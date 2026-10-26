@@ -3,7 +3,7 @@ import { GoneException, Injectable, Optional, type OnModuleDestroy, type OnModul
 import { HttpAdapterHost } from "@nestjs/core";
 import { spawn } from "node:child_process";
 import { rm } from "node:fs/promises";
-import { join } from "node:path";
+import { join, posix } from "node:path";
 import { Observable, Subject } from "rxjs";
 import { RegistryService } from "../registry/registry.service";
 import { WorktreeService, type ChangedFile } from "../worktree/worktree.service";
@@ -86,21 +86,42 @@ import {
   MINION_AGENT_ID,
   MINION_OUTCOME_CONTRACT,
   MINION_TIME_CAP_PROMPT,
+  MINION_PR_TITLE_RULE,
+  MINION_FINDINGS_SKILL,
+  minionFindingLine,
   MINION_TIME_CAP_MS,
   MINION_GRACE_MS,
   type MinionResult,
   type MinionVerdictReport,
+  type PrCheck,
+  type PrCheckState,
 } from "@kermanych/core";
 import { claimTaskForLaunch, createTask, getTask, listProjects, patchTask, releaseLaunchClaim, type CloudProject, type AiTrigger, type Task, type TaskPatch } from "@kermanych/cloud";
 import { AuthService } from "../auth/auth.service";
 import { ModelsService } from "../models/models.service";
 import { NativeSessionService, nativeUnsupported } from "../native/native-session.service";
 import { CodedError } from "../management/coded-error";
-import { PR_URL_RE } from "./pr-url";
+import { firstPrUrl } from "./pr-url";
 import { launchToolsFor } from "./chat-tools";
 import { MachineResourcesService } from "../machine/machine-resources.service";
 import { WatchdogService } from "../machine/watchdog.service";
+import { BranchNameService, type BranchContext } from "./branch-name.service";
 import { noAskOverlay } from "../minion/ask-overlay";
+import { EnvFileService } from "../env/env-file.service";
+import { GithubClient, GithubHttpError, parseGithubPrUrl, parseGithubRemote, type GithubPull } from "../github/github-client";
+
+// A failed merged-PR check, in the words the UI shows (docs/specs/2026-10-26-pr-merged-close-prompt.md,
+// decision 6). A spent rate limit is a 403 too, so it is read first. `fetch` rejects with a
+// TypeError when the network is down and with a TimeoutError/AbortError when the signal fires.
+function prCheckFailure(err: unknown): PrCheck {
+  if (err instanceof GithubHttpError) {
+    if (err.rateLimited) return { state: "rate_limited" };
+    return { state: [401, 403, 404].includes(err.status) ? "no_access" : "error" };
+  }
+  const name = (err as { name?: unknown } | null)?.name;
+  if (err instanceof TypeError || name === "TimeoutError" || name === "AbortError") return { state: "offline" };
+  return { state: "error" };
+}
 
 type Live = {
   rpc: AgentRuntime;
@@ -293,6 +314,14 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     @Optional() private watchdog?: WatchdogService,
     // A restart's waiting sessions start once the api listens: a native harness needs its port.
     @Optional() private http?: HttpAdapterHost,
+    // Names a new branch from what its task is about (docs/specs/2026-10-26-branch-name-from-task.md).
+    // Optional so specs construct the supervisor without it — then the branch is the
+    // transliterated title and no model is asked.
+    @Optional() private branchNames?: BranchNameService,
+    // The merged-PR check reads the bound repo's `GIT_TOKEN` from its `.env`
+    // (docs/specs/2026-10-26-pr-merged-close-prompt.md, decision 5). Optional so specs construct
+    // the supervisor without it — then GitHub is asked anonymously.
+    @Optional() private envFile?: EnvFileService,
   ) {
     this.native?.events$.subscribe((e) => {
       if (e.type === "changed") {
@@ -383,16 +412,18 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
   // Never throws, for the same reason as ompSkills: the service degrades on its own for a
   // project reason (offline cloud, unreadable repository file, an override gone stale) and
   // throws for a caller error (an invalid project id), and neither may cost an agent its run.
-  // No template and an empty block is "this project customised nothing".
+  // No template and an empty block is "this project customised nothing". `extra` are skills
+  // Kermanych adds to this one launch, after the assigned sequence (SkillsService.assignedFor).
   private async agentPrompt(
     projectId: string,
     agentId: string,
     cwd: string,
+    extra: readonly string[] = [],
   ): Promise<{ template?: string; block: string }> {
     try {
       const scope = this.aiScope(projectId);
       const [assigned, template] = await Promise.all([
-        this.skills.assignedFor(scope, agentId, cwd),
+        this.skills.assignedFor(scope, agentId, cwd, extra),
         this.skills.instructionFor(scope, agentId),
       ]);
       return { ...(template !== undefined ? { template } : {}), block: assigned.block };
@@ -1061,7 +1092,7 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
 
     const { branch, baseBranch } = await this.resolveLaunchParams(
       project,
-      task.title,
+      { title: task.title, description: task.description },
       prefix,
       worktree,
       undefined,
@@ -1095,6 +1126,8 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
       // minion never takes one: that agent interviews a person.
       ...(task.deepAnalysis && !minion ? { deepAnalysis: true } : {}),
       ...(minion ? { minion: true } : {}),
+      // A minion run of a finding card carries the kind for its opening prompt (decision 14).
+      ...(minion && task.findingKind ? { findingKind: task.findingKind } : {}),
     });
     if (minion) this.minionRuns.set(session.id, { phase: "work", starting: true });
     try {
@@ -1210,7 +1243,7 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     // Everything the launcher used to ask for is derived: the chat's opening message is the
     // task, its first line the name, and the rest are the project's defaults.
     const name = taskNameFromText(chat.task) || chat.name;
-    const { branch, baseBranch } = await this.resolveLaunchParams(project, name, "feature", true, chatId);
+    const { branch, baseBranch } = await this.resolveLaunchParams(project, { title: name, description: chat.task }, "feature", true, chatId);
     const { template, block } = await this.agentPrompt(chat.projectId, "promote", project.localRepoPath);
     const prompt = renderInstruction(agentById("promote")!, { branch }, template) + block;
 
@@ -1249,10 +1282,11 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
 
   // In-place guards + a de-duplicated branch name, shared by every birth path of an agent
   // (createSessionFromTask, promoteChatToAgent) and by attaching a worktree to an existing
-  // session. excludeId keeps a session from colliding with or blocking itself.
+  // session. excludeId keeps a session from colliding with or blocking itself. The name comes
+  // from the task (BranchNameService), else from its transliterated title.
   private async resolveLaunchParams(
     project: Project,
-    name: string,
+    task: BranchContext,
     prefix: BranchPrefix,
     worktree: boolean,
     excludeId?: string,
@@ -1296,10 +1330,13 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
       // and «Зміни» always know the base; only a detached HEAD leaves none (fork from HEAD).
       baseBranch = requestedBase || project.defaultBranch || (await this.worktree.currentBranch(project.localRepoPath)) || undefined;
     }
+    // Named after the guards, so a refused launch spends no model call; the taken set is read
+    // after the answer, so it includes whatever launched while the model was thinking.
+    const slug = (await this.branchNames?.suggest(task)) ?? slugify(task.title);
     const existing = new Set(
       this.registry.listSessions(project.id).filter((s) => s.id !== excludeId).map((s) => s.branch).filter(Boolean),
     );
-    const branch = uniqueSlug(branchName(slugify(name), prefix), existing);
+    const branch = uniqueSlug(branchName(slug, prefix), existing);
     return { branch, baseBranch };
   }
 
@@ -1494,12 +1531,17 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
   // or repository override wins. Degrades like completeDocs: the wrapper alone is a complete ask.
   // A «Посіпака» run gets the minion's instruction around the card — the «ШІ-команда» override
   // and assigned skills like every agent — and Kermanych's outcome contract after it, which no
-  // override can drop (docs/specs/2026-10-23-minion-auto-run.md, decision 11).
+  // override can drop (docs/specs/2026-10-23-minion-auto-run.md, decision 11). A card filed from
+  // a «Знахідка» also gets, right after the card, Kermanych's line naming the kind, and the
+  // `minion-findings` skill after the assigned ones (decision 14): a repository, project,
+  // workspace or user skill of that name wins, and a team that switched it off gets the line alone.
   private async openingPrompt(session: Session, firstPrompt: string, cwd: string): Promise<string> {
     if (session.minion && firstPrompt.trim()) {
-      const { template, block } = await this.agentPrompt(session.projectId, MINION_AGENT_ID, cwd);
+      const kind = session.findingKind;
+      const { template, block } = await this.agentPrompt(session.projectId, MINION_AGENT_ID, cwd, kind ? [MINION_FINDINGS_SKILL] : []);
       const card = firstPrompt.trim() === session.name.trim() ? session.name : `${session.name}\n\n${firstPrompt}`;
-      return `${renderInstruction(agentById(MINION_AGENT_ID)!, { task: card }, template)}${block}\n\n${MINION_OUTCOME_CONTRACT}`;
+      const about = kind ? `\n\n${minionFindingLine(kind)}` : "";
+      return `${renderInstruction(agentById(MINION_AGENT_ID)!, { task: card }, template)}${about}${block}\n\n${MINION_OUTCOME_CONTRACT}`;
     }
     if (!session.deepAnalysis || !firstPrompt.trim()) return firstPrompt;
     let block = "";
@@ -1856,22 +1898,16 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     // tool result. `agent_end` reads this to choose `in_review` over `done`; scanning here
     // (not there) catches the URL even when the PR turn is followed by more turns.
     if (l.prRequested === true && l.prOpened !== true) {
-      for (const entry of reduced.entries) {
-        if (entry.kind === "assistant_text" && PR_URL_RE.test(entry.text)) {
-          l.prOpened = true;
-          break;
-        }
-        if (entry.kind === "tool" && (reduced.full.get(entry.id) ?? []).some((ln) => "text" in ln && PR_URL_RE.test(ln.text))) {
-          l.prOpened = true;
-          break;
-        }
-      }
+      const prUrl = firstPrUrl(reduced.entries, reduced.full);
       // Once the URL surfaces, remember it durably on the row. The `in_review` status a later
       // follow-up turn overwrites is transient; the FACT that a PR exists must outlive it, so
       // the finish sheet keeps offering «Закоміти» and every later turn settles back on review.
-      if (l.prOpened === true) {
+      // The URL itself is what the merged-PR check later asks GitHub about.
+      if (prUrl) {
+        l.prOpened = true;
         l.live.prOpened = true;
-        this.registry.updateSession(id, { prOpened: true });
+        l.live.prUrl = prUrl;
+        this.registry.updateSession(id, { prOpened: true, prUrl });
       }
     }
     // Task artifacts an agent attaches to its card via the shared kermanych-action mechanism —
@@ -2458,6 +2494,9 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     // after the instruction, whatever its source, so an overridden PR agent still brings the base in.
     const base = this.syncBase(s, g);
     const sync = base ? `\n\n${baseSyncBlock(base)}` : "";
+    // A «Посіпака» session's PR is told apart by its title (docs/specs/2026-10-23-minion-auto-run.md,
+    // decision 10); appended like the sync, so neither an override nor the repo's conventions drop it.
+    const title = s.minion ? `\n\n${MINION_PR_TITLE_RULE}` : "";
     const prompt =
       renderInstruction(
         agentById("pull-request")!,
@@ -2467,7 +2506,7 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
           baseLine,
         },
         template,
-      ) + sync + block + artifacts;
+      ) + sync + title + block + artifacts;
 
     // A send parked for an agent slot replays this whole call later, so the flags below are armed
     // for the turn that call starts, not now on a child that is not running it.
@@ -2896,14 +2935,17 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
   // merged anywhere — code leaves Kermanych through a pull request only, so the BRANCH is
   // kept: it is what the PR points at, and reopening the session continues on it. The row
   // stays as `merged` history.
-  async finishSession(id: string): Promise<{ finished: true; branch: string }> {
+  // `skipDocsGate` is internal: only closeMerged passes it, after GitHub confirmed the merge —
+  // documentation commits would land on a branch that is already merged. The public finish
+  // route keeps the gate.
+  async finishSession(id: string, opts: { skipDocsGate?: boolean } = {}): Promise<{ finished: true; branch: string }> {
     const s = this.registry.listSessions().find((x) => x.id === id);
     if (!s) throw new Error("session not found");
     const g = this.boundProject(s.projectId);
     if (s.kind !== "agent")
       throw new Error(`${s.kind} branches can't be finished — merge or discard instead`);
     if (s.worktree && !s.worktreePath) throw new Error("session has no worktree");
-    await this.assertDocsGate(id);
+    if (!opts.skipDocsGate) await this.assertDocsGate(id);
 
     const dir = s.worktreePath || g.localRepoPath;
     const base = s.worktree ? "" : (s.baseBranch ?? "");
@@ -2945,6 +2987,90 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     return { finished: true, branch: s.branch };
   }
 
+  // Is the session's pull request merged on GitHub? (docs/specs/2026-10-26-pr-merged-close-prompt.md)
+  // Asked when the operator selects the session in «Агенти»; a `merged` answer offers
+  // «Закрити задачу». Only an agent session that opened a PR, is not retired, still has its
+  // tree and is not working right now is checked (decision 9); anything else is `unsupported`.
+  // The PR is the stored GitHub URL's, else (or when that one is not merged — closed and
+  // replaced) the latest merged PR of the session's branch on its base, opened no earlier than
+  // the session (decision 4). GitHub failures become states, never exceptions: the UI only
+  // shows them. The token is the bound repo's `GIT_TOKEN` (decision 5) and leaves no trace.
+  async prCheck(id: string): Promise<PrCheck> {
+    const row = this.registry.listSessions().find((x) => x.id === id);
+    if (!row) throw new Error("session not found");
+    const s = this.merge(row);
+    const g = this.registry.listProjects().find((p) => p.id === s.projectId);
+    if (
+      s.kind !== "agent" || !s.prOpened || s.status === "merged" || ACTIVE_STATUSES.includes(s.status) ||
+      (s.worktree && !s.worktreePath) || !g?.localRepoPath
+    )
+      return { state: "unsupported" };
+    const dir = s.worktreePath || g.localRepoPath;
+    const gh = new GithubClient(await this.gitToken(g.localRepoPath));
+    const stored = s.prUrl ? parseGithubPrUrl(s.prUrl) : null;
+    const report = (p: GithubPull, state: PrCheckState): PrCheck => ({ state, url: p.html_url, number: p.number });
+    const merged = async (p: GithubPull): Promise<PrCheck> => ({ ...report(p, "merged"), leftover: await this.prLeftover(dir, s.branch, p.head.sha) });
+    try {
+      let storedPull: GithubPull | undefined;
+      if (stored) {
+        storedPull = await gh.pull(stored.owner, stored.repo, stored.number);
+        if (storedPull.merged_at) return await merged(storedPull);
+      }
+      // The branch lookup reads owner/repo from `origin`; a stored GitHub URL names them too
+      // when the remote is not a GitHub one.
+      const remote = parseGithubRemote(await this.worktree.originUrl(g.localRepoPath)) ?? stored;
+      if (!remote || !s.branch) return storedPull ? report(storedPull, storedPull.state) : { state: "unsupported" };
+      let closed: GithubPull[];
+      try {
+        closed = await gh.closedPullsByHead(remote.owner, remote.repo, `${remote.owner}:${s.branch}`);
+      } catch (err) {
+        // The stored PR's own answer stands when only the fallback failed.
+        if (storedPull) return report(storedPull, storedPull.state);
+        throw err;
+      }
+      // Only a PR into the session's base (when one is known), opened since the session — an
+      // old PR from a reused branch name is somebody else's history. Newest first.
+      const base = s.baseBranch || g.defaultBranch || "";
+      const since = Date.parse(s.createdAt);
+      const ours = closed
+        .filter((p) => (!base || p.base.ref === base) && Date.parse(p.created_at) >= since)
+        .sort((a, b) => Date.parse(b.merged_at ?? b.created_at) - Date.parse(a.merged_at ?? a.created_at));
+      const replacement = ours.find((p) => p.merged_at);
+      if (replacement) return await merged(replacement);
+      if (storedPull) return report(storedPull, storedPull.state);
+      return ours[0] ? report(ours[0], "closed") : { state: "not_found" };
+    } catch (err) {
+      return prCheckFailure(err);
+    }
+  }
+
+  // «Закрити задачу»: the server re-checks the merge itself, so the UI cannot use this route to
+  // finish around the documentation gate (decision 3). Everything else is finishSession's.
+  async closeMerged(id: string): Promise<{ finished: true; branch: string }> {
+    if ((await this.prCheck(id)).state !== "merged") throw new Error("pr is not merged");
+    return this.finishSession(id, { skipDocsGate: true });
+  }
+
+  // Work the merged PR does not carry (decision 8): uncommitted changes, or a local branch head
+  // that is neither the PR's head nor behind it. A head GitHub knows but this clone does not
+  // fails isAncestor and so counts as unpushed. A branch that no longer resolves holds nothing.
+  private async prLeftover(dir: string, branch: string, prHead: string): Promise<{ dirty: boolean; unpushed: boolean }> {
+    const dirty = await this.worktree.hasUncommitted(dir);
+    const local = await this.worktree.revParse(dir, `refs/heads/${branch}`);
+    const unpushed = !!local && local !== prHead && !(await this.worktree.isAncestor(dir, local, prHead));
+    return { dirty, unpushed };
+  }
+
+  // The bound repo's `GIT_TOKEN`, "" without one (or without the env service, as in specs).
+  private async gitToken(repoPath: string): Promise<string> {
+    try {
+      const env = await this.envFile?.read(repoPath);
+      return env?.entries.find((e) => e.key === "GIT_TOKEN")?.value.trim() ?? "";
+    } catch {
+      return "";
+    }
+  }
+
   // Reopen a retired worktree agent: bring the worktree back ON THE SESSION'S OWN BRANCH,
   // which finish keeps — the pull request points at it, so continuing here updates that PR.
   // A row retired before branches were kept has none left; that one forks a fresh branch off
@@ -2960,7 +3086,7 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     const kept = !!s.branch && (await this.worktree.refExists(g.localRepoPath, `refs/heads/${s.branch}`));
     const { branch, baseBranch } = kept
       ? { branch: s.branch, baseBranch: s.baseBranch }
-      : await this.resolveLaunchParams(g, s.name, s.prefix ?? "feature", true, id, s.baseBranch);
+      : await this.resolveLaunchParams(g, { title: s.name, description: s.task }, s.prefix ?? "feature", true, id, s.baseBranch);
     const wtDir = worktreeDir(id);
     // The row owns no worktree, so anything at its path is what the retirement left behind — a
     // tree from before removeWorktree cleaned up after itself, or one a stray process (a dev
@@ -3221,28 +3347,31 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
   }
 
   // The operator wrote to the run (`work`: its next verdict drives the same flow) or restarted
-  // it (`idle`: the old child's exit is theirs, not a failed run). Either way no clock any more.
+  // it (`idle`: the old child's exit is theirs, not a failed run). Either way no clock any more,
+  // and nothing Kermanych was about to do after the last verdict (`advancing`) goes ahead.
   private attendMinionRun(id: string, phase: "work" | "idle" = "work"): void {
     const run = this.minionRun(id);
     if (!run) return;
     run.attended = true;
     run.phase = phase;
+    run.advancing = false;
     this.clearMinionClock(run);
   }
 
   // At a minion turn's end, before the settle: whether the turn waits on a person (`review`),
-  // whether the run goes on with a docs or PR turn (`hold`: it settles `queued`, not `done`, so
-  // the card never flashes to the closed lane and stays active for every machine meanwhile),
-  // and what to do once it has settled (`after`). Consumes the turn's verdict.
+  // whether the run goes on (`hold`: it settles `queued`, not `done`, so the card never flashes to
+  // the closed lane and stays active for every machine while Kermanych checks the branch and
+  // sends the docs or PR turn), and what to do once it has settled (`after`). Consumes the turn's
+  // verdict.
   private onMinionTurnEnd(id: string, hasPr: boolean): { review: boolean; hold?: boolean; after: () => void } {
     const run = this.minionRun(id);
     if (!run) return { review: false, after: () => {} };
     const verdict = run.verdict;
     run.verdict = undefined;
     const record = (result: MinionResult, effect: MinionRunResult["effect"]) => () => void this.recordMinionResult(id, result, effect);
-    const advance = () => {
+    const hold = (next: () => Promise<void>) => {
       run.advancing = true;
-      return { review: false, hold: true, after: () => void this.advanceMinion(id, run) };
+      return { review: false, hold: true, after: () => void next() };
     };
     switch (run.phase) {
       // Waiting on a person already (a stopped or capped turn's late end): stay on review. A PR
@@ -3253,7 +3382,7 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
           return { review: true, after: record({ outcome: "pr" }, "neutral") };
         return { review: true, after: () => {} };
       case "docs":
-        return advance();
+        return hold(() => this.advanceMinion(id, run));
       case "pr":
         run.phase = "idle";
         // The agent's own words, when it reported why the PR did not open, are the reason. A run
@@ -3262,7 +3391,8 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
           ? { review: true, after: record({ outcome: "pr" }, run.capped ? "failure" : "success") }
           : { review: true, after: record({ outcome: "needs_decision", code: "no_pr", ...(verdict ? { reason: verdict.summary } : {}) }, "failure") };
       case "work":
-        if (verdict?.outcome === "ready") return advance();
+        if (verdict?.outcome === "ready") return hold(() => this.advanceMinion(id, run, verdict.summary));
+        if (verdict?.outcome === "not_needed") return hold(() => this.closeNotNeeded(id, run, verdict.summary));
         if (verdict) {
           run.phase = "idle";
           // The agent's own call resets the failures — unless the time cap made it.
@@ -3284,11 +3414,24 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
-  // After a `ready` (or the docs turn): one docs turn while the gate fails, then the PR. Called
-  // once the turn has settled, so both sends start a fresh turn.
-  private async advanceMinion(id: string, run: MinionRun): Promise<void> {
+  // After a `ready` (or the docs turn): a branch with nothing on it goes to a person (decision
+  // 14), then one docs turn while the gate fails, then the PR. Called once the turn has settled,
+  // so both sends start a fresh turn. `summary` is the `ready`'s, for the no-changes reason.
+  private async advanceMinion(id: string, run: MinionRun, summary?: string): Promise<void> {
     try {
+      // Only right after the `ready`: once the docs turn ran, the branch holds at least the docs.
+      if (run.phase === "work") {
+        const changes = await this.minionChanges(id);
+        if (!run.advancing) return;
+        if (!changes.length) {
+          run.phase = "idle";
+          this.settleMinionRest(id, "in_review");
+          await this.recordMinionResult(id, { outcome: "needs_decision", code: "no_changes", ...(summary ? { reason: summary } : {}) }, "failure");
+          return;
+        }
+      }
       let { failures } = await this.docsGate(id);
+      if (!run.advancing) return;
       if (failures.length && !run.docsSent) {
         run.docsSent = true;
         run.phase = "docs";
@@ -3299,7 +3442,7 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
       }
       if (failures.length) {
         run.phase = "idle";
-        this.settleMinionReview(id);
+        this.settleMinionRest(id, "in_review");
         await this.recordMinionResult(id, { outcome: "needs_decision", code: "docs_gate", reason: failures.join(", ") }, "failure");
         return;
       }
@@ -3307,7 +3450,7 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
       await this.createPullRequest(id);
     } catch (err) {
       run.phase = "idle";
-      this.settleMinionReview(id);
+      this.settleMinionRest(id, "in_review");
       await this.recordMinionResult(id, { outcome: "failed", code: "session_error", reason: (err as Error).message }, "failure");
     } finally {
       run.advancing = false;
@@ -3315,10 +3458,51 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
-  // A run that rests between turns (`queued` while it advanced after `ready`) and then turns out
-  // to wait on a person moves to review — unless a turn has started meanwhile. `turnRunning`
-  // cannot tell: the `queued` hold itself reads as a running turn.
-  private settleMinionReview(id: string): void {
+  // After a `not_needed` (decision 14): the card closes at `done` only when the branch holds
+  // nothing. Changes left on it hand the run to a person, as a failure: the agent said there was
+  // nothing to change, and did change something.
+  private async closeNotNeeded(id: string, run: MinionRun, summary: string): Promise<void> {
+    try {
+      const changes = await this.minionChanges(id);
+      if (!run.advancing) return;
+      run.phase = "idle";
+      if (changes.length) {
+        this.settleMinionRest(id, "in_review");
+        await this.recordMinionResult(id, { outcome: "needs_decision", code: "has_changes", reason: summary }, "failure");
+        return;
+      }
+      this.settleMinionRest(id, "done");
+      // A run that reached the time cap counts as failed, whatever it reported (decision 9).
+      await this.recordMinionResult(id, { outcome: "not_needed", reason: summary }, run.capped ? "failure" : "success");
+    } catch (err) {
+      run.phase = "idle";
+      this.settleMinionRest(id, "in_review");
+      await this.recordMinionResult(id, { outcome: "failed", code: "session_error", reason: (err as Error).message }, "failure");
+    } finally {
+      run.advancing = false;
+      this.pushUpdate(id);
+    }
+  }
+
+  // What a minion run has left on its branch (decision 14): what finishInfo lists, against the
+  // same base, without the project's carry files — Kermanych copied those into the worktree
+  // itself, and one the repository does not ignore would read as the agent's change. A carry
+  // entry names a repository-relative file the way git lists it once normalised (`./.env`).
+  private async minionChanges(id: string): Promise<ChangedFile[]> {
+    const s = this.registry.listSessions().find((x) => x.id === id);
+    if (!s) throw new Error("session not found");
+    const g = this.boundProject(s.projectId);
+    if (s.worktree && !s.worktreePath) throw new Error("session has no worktree — reopen it to continue");
+    const { dir, from } = await this.branchBase(s, g);
+    const carried = new Set((g.carryFiles ?? [".env"]).map((f) => posix.normalize(f.replaceAll("\\", "/"))));
+    return (await this.worktree.changedFiles(dir, from)).filter((f) => !carried.has(f.path));
+  }
+
+  // A run that rests between turns (`queued` while Kermanych checks its branch or sends its next
+  // turn) settles where it ended: on review when it waits on a person, at `done` when a
+  // `not_needed` closed it — unless a turn has started meanwhile. `turnRunning` cannot tell: the
+  // `queued` hold itself reads as a running turn. The hold held an agent slot, which is free now.
+  private settleMinionRest(id: string, to: "in_review" | "done"): void {
     const s = this.registry.listSessions().find((x) => x.id === id);
     if (!s) return;
     const status = this.merge(s).status;
@@ -3326,11 +3510,12 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     const l = this.map.get(id);
     if (l && (l.turnPending || l.state.status === "thinking" || l.state.status === "tool" || l.state.status === "waiting_input")) return;
     if (l) {
-      l.state = { status: "in_review" };
-      l.live.status = "in_review";
+      l.state = { status: to };
+      l.live.status = to;
     }
-    this.registry.updateSession(id, { status: "in_review" });
+    this.registry.updateSession(id, { status: to });
     this.pushUpdate(id);
+    this.drainSlots();
   }
 
   // Persist a run's result, show it, send it to the card, and tell MinionService how it counts.
@@ -3357,8 +3542,9 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
   }
 
   // The operator stops, deletes or finishes a minion session. A run still in flight — a turn
-  // running, a docs or PR turn on its way, or no result yet — ends `stopped`, which counts for
-  // nothing; a run that already ended keeps its result.
+  // running, a branch check or a docs or PR turn on its way, or no result yet — ends `stopped`,
+  // which counts for nothing, and what was on its way does not go ahead; a run that already ended
+  // keeps its result.
   private async endMinionRun(id: string): Promise<void> {
     const row = this.registry.listSessions().find((x) => x.id === id);
     const run = row?.minion ? this.minionRun(id) : undefined;
@@ -3366,6 +3552,7 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     const inFlight = !row.minionResult || run.advancing === true || ACTIVE_STATUSES.includes(this.merge(row).status) || this.turnRunning(row);
     run.phase = "idle";
     run.attended = true;
+    run.advancing = false;
     run.verdict = undefined;
     this.clearMinionClock(run);
     if (inFlight) await this.recordMinionResult(id, { outcome: "stopped" }, "neutral");

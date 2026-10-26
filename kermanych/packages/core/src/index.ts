@@ -62,6 +62,9 @@ export {
   type ReleaseSource,
   type ReleaseNotesAsk,
   type ReleaseNotesReply,
+  type ReleaseNotesAuthorsAsk,
+  type ReleaseNotesAuthorsReply,
+  type ReleaseAuthor,
 } from "./release-notes";
 export { THINKING_LEVELS, isThinkingLevel, type ThinkingLevel } from "./thinking";
 export {
@@ -317,6 +320,7 @@ export {
   MINION_REASON_CODES,
   MINION_PAUSE_CODES,
   MINION_OUTCOME_CONTRACT,
+  MINION_PR_TITLE_RULE,
   MINION_TIME_CAP_PROMPT,
   isMinionOutcome,
   isMinionReasonCode,
@@ -324,6 +328,8 @@ export {
   clampMinionCap,
   validateOutcomeReport,
   readMinionResult,
+  minionFindingLine,
+  MINION_FINDINGS_SKILL,
   type MinionVerdict,
   type MinionVerdictReport,
   type MinionOutcome,

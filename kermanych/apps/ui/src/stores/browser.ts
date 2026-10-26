@@ -135,6 +135,12 @@ export const useSessionBrowser = defineStore('sessionBrowser', () => {
     localStorage.setItem(SPLIT_KEY, on ? '1' : '0');
   }
 
+  // The operator's ✕ on the Браузер tab. Main reports it back through onClosed, which forgets
+  // the state; the picks tray stays, as after an idle close.
+  function close(sessionId: string): void {
+    bridge?.close(sessionId);
+  }
+
   function addPick(sessionId: string, pick: KermanychBrowserPick): void {
     const entry: TrayPick = { id: crypto.randomUUID(), pick, comment: '' };
     picks.value = { ...picks.value, [sessionId]: [...(picks.value[sessionId] ?? []), entry] };
@@ -186,6 +192,7 @@ export const useSessionBrowser = defineStore('sessionBrowser', () => {
     refresh,
     navigate,
     setSplit,
+    close,
     addPick,
     setComment,
     setNote,

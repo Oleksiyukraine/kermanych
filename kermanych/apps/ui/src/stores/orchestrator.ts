@@ -149,6 +149,14 @@ export const useOrchestrator = defineStore('orchestrator', () => {
         ...sessions.value.filter((x) => x.id !== e.session.id),
         e.session,
       ];
+      // A completed session («Завершити», a merged discussion/review) closes its chat pane:
+      // there is nothing left to do in it. Only on the transition, so opening an already
+      // merged card from «Завершені» (to read it or ↻ restore it) still shows the chat.
+      // Covers every source — this window's finish, another window, the api — because the
+      // api echoes each status change here.
+      if (prev !== undefined && prev !== 'merged' && e.session.status === 'merged' && selectedSessionId.value === e.session.id) {
+        selectedSessionId.value = undefined;
+      }
       // Native notification on an attention-worthy transition, only while the desktop
       // window is unfocused. Guarded so the browser build (no Notification) never throws.
       if (
@@ -469,6 +477,10 @@ export const useOrchestrator = defineStore('orchestrator', () => {
     return api.finishInfo(id);
   }
 
+  function prCheck(id: string) {
+    return api.prCheck(id);
+  }
+
   function fileDiff(id: string, path: string) {
     return api.fileDiff(id, path);
   }
@@ -492,6 +504,17 @@ export const useOrchestrator = defineStore('orchestrator', () => {
   async function finishSession(id: string) {
     const res = await api.finish(id);
     // preview is stopped server-side on finish; drop its local url too.
+    if (previews.value[id]) {
+      const next = { ...previews.value };
+      delete next[id];
+      previews.value = next;
+    }
+    return res;
+  }
+
+  async function closeMerged(id: string) {
+    const res = await api.closeMerged(id);
+    // Same retirement as finishSession: the preview is stopped server-side; drop its url too.
     if (previews.value[id]) {
       const next = { ...previews.value };
       delete next[id];
@@ -594,12 +617,14 @@ export const useOrchestrator = defineStore('orchestrator', () => {
     getEnv,
     saveEnv,
     finishInfo,
+    prCheck,
     fileDiff,
     sessionTree,
     sessionFile,
     projectTree,
     projectFile,
     finishSession,
+    closeMerged,
     createPr,
     commitChanges,
     completeDocs,

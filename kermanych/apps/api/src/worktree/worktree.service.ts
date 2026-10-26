@@ -512,6 +512,20 @@ export class WorktreeService {
     return (await git(repoDir, ["rev-parse", "--verify", "--quiet", ref])).ok;
   }
 
+  // The commit `ref` names, or "" when it does not resolve. The merged-PR check compares the
+  // session branch's local head with the merged PR's head commit.
+  async revParse(repoDir: string, ref: string): Promise<string> {
+    const r = await gitStdout(repoDir, ["rev-parse", "--verify", "--quiet", `${ref}^{commit}`]);
+    return r.ok ? r.out.trim() : "";
+  }
+
+  // The `origin` remote's URL, or "" without one. Stdout only: a stderr warning must not be
+  // parsed as part of the URL the merged-PR check reads the GitHub owner and repo from.
+  async originUrl(repoDir: string): Promise<string> {
+    const r = await gitStdout(repoDir, ["remote", "get-url", "origin"]);
+    return r.ok ? r.out.trim() : "";
+  }
+
   // Refresh `origin/<branch>` alone, with the machine's own credentials like the footer's fetch:
   // no prompt, a timeout. The explicit refspec writes the remote-tracking ref even in a clone
   // whose configured refspec does not cover the branch, and a `+refs/heads/…` argument can never

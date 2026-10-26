@@ -27,6 +27,8 @@ import {
   type ManagementMember,
   type ManagementRiskRow,
   type ReleaseNotesAsk,
+  type ReleaseNotesAuthorsAsk,
+  type ReleaseNotesAuthorsReply,
   type ReleaseNotesReply,
   type ReleaseSource,
 } from "@kermanych/core";
@@ -60,6 +62,45 @@ function riskRows(v: unknown): ManagementRiskRow[] {
     });
   }
   return rows;
+}
+
+// The projects and the period of a release-notes ask, shared by the note and by the people
+// picker that precedes it: both must read the same history, so both refuse the same input.
+// One or more projects, each with its own branch. Every source is checked before any git
+// work starts, so a half-filled form is refused as a whole and never generates a note about
+// only the projects that happened to be complete.
+function releaseRange(b: Partial<ReleaseNotesAuthorsAsk> | undefined): ReleaseNotesAuthorsAsk {
+  const raw: unknown[] = Array.isArray(b?.sources) ? b.sources : [];
+  if (raw.length === 0) throw badRequest("project_missing", "не вказано проєкт");
+  const sources: ReleaseSource[] = [];
+  for (const s of raw) {
+    const src = (s ?? {}) as Partial<ReleaseSource>;
+    const projectId = typeof src.projectId === "string" ? src.projectId.trim() : "";
+    if (!projectId) throw badRequest("project_missing", "не вказано проєкт");
+    const branch = typeof src.branch === "string" ? src.branch.trim() : "";
+    if (!branch) throw badRequest("branch_missing", "не вказано гілку");
+    // One project twice would print its commits twice under two identical headings — the
+    // form cannot produce it, so anything that does is a bug worth refusing.
+    if (sources.some((x) => x.projectId === projectId)) throw badRequest("project_duplicate", "проєкт вказано двічі");
+    sources.push({ projectId, branch });
+  }
+  const rangeFrom = typeof b?.rangeFrom === "string" ? b.rangeFrom.trim() : "";
+  const rangeTo = typeof b?.rangeTo === "string" ? b.rangeTo.trim() : "";
+  if (!isReleaseDate(rangeFrom) || !isReleaseDate(rangeTo))
+    throw badRequest("period_format_invalid", "період має бути парою дат у форматі YYYY-MM-DD");
+  // Lexicographic IS chronological for YYYY-MM-DD — no Date parsing to disagree with git.
+  if (rangeFrom > rangeTo) throw badRequest("period_start_after_end", "початок періоду пізніший за його кінець");
+  return { sources, rangeFrom, rangeTo };
+}
+
+// A service failure relayed as a 400. A missing `omp`, a start timeout, an unbound project,
+// an unknown branch or an empty range are all operator-actionable sentences already; a 500
+// would hide every one of them behind "Internal Server Error" and the screen would have
+// nothing to show. A `CodedError` carries its stable code on to the body so the UI can
+// localize it; anything else keeps its prose.
+function relay(err: unknown): never {
+  if (err instanceof CodedError) throw badRequest(err.code, err.message, err.params);
+  throw new BadRequestException((err as Error).message);
 }
 
 // The roster as the browser sent it. Same reasoning as `riskRows`: `workspace_members` is
@@ -371,12 +412,7 @@ export class ManagementController {
     try {
       return await this.chat.ask({ ...b, conversationId, text, workspaceId, workspaceProjects, context, attachments }, req.user.id);
     } catch (err) {
-      // A missing `omp`, a start timeout or a turn timeout are all operator-actionable
-      // sentences already; a 500 would hide every one of them behind "Internal Server
-      // Error" and the composer would have nothing to show. A `CodedError` carries its
-      // stable code on to the body so the UI can localize it; anything else keeps its prose.
-      if (err instanceof CodedError) throw badRequest(err.code, err.message, err.params);
-      throw new BadRequestException((err as Error).message);
+      relay(err);
     }
   }
 
@@ -387,8 +423,7 @@ export class ManagementController {
     try {
       return await this.chat.reset(conversationId);
     } catch (err) {
-      if (err instanceof CodedError) throw badRequest(err.code, err.message, err.params);
-      throw new BadRequestException((err as Error).message);
+      relay(err);
     }
   }
 
@@ -403,30 +438,7 @@ export class ManagementController {
   // still refuses it if anything else asks.
   @Post("release-notes")
   async releaseNotes(@Body() b: ReleaseNotesAsk): Promise<ReleaseNotesReply> {
-    // One or more projects, each with its own branch. Every source is checked before any git
-    // work starts, so a half-filled form is refused as a whole and never generates a note
-    // about only the projects that happened to be complete.
-    const raw: unknown[] = Array.isArray(b?.sources) ? b.sources : [];
-    if (raw.length === 0) throw badRequest("project_missing", "не вказано проєкт");
-    const sources: ReleaseSource[] = [];
-    for (const s of raw) {
-      const src = (s ?? {}) as Partial<ReleaseSource>;
-      const projectId = typeof src.projectId === "string" ? src.projectId.trim() : "";
-      if (!projectId) throw badRequest("project_missing", "не вказано проєкт");
-      const branch = typeof src.branch === "string" ? src.branch.trim() : "";
-      if (!branch) throw badRequest("branch_missing", "не вказано гілку");
-      // One project twice would print its commits twice under two identical headings — the
-      // form cannot produce it, so anything that does is a bug worth refusing.
-      if (sources.some((x) => x.projectId === projectId))
-        throw badRequest("project_duplicate", "проєкт вказано двічі");
-      sources.push({ projectId, branch });
-    }
-    const rangeFrom = typeof b?.rangeFrom === "string" ? b.rangeFrom.trim() : "";
-    const rangeTo = typeof b?.rangeTo === "string" ? b.rangeTo.trim() : "";
-    if (!isReleaseDate(rangeFrom) || !isReleaseDate(rangeTo))
-      throw badRequest("period_format_invalid", "період має бути парою дат у форматі YYYY-MM-DD");
-    // Lexicographic IS chronological for YYYY-MM-DD — no Date parsing to disagree with git.
-    if (rangeFrom > rangeTo) throw badRequest("period_start_after_end", "початок періоду пізніший за його кінець");
+    const { sources, rangeFrom, rangeTo } = releaseRange(b);
     const workspaceName = typeof b?.workspaceName === "string" ? b.workspaceName.trim() : "";
     // Absent is the original by-topic note; anything present must be a layout this build
     // writes — a typo silently falling back to «topic» would hand back the wrong document.
@@ -435,6 +447,18 @@ export class ManagementController {
       throw badRequest("group_by_invalid", `невідоме групування реліз-нот (${RELEASE_GROUPINGS.join(" | ")})`, {
         allowed: RELEASE_GROUPINGS.join(" | "),
       });
+    // Absent is the whole team. Present, it is a non-empty list of names and only means
+    // something per person: a by-topic note names nobody, so quietly dropping the list would
+    // hand back a document about everyone to someone who asked about two people.
+    let authors: string[] | undefined;
+    if (b?.authors !== undefined) {
+      const raw: unknown = b.authors;
+      const names = Array.isArray(raw) && raw.every((a) => typeof a === "string") ? raw.map((a) => a.trim()) : [];
+      if (names.length === 0 || names.some((a) => !a))
+        throw badRequest("authors_invalid", "authors має бути непорожнім списком імен авторів комітів");
+      if (groupBy !== "person") throw badRequest("authors_need_person", "вибір людей можливий лише у звіті по людях");
+      authors = [...new Set(names)];
+    }
     try {
       return await this.releases.generate({
         sources,
@@ -442,13 +466,23 @@ export class ManagementController {
         rangeFrom,
         rangeTo,
         groupBy,
+        ...(authors ? { authors } : {}),
       });
     } catch (err) {
-      // Unbound project, unknown branch, an empty range and a dead omp are all
-      // operator-actionable sentences; a 500 would bury every one of them. A `CodedError`
-      // relays its stable code to the body so the UI can localize it.
-      if (err instanceof CodedError) throw badRequest(err.code, err.message, err.params);
-      throw new BadRequestException((err as Error).message);
+      relay(err);
+    }
+  }
+
+  // The people the per-person form offers for the projects, branches and period it is about
+  // to generate from — the commit authors, read from THIS machine's clones exactly the way
+  // the note will read them. Git only, no model turn, so nothing is spent.
+  @Post("release-notes/authors")
+  async releaseNotesAuthors(@Body() b: ReleaseNotesAuthorsAsk): Promise<ReleaseNotesAuthorsReply> {
+    const ask = releaseRange(b);
+    try {
+      return await this.releases.authors(ask);
+    } catch (err) {
+      relay(err);
     }
   }
 }

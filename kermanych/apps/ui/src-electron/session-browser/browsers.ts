@@ -416,7 +416,9 @@ export class SessionBrowsers implements BrowserHost {
   }
 
   private emit(v: SessionView): void {
-    if (v.wc.isDestroyed()) return;
+    // A closed view's page can still report a load stopping on its way out; that report must
+    // not bring its state back in the renderer (the pane would then show it and recreate it).
+    if (v.wc.isDestroyed() || this.views.get(v.sessionId) !== v) return;
     this.send('kermanych:browser:state-changed', this.state(v));
   }
 
@@ -448,6 +450,8 @@ export class SessionBrowsers implements BrowserHost {
     ipcMain.on('kermanych:browser:devtools', (_e, sessionId: string) => withView(sessionId, (v) => v.wc.openDevTools({ mode: 'detach' })));
     ipcMain.handle('kermanych:browser:pick', (_e, sessionId: string) => this.pick(sessionId));
     ipcMain.on('kermanych:browser:cancel-pick', (_e, sessionId: string) => void this.cancelPick(sessionId));
+    // The operator's ✕ on the Браузер tab: the page goes, its last URL stays for «Відкрити знову».
+    ipcMain.on('kermanych:browser:close', (_e, sessionId: string) => this.teardown(sessionId));
     ipcMain.handle('kermanych:browser:answer-dialog', async (_e, sessionId: string, accept: boolean) => {
       const v = this.views.get(sessionId);
       if (!v) throw new Error('This session has no browser open');

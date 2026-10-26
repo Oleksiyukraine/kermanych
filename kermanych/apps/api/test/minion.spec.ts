@@ -1,9 +1,10 @@
 // apps/api/test/minion.spec.ts
 // «Посіпака» (docs/specs/2026-10-23-minion-auto-run.md): which card the poll takes and when it
 // takes none, the claim and its release, the run protocol at each turn's end (verdict → docs
-// turn → PR → `in_review`), the failure count and the pause, the provider preflight, the time
-// cap, the `report_outcome` tool and the routes. Real in-memory registry, a stubbed cloud, and
-// a fake runtime the test drives through each turn.
+// turn → PR → `in_review`, or `not_needed` → `done`), the branch check before either, the
+// failure count and the pause, the provider preflight, the time cap, a finding card's rules, the
+// `report_outcome` tool and the routes. Real in-memory registry, a stubbed cloud, and a fake
+// runtime the test drives through each turn.
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -18,7 +19,9 @@ import {
   MINION_POLL_MS,
   MINION_TIME_CAP_MS,
   MINION_TIME_CAP_PROMPT,
+  MINION_PR_TITLE_RULE,
   agentById,
+  minionFindingLine,
   renderInstruction,
   type RpcEvent,
   type ServerEvent,
@@ -172,6 +175,7 @@ import { MinionController } from "../src/http/minion.controller";
 import { NO_ASK_OVERLAY } from "../src/minion/ask-overlay";
 import { setKeepAwake } from "../src/minion/keep-awake";
 import { stubSkills } from "./skills-stub";
+import { SkillsService } from "../src/skills/skills.service";
 
 const NOW = "2026-10-23T10:00:00.000Z";
 const PR_URL = "https://github.com/o/r/pull/7";
@@ -205,7 +209,8 @@ function make() {
     currentBranch: vi.fn().mockResolvedValue("main"),
     forkStart: vi.fn(async (_repo: string, base: string) => ({ ref: base, stale: false })),
     forkPoint: vi.fn().mockResolvedValue(""),
-    changedFiles: vi.fn().mockResolvedValue([]),
+    // A run's branch carries the agent's work unless a test says otherwise.
+    changedFiles: vi.fn().mockResolvedValue([{ path: "src/login.ts", added: 12, removed: 3 }]),
     unmergedFiles: vi.fn().mockResolvedValue([]),
     hasUncommitted: vi.fn().mockResolvedValue(false),
     fetchBranch: vi.fn().mockResolvedValue("skipped"),
@@ -239,7 +244,7 @@ function make() {
   const report = async (sessionId: string, args: unknown) =>
     ((await browser.handle(sessionId, { jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: "report_outcome", arguments: args } })) as { result: CallResult })
       .result;
-  return { sup, registry, worktree, browser, minion, runtimeCheck, events, bindProject, minionSessions, row, childOf, report };
+  return { sup, registry, worktree, skills, browser, minion, runtimeCheck, events, bindProject, minionSessions, row, childOf, report };
 }
 
 function card(over: Partial<Task> & { id: string; projectId: string }): Task {
@@ -550,6 +555,8 @@ describe("the run protocol", () => {
     turn(child);
     await vi.waitFor(() => expect(child.prompts).toHaveLength(3));
     expect(child.prompts[2]).toMatch(/gh pr create/);
+    // The PR is told apart by its title, whatever the PR agent's instruction says.
+    expect(child.prompts[2]).toContain(MINION_PR_TITLE_RULE);
     await flush();
 
     turn(child, ...prReply);
@@ -660,6 +667,122 @@ describe("the run protocol", () => {
     slowDiff.resolve([]);
     await flush();
     expect(registry.listReportOutbox().find((r) => r.taskId === "a")?.write.session.minion).toEqual({ outcome: "pr" });
+  });
+
+  it("not_needed on an unchanged branch closes the card at done with the evidence, resetting the failures", async () => {
+    const { minion, bindProject, minionSessions, sup, row, childOf, report, registry, worktree } = make();
+    bindProject("p1");
+    card({ id: "a", projectId: "p1" });
+    registry.setMinionSettings({ cap: 1, failures: 1 });
+    worktree.changedFiles.mockResolvedValue([]);
+    const gate = vi.spyOn(sup, "docsGate");
+    const evidence = "Already fixed on main: src/math.ts:14 clamps the value since a1b2c3d.";
+
+    await minion.poll();
+    const [s] = minionSessions();
+    const child = childOf(s!.id);
+    child.emit({ type: "agent_start" } as RpcEvent);
+    expect((await report(s!.id, { outcome: "not_needed", summary: evidence })).content[0]!.text).toBe("Recorded: not_needed. End your turn now.");
+    child.emit({ type: "agent_end" } as RpcEvent);
+    // Never `done` before the branch is checked: the card would close on the agent's word alone.
+    expect(row(s!.id).status).toBe("queued");
+
+    await vi.waitFor(() => expect(row(s!.id).minionResult).toEqual({ outcome: "not_needed", reason: evidence }));
+    expect(row(s!.id).status).toBe("done");
+    await vi.waitFor(() => expect(minion.state()).toMatchObject({ failures: 0, running: 0 }));
+    expect(child.prompts).toHaveLength(1);
+    expect(gate).not.toHaveBeenCalled();
+    await vi.waitFor(() =>
+      expect(registry.listReportOutbox().find((r) => r.taskId === "a")?.write.session.minion).toEqual({ outcome: "not_needed", reason: evidence }),
+    );
+  });
+
+  it("not_needed that left changes on the branch hands the run to a person, as a failure", async () => {
+    const { minion, bindProject, minionSessions, row, childOf, report } = make();
+    bindProject("p1");
+    card({ id: "a", projectId: "p1" });
+
+    await minion.poll();
+    const [s] = minionSessions();
+    const child = childOf(s!.id);
+    child.emit({ type: "agent_start" } as RpcEvent);
+    await report(s!.id, { outcome: "not_needed", summary: "The check already exists." });
+    child.emit({ type: "agent_end" } as RpcEvent);
+
+    await vi.waitFor(() => expect(row(s!.id).minionResult).toEqual({ outcome: "needs_decision", code: "has_changes", reason: "The check already exists." }));
+    expect(row(s!.id).status).toBe("in_review");
+    expect(minion.state().failures).toBe(1);
+    expect(child.prompts).toHaveLength(1);
+  });
+
+  it("ready on an unchanged branch goes to a person before any docs or PR turn, as a failure", async () => {
+    const { minion, bindProject, minionSessions, sup, row, childOf, report, worktree } = make();
+    bindProject("p1");
+    card({ id: "a", projectId: "p1" });
+    worktree.changedFiles.mockResolvedValue([]);
+    const gate = vi.spyOn(sup, "docsGate").mockImplementation(async () => ({ enabled: true, failures: ["task-spec"] }));
+
+    await minion.poll();
+    const [s] = minionSessions();
+    const child = childOf(s!.id);
+    child.emit({ type: "agent_start" } as RpcEvent);
+    await report(s!.id, { outcome: "ready", summary: "Verified the fix." });
+    child.emit({ type: "agent_end" } as RpcEvent);
+
+    await vi.waitFor(() => expect(row(s!.id).minionResult).toEqual({ outcome: "needs_decision", code: "no_changes", reason: "Verified the fix." }));
+    expect(row(s!.id).status).toBe("in_review");
+    expect(minion.state().failures).toBe(1);
+    expect(child.prompts).toHaveLength(1);
+    expect(gate).not.toHaveBeenCalled();
+  });
+
+  // Kermanych copies them into the worktree itself; one the repository does not ignore is listed.
+  it("the project's carry files are not the agent's changes", async () => {
+    const { minion, bindProject, minionSessions, row, childOf, report, registry, worktree } = make();
+    bindProject("p1");
+    registry.patchProject("p1", { carryFiles: ["./.env", "config/local.json"] });
+    card({ id: "a", projectId: "p1" });
+    worktree.changedFiles.mockResolvedValue([
+      { path: ".env", added: 4, removed: 0 },
+      { path: "config/local.json", added: 9, removed: 0 },
+    ]);
+
+    await minion.poll();
+    const [s] = minionSessions();
+    const child = childOf(s!.id);
+    child.emit({ type: "agent_start" } as RpcEvent);
+    await report(s!.id, { outcome: "not_needed", summary: "Duplicate of «Clamp the value»." });
+    child.emit({ type: "agent_end" } as RpcEvent);
+
+    await vi.waitFor(() => expect(row(s!.id).minionResult).toEqual({ outcome: "not_needed", reason: "Duplicate of «Clamp the value»." }));
+    expect(row(s!.id).status).toBe("done");
+  });
+
+  it("a stop while Kermanych checks the branch sends nothing more", async () => {
+    const { minion, bindProject, minionSessions, sup, row, childOf, report, worktree } = make();
+    bindProject("p1");
+    card({ id: "a", projectId: "p1" });
+    const slowDiff = Promise.withResolvers<{ path: string; added: number; removed: number }[]>();
+    worktree.changedFiles.mockImplementation(() => slowDiff.promise);
+    // What follows the verdict, only to wait for its end: what must not happen is a later send.
+    const advance = vi.spyOn(sup as unknown as { advanceMinion: () => Promise<void> }, "advanceMinion");
+
+    await minion.poll();
+    const [s] = minionSessions();
+    const child = childOf(s!.id);
+    child.emit({ type: "agent_start" } as RpcEvent);
+    await report(s!.id, { outcome: "ready", summary: "Done." });
+    child.emit({ type: "agent_end" } as RpcEvent);
+    await vi.waitFor(() => expect(advance).toHaveBeenCalled());
+
+    const stopping = sup.stopSession(s!.id);
+    slowDiff.resolve([{ path: "src/login.ts", added: 1, removed: 0 }]);
+    await stopping;
+    await advance.mock.results[0]!.value;
+
+    expect(row(s!.id)).toMatchObject({ status: "stopped", minionResult: { outcome: "stopped" } });
+    expect(spawns.flatMap((x) => x.child.prompts).some((p) => /gh pr create/.test(p))).toBe(false);
+    expect(minion.state().running).toBe(0);
   });
 
   it("a turn without a verdict settles at in_review as a failure", async () => {
@@ -798,6 +921,39 @@ describe("the run protocol", () => {
 
     expect(child.steers).toEqual(["focus on the API first"]);
     expect(child.alive).toBe(true);
+  });
+});
+
+describe("a card filed from a finding", () => {
+  it("tells the run its kind and brings the minion-findings rules; an ordinary card gets neither", async () => {
+    const { minion, bindProject, minionSessions, registry, skills, childOf } = make();
+    // The real resolution over an empty library: the default skill, with nothing set up.
+    const library = new SkillsService({ cloudClient: () => ({}) } as never);
+    library.readAssignments = async () => [];
+    library.readSkills = async () => [];
+    Object.assign(skills, { assignedFor: library.assignedFor.bind(library) });
+    bindProject("p1");
+    registry.setMinionSettings({ cap: 2, failures: 0 });
+    card({ id: "finding", projectId: "p1", findingKind: "security", createdAt: "2026-10-23T10:01:00.000Z" });
+    card({ id: "plain", projectId: "p1", createdAt: "2026-10-23T10:02:00.000Z" });
+
+    await minion.poll();
+    await minion.poll();
+    const byCard = (taskId: string) => minionSessions().find((s) => s.taskId === taskId)!;
+
+    // Stamped on the session, so a relaunch of the run gets the same rules.
+    expect(byCard("finding").findingKind).toBe("security");
+    const prompt = childOf(byCard("finding").id).prompts[0]!;
+    const at = (text: string) => prompt.indexOf(text);
+    expect(at("do finding")).toBeGreaterThan(-1);
+    expect(at(minionFindingLine("security"))).toBeGreaterThan(at("do finding"));
+    expect(at("## security")).toBeGreaterThan(at(minionFindingLine("security")));
+    expect(at(MINION_OUTCOME_CONTRACT)).toBeGreaterThan(at("## security"));
+
+    expect(byCard("plain").findingKind).toBeUndefined();
+    const plain = childOf(byCard("plain").id).prompts[0]!;
+    expect(plain).not.toContain("«Знахідка»");
+    expect(plain).not.toContain("## security");
   });
 });
 

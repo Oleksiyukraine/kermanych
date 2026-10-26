@@ -75,13 +75,14 @@ vi.mock("@kermanych/cloud", () => ({
 import { SupervisorService } from "../src/supervisor/supervisor.service";
 import { RegistryService } from "../src/registry/registry.service";
 import { stubSkills } from "./skills-stub";
+import type { BranchNameService } from "../src/supervisor/branch-name.service";
 
 const USER = "11111111-1111-1111-1111-111111111111";
 const OTHER = "22222222-2222-2222-2222-222222222222";
 const PROJECT = "33333333-3333-3333-3333-333333333333";
 const NOW = "2026-08-21T10:00:00.000Z";
 
-function make() {
+function make(branchNames?: BranchNameService) {
   const registry = new RegistryService(":memory:");
   const worktree = {
     isGitRepo: vi.fn().mockResolvedValue(true),
@@ -103,7 +104,19 @@ function make() {
   // The deep-analysis launch resolves its skill by name; none resolves here, so the wrapper
   // goes out with an empty block (stubSkills leaves the name resolver out on purpose).
   const skills = Object.assign(stubSkills(), { assignedForNames: async () => ({ block: "", view: [], missing: [] }) });
-  const sup = new SupervisorService(registry, worktree as unknown as WorktreeService, auth, skills, stubModels());
+  const sup = new SupervisorService(
+    registry,
+    worktree as unknown as WorktreeService,
+    auth,
+    skills,
+    stubModels(),
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    branchNames,
+  );
   return { sup, registry, worktree };
 }
 
@@ -311,6 +324,28 @@ describe("createSessionFromTask", () => {
     expect(local.name).toBe("kermanych");
     expect(local.carryFiles).toEqual([".env", ".env.local"]);
     expect(local.localRepoPath).toBe("/tmp/proj");
+  });
+
+  it("names the branch from the task through the namer, under the card's prefix", async () => {
+    const suggest = vi.fn(async () => "add-github-oauth");
+    const { sup, registry } = make({ suggest } as unknown as BranchNameService);
+    bind(registry);
+    task({ assigneeId: USER, title: "Додати вхід через GitHub", prefix: "fix" });
+
+    const session = await sup.createSessionFromTask("task-1", USER);
+
+    expect(suggest).toHaveBeenCalledWith({ title: "Додати вхід через GitHub", description: "wire GitHub OAuth" });
+    expect(session.branch).toBe("fix/add-github-oauth");
+  });
+
+  it("falls back to the transliterated title when the namer has no answer", async () => {
+    const { sup, registry } = make({ suggest: async () => undefined } as unknown as BranchNameService);
+    bind(registry);
+    task({ assigneeId: USER, title: "Додати вхід" });
+
+    const session = await sup.createSessionFromTask("task-1", USER);
+
+    expect(session.branch).toBe("feature/dodaty-vkhid");
   });
 
   it("falls back to the task title and safe launch defaults", async () => {

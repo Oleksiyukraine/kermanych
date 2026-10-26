@@ -38,7 +38,8 @@ export type KIconName =
   | 'analysis'
   | 'start'
   | 'minion'
-  | 'decision';
+  | 'decision'
+  | 'notNeeded';
 </script>
 
 <script setup lang="ts">
@@ -154,6 +155,9 @@ const ICONS: Record<KIconName, readonly string[]> = {
   // «Потрібне рішення» — a question in a disc (Lucide's circle-help): the run stopped on a choice
   // that is the operator's to make (KDecisionMark).
   decision: ['M3 12a9 9 0 1 0 18 0a9 9 0 1 0-18 0', 'M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3', 'M12 17h.01'],
+  // «Не потрібно» — a slashed disc (Lucide's ban): the run found nothing to change and closed
+  // the card (KNotNeededMark).
+  notNeeded: ['M3 12a9 9 0 1 0 18 0a9 9 0 1 0-18 0', 'm4.9 4.9 14.2 14.2'],
 };
 
 const props = defineProps<{ name: KIconName }>();

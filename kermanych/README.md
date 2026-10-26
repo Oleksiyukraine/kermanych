@@ -842,10 +842,10 @@ spawned → their nested subagents.
 - **Clicks.** A session card opens its chat (the map closes); so does any card in the list. A
   subagent card opens its transcript and figures in a drawer over the map. Esc closes the
   drawer, then the map.
-- **«Посіпака».** Its sessions carry the minion mark, and «потрібне рішення» when they wait for
-  you. A strip above the map shows the minion on this machine — working N of its cap, the cards
-  waiting, the activated projects — or why it is paused, with ⏸ / ▶. It is hidden while no
-  project is activated here.
+- **«Посіпака».** Its sessions carry the minion mark, «потрібне рішення» when they wait for
+  you, and «не потрібно» when the run found nothing to change. A strip above the map shows the
+  minion on this machine — working N of its cap, the cards waiting, the activated projects — or
+  why it is paused, with ⏸ / ▶. It is hidden while no project is activated here.
 - **Limit.** Subagent trees live in the api's memory while the session is live: they survive
   a UI reload (the socket snapshot carries them) but not an api or app restart, «Завершити»
   or deleting the session. A subagent's transcript opens only while its session is live.
@@ -913,9 +913,11 @@ live. The web build has no session browser.
 - **The browser sits above the app's own UI**, so while a menu or dialog is open it is
   replaced by a still frame of the page, and toasts move beside it. A failed load or a crashed
   page shows a panel with **Спробувати ще**. A hidden session browser keeps running — the
-  agent can work in it while you look elsewhere. At most 6 stay alive (and none idle for 20
-  minutes); a closed one remembers its last address, and the empty tab offers
-  **Відкрити знову**. It is deleted with its session.
+  agent can work in it while you look elsewhere. **✕** beside «Браузер» on the tab (shown
+  while a page is open) closes it; the tab stays. Otherwise at most 6 stay alive (and none
+  idle for 20 minutes). A closed one remembers its last address, and the empty tab offers
+  **Відкрити знову**; the agent's `browser_navigate` opens a new page, its other browser tools
+  refuse until then and name the last address. It is deleted with its session.
 
 ## Monorepo layout
 
@@ -1016,8 +1018,16 @@ developer's machine. The direction is always task → session.
    `~/.kermanych/worktrees/<sessionId>`, copies the project's `carryFiles` (`.env` by
    default) into it, and spawns one `omp --mode rpc` child. From here on the session is an
    ordinary local session: it appears on the Агенти board and you drive it there. The branch
-   starts from the session's base — the card's base branch, else the project's default
-   branch, else the branch the project checkout is on, recorded on the session either way.
+   is named `<prefix>/<slug>`: the prefix is the card's (`feature` by default), and the slug is
+   a short English summary of the card's title and description written by the fast model of
+   your runtime (omp's `pi/smol` role, claude's `haiku`) in one tool-less call bounded at 15 s
+   to start and 15 s to answer. When that call fails or times out, the slug is the title
+   transliterated to Latin, cut at a whole word within 40 characters; a slug already taken in
+   the project gets `-2`, `-3`, … (Spec: `docs/specs/2026-10-26-branch-name-from-task.md`.) The
+   same naming applies to a chat promoted to an agent and to a reopened session whose branch is
+   gone. The branch starts from the session's base — the card's base branch, else the
+   project's default branch, else the branch the project checkout is on, recorded on the
+   session either way.
    Before the fork the API fetches `origin/<base>` with this machine's own git credentials
    (15 s timeout). When origin's copy contains the local `<base>` (the local branch is only
    behind), the branch starts from `origin/<base>`, without tracking it; when the local
@@ -1033,12 +1043,29 @@ developer's machine. The direction is always task → session.
    board's «На ревʼю» column — settled, but waiting on a human reviewer rather than
    closed. «Завершити» itself is the other exit: it retires the session — commits loose work,
    stops the agent, removes the worktree — and lands on `merged`; nothing is merged into the
-   base branch, the branch stays for its PR. Once a session's branch has an open PR, that fact is
+   base branch, the branch stays for its PR. The moment a session lands on `merged` — from
+   «Завершити» here, a merged discussion or review, or a finish in another window — its chat
+   pane closes if it was open; an already finished session opened later from «Завершені»
+   stays open. Once a session's branch has an open PR, that fact is
    durable: the finish sheet's secondary action stays «Закоміти» (never «Створити ПР», which
    would try to open a second PR and find nothing to push), and EVERY later turn settles the
    card back on «На ревʼю» — even the plain follow-up prompts you send to fix review findings,
    which drive the card through «в роботі» mid-turn. «Закоміти» has the agent commit and push
    that follow-up work onto the same branch, updating the open PR.
+
+   **Merged PR.** Kermanych does not watch a PR on GitHub. When you select a session in
+   «Агенти» that opened a PR and is not running a turn, it asks GitHub about that PR: the URL
+   the agent replied with, or, for a session from before the URL was kept or when that PR was
+   not merged, the closed PRs of the session's branch on `origin` (targeting its base, opened
+   after the session started). It authenticates with the project's `GIT_TOKEN`, or anonymously
+   when there is none (public repositories only); GitLab and Bitbucket PRs are not checked.
+   «Сесія» shows the PR and the answer — open, merged, closed without merge, or why it could
+   not tell (no access, GitHub API limit, no network). A merged PR opens «PR змерджено» with
+   «Закрити задачу»: the API checks the merge again and retires the session as «Завершити»
+   does, without the documentation gate (the code is already in the base), so the card lands
+   in «Завершені». The popup warns when uncommitted changes or commits made after the PR's
+   last push would stay only on the branch. «Не зараз» closes it until you select the session
+   again. (Spec: `docs/specs/2026-10-26-pr-merged-close-prompt.md`.)
 6. **Reports flow back** — after every turn and on «Завершити» the local API also writes onto
    the card what the session's «Документація» and «Сесія» tabs show: the documentation it read
    and the documentation it created or changed (repository paths with +/− counts), and the
@@ -1151,19 +1178,43 @@ request with nobody watching.
   `report_outcome` tool of its `kermanych` MCP server:
   - `ready`: Kermanych completes the documentation once if the project requires it and it is
     missing, then runs «Створити ПР» as usual — the PR is opened with the project's
-    `GIT_TOKEN` from this machine — and the card lands on «На ревʼю»;
+    `GIT_TOKEN` from this machine, and its title starts with `[Minion]` (e.g.
+    `[Minion] fix(api): handle an empty list`) — and the card lands on «На ревʼю». A `ready`
+    with nothing changed on the branch lands there with «потрібне рішення: немає змін» instead,
+    before any PR turn;
+  - `not_needed`: the problem is already fixed, the card repeats another one, or the code it
+    names is gone. The agent changes nothing and gives the evidence; when the branch has no
+    changes, the card closes in «Завершені» with «не потрібно» and the evidence in its tooltip.
+    Changes left on the branch put it on «На ревʼю» with «потрібне рішення» instead. The
+    project's carry files (`.env`) do not count as changes;
   - `needs_decision`: the card lands on «На ревʼю» with «потрібне рішення» and the reason.
     Answer the session in «Агенти» like any other; the minion goes on and opens the PR when it
     is done.
+- **Old cards and findings.** Most of what it runs is findings and old backlog cards, so its
+  default instruction has it check first that the card still applies (`not_needed` when it does
+  not, `needs_decision` when the problem does not reproduce or the code exists only on another
+  branch), make the smallest change that meets the acceptance criteria, stop with a plan instead
+  of changing a public API or a schema, adding a migration or a dependency, or spreading over
+  many files, and leave a check that already fails on the base to the PR's `## Testing` and a
+  finding. A card filed from a «Знахідка» also gets a line naming its kind and the default skill
+  `minion-findings`, with rules per kind: reproduce a bug and keep a test that fails without the
+  fix; reproduce a security problem only locally, keep secrets and exploit steps out of the PR,
+  and leave key rotation and access policy to a person; keep behaviour for tech debt; change only
+  documentation for a docs finding. «Бібліотека» or a skill of that name in the repository
+  overrides it, and switching it off drops it.
 - **When it pauses.** Two failed runs in a row pause it on this machine: a launch that fails,
-  a crash, a turn that ends without a verdict, a `ready` that ends without a PR, or a card that
-  runs past 2 hours. A signed-out AI provider pauses it at once, before it takes a card.
-  «Продовжити» on the «Посіпака» card or ▶ on «Карта агентів» resumes it. Stopping a minion
-  session yourself is not a failure, and the minion does not take that card again.
-- **Where you see it.** The «Посіпака» mark on its cards and sessions, «потрібне рішення» on
-  the cards that wait for you, the outcome in the card's session report
-  (`session_report.minion`, readable from every machine), and the strip above «Карта агентів».
-  Routes: `GET /api/minion`, `PUT /api/minion` (`{ cap?, paused? }`),
+  a crash, a turn that ends without a verdict, a `ready` with no changes or without a PR, a
+  `not_needed` that left changes, or a card that runs past 2 hours. A signed-out AI provider
+  pauses it at once, before it takes a card. «Продовжити» on the «Посіпака» card or ▶ on «Карта
+  агентів» resumes it. Stopping a minion session yourself is not a failure, and the minion does
+  not take that card again.
+- **Where you see it.** The «Посіпака» mark on its cards and sessions, the `[Minion]` prefix of
+  its PR titles (any PR opened from its session, «Створити ПР» by hand too; on GitHub,
+  `is:pr Minion in:title` finds them), «потрібне рішення» on
+  the cards that wait for you and «не потрібно» on the ones it closed, the outcome in the card's
+  session report (`session_report.minion`, readable from every machine), the strip above «Карта
+  агентів», and its bot icon beside each project in the left sidebar it is activated for on this
+  machine. Routes: `GET /api/minion`, `PUT /api/minion` (`{ cap?, paused? }`),
   `PUT /api/minion/projects/:id` (`{ active }`); the socket event `minion_update`.
 - **An always-on machine.** Install Kermanych there, sign in with **your own** account (a
   separate account would find no cards of its own), bind the projects, put `GIT_TOKEN` into
@@ -1407,6 +1458,18 @@ That field is a real assistant, and it is deliberately narrow:
   Authors are read as git's `%aN`, so a repository's `.mailmap` folds one person's aliases
   into one section; bots get a closing sentence naming what they updated, not a section of
   their own.
+  With «Звіт по людях» ticked the form also shows a «People» picker: the commit authors the
+  picked projects have on their branches in the period, with their commit counts, read from
+  this machine's clones by `POST /management/release-notes/authors` (git only, no model
+  turn) and re-read whenever a project, branch or date changes. It starts at «Whole team»;
+  untick people — or clear «Whole team» and tick one — to write the report about just them.
+  The pick travels as `"authors": [...]` on the generation request: only those people's
+  commits reach the model, the note's heading says it covers selected contributors, and a
+  picked project none of them committed to is left out of the note rather than refused
+  (`no_commits_by_authors` when none of them committed anywhere). `authors` is refused
+  without `"groupBy": "person"` (`authors_need_person`) or when it is not a non-empty list of
+  names (`authors_invalid`). The chat's `release.notes` action has no `authors` field: the
+  chat cannot see the commit authors, so a pick is made in the form.
   **Every change of the period is named, however long the period.** The note never writes
   «and 45 other changes»: related commits are merged into one bullet that says what changed,
   small ones become a short bullet of a few words, and a count is never a substitute. Every

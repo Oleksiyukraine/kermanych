@@ -25,7 +25,7 @@ async function refusal(run: () => Promise<unknown>): Promise<ApiErrorBody> {
 
 function make(over: { chat?: Partial<ManagementChatService>; releases?: Partial<ReleaseNotesService> } = {}) {
   const chat = { ask: async () => ({}), reset: async () => ({ ok: true }), ...over.chat } as unknown as ManagementChatService;
-  const releases = { generate: async () => ({}), ...over.releases } as unknown as ReleaseNotesService;
+  const releases = { generate: async () => ({}), authors: async () => ({ authors: [] }), ...over.releases } as unknown as ReleaseNotesService;
   return new ManagementController(chat, releases);
 }
 
@@ -127,6 +127,28 @@ describe("ManagementController — release-notes validations", () => {
   it("codes an unknown grouping", async () => {
     const body = await refusal(() => make().releaseNotes(relAsk({ groupBy: "team" as never })));
     expect(body).toMatchObject({ code: "group_by_invalid", params: { allowed: "topic | person" } });
+  });
+  // A picked list of people only means something per person; a by-topic note names nobody,
+  // so dropping the list silently would hand back a document about everyone.
+  it("codes people picked for a by-topic note, or an empty pick", async () => {
+    expect((await refusal(() => make().releaseNotes(relAsk({ authors: ["Оля"] })))).code).toBe("authors_need_person");
+    expect((await refusal(() => make().releaseNotes(relAsk({ groupBy: "person", authors: [] })))).code).toBe("authors_invalid");
+    expect((await refusal(() => make().releaseNotes(relAsk({ groupBy: "person", authors: [" "] })))).code).toBe("authors_invalid");
+  });
+  it("hands the service the picked people, trimmed and once each", async () => {
+    let seen: ReleaseNotesAsk | undefined;
+    const ctl = make({ releases: { generate: async (a: ReleaseNotesAsk) => ((seen = a), {}) } as never });
+    await ctl.releaseNotes(relAsk({ groupBy: "person", authors: [" Оля ", "Петро", "Оля"] }));
+    expect(seen?.authors).toEqual(["Оля", "Петро"]);
+  });
+  // The people picker reads the same history the note will, so it refuses the same input.
+  it("refuses the authors ask exactly like the note's projects and period", async () => {
+    expect((await refusal(() => make().releaseNotesAuthors(relAsk({ rangeFrom: "nope" })))).code).toBe("period_format_invalid");
+    const body = await refusal(() =>
+      make({ releases: { authors: async () => Promise.reject(new CodedError("project_not_bound", "x", { project: "Альфа" })) } as never })
+        .releaseNotesAuthors(relAsk()),
+    );
+    expect(body).toMatchObject({ code: "project_not_bound", params: { project: "Альфа" } });
   });
 });
 
