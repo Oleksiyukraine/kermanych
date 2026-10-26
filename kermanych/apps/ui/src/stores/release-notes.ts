@@ -66,6 +66,8 @@ export type ReleaseNotesJob = {
   rangeTo: string;
   // `topic` — the original by-meaning note; `person` — one section per commit author.
   groupBy: ReleaseGrouping;
+  // `person` only: the commit authors the report is restricted to. Absent is the whole team.
+  authors?: string[];
   startedAt: number;
   // A failed run KEEPS its row with the reason attached. The toast that announced the
   // failure is gone four seconds later, and the person it was meant for was on another
@@ -161,6 +163,7 @@ export const useReleaseNotes = defineStore('release-notes', () => {
         rangeFrom: job.rangeFrom,
         rangeTo: job.rangeTo,
         groupBy: job.groupBy,
+        ...(job.authors ? { authors: job.authors } : {}),
       });
       await create(job.workspaceId, {
         sources: job.sources,
@@ -195,7 +198,10 @@ export const useReleaseNotes = defineStore('release-notes', () => {
         j.sources.every((s, i) => s.projectId === input.sources[i]?.projectId && s.branch === input.sources[i]?.branch) &&
         j.rangeFrom === input.rangeFrom &&
         j.rangeTo === input.rangeTo &&
-        j.groupBy === input.groupBy,
+        j.groupBy === input.groupBy &&
+        // The same people, in any order — the note's sections follow commit counts, not the pick.
+        (j.authors ?? []).length === (input.authors ?? []).length &&
+        (j.authors ?? []).every((a) => input.authors?.includes(a)),
     );
     if (already) return;
 
