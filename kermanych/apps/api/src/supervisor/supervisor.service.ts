@@ -102,6 +102,7 @@ import { PR_URL_RE } from "./pr-url";
 import { launchToolsFor } from "./chat-tools";
 import { MachineResourcesService } from "../machine/machine-resources.service";
 import { WatchdogService } from "../machine/watchdog.service";
+import { BranchNameService, type BranchContext } from "./branch-name.service";
 import { noAskOverlay } from "../minion/ask-overlay";
 
 type Live = {
@@ -295,6 +296,10 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     @Optional() private watchdog?: WatchdogService,
     // A restart's waiting sessions start once the api listens: a native harness needs its port.
     @Optional() private http?: HttpAdapterHost,
+    // Names a new branch from what its task is about (docs/specs/2026-10-26-branch-name-from-task.md).
+    // Optional so specs construct the supervisor without it — then the branch is the
+    // transliterated title and no model is asked.
+    @Optional() private branchNames?: BranchNameService,
   ) {
     this.native?.events$.subscribe((e) => {
       if (e.type === "changed") {
@@ -1065,7 +1070,7 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
 
     const { branch, baseBranch } = await this.resolveLaunchParams(
       project,
-      task.title,
+      { title: task.title, description: task.description },
       prefix,
       worktree,
       undefined,
@@ -1216,7 +1221,7 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     // Everything the launcher used to ask for is derived: the chat's opening message is the
     // task, its first line the name, and the rest are the project's defaults.
     const name = taskNameFromText(chat.task) || chat.name;
-    const { branch, baseBranch } = await this.resolveLaunchParams(project, name, "feature", true, chatId);
+    const { branch, baseBranch } = await this.resolveLaunchParams(project, { title: name, description: chat.task }, "feature", true, chatId);
     const { template, block } = await this.agentPrompt(chat.projectId, "promote", project.localRepoPath);
     const prompt = renderInstruction(agentById("promote")!, { branch }, template) + block;
 
@@ -1255,10 +1260,11 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
 
   // In-place guards + a de-duplicated branch name, shared by every birth path of an agent
   // (createSessionFromTask, promoteChatToAgent) and by attaching a worktree to an existing
-  // session. excludeId keeps a session from colliding with or blocking itself.
+  // session. excludeId keeps a session from colliding with or blocking itself. The name comes
+  // from the task (BranchNameService), else from its transliterated title.
   private async resolveLaunchParams(
     project: Project,
-    name: string,
+    task: BranchContext,
     prefix: BranchPrefix,
     worktree: boolean,
     excludeId?: string,
@@ -1302,10 +1308,13 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
       // and «Зміни» always know the base; only a detached HEAD leaves none (fork from HEAD).
       baseBranch = requestedBase || project.defaultBranch || (await this.worktree.currentBranch(project.localRepoPath)) || undefined;
     }
+    // Named after the guards, so a refused launch spends no model call; the taken set is read
+    // after the answer, so it includes whatever launched while the model was thinking.
+    const slug = (await this.branchNames?.suggest(task)) ?? slugify(task.title);
     const existing = new Set(
       this.registry.listSessions(project.id).filter((s) => s.id !== excludeId).map((s) => s.branch).filter(Boolean),
     );
-    const branch = uniqueSlug(branchName(slugify(name), prefix), existing);
+    const branch = uniqueSlug(branchName(slug, prefix), existing);
     return { branch, baseBranch };
   }
 
@@ -2971,7 +2980,7 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     const kept = !!s.branch && (await this.worktree.refExists(g.localRepoPath, `refs/heads/${s.branch}`));
     const { branch, baseBranch } = kept
       ? { branch: s.branch, baseBranch: s.baseBranch }
-      : await this.resolveLaunchParams(g, s.name, s.prefix ?? "feature", true, id, s.baseBranch);
+      : await this.resolveLaunchParams(g, { title: s.name, description: s.task }, s.prefix ?? "feature", true, id, s.baseBranch);
     const wtDir = worktreeDir(id);
     // The row owns no worktree, so anything at its path is what the retirement left behind — a
     // tree from before removeWorktree cleaned up after itself, or one a stray process (a dev

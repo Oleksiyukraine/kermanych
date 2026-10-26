@@ -397,7 +397,7 @@ export const uk = {
       dragHint: 'або перетягни сюди',
       nameLabel: 'Назва задачі',
       namePlaceholder: 'виводиться із завдання',
-      nameHintPending: 'зʼявиться, як напишеш завдання',
+      branchNameGenerated: 'назву гілки складе модель із задачі під час запуску',
       typeLabel: 'Тип',
       platformLabel: 'Платформа',
       optional: 'необовʼязково',

@@ -12,9 +12,16 @@ const TRANSLIT: Record<string, string> = {
   ч: "ch", ш: "sh", щ: "shch", ь: "", ю: "iu", я: "ia", ъ: "", ы: "y", э: "e", ё: "e",
 };
 
+// Capped at 40 characters. A cut that lands inside a word drops that partial word, so a long
+// name ends on a whole word (`…-nazvy`, never `…-nazvy-`); a single over-long word is sliced.
+const SLUG_MAX = 40;
 export function slugify(name: string): string {
   const latin = name.toLowerCase().replace(/[\u0400-\u04ff]/g, (ch) => TRANSLIT[ch] ?? "");
-  return latin.replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 40) || "session";
+  const full = latin.replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+  if (full.length <= SLUG_MAX) return full || "session";
+  const cut = full.slice(0, SLUG_MAX);
+  const wordEnd = full[SLUG_MAX] === "-" ? SLUG_MAX : cut.lastIndexOf("-");
+  return (wordEnd > 0 ? cut.slice(0, wordEnd) : cut).replace(/-+$/, "");
 }
 
 // A short human label for a task, derived from the text that started it (a chat's
