@@ -19,7 +19,7 @@ import { TerminalService } from "../terminal/terminal.service";
 import { CodedError } from "../management/coded-error";
 import { claudeHistoryToOmp } from "../runtime/claude-history";
 import { messagesToTranscript, type OmpMessage, type Rehydrated } from "../supervisor/messages-to-transcript";
-import { PR_URL_RE } from "../supervisor/pr-url";
+import { firstPrUrl } from "../supervisor/pr-url";
 import { CHAT_TOOLS } from "../supervisor/chat-tools";
 import { claudeToolName } from "../runtime/claude-code-runtime";
 import { claudeMcpConfigPath, claudeSettingsPath, codexConfigArgs, codexHookPath, NATIVE_TOKEN_ENV, NATIVE_URL_ENV, ompExtensionPath } from "./native-hooks";
@@ -677,22 +677,20 @@ export class NativeSessionService implements OnModuleInit, OnModuleDestroy {
       const first = transcript.entries.find((e) => e.kind === "user_text" && e.text.trim());
       if (first?.kind === "user_text") this.registry.updateSession(id, { task: first.text.trim() });
     }
-    if (run?.prRequested && !session.prOpened && this.mentionsPr(messages.slice(run.prFrom ?? 0))) {
+    const prUrl = run?.prRequested && !session.prOpened ? this.prUrlIn(messages.slice(run.prFrom ?? 0)) : undefined;
+    if (run && prUrl) {
       run.prRequested = false;
-      this.registry.updateSession(id, { prOpened: true });
+      this.registry.updateSession(id, { prOpened: true, prUrl });
       if (run.status === "done") this.setStatus(id, run, "in_review");
     }
     this.events$.next({ type: "transcript", sessionId: id, transcript });
     this.events$.next({ type: "changed", sessionId: id });
   }
 
-  private mentionsPr(messages: OmpMessage[]): boolean {
+  // The first PR URL in the messages since «Створити ПР» was pasted, stored with `prOpened`.
+  private prUrlIn(messages: OmpMessage[]): string | undefined {
     const { entries, full } = messagesToTranscript(messages);
-    return entries.some(
-      (e) =>
-        (e.kind === "assistant_text" && PR_URL_RE.test(e.text)) ||
-        (e.kind === "tool" && (full.get(e.id) ?? []).some((ln) => "text" in ln && PR_URL_RE.test(ln.text))),
-    );
+    return firstPrUrl(entries, full);
   }
 
   // The rest state after a turn: on review when the branch has a PR or a «Закоміти» landed.

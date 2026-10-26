@@ -1047,6 +1047,20 @@ developer's machine. The direction is always task → session.
    card back on «На ревʼю» — even the plain follow-up prompts you send to fix review findings,
    which drive the card through «в роботі» mid-turn. «Закоміти» has the agent commit and push
    that follow-up work onto the same branch, updating the open PR.
+
+   **Merged PR.** Kermanych does not watch a PR on GitHub. When you select a session in
+   «Агенти» that opened a PR and is not running a turn, it asks GitHub about that PR: the URL
+   the agent replied with, or, for a session from before the URL was kept or when that PR was
+   not merged, the closed PRs of the session's branch on `origin` (targeting its base, opened
+   after the session started). It authenticates with the project's `GIT_TOKEN`, or anonymously
+   when there is none (public repositories only); GitLab and Bitbucket PRs are not checked.
+   «Сесія» shows the PR and the answer — open, merged, closed without merge, or why it could
+   not tell (no access, GitHub API limit, no network). A merged PR opens «PR змерджено» with
+   «Закрити задачу»: the API checks the merge again and retires the session as «Завершити»
+   does, without the documentation gate (the code is already in the base), so the card lands
+   in «Завершені». The popup warns when uncommitted changes or commits made after the PR's
+   last push would stay only on the branch. «Не зараз» closes it until you select the session
+   again. (Spec: `docs/specs/2026-10-26-pr-merged-close-prompt.md`.)
 6. **Reports flow back** — after every turn and on «Завершити» the local API also writes onto
    the card what the session's «Документація» and «Сесія» tabs show: the documentation it read
    and the documentation it created or changed (repository paths with +/− counts), and the

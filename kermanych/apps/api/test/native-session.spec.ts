@@ -507,10 +507,12 @@ describe("session-file readers", () => {
     const s = create("omp", { ompSessionFile: file });
     await native.start(s, { resume: true });
     await native.arm(s.id, "pr");
-    writeFileSync(file, [msg({ role: "user", content: [{ type: "text", text: "x" }] }), assistant("ok", 0.5), msg({ role: "user", content: [{ type: "text", text: "open a PR" }] }), assistant("Opened https://github.com/o/r/pull/42", 0.25)].join("\n"));
+    writeFileSync(file, [msg({ role: "user", content: [{ type: "text", text: "x" }] }), assistant("ok", 0.5), msg({ role: "user", content: [{ type: "text", text: "open a PR" }] }), assistant("Opened https://github.com/o/r/pull/42, then https://github.com/o/r/pull/43", 0.25)].join("\n"));
     native.ompEvent(s.id, { event: "working" });
     native.ompEvent(s.id, { event: "idle" });
     await vi.waitFor(() => expect(row(s.id).prOpened).toBe(true));
+    // The FIRST URL since arming is stored for the merged-PR check.
+    expect(row(s.id).prUrl).toBe("https://github.com/o/r/pull/42");
     expect(row(s.id).usage).toEqual({ input: 2, output: 2, cacheRead: 0, cacheWrite: 0, cost: 0.75 });
     expect(row(s.id).model).toBe("m-1");
     expect(native.live(s.id)?.status).toBe("in_review");

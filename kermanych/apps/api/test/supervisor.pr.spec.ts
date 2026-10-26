@@ -180,6 +180,9 @@ describe("createPullRequest", () => {
     expect(registry.listSessions().find((x) => x.id === s.id)!.status).toBe("in_review");
     // …and the live entry agrees, or merge() would keep shadowing the row.
     expect(sup.snapshot().sessions.find((x) => x.id === s.id)!.status).toBe("in_review");
+    // The URL is stored with the flag, for the merged-PR check — and the live entry carries it.
+    expect(registry.listSessions().find((x) => x.id === s.id)!.prUrl).toBe("https://github.com/o/r/pull/7");
+    expect(sup.snapshot().sessions.find((x) => x.id === s.id)!.prUrl).toBe("https://github.com/o/r/pull/7");
   });
 
   it("leaves an unrequested turn on done, but keeps every turn on review once the PR is open", async () => {

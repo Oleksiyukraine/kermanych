@@ -62,7 +62,9 @@ Settled with the operator one question at a time.
 4. **Finding the PR: store its URL, fall back to the branch.** From now on the first `PR_URL_RE`
    match is persisted as `sessions.pr_url` at the same moment `prOpened` is set (managed and
    native). A GitHub URL is checked directly. A session without a URL (opened before this change)
-   or with a non-GitHub URL is looked up by branch: owner/repo from the `origin` remote, the
+   or with a non-GitHub URL is looked up by branch: owner/repo from the `origin` remote (the ssh
+   forms also accept a per-account `~/.ssh/config` host alias `github.com-<alias>`, as this very
+   repository uses: `git@github.com-kermanych:Oleksiyukraine/kermanych.git`), the
    closed PRs with `head = <owner>:<branch>`, counting only one that has `merged_at`, targets the
    session's base, and was created no earlier than the session (so an old PR from a reused branch
    name does not count). A stored GitHub URL whose PR is not merged also falls back to the branch
