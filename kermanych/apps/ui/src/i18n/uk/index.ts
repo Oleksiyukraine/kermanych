@@ -447,6 +447,7 @@ export const uk = {
       forward: 'Вперед',
       reload: 'Перезавантажити',
       stop: 'Зупинити',
+      close: 'Закрити браузер — сторінку можна буде відкрити знову',
       addressPlaceholder: 'Адреса, напр. localhost:5173',
       viewportTitle: 'Ширина сторінки',
       viewport: {
