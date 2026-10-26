@@ -13,20 +13,27 @@ export const OUTCOME_TOOL = {
   name: MINION_OUTCOME_TOOL,
   description:
     "Report how this unattended «Посіпака» run ends. Nobody is watching the session: this call is the only way Kermanych learns the outcome. " +
-    "Use `ready` when the card's work is done and checked — every acceptance criterion of the card met and the project's checks (typecheck, tests) run for what you changed. " +
+    "Use `ready` when the card's work is done, committed on this branch and checked — every acceptance criterion of the card met and the project's checks (typecheck, tests) run for what you changed. " +
     "Kermanych then completes the documentation if the project requires it and has you open the pull request; do not push or open it yourself. " +
-    "Use `needs_decision` when you cannot finish without a human: the card contradicts the code, a product choice that is not yours to make, missing access, credentials or data. " +
+    "Use `not_needed` when there is nothing to change: the problem is already fixed on this branch, the card repeats another one, or the code it names is gone. " +
+    "Change nothing for it and remove anything you created to check; Kermanych closes the card only when the branch has no changes. " +
+    "Use `needs_decision` when you cannot finish without a human: the card contradicts the code, a product choice that is not yours to make, missing access, credentials or data, a problem you cannot reproduce or code that exists only on another branch. " +
     "Do not guess past such a blocker. " +
-    "The summary: for `ready`, what you changed and the decisions you took within the card's scope; for `needs_decision`, exactly what blocks you and which decision is needed, plus what is already done. " +
+    "The summary: for `ready`, what you changed and the decisions you took within the card's scope; for `not_needed`, the evidence — `path:line` on this branch, a command's output, or the card it repeats; for `needs_decision`, exactly what blocks you and which decision is needed, plus what is already done. " +
     "Call it once, as the last action of your turn, then end the turn. A turn that ends without it counts as a failed run.",
   inputSchema: {
     type: "object",
     properties: {
-      outcome: { type: "string", enum: [...MINION_VERDICTS], description: "`ready`: done and checked. `needs_decision`: blocked on a human decision." },
+      outcome: {
+        type: "string",
+        enum: [...MINION_VERDICTS],
+        description: "`ready`: done and checked. `not_needed`: nothing to change, with evidence. `needs_decision`: blocked on a human decision.",
+      },
       summary: {
         type: "string",
         maxLength: MINION_SUMMARY_MAX,
-        description: "A paragraph or two in English: what changed and the decisions taken, or what blocks you and which decision is needed.",
+        description:
+          "A paragraph or two in English: what changed and the decisions taken, the evidence that nothing needs changing, or what blocks you and which decision is needed.",
       },
     },
     required: ["outcome", "summary"],

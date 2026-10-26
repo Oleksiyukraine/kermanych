@@ -649,24 +649,33 @@ Rejected:
 - **Docs:** README (see Documentation impact).
 - **Decision 14 (rules for findings and old backlog cards):**
   - Core: the general rules in the default `MINION` instruction (its holes unchanged); the default
-    skill `minion-findings`; the verdict and the outcome `not_needed` (`MINION_VERDICTS`,
-    `MINION_OUTCOMES`) and the reason codes `no_changes` and `has_changes`; the outcome contract
-    and a Kermanych line naming the finding kind; `Session.findingKind`.
+    skill `minion-findings` (`MINION_FINDINGS_SKILL`); the verdict and the outcome `not_needed`
+    (`MINION_VERDICTS`, `MINION_OUTCOMES`) and the reason codes `no_changes` and `has_changes`;
+    the outcome contract and a Kermanych line naming the finding kind (`minionFindingLine`);
+    `Session.findingKind`.
   - API:
-    - `sessions.finding_kind`, stamped by `launchMinion`;
+    - `sessions.finding_kind`, stamped from the card when the minion run is created (`launchTask`);
     - for a finding card, the opening prompt adds the kind line and `minion-findings` to the
       minion's assigned skills (`SkillsService.assignedFor` takes extra names, so the block and its
-      de-duplication stay one);
+      de-duplication stay one; the extras resolve offline too, like any default);
     - the `report_outcome` description and schema;
-    - at a minion turn's end, `not_needed` → the branch check → `done` with `not_needed` (a
-      success) or `in_review` with `has_changes` (a failure);
+    - at a minion turn's end, `not_needed` → rests `queued` → the branch check → `done` with
+      `not_needed` (a success, a failure after the time cap) or `in_review` with `has_changes` (a
+      failure);
     - on `ready`, the branch check runs before the docs gate → `in_review` with `no_changes` (a
       failure) when the branch is empty;
-    - the branch check is `changedFiles` against the base without the project's carry files.
-  - UI: `KNotNeededMark` on `KKanbanCard`, `KSessionCard` and the map node, with a kit sample;
-    `cardNotNeeded` / `sessionNotNeeded` and their wording in `lib/minion.ts`; the
-    `minion-findings` line on `MinionPanel`; i18n uk/en.
-  - Docs: README «Посіпака».
+    - the branch check is `changedFiles` against the base `finishInfo` uses, without the project's
+      carry files (normalised, so `./.env` is `.env`);
+    - `settleMinionRest` settles a resting run at `in_review` or `done` and frees its agent slot;
+    - the operator taking a run over (a message, a restart, a stop, delete or finish) clears
+      `advancing`, and the branch check and the docs gate stop after their awaits instead of
+      sending the next turn. The window left inside `completeDocs` / `createPullRequest` is filed
+      as a finding.
+  - UI: `KNotNeededMark` (a new `notNeeded` icon) on `KKanbanCard`, `KSessionCard`, the session
+    header and the map node, with kit samples; `cardNotNeeded` / `sessionNotNeeded` and their
+    wording in `lib/minion.ts`; the `minion-findings` line on `MinionPanel`; i18n uk/en. The
+    kanban card's mark row wraps: two marks no longer push the card out of its column.
+  - Docs: README «Посіпака» and «Карта агентів».
 
 ## Verification
 
@@ -735,21 +744,51 @@ Rejected:
   `powerSaveBlocker`; the browser-tab build keeps the default refresh), the claude-code runtime
   with `disallowedTools` against the real CLI, a real GitHub PR, and pushing the migration to the
   team's project.
-- **Decision 14 (planned; replaced with the results after implementation):**
-  - core: the validator accepts `not_needed`, and a stored `not_needed` result reads back;
-  - api (`minion.spec.ts`):
-    - `not_needed` on an unchanged branch → `done` with `not_needed`, the failures reset;
+- **Decision 14:**
+  - Suites: `packages/core` 23 files, 227 passed (the validator takes `not_needed`, a stored
+    `not_needed` and a `has_changes` result read back, the default skill the supervisor asks for
+    exists). `apps/api` 114 files, 1058 passed, 4 skipped; `minion.spec.ts` 34 (+6):
+    - `not_needed` on an unchanged branch rests `queued`, then `done` with the evidence, the
+      failures reset, no docs gate and no further prompt, and the card's report carries it;
     - `not_needed` with changes → `in_review` with `has_changes`, a failure;
-    - `ready` on an unchanged branch → `in_review` with `no_changes`, a failure, and no PR turn;
-    - the project's carry files do not count as changes;
-    - a finding card's opening prompt names the kind and asks for `minion-findings`; an ordinary
-      card's does not;
-  - ui: the «не потрібно» predicates and the new reasons' wording;
-  - smoke with real omp against the local stack:
-    - a stale finding card (its bug already fixed on the base) closes as «не потрібно» with the
-      evidence;
-    - a live bug finding is reproduced with a failing test and fixed through a PR;
-    - an ordinary backlog card still runs to a PR.
+    - `ready` on an unchanged branch → `in_review` with `no_changes`, a failure, before the docs
+      gate and with no PR turn;
+    - carry files `./.env` and `config/local.json` listed by git do not count;
+    - a stop while the branch is checked sends nothing more (without the guard the run went on
+      to its PR turn and the session ended `done`);
+    - a finding card's prompt, resolved by the real `SkillsService` over an empty library,
+      carries the kind line and the `minion-findings` body between the card and the outcome
+      contract, and the session `findingKind`; an ordinary card's carries neither.
+    `skills.assignments.spec.ts`: Kermanych's extra names follow the assigned sequence once and
+    still arrive with the cloud unreachable. `apps/ui` 63 files, 717 passed: the «не потрібно»
+    predicates (only at `done` for a card, never with «потрібне рішення»), the evidence tooltip
+    and its fallback, the two new reasons worded in the real uk/en catalogues.
+  - Typecheck and build: `apps/api` `tsc --noEmit` clean, `nest build` clean, `packages/cloud`
+    `tsc --noEmit` clean; `apps/ui` `vue-tsc --noEmit` only the pre-existing TS2352.
+  - Smoke: the built api and real omp (`claude-opus-5-5`) against the local stack, as above. The
+    throwaway repo had `clamp()` already fixed and `average([])` still returning `NaN`. The project's
+    carry files were `.env` (ignored) and `local.config.json` (untracked, not ignored, so git
+    lists it in every worktree). Three auto-run cards were taken oldest first:
+    - a `bug` finding about `clamp()` (stale): the model's opening prompt had the kind line and
+      the `minion-findings` body between the card and the outcome contract. The agent ran the
+      evidence command (it printed 10, not 15), cited `src/math.js:5` and `test/math.test.js:6`,
+      changed nothing, and reported `not_needed`. The card went `done` with
+      `session_report.minion = { outcome: "not_needed", reason: <the evidence> }`, failures 0.
+      `local.config.json` did not count as a change;
+    - a `bug` finding about `average([])` (live): reproduced first (`NaN`, and the new test
+      failed), fixed with a guard and a test, `ready` → «Створити ПР» → `gh pr create` →
+      `in_review` with `pr`. The PR body said what was wrong, how it was confirmed, what changed,
+      the decisions and the testing;
+    - an ordinary card («Add a sum() helper») ran to a PR. Its prompt had the general rules but
+      neither the kind line nor the skill;
+    - the UI against that api: «не потрібно» on the «Завершені» card (tooltip = the evidence), on
+      the session in «Агенти» and its header, and on its «Карта агентів» node. The
+      `minion-findings` line on the «Посіпака» card. `minion-findings` listed as «системний» in
+      «Бібліотека». The smoke showed the board card's mark row overflowing its column with two
+      marks (the same with «потрібне рішення»); the row now wraps, re-checked on the board and
+      the kit samples.
+  - Not exercised: `has_changes` and `no_changes` with a real agent (unit tests only), and a team
+    override or a switched-off `minion-findings` (the same resolution as any default skill).
 
 ## Documentation impact
 

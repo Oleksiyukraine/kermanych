@@ -109,6 +109,7 @@
               :deep-analysis="item.card.deepAnalysis"
               :auto-run="item.card.autoRun"
               :needs-decision="cardDecisionReason(t, item.card)"
+              :not-needed="cardNotNeededReason(t, item.card)"
               :selected="false"
               :pending="cardDelete.busyFor(item.card.id)"
               removable
@@ -128,6 +129,7 @@
               :deep-analysis="item.session.deepAnalysis"
               :minion="item.session.minion"
               :needs-decision="sessionDecisionReason(t, item.session)"
+              :not-needed="sessionNotNeededReason(t, item.session)"
               :usage="item.session.usage"
               :selected="store.selectedSessionId === item.session.id"
               :removable="item.session.kind === 'task'"
@@ -199,6 +201,7 @@
             <KAnalysisMark v-if="selectedSession.deepAnalysis" />
             <KMinionMark v-if="selectedSession.minion" kind="running" />
             <KDecisionMark v-if="selectedDecision" :reason="selectedDecision" />
+            <KNotNeededMark v-else-if="selectedNotNeeded" :reason="selectedNotNeeded" />
           </div>
 
           <div class="agents__detail-controls">
@@ -1216,7 +1219,8 @@ import SessionFindings from 'components/agents/SessionFindings.vue';
 import KAnalysisMark from 'components/kit/KAnalysisMark.vue';
 import KMinionMark from 'components/kit/KMinionMark.vue';
 import KDecisionMark from 'components/kit/KDecisionMark.vue';
-import { cardDecisionReason, sessionDecisionReason } from '../lib/minion';
+import KNotNeededMark from 'components/kit/KNotNeededMark.vue';
+import { cardDecisionReason, cardNotNeededReason, sessionDecisionReason, sessionNotNeededReason } from '../lib/minion';
 import KSplitButton from 'components/kit/KSplitButton.vue';
 import { type KIconName } from 'components/kit/KIcon.vue';
 import KTabs from 'components/kit/KTabs.vue';
@@ -1609,6 +1613,7 @@ const selectedSession = computed(() =>
   store.sessions.find((s) => s.id === store.selectedSessionId),
 );
 const selectedDecision = computed(() => (selectedSession.value ? sessionDecisionReason(t, selectedSession.value) : undefined));
+const selectedNotNeeded = computed(() => (selectedSession.value ? sessionNotNeededReason(t, selectedSession.value) : undefined));
 
 // The open session is READ, as it stands, for the sidebar's unread-result mark
 // (stores/seen.ts). Re-marked whenever it moves while open, so a result that lands under the

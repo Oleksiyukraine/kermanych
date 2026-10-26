@@ -1,20 +1,26 @@
 import { describe, expect, test } from "vitest";
 import {
   MINION_CAP_MAX,
+  MINION_FINDINGS_SKILL,
   MINION_SUMMARY_MAX,
   clampMinionCap,
   readMinionResult,
   validateOutcomeReport,
 } from "../src/minion";
 import { readSessionReport, taskReportsWrite, type ReportSource } from "../src/task-reports";
+import { DEFAULT_SKILLS } from "../src/skills";
 
 describe("validateOutcomeReport", () => {
-  test("accepts the two verdicts and trims the summary", () => {
+  test("accepts the three verdicts and trims the summary", () => {
     expect(validateOutcomeReport({ outcome: "ready", summary: "  Fixed the off-by-one.\n" })).toEqual({
       ok: true,
       report: { outcome: "ready", summary: "Fixed the off-by-one." },
     });
     expect(validateOutcomeReport({ outcome: "needs_decision", summary: "Which API version?" })).toMatchObject({ ok: true });
+    expect(validateOutcomeReport({ outcome: "not_needed", summary: "Fixed on the base: src/math.js:4." })).toMatchObject({
+      ok: true,
+      report: { outcome: "not_needed" },
+    });
   });
 
   test("refuses an unknown verdict, a blank summary and a non-object, naming the field", () => {
@@ -50,6 +56,11 @@ describe("readMinionResult", () => {
       code: "no_pr",
       reason: "push refused",
     });
+    expect(readMinionResult({ outcome: "not_needed", reason: "Already fixed: src/a.ts:3" })).toEqual({
+      outcome: "not_needed",
+      reason: "Already fixed: src/a.ts:3",
+    });
+    expect(readMinionResult({ outcome: "needs_decision", code: "has_changes" })).toEqual({ outcome: "needs_decision", code: "has_changes" });
   });
 
   test("drops an unknown code or a blank reason, and refuses an unknown outcome", () => {
@@ -74,4 +85,10 @@ describe("the card's session report", () => {
     expect(readSessionReport({ ...head, minion: { outcome: "pr" } })?.minion).toEqual({ outcome: "pr" });
     expect(readSessionReport({ ...head, minion: { outcome: "won" } })).not.toHaveProperty("minion");
   });
+});
+
+// The supervisor asks for the per-kind rules by this name; with no default behind it, a finding
+// card would get nothing unless a team wrote the skill itself.
+test("Kermanych ships the skill a finding card's run asks for", () => {
+  expect(DEFAULT_SKILLS.map((s) => s.name)).toContain(MINION_FINDINGS_SKILL);
 });

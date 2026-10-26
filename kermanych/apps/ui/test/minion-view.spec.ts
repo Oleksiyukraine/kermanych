@@ -6,12 +6,16 @@ import { en } from '../src/i18n/en';
 import {
   cardDecisionReason,
   cardNeedsDecision,
+  cardNotNeeded,
+  cardNotNeededReason,
   minionPauseText,
   minionProjectNames,
   minionReasonText,
   minionStripText,
   sessionDecisionReason,
   sessionNeedsDecision,
+  sessionNotNeeded,
+  sessionNotNeededReason,
 } from '../src/lib/minion';
 import { findingTaskInsert } from '../src/lib/findings';
 
@@ -79,6 +83,38 @@ describe('the «потрібне рішення» predicates', () => {
   });
 });
 
+describe('the «не потрібно» predicates', () => {
+  const evidence = report({ outcome: 'not_needed', reason: 'вже виправлено: src/a.ts:12' });
+
+  it('marks a card only «Завершені» with the minion’s not_needed on it', () => {
+    expect(cardNotNeeded(card({ status: 'done', sessionReport: evidence }))).toBe(true);
+    expect(cardNotNeeded(card({ sessionReport: evidence }))).toBe(false);
+    expect(cardNotNeeded(card({ status: 'done', sessionReport: report({ outcome: 'pr' }) }))).toBe(false);
+    expect(cardNotNeeded(card({ status: 'done' }))).toBe(false);
+  });
+
+  it('never shows together with «потрібне рішення»', () => {
+    const asked = card({ sessionReport: report({ outcome: 'needs_decision' }) });
+    expect(cardNotNeeded(asked)).toBe(false);
+    expect(cardNeedsDecision(card({ status: 'done', sessionReport: evidence }))).toBe(false);
+  });
+
+  it('marks a session by its last minion result', () => {
+    expect(sessionNotNeeded({ minionResult: { outcome: 'not_needed' } })).toBe(true);
+    expect(sessionNotNeeded({ minionResult: { outcome: 'needs_decision' } })).toBe(false);
+    expect(sessionNotNeeded({})).toBe(false);
+  });
+
+  it('gives the mark the agent’s evidence, a name when it is blank, or nothing', () => {
+    expect(cardNotNeededReason(t, card({ status: 'done', sessionReport: evidence }))).toBe('вже виправлено: src/a.ts:12');
+    expect(cardNotNeededReason(t, card({ status: 'done', sessionReport: report({ outcome: 'not_needed', reason: '   ' }) }))).toBe('Не потрібно');
+    expect(cardNotNeededReason(t, card({ sessionReport: evidence }))).toBeUndefined();
+    expect(sessionNotNeededReason(t, { minionResult: { outcome: 'not_needed', reason: ' дубль #12 ' } })).toBe('дубль #12');
+    expect(sessionNotNeededReason(translator(en), { minionResult: { outcome: 'not_needed' } })).toBe('Not needed');
+    expect(sessionNotNeededReason(t, { minionResult: { outcome: 'failed' } })).toBeUndefined();
+  });
+});
+
 describe('minionReasonText', () => {
   it('words Kermanych’s code, then the free text', () => {
     expect(minionReasonText(t, { outcome: 'needs_decision', code: 'docs_gate', reason: 'README не оновлено' })).toBe(
@@ -89,6 +125,16 @@ describe('minionReasonText', () => {
 
   it('never leaves the tooltip empty', () => {
     expect(minionReasonText(t, { outcome: 'needs_decision' })).toBe('Потрібне рішення');
+  });
+
+  it('words the branch-check codes under «потрібне рішення»', () => {
+    expect(minionReasonText(t, { outcome: 'needs_decision', code: 'no_changes' })).toBe('Посіпака сказав «готово», але на гілці немає змін');
+    expect(minionReasonText(t, { outcome: 'needs_decision', code: 'has_changes', reason: 'дубль #12' })).toBe(
+      'Посіпака позначив задачу непотрібною, але на гілці є зміни — дубль #12',
+    );
+    const tr = translator(en);
+    expect(minionReasonText(tr, { outcome: 'needs_decision', code: 'no_changes' })).toBe('the Minion said «ready», but the branch has no changes');
+    expect(minionReasonText(tr, { outcome: 'needs_decision', code: 'has_changes' })).toBe('the Minion marked the task not needed, but the branch has changes');
   });
 
   it.each([
