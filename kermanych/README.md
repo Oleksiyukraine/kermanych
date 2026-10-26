@@ -1407,6 +1407,18 @@ That field is a real assistant, and it is deliberately narrow:
   Authors are read as git's `%aN`, so a repository's `.mailmap` folds one person's aliases
   into one section; bots get a closing sentence naming what they updated, not a section of
   their own.
+  With «Звіт по людях» ticked the form also shows a «People» picker: the commit authors the
+  picked projects have on their branches in the period, with their commit counts, read from
+  this machine's clones by `POST /management/release-notes/authors` (git only, no model
+  turn) and re-read whenever a project, branch or date changes. It starts at «Whole team»;
+  untick people — or clear «Whole team» and tick one — to write the report about just them.
+  The pick travels as `"authors": [...]` on the generation request: only those people's
+  commits reach the model, the note's heading says it covers selected contributors, and a
+  picked project none of them committed to is left out of the note rather than refused
+  (`no_commits_by_authors` when none of them committed anywhere). `authors` is refused
+  without `"groupBy": "person"` (`authors_need_person`) or when it is not a non-empty list of
+  names (`authors_invalid`). The chat's `release.notes` action has no `authors` field: the
+  chat cannot see the commit authors, so a pick is made in the form.
   **Every change of the period is named, however long the period.** The note never writes
   «and 45 other changes»: related commits are merged into one bullet that says what changed,
   small ones become a short bullet of a few words, and a count is never a substitute. Every

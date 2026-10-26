@@ -51,7 +51,11 @@
           </span>
           <span class="rel__row-meta">
             <KTag v-for="s in j.sources" :key="s.projectId">{{ sourceLabel(s) }}</KTag>
-            <KTag v-if="j.groupBy === 'person'">{{ t('management.releases.byPersonTag') }}</KTag>
+            <KTag v-if="j.groupBy === 'person'">{{
+              j.authors
+                ? t('management.releases.byPersonOfTag', { names: j.authors.join(', ') })
+                : t('management.releases.byPersonTag')
+            }}</KTag>
             <span class="rel__row-range mono">{{ j.rangeFrom }} — {{ j.rangeTo }}</span>
           </span>
           <span v-if="j.error" class="rel__row-error">{{ j.error }}</span>
@@ -121,6 +125,26 @@
         <!-- Off by default: the note is the by-topic document it always was. On, it is one
              section per commit author in the period, each in the same plain language. -->
         <KCheckbox v-model="gen.byPerson" :label="t('management.releases.byPersonLabel')" />
+        <!-- Who the per-person report is about: the whole team by default, or any subset of
+             the commit authors the picked projects, branches and period actually have — read
+             from the same git history the note will be written from, so every name offered
+             is a name the generation will find. -->
+        <template v-if="gen.byPerson">
+          <KSelect
+            multiple
+            :values="authorModel"
+            :label="t('management.releases.authorsLabel')"
+            :options="authorOptions"
+            :summary="authorSummary"
+            :loading="authorList.loading"
+            :disabled="!authorList.authors.length"
+            @update:values="pickAuthors"
+          />
+          <p v-if="authorList.error" class="rel__form-error">
+            {{ t('management.releases.authorsFailed', { error: authorList.error }) }}
+          </p>
+          <p v-else-if="authorHint" class="rel__form-hint">{{ authorHint }}</p>
+        </template>
 
         <!-- Where the material comes from and what pressing the button costs, said before
              it is pressed: the commits are read from THIS machine's clone, the writing
@@ -248,6 +272,9 @@ import ReleaseSlackModal from 'components/releases/ReleaseSlackModal.vue';
 import { useProjects } from 'stores/projects';
 import { useOrchestrator } from 'stores/orchestrator';
 import { renderMarkdown } from '../lib/markdown';
+import { api } from '../lib/api';
+import { toggleActive } from '../lib/capacity';
+import type { ReleaseAuthor, ReleaseNotesAuthorsAsk } from '@kermanych/core';
 import { relativeTime, renderTime } from '../lib/time';
 import { useNow } from '../composables/useNow';
 
@@ -318,6 +345,10 @@ const gen = reactive({
   rangeFrom: '',
   rangeTo: '',
   byPerson: false,
+  // Who a per-person report is about, as the operator last picked them. `null` is the whole
+  // team — every author the period has, including one who appears when the range widens. A
+  // list is an explicit pick: an author it does not name stays out of the report.
+  authors: null as string[] | null,
 });
 
 // The workspace's projects, with the binding state said IN the picker: an unbound project
@@ -390,12 +421,121 @@ function openGenerate(): void {
   genOpen.value = true;
 }
 
-const canGenerate = computed(
+// ── People of a per-person report ─────────────────────────────────────────────
+
+// The «whole team» master row of the people picker — the same shape the capacity screen's
+// roster picker uses. An author git prints is never an empty name, so it cannot collide.
+const ALL_AUTHORS = '';
+
+// The commit authors of what the form currently names, read by the local api from the same
+// git history the note will be written from. `key` is the ask the list answers, so a reply
+// to an ask the operator has already changed is dropped instead of shown.
+const authorList = ref<{ key: string; authors: ReleaseAuthor[]; loading: boolean; error: string }>({
+  key: '',
+  authors: [],
+  loading: false,
+  error: '',
+});
+
+// Every project has its branch and the period is set — what the history is read by.
+const sourcesReady = computed(
   () =>
     pickedProjects.value.length > 0 &&
     pickedProjects.value.every((p) => !!gen.branches[p.id]) &&
     gen.rangeFrom !== '' &&
     gen.rangeTo !== '',
+);
+
+// Only once the form names everything the history is read by, with a forward period, and
+// only while somebody is looking at the picker.
+const authorsAsk = computed<ReleaseNotesAuthorsAsk | null>(() => {
+  if (!genOpen.value || !gen.byPerson || !sourcesReady.value || gen.rangeFrom > gen.rangeTo) return null;
+  return {
+    sources: pickedProjects.value.map((p) => ({ projectId: p.id, branch: gen.branches[p.id] ?? '' })),
+    rangeFrom: gen.rangeFrom,
+    rangeTo: gen.rangeTo,
+  };
+});
+const authorsKey = computed(() => (authorsAsk.value ? JSON.stringify(authorsAsk.value) : ''));
+
+// Re-read whenever the ask changes, and on every reopening of the form — the clone may have
+// grown commits since. The previous names stay visible (spinning) during the re-read.
+watch(
+  authorsKey,
+  async (key) => {
+    const ask = authorsAsk.value;
+    if (!key || !ask) return;
+    authorList.value = { ...authorList.value, key, loading: true, error: '' };
+    try {
+      const reply = await api.releaseNotesAuthors(ask);
+      if (authorList.value.key === key) authorList.value = { key, authors: reply.authors, loading: false, error: '' };
+    } catch (e) {
+      if (authorList.value.key === key)
+        authorList.value = { key, authors: [], loading: false, error: e instanceof Error ? e.message : String(e) };
+    }
+  },
+  { immediate: true },
+);
+
+const authorNames = computed(() => authorList.value.authors.map((a) => a.name));
+// The pick, narrowed to the authors this period actually has: a name picked for another
+// range is kept in `gen.authors` (it comes back if the range does) but is not sent.
+const pickedAuthors = computed(() =>
+  gen.authors === null ? authorNames.value : authorNames.value.filter((n) => gen.authors?.includes(n)),
+);
+const allAuthors = computed(() => pickedAuthors.value.length === authorNames.value.length);
+
+const authorOptions = computed<KSelectOption[]>(() => [
+  { value: ALL_AUTHORS, label: t('management.releases.authorsAll') },
+  ...authorList.value.authors.map((a) => ({
+    value: a.name,
+    label: t('management.releases.authorOption', { name: a.name, count: a.commits }),
+  })),
+]);
+const authorModel = computed(() => (allAuthors.value ? [ALL_AUTHORS, ...pickedAuthors.value] : pickedAuthors.value));
+const authorSummary = computed(() => {
+  if (authorList.value.loading && !authorNames.value.length) return t('management.releases.authorsLoading');
+  if (allAuthors.value) return t('management.releases.authorsAll');
+  return t('management.releases.authorsPicked', { count: pickedAuthors.value.length, total: authorNames.value.length });
+});
+
+// What the operator needs to know about the pick before pressing the button: that the form
+// does not name enough to read the history yet, that the period has nobody, or that nobody
+// is picked — the last one being why «Згенерувати» is disabled.
+const authorHint = computed(() => {
+  if (!authorsAsk.value) return t('management.releases.authorsNeedForm');
+  if (authorList.value.loading) return '';
+  if (!authorNames.value.length) return t('management.releases.authorsNone');
+  if (!pickedAuthors.value.length) return t('management.releases.authorsPickOne');
+  return '';
+});
+
+// One pick toggles one row; the fold onto an exclusion set is the capacity screen's
+// `toggleActive`, so «whole team» clears or fills the roster exactly as it does there.
+// Everybody picked is stored as `null` — the whole team, newcomers included. Names picked
+// earlier that this period does not have are kept, so they return with their range.
+function pickAuthors(next: readonly string[]): void {
+  const names = authorNames.value;
+  const excluded = new Set(names.filter((n) => !pickedAuthors.value.includes(n)));
+  const out = toggleActive(names, excluded, ALL_AUTHORS, next);
+  gen.authors =
+    out.size === 0
+      ? null
+      : [...(gen.authors ?? []).filter((n) => !names.includes(n)), ...names.filter((n) => !out.has(n))];
+}
+
+// An explicit pick of people is only sendable once the list it was made from is read for
+// THIS ask: otherwise the names might belong to a range the form no longer says. The whole
+// team needs no list — the api reads everyone the period has.
+const canGenerate = computed(
+  () =>
+    sourcesReady.value &&
+    (!gen.byPerson ||
+      gen.authors === null ||
+      (authorList.value.key === authorsKey.value &&
+        !authorList.value.loading &&
+        !authorList.value.error &&
+        pickedAuthors.value.length > 0)),
 );
 
 // Hand the run to the store and close. Nothing is awaited here on purpose: this component
@@ -415,6 +555,7 @@ function submitGenerate(): void {
     rangeFrom: gen.rangeFrom,
     rangeTo: gen.rangeTo,
     groupBy: gen.byPerson ? 'person' : 'topic',
+    ...(gen.byPerson && gen.authors !== null && !allAuthors.value ? { authors: pickedAuthors.value } : {}),
   });
   genOpen.value = false;
 }

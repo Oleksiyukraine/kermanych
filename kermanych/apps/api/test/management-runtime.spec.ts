@@ -208,4 +208,41 @@ describe("ReleaseNotesService — several projects", () => {
     });
     expect(calls).toHaveLength(0);
   });
+
+  // A back-end developer picked over both projects: the note is written from their commits
+  // alone, and the project they never touched is left out rather than refused.
+  it("writes a per-person note from the picked people only, leaving out a project none of them touched", async () => {
+    const petro = { ...commit, author: "Петро" };
+    const { svc } = twoRepos({ "/repos/alpha": [commit, petro], "/repos/beta": [petro] });
+    const out = await svc.generate({ ...ask, groupBy: "person", authors: ["Оля"] });
+    expect(out.commitCount).toBe(1);
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.opts.cwd).toBe("/repos/alpha");
+
+    const onlyBeta = await svc.generate({ ...ask, groupBy: "person", authors: ["Петро"] });
+    expect(onlyBeta.commitCount).toBe(2);
+  });
+
+  it("refuses before any spawn when none of the picked people committed in the period", async () => {
+    const { svc } = twoRepos({ "/repos/alpha": [commit], "/repos/beta": [commit] });
+    await expect(svc.generate({ ...ask, groupBy: "person", authors: ["Нікого"] })).rejects.toMatchObject({
+      code: "no_commits_by_authors",
+      params: { from: "2026-08-01", to: "2026-08-31" },
+    });
+    expect(calls).toHaveLength(0);
+  });
+
+  // The picker's list: one row per person across every project, busiest first, and an empty
+  // project contributes nobody instead of refusing the list.
+  it("lists the period's authors across projects with summed counts", async () => {
+    const petro = { ...commit, author: "Петро" };
+    const { svc } = twoRepos({ "/repos/alpha": [commit, petro], "/repos/beta": [petro, petro] });
+    expect(await svc.authors(ask)).toEqual({
+      authors: [
+        { name: "Петро", commits: 3 },
+        { name: "Оля", commits: 1 },
+      ],
+    });
+    expect(await twoRepos({ "/repos/alpha": [commit] }).svc.authors(ask)).toEqual({ authors: [{ name: "Оля", commits: 1 }] });
+  });
 });

@@ -15,14 +15,27 @@
 // same division of labour the risk register uses — the api has no cloud credentials and
 // must not grow any.
 import { Injectable, Logger } from "@nestjs/common";
-import type { ReleaseNotesAsk, ReleaseNotesReply, ReleaseSource, AgentRuntimeKind } from "@kermanych/core";
+import type {
+  ReleaseNotesAsk,
+  ReleaseNotesAuthorsAsk,
+  ReleaseNotesAuthorsReply,
+  ReleaseNotesReply,
+  ReleaseSource,
+  AgentRuntimeKind,
+} from "@kermanych/core";
 import { runOneShot } from "../runtime/one-shot";
 import { resolveRuntime } from "../runtime/resolve-runtime";
 import { RegistryService } from "../registry/registry.service";
 import { WorktreeService } from "../worktree/worktree.service";
 import { MANAGEMENT_TOOLS } from "./management-chat.service";
 import { CodedError } from "./coded-error";
-import { buildReleaseNotesPrompt, MAX_SUBJECT_CHARS, subjectsSize, type ReleasePromptSource } from "./release-notes-prompt";
+import {
+  buildReleaseNotesPrompt,
+  commitsByAuthor,
+  MAX_SUBJECT_CHARS,
+  subjectsSize,
+  type ReleasePromptSource,
+} from "./release-notes-prompt";
 
 // The document's title, read from its first `# ` heading — the prompt requires one, but a
 // model that ignored the rule must not sink the whole generation, so the fallback restates
@@ -53,8 +66,38 @@ export class ReleaseNotesService {
     // Every source is resolved before the child is spawned: a note over the back-end and the
     // front-end that fails on the second one must not have spent a model turn on the first.
     // In order, so the first refusal the operator reads is about the first project they picked.
-    const sources: ReleasePromptSource[] = [];
-    for (const source of ask.sources) sources.push(await this.resolve(source, ask.rangeFrom, ask.rangeTo));
+    const resolved: ReleasePromptSource[] = [];
+    for (const source of ask.sources) {
+      const s = await this.read(source, ask.rangeFrom, ask.rangeTo);
+      // An empty project refuses the whole note rather than becoming an empty section: an
+      // empty range is usually the wrong branch, and that is worth knowing before a model
+      // turn. Checked BEFORE the people filter: a project the picked people never touched is
+      // a fact about them, not a sign of the wrong branch.
+      if (s.commits.length === 0)
+        throw new CodedError(
+          "no_commits_in_range",
+          `у проєкті «${s.projectName}» на гілці «${s.branch}» немає комітів за ${ask.rangeFrom} — ${ask.rangeTo}; реліз-ноти нема з чого писати`,
+          { project: s.projectName, branch: s.branch, from: ask.rangeFrom, to: ask.rangeTo },
+        );
+      resolved.push(s);
+    }
+
+    // A per-person report about some of the team: only the picked people's commits reach the
+    // prompt, so the roster, the sections and the ceiling below all see exactly them. A
+    // project none of them committed to is left out — a back-end developer picked over the
+    // back-end and the front-end gets a note about the back-end, not an empty section.
+    const picked = ask.groupBy === "person" && ask.authors ? new Set(ask.authors) : undefined;
+    const sources = picked
+      ? resolved
+          .map((s) => ({ ...s, commits: s.commits.filter((c) => picked.has(c.author)) }))
+          .filter((s) => s.commits.length > 0)
+      : resolved;
+    if (sources.length === 0)
+      throw new CodedError(
+        "no_commits_by_authors",
+        `обрані люди не мають комітів у вибраних проєктах за ${ask.rangeFrom} — ${ask.rangeTo}`,
+        { from: ask.rangeFrom, to: ask.rangeTo },
+      );
 
     // The note names every commit, so every subject goes into the prompt. A period whose
     // subjects alone overflow the ceiling is refused before the spawn, with the count, rather
@@ -74,6 +117,7 @@ export class ReleaseNotesService {
       rangeFrom: ask.rangeFrom,
       rangeTo: ask.rangeTo,
       groupBy: ask.groupBy,
+      ...(picked ? { authors: [...picked] } : {}),
     });
 
     // Born in the first project's repository. With several projects the prompt names every
@@ -104,10 +148,20 @@ export class ReleaseNotesService {
     };
   }
 
+  // The people the per-person form offers: every commit author of the period across the
+  // asked projects, each on its own branch, with their commit count summed over them. Read
+  // exactly the way `generate` reads, so a name offered here is a name it will find. An empty
+  // project is not refused here — it simply contributes nobody; generating still refuses it.
+  async authors(ask: ReleaseNotesAuthorsAsk): Promise<ReleaseNotesAuthorsReply> {
+    const logs: ReleasePromptSource["commits"][] = [];
+    for (const source of ask.sources) logs.push((await this.read(source, ask.rangeFrom, ask.rangeTo)).commits);
+    return { authors: [...commitsByAuthor(logs.flat())].map(([name, own]) => ({ name, commits: own.length })) };
+  }
+
   // One source → its project's name, checkout and commits. Every refusal names the project:
   // with two projects picked, «the branch is not in the repository» is useless without
   // saying which repository.
-  private async resolve(source: ReleaseSource, from: string, to: string): Promise<ReleasePromptSource> {
+  private async read(source: ReleaseSource, from: string, to: string): Promise<ReleasePromptSource> {
     // The registry, never the client, says where the repo lives — the same rule
     // managementRepos applies. Unbound means unbuildable HERE: generation reads THIS
     // machine's git history, so the error names the machine, not the project.
@@ -130,15 +184,7 @@ export class ReleaseNotesService {
         { project: project.name, branch: source.branch },
       );
 
-    // An empty project refuses the whole note rather than becoming an empty section: an
-    // empty range is usually the wrong branch, and that is worth knowing before a model turn.
     const commits = await this.worktree.logRange(project.localRepoPath, source.branch, from, to);
-    if (commits.length === 0)
-      throw new CodedError(
-        "no_commits_in_range",
-        `у проєкті «${project.name}» на гілці «${source.branch}» немає комітів за ${from} — ${to}; реліз-ноти нема з чого писати`,
-        { project: project.name, branch: source.branch, from, to },
-      );
 
     return { projectName: project.name, branch: source.branch, repoPath: project.localRepoPath, commits };
   }

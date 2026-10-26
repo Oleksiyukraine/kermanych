@@ -62,6 +62,9 @@ export {
   type ReleaseSource,
   type ReleaseNotesAsk,
   type ReleaseNotesReply,
+  type ReleaseNotesAuthorsAsk,
+  type ReleaseNotesAuthorsReply,
+  type ReleaseAuthor,
 } from "./release-notes";
 export { THINKING_LEVELS, isThinkingLevel, type ThinkingLevel } from "./thinking";
 export {
