@@ -2521,6 +2521,7 @@ export const uk = {
     railItem: {
       unbound: ' · не прив’язано',
       orphan: ' · поза хмарою',
+      minion: ' · Посіпака активний на цій машині',
     },
     attention: {
       input: 'чекає відповіді: {count}',

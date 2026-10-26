@@ -2513,6 +2513,7 @@ export const en: MessageSchema = {
     railItem: {
       unbound: ' · not linked',
       orphan: ' · outside the cloud',
+      minion: ' · Minion active on this machine',
     },
     attention: {
       input: 'awaiting an answer: {count}',
