@@ -113,6 +113,9 @@
             :options="issueTypeOptions"
             :loading="issueTypesLoading"
           />
+          <!-- Jira's refusal to list the board's issue types belongs to this half only: the
+               board is auto-picked on open, so it must not surface on the «Дошка» side. -->
+          <p v-if="issueTypesError" class="findings__error" role="alert">{{ issueTypesError }}</p>
         </template>
         <KField v-model="title" :label="t('agents.findings.dialog.taskTitle')" />
         <KField v-model="description" :label="t('agents.findings.dialog.description')" multiline :rows="14" />
@@ -249,6 +252,7 @@ const jiraBoardOptions = computed<KSelectOption[]>(() =>
 const issueTypes = ref<JiraEditorOptions['issueTypes']>([]);
 const issueType = ref('');
 const issueTypesLoading = ref(false);
+const issueTypesError = ref<string | null>(null);
 const issueTypeOptions = computed<KSelectOption[]>(() =>
   issueTypes.value.filter((it) => !it.subtask).map((it) => ({ value: it.id, label: it.name })),
 );
@@ -303,6 +307,7 @@ async function probeJira(ws: string | undefined): Promise<void> {
 watch(jiraBoard, async (id) => {
   issueTypes.value = [];
   issueType.value = '';
+  issueTypesError.value = null;
   if (!id) return;
   issueTypesLoading.value = true;
   try {
@@ -311,7 +316,7 @@ watch(jiraBoard, async (id) => {
     issueTypes.value = opts.issueTypes;
     issueType.value = (finding.value && pickFindingIssueType(opts.issueTypes, finding.value.kind)) ?? '';
   } catch (e) {
-    if (jiraBoard.value === id) dialogError.value = errorText(e);
+    if (jiraBoard.value === id) issueTypesError.value = errorText(e);
   } finally {
     if (jiraBoard.value === id) issueTypesLoading.value = false;
   }
