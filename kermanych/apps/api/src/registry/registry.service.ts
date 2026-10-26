@@ -386,6 +386,13 @@ export class RegistryService {
     } catch {
       /* column already exists */
     }
+    // Additive migration: the pull request's URL, stored with `pr_opened`, so the merged-PR check
+    // (docs/specs/2026-10-26-pr-merged-close-prompt.md) asks GitHub about exactly that PR.
+    try {
+      this.db.exec(`ALTER TABLE sessions ADD COLUMN pr_url TEXT`);
+    } catch {
+      /* column already exists */
+    }
     // Additive migration: a native session (docs/specs/2026-10-05-native-sessions.md) runs its
     // harness as its own TUI in a pty and Kermanych only observes it. Fixed at creation.
     try {
@@ -732,12 +739,12 @@ export class RegistryService {
   }
 
   listSessions(projectId?: string): Session[] {
-    const sql = `SELECT id, project_id as projectId, task_id as taskId, name, task, worktree_path as worktreePath, branch, worktree, base_branch as baseBranch, omp_session_id as ompSessionId, omp_session_file as ompSessionFile, parent_session_id as parentSessionId, kind, model, prefix, platform, runtime, native, deep_analysis, minion, minion_result, finding_kind, effort, status, pr_opened as prOpened, archived, usage, pending_prompt, created_at as createdAt, last_activity_at as lastActivityAt, (SELECT COUNT(*) FROM session_findings f WHERE f.session_id = sessions.id AND f.status = 'open') as open_findings FROM sessions`;
+    const sql = `SELECT id, project_id as projectId, task_id as taskId, name, task, worktree_path as worktreePath, branch, worktree, base_branch as baseBranch, omp_session_id as ompSessionId, omp_session_file as ompSessionFile, parent_session_id as parentSessionId, kind, model, prefix, platform, runtime, native, deep_analysis, minion, minion_result, finding_kind, effort, status, pr_opened as prOpened, pr_url, archived, usage, pending_prompt, created_at as createdAt, last_activity_at as lastActivityAt, (SELECT COUNT(*) FROM session_findings f WHERE f.session_id = sessions.id AND f.status = 'open') as open_findings FROM sessions`;
     const rows = (
       projectId
         ? this.db.prepare(sql + ` WHERE project_id = ? ORDER BY created_at`).all(projectId)
         : this.db.prepare(sql + ` ORDER BY created_at`).all()
-    ) as (Omit<Session, "archived" | "worktree" | "usage" | "effort" | "runtime" | "prOpened" | "native" | "deepAnalysis" | "minion" | "minionResult" | "findingKind" | "openFindings" | "pendingPrompt"> & { archived: number; worktree: number; usage: string | null; effort: string | null; runtime: string | null; prOpened: number; native: number; deep_analysis: number; minion: number; minion_result: string | null; finding_kind: string | null; open_findings: number; pending_prompt: string | null })[];
+    ) as (Omit<Session, "archived" | "worktree" | "usage" | "effort" | "runtime" | "prOpened" | "prUrl" | "native" | "deepAnalysis" | "minion" | "minionResult" | "findingKind" | "openFindings" | "pendingPrompt"> & { archived: number; worktree: number; usage: string | null; effort: string | null; runtime: string | null; prOpened: number; pr_url: string | null; native: number; deep_analysis: number; minion: number; minion_result: string | null; finding_kind: string | null; open_findings: number; pending_prompt: string | null })[];
     // SQLite stores the flag as 0/1; hand callers a real boolean. `effort` is validated rather
     // than cast: a row written by an older build (or by hand) must degrade to "not known" —
     // typing an unknown word as a ThinkingLevel would send it straight back into omp's argv.
@@ -745,12 +752,13 @@ export class RegistryService {
     // valid) so invalid values degrade to undefined.
     // `native` and `deep_analysis` are 0/1 flags too, surfaced only when set so an ordinary row
     // stays as it was; `open_findings` likewise appears only when something waits.
-    // `pending_prompt` likewise appears only while a message waits for a slot.
+    // `pending_prompt` likewise appears only while a message waits for a slot; `pr_url` only once
+    // a PR URL was stored.
     // `minion` likewise; `minion_result` and `finding_kind` are validated like `effort`, so a
     // hand-edited row degrades.
-    return rows.map(({ native, deep_analysis, minion, minion_result, finding_kind, open_findings, pending_prompt, ...r }) => {
+    return rows.map(({ native, deep_analysis, minion, minion_result, finding_kind, open_findings, pending_prompt, pr_url, ...r }) => {
       const minionResult = readMinionColumn(minion_result);
-      return { ...r, ...(native ? { native: true } : {}), ...(deep_analysis ? { deepAnalysis: true } : {}), ...(minion ? { minion: true } : {}), ...(minionResult ? { minionResult } : {}), ...(isFindingKind(finding_kind) ? { findingKind: finding_kind } : {}), ...(open_findings ? { openFindings: open_findings } : {}), ...(pending_prompt !== null ? { pendingPrompt: pending_prompt } : {}), archived: r.archived !== 0, worktree: r.worktree !== 0, prOpened: r.prOpened !== 0, taskId: r.taskId ?? undefined, model: r.model ?? undefined, prefix: r.prefix ?? undefined, platform: r.platform ?? undefined, runtime: isNativeHarness(r.runtime) ? r.runtime : undefined, effort: isThinkingLevel(r.effort) ? r.effort : undefined, usage: readUsage(r.usage) };
+      return { ...r, ...(native ? { native: true } : {}), ...(deep_analysis ? { deepAnalysis: true } : {}), ...(minion ? { minion: true } : {}), ...(minionResult ? { minionResult } : {}), ...(isFindingKind(finding_kind) ? { findingKind: finding_kind } : {}), ...(open_findings ? { openFindings: open_findings } : {}), ...(pending_prompt !== null ? { pendingPrompt: pending_prompt } : {}), ...(pr_url ? { prUrl: pr_url } : {}), archived: r.archived !== 0, worktree: r.worktree !== 0, prOpened: r.prOpened !== 0, taskId: r.taskId ?? undefined, model: r.model ?? undefined, prefix: r.prefix ?? undefined, platform: r.platform ?? undefined, runtime: isNativeHarness(r.runtime) ? r.runtime : undefined, effort: isThinkingLevel(r.effort) ? r.effort : undefined, usage: readUsage(r.usage) };
     });
   }
 
@@ -814,7 +822,7 @@ export class RegistryService {
     const next = { ...cur, ...patch };
     this.db
       .prepare(
-        `UPDATE sessions SET project_id=?, task_id=?, name=?, task=?, worktree_path=?, branch=?, worktree=?, base_branch=?, omp_session_id=?, omp_session_file=?, kind=?, model=?, prefix=?, platform=?, runtime=?, effort=?, status=?, pr_opened=?, archived=?, minion_result=? WHERE id=?`,
+        `UPDATE sessions SET project_id=?, task_id=?, name=?, task=?, worktree_path=?, branch=?, worktree=?, base_branch=?, omp_session_id=?, omp_session_file=?, kind=?, model=?, prefix=?, platform=?, runtime=?, effort=?, status=?, pr_opened=?, pr_url=?, archived=?, minion_result=? WHERE id=?`,
       )
       .run(
         next.projectId,
@@ -835,6 +843,7 @@ export class RegistryService {
         next.effort ?? null,
         next.status,
         next.prOpened ? 1 : 0,
+        next.prUrl || null,
         next.archived ? 1 : 0,
         next.minionResult ? JSON.stringify(next.minionResult) : null,
         id,

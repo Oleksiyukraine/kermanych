@@ -477,6 +477,10 @@ export const useOrchestrator = defineStore('orchestrator', () => {
     return api.finishInfo(id);
   }
 
+  function prCheck(id: string) {
+    return api.prCheck(id);
+  }
+
   function fileDiff(id: string, path: string) {
     return api.fileDiff(id, path);
   }
@@ -500,6 +504,17 @@ export const useOrchestrator = defineStore('orchestrator', () => {
   async function finishSession(id: string) {
     const res = await api.finish(id);
     // preview is stopped server-side on finish; drop its local url too.
+    if (previews.value[id]) {
+      const next = { ...previews.value };
+      delete next[id];
+      previews.value = next;
+    }
+    return res;
+  }
+
+  async function closeMerged(id: string) {
+    const res = await api.closeMerged(id);
+    // Same retirement as finishSession: the preview is stopped server-side; drop its url too.
     if (previews.value[id]) {
       const next = { ...previews.value };
       delete next[id];
@@ -602,12 +617,14 @@ export const useOrchestrator = defineStore('orchestrator', () => {
     getEnv,
     saveEnv,
     finishInfo,
+    prCheck,
     fileDiff,
     sessionTree,
     sessionFile,
     projectTree,
     projectFile,
     finishSession,
+    closeMerged,
     createPr,
     commitChanges,
     completeDocs,

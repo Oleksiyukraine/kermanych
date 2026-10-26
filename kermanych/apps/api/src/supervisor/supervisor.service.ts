@@ -93,18 +93,35 @@ import {
   MINION_GRACE_MS,
   type MinionResult,
   type MinionVerdictReport,
+  type PrCheck,
+  type PrCheckState,
 } from "@kermanych/core";
 import { claimTaskForLaunch, createTask, getTask, listProjects, patchTask, releaseLaunchClaim, type CloudProject, type AiTrigger, type Task, type TaskPatch } from "@kermanych/cloud";
 import { AuthService } from "../auth/auth.service";
 import { ModelsService } from "../models/models.service";
 import { NativeSessionService, nativeUnsupported } from "../native/native-session.service";
 import { CodedError } from "../management/coded-error";
-import { PR_URL_RE } from "./pr-url";
+import { firstPrUrl } from "./pr-url";
 import { launchToolsFor } from "./chat-tools";
 import { MachineResourcesService } from "../machine/machine-resources.service";
 import { WatchdogService } from "../machine/watchdog.service";
 import { BranchNameService, type BranchContext } from "./branch-name.service";
 import { noAskOverlay } from "../minion/ask-overlay";
+import { EnvFileService } from "../env/env-file.service";
+import { GithubClient, GithubHttpError, parseGithubPrUrl, parseGithubRemote, type GithubPull } from "../github/github-client";
+
+// A failed merged-PR check, in the words the UI shows (docs/specs/2026-10-26-pr-merged-close-prompt.md,
+// decision 6). A spent rate limit is a 403 too, so it is read first. `fetch` rejects with a
+// TypeError when the network is down and with a TimeoutError/AbortError when the signal fires.
+function prCheckFailure(err: unknown): PrCheck {
+  if (err instanceof GithubHttpError) {
+    if (err.rateLimited) return { state: "rate_limited" };
+    return { state: [401, 403, 404].includes(err.status) ? "no_access" : "error" };
+  }
+  const name = (err as { name?: unknown } | null)?.name;
+  if (err instanceof TypeError || name === "TimeoutError" || name === "AbortError") return { state: "offline" };
+  return { state: "error" };
+}
 
 type Live = {
   rpc: AgentRuntime;
@@ -301,6 +318,10 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     // Optional so specs construct the supervisor without it — then the branch is the
     // transliterated title and no model is asked.
     @Optional() private branchNames?: BranchNameService,
+    // The merged-PR check reads the bound repo's `GIT_TOKEN` from its `.env`
+    // (docs/specs/2026-10-26-pr-merged-close-prompt.md, decision 5). Optional so specs construct
+    // the supervisor without it — then GitHub is asked anonymously.
+    @Optional() private envFile?: EnvFileService,
   ) {
     this.native?.events$.subscribe((e) => {
       if (e.type === "changed") {
@@ -1877,22 +1898,16 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     // tool result. `agent_end` reads this to choose `in_review` over `done`; scanning here
     // (not there) catches the URL even when the PR turn is followed by more turns.
     if (l.prRequested === true && l.prOpened !== true) {
-      for (const entry of reduced.entries) {
-        if (entry.kind === "assistant_text" && PR_URL_RE.test(entry.text)) {
-          l.prOpened = true;
-          break;
-        }
-        if (entry.kind === "tool" && (reduced.full.get(entry.id) ?? []).some((ln) => "text" in ln && PR_URL_RE.test(ln.text))) {
-          l.prOpened = true;
-          break;
-        }
-      }
+      const prUrl = firstPrUrl(reduced.entries, reduced.full);
       // Once the URL surfaces, remember it durably on the row. The `in_review` status a later
       // follow-up turn overwrites is transient; the FACT that a PR exists must outlive it, so
       // the finish sheet keeps offering «Закоміти» and every later turn settles back on review.
-      if (l.prOpened === true) {
+      // The URL itself is what the merged-PR check later asks GitHub about.
+      if (prUrl) {
+        l.prOpened = true;
         l.live.prOpened = true;
-        this.registry.updateSession(id, { prOpened: true });
+        l.live.prUrl = prUrl;
+        this.registry.updateSession(id, { prOpened: true, prUrl });
       }
     }
     // Task artifacts an agent attaches to its card via the shared kermanych-action mechanism —
@@ -2920,14 +2935,17 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
   // merged anywhere — code leaves Kermanych through a pull request only, so the BRANCH is
   // kept: it is what the PR points at, and reopening the session continues on it. The row
   // stays as `merged` history.
-  async finishSession(id: string): Promise<{ finished: true; branch: string }> {
+  // `skipDocsGate` is internal: only closeMerged passes it, after GitHub confirmed the merge —
+  // documentation commits would land on a branch that is already merged. The public finish
+  // route keeps the gate.
+  async finishSession(id: string, opts: { skipDocsGate?: boolean } = {}): Promise<{ finished: true; branch: string }> {
     const s = this.registry.listSessions().find((x) => x.id === id);
     if (!s) throw new Error("session not found");
     const g = this.boundProject(s.projectId);
     if (s.kind !== "agent")
       throw new Error(`${s.kind} branches can't be finished — merge or discard instead`);
     if (s.worktree && !s.worktreePath) throw new Error("session has no worktree");
-    await this.assertDocsGate(id);
+    if (!opts.skipDocsGate) await this.assertDocsGate(id);
 
     const dir = s.worktreePath || g.localRepoPath;
     const base = s.worktree ? "" : (s.baseBranch ?? "");
@@ -2967,6 +2985,90 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     this.pushUpdate(id);
     this.drainSlots();
     return { finished: true, branch: s.branch };
+  }
+
+  // Is the session's pull request merged on GitHub? (docs/specs/2026-10-26-pr-merged-close-prompt.md)
+  // Asked when the operator selects the session in «Агенти»; a `merged` answer offers
+  // «Закрити задачу». Only an agent session that opened a PR, is not retired, still has its
+  // tree and is not working right now is checked (decision 9); anything else is `unsupported`.
+  // The PR is the stored GitHub URL's, else (or when that one is not merged — closed and
+  // replaced) the latest merged PR of the session's branch on its base, opened no earlier than
+  // the session (decision 4). GitHub failures become states, never exceptions: the UI only
+  // shows them. The token is the bound repo's `GIT_TOKEN` (decision 5) and leaves no trace.
+  async prCheck(id: string): Promise<PrCheck> {
+    const row = this.registry.listSessions().find((x) => x.id === id);
+    if (!row) throw new Error("session not found");
+    const s = this.merge(row);
+    const g = this.registry.listProjects().find((p) => p.id === s.projectId);
+    if (
+      s.kind !== "agent" || !s.prOpened || s.status === "merged" || ACTIVE_STATUSES.includes(s.status) ||
+      (s.worktree && !s.worktreePath) || !g?.localRepoPath
+    )
+      return { state: "unsupported" };
+    const dir = s.worktreePath || g.localRepoPath;
+    const gh = new GithubClient(await this.gitToken(g.localRepoPath));
+    const stored = s.prUrl ? parseGithubPrUrl(s.prUrl) : null;
+    const report = (p: GithubPull, state: PrCheckState): PrCheck => ({ state, url: p.html_url, number: p.number });
+    const merged = async (p: GithubPull): Promise<PrCheck> => ({ ...report(p, "merged"), leftover: await this.prLeftover(dir, s.branch, p.head.sha) });
+    try {
+      let storedPull: GithubPull | undefined;
+      if (stored) {
+        storedPull = await gh.pull(stored.owner, stored.repo, stored.number);
+        if (storedPull.merged_at) return await merged(storedPull);
+      }
+      // The branch lookup reads owner/repo from `origin`; a stored GitHub URL names them too
+      // when the remote is not a GitHub one.
+      const remote = parseGithubRemote(await this.worktree.originUrl(g.localRepoPath)) ?? stored;
+      if (!remote || !s.branch) return storedPull ? report(storedPull, storedPull.state) : { state: "unsupported" };
+      let closed: GithubPull[];
+      try {
+        closed = await gh.closedPullsByHead(remote.owner, remote.repo, `${remote.owner}:${s.branch}`);
+      } catch (err) {
+        // The stored PR's own answer stands when only the fallback failed.
+        if (storedPull) return report(storedPull, storedPull.state);
+        throw err;
+      }
+      // Only a PR into the session's base (when one is known), opened since the session — an
+      // old PR from a reused branch name is somebody else's history. Newest first.
+      const base = s.baseBranch || g.defaultBranch || "";
+      const since = Date.parse(s.createdAt);
+      const ours = closed
+        .filter((p) => (!base || p.base.ref === base) && Date.parse(p.created_at) >= since)
+        .sort((a, b) => Date.parse(b.merged_at ?? b.created_at) - Date.parse(a.merged_at ?? a.created_at));
+      const replacement = ours.find((p) => p.merged_at);
+      if (replacement) return await merged(replacement);
+      if (storedPull) return report(storedPull, storedPull.state);
+      return ours[0] ? report(ours[0], "closed") : { state: "not_found" };
+    } catch (err) {
+      return prCheckFailure(err);
+    }
+  }
+
+  // «Закрити задачу»: the server re-checks the merge itself, so the UI cannot use this route to
+  // finish around the documentation gate (decision 3). Everything else is finishSession's.
+  async closeMerged(id: string): Promise<{ finished: true; branch: string }> {
+    if ((await this.prCheck(id)).state !== "merged") throw new Error("pr is not merged");
+    return this.finishSession(id, { skipDocsGate: true });
+  }
+
+  // Work the merged PR does not carry (decision 8): uncommitted changes, or a local branch head
+  // that is neither the PR's head nor behind it. A head GitHub knows but this clone does not
+  // fails isAncestor and so counts as unpushed. A branch that no longer resolves holds nothing.
+  private async prLeftover(dir: string, branch: string, prHead: string): Promise<{ dirty: boolean; unpushed: boolean }> {
+    const dirty = await this.worktree.hasUncommitted(dir);
+    const local = await this.worktree.revParse(dir, `refs/heads/${branch}`);
+    const unpushed = !!local && local !== prHead && !(await this.worktree.isAncestor(dir, local, prHead));
+    return { dirty, unpushed };
+  }
+
+  // The bound repo's `GIT_TOKEN`, "" without one (or without the env service, as in specs).
+  private async gitToken(repoPath: string): Promise<string> {
+    try {
+      const env = await this.envFile?.read(repoPath);
+      return env?.entries.find((e) => e.key === "GIT_TOKEN")?.value.trim() ?? "";
+    } catch {
+      return "";
+    }
   }
 
   // Reopen a retired worktree agent: bring the worktree back ON THE SESSION'S OWN BRANCH,

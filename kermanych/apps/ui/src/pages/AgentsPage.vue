@@ -576,6 +576,22 @@
               <dt class="agents__meta-label">{{ t('agents.session.base') }}</dt>
               <dd class="agents__meta-value mono">{{ selectedSession.baseBranch || '—' }}</dd>
             </div>
+            <!-- The PR «Створити ПР» opened and what GitHub says about it now. Checked only when
+                 the session is selected and eligible (prCheckEligible); otherwise just the link. -->
+            <div v-if="selectedSession.prOpened" class="agents__meta-row">
+              <dt class="agents__meta-label">{{ t('agents.pr.label') }}</dt>
+              <dd class="agents__meta-value mono">
+                <a
+                  v-if="prLink"
+                  class="agents__meta-link"
+                  :href="prLink.url"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >{{ prLink.label }}</a>
+                <span v-if="prStateWord">{{ prStateWord }}</span>
+                <template v-if="!prLink && !prStateWord">—</template>
+              </dd>
+            </div>
             <div class="agents__meta-row">
               <dt class="agents__meta-label">{{ t('agents.session.context') }}</dt>
               <dd class="agents__meta-value mono">{{ ctxOf(selectedSession) ?? '—' }}</dd>
@@ -1112,6 +1128,47 @@
       </template>
     </KModal>
 
+    <!-- MERGED PR — the PR this session opened is merged on GitHub: offer to retire the session
+         the way «Завершити» does (the api re-checks the merge and skips the documentation gate).
+         Asked once per selection; «Не зараз» is not remembered. -->
+    <KModal
+      :model-value="!!prMerged"
+      :title="t('agents.pr.mergedTitle')"
+      :persistent="closeMergedAction.busy.value"
+      @update:model-value="(open: boolean) => { if (!open) prMerged = null; }"
+    >
+      <div v-if="prMerged" class="agents__form">
+        <i18n-t keypath="agents.pr.mergedLead" tag="p">
+          <template #pr>
+            <a
+              v-if="prMerged.check.url"
+              class="agents__meta-link mono"
+              :href="prMerged.check.url"
+              target="_blank"
+              rel="noopener noreferrer"
+            >{{ prLabel(prMerged.check.url, prMerged.check.number) }}</a>
+            <span v-else class="mono">PR</span>
+          </template>
+        </i18n-t>
+        <template v-if="prMerged.check.leftover?.dirty || prMerged.check.leftover?.unpushed">
+          <p v-if="prMerged.check.leftover?.dirty" class="agents__error">{{ t('agents.pr.leftoverDirty') }}</p>
+          <p v-if="prMerged.check.leftover?.unpushed" class="agents__error">{{ t('agents.pr.leftoverUnpushed') }}</p>
+          <i18n-t keypath="agents.pr.leftoverBranch" tag="p" class="agents__hint">
+            <template #branch><code class="mono">{{ prMerged.branch }}</code></template>
+          </i18n-t>
+        </template>
+        <p v-if="closeMergedError" class="agents__error" role="alert">{{ closeMergedError }}</p>
+      </div>
+      <template #controls>
+        <KBtn variant="ghost" :disabled="closeMergedAction.busy.value" @click="prMerged = null">{{ t('agents.pr.notNow') }}</KBtn>
+        <KBtn
+          variant="primary"
+          :loading="closeMergedAction.busy.value"
+          @click="prMerged && closeMergedAction.run(prMerged.id)"
+        >{{ t('agents.pr.close') }}</KBtn>
+      </template>
+    </KModal>
+
     <!-- DOCUMENT → CARD — an API request (or handoff) becomes a task on another project's board
          mid-task: the other side's agent starts from the card, this session keeps working. -->
     <KModal v-model="docTaskOpen" :title="t('agents.docTask.title')" width="720px">
@@ -1164,6 +1221,8 @@ import {
   type DocsWriteKind,
   type DocsGateFailure,
   type ImageInput,
+  type PrCheck,
+  type PrCheckState,
   type Session,
   type SessionStatus,
   type TranscriptEntry,
@@ -2312,6 +2371,110 @@ watch(
   },
 );
 onBeforeUnmount(() => clearTimeout(changesTimer));
+
+// ── Merged PR (docs/specs/2026-10-26-pr-merged-close-prompt.md) ─────────────
+// Selecting a session that opened a PR asks GitHub (through the api) whether it is merged.
+// Only a resting agent with its worktree still there is checked: an active agent is still
+// working, a merged one is already retired. The answer lives here until the next selection;
+// nothing is persisted.
+function prCheckEligible(s: Session): boolean {
+  return (
+    s.kind === 'agent' &&
+    !!s.prOpened &&
+    s.status !== 'merged' &&
+    !s.archived &&
+    !ACTIVE_STATUSES.includes(s.status) &&
+    !(s.worktree && !s.worktreePath)
+  );
+}
+
+// Keyed by session id so a result never shows against another session's row.
+const prCheckResult = ref<{ id: string; check: PrCheck } | null>(null);
+const prChecking = ref(false);
+// The popup: which session, its PR and its branch (captured, so the text survives the
+// session row turning `merged` while the request settles).
+const prMerged = ref<{ id: string; branch: string; check: PrCheck } | null>(null);
+const closeMergedError = ref<string | null>(null);
+// Orders overlapping checks: a reply for a previously selected session is dropped.
+let prCheckRun = 0;
+
+async function runPrCheck(s: Session): Promise<void> {
+  const run = ++prCheckRun;
+  prChecking.value = true;
+  let check: PrCheck;
+  try {
+    check = await store.prCheck(s.id);
+  } catch {
+    // The api maps every GitHub failure to a state; a throw is the local api itself.
+    check = { state: 'error' };
+  }
+  if (run !== prCheckRun) return;
+  prChecking.value = false;
+  prCheckResult.value = { id: s.id, check };
+  // A failed check never prompts; manual «Завершити» stays available.
+  if (check.state === 'merged') {
+    closeMergedError.value = null;
+    prMerged.value = { id: s.id, branch: s.branch, check };
+  }
+}
+
+// Keyed on the resolved session's id rather than `selectedSessionId` alone: a selection that
+// lands before the session list does still gets its check once the row arrives, while a
+// `session_update` on the same session never re-asks.
+watch(
+  () => selectedSession.value?.id,
+  () => {
+    // Invalidate any check in flight and whatever the previous session showed.
+    prCheckRun++;
+    prChecking.value = false;
+    prCheckResult.value = null;
+    prMerged.value = null;
+    const s = selectedSession.value;
+    if (s && prCheckEligible(s)) void runPrCheck(s);
+  },
+  { immediate: true },
+);
+
+const closeMergedAction = useAsyncAction(
+  async (id: string) => {
+    closeMergedError.value = null;
+    await store.closeMerged(id);
+    // The row turns `merged` through the normal session_update; nothing new is selected.
+    prMerged.value = null;
+  },
+  { onError: (e) => { closeMergedError.value = errorText(e); } },
+);
+
+// `#<number>` for a GitHub PR; a stored non-GitHub URL still ends in its number
+// (GitLab `/merge_requests/12`, Bitbucket `/pull-requests/7`).
+function prLabel(url: string, number?: number): string {
+  const n = number ?? url.match(/\/(\d+)\/?$/)?.[1];
+  return n != null ? `#${n}` : 'PR';
+}
+
+const PR_STATE_KEYS: Record<PrCheckState, string> = {
+  open: 'agents.pr.state.open',
+  merged: 'agents.pr.state.merged',
+  closed: 'agents.pr.state.closed',
+  not_found: 'agents.pr.state.notFound',
+  unsupported: 'agents.pr.state.unsupported',
+  no_access: 'agents.pr.state.noAccess',
+  rate_limited: 'agents.pr.state.rateLimited',
+  offline: 'agents.pr.state.offline',
+  error: 'agents.pr.state.error',
+};
+
+const selectedPrCheck = computed(() =>
+  prCheckResult.value && prCheckResult.value.id === selectedSession.value?.id ? prCheckResult.value.check : undefined,
+);
+const prLink = computed(() => {
+  const url = selectedPrCheck.value?.url ?? selectedSession.value?.prUrl;
+  return url ? { url, label: prLabel(url, selectedPrCheck.value?.number) } : undefined;
+});
+const prStateWord = computed(() => {
+  if (selectedPrCheck.value) return t(PR_STATE_KEYS[selectedPrCheck.value.state]);
+  return prChecking.value ? t('agents.pr.state.checking') : undefined;
+});
 
 // ctx% is already 0–100 as reported by omp — render verbatim, never ×100.
 function ctxOf(s: Session): string | undefined {
@@ -4337,6 +4500,15 @@ async function submitPreviewConfig(): Promise<void> {
   cursor: pointer;
 }
 .agents__meta-copy:hover {
+  text-decoration: underline;
+}
+// The PR link (the «PR» row and the merged-PR popup): opens in the OS browser, and like
+// the copy target it reads as plain text with a hover underline.
+.agents__meta-link {
+  color: inherit;
+  text-decoration: none;
+}
+.agents__meta-link:hover {
   text-decoration: underline;
 }
 // No wrapping: the bar is 34px and a second row of glyphs would grow it. At most five fit

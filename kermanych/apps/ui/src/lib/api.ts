@@ -39,6 +39,7 @@ import type {
   MachineResources,
   ResourcesUpdate,
   MinionState,
+  PrCheck,
 } from '@kermanych/core';
 import type {
   CloudProject,
@@ -732,6 +733,15 @@ export const api = {
 
   createPr: (id: string): Promise<{ ok: boolean }> =>
     post<{ ok: boolean }>(`/sessions/${id}/pr`, {}),
+
+  // Whether this session's pull request is merged on GitHub. Never fails for a GitHub problem:
+  // the api maps it to a state (no access, rate limit, offline …) the «Сесія» tab can show.
+  prCheck: (id: string): Promise<PrCheck> => get<PrCheck>(`/sessions/${id}/pr`),
+
+  // «Закрити задачу» after a merged PR: the api re-checks the merge, then finishes the session
+  // without the documentation gate; it refuses (400) anything not merged.
+  closeMerged: (id: string): Promise<{ finished: boolean; branch: string }> =>
+    post(`/sessions/${id}/close-merged`, {}),
 
   commitChanges: (id: string): Promise<{ ok: boolean }> =>
     post<{ ok: boolean }>(`/sessions/${id}/commit`, {}),

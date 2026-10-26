@@ -115,6 +115,10 @@ export type Session = {
   // two things: the finish sheet's secondary action stays «Закоміти» (never reopens a PR), and
   // any later turn settles the card back on «На ревʼю» instead of `done`.
   prOpened?: boolean;
+  // The pull request's URL: the first PR URL that surfaced together with `prOpened`. Absent on
+  // sessions that opened their PR before it was stored; the merged-PR check then looks the PR up
+  // by branch (docs/specs/2026-10-26-pr-merged-close-prompt.md, decision 4).
+  prUrl?: string;
   todoPhases?: TodoPhase[]; contextPercent?: number; lastEventAt?: number;
   // Lifetime accounting: every assistant turn this session ran, summed. Persisted by the
   // api, so a dormant or finished agent still states what it spent. Absent means "never
@@ -123,6 +127,13 @@ export type Session = {
   pendingUiRequest?: RpcExtensionUIRequest; archived?: boolean; createdAt: string;
   lastActivityAt: string;
 };
+
+// The merged-PR check of a session (docs/specs/2026-10-26-pr-merged-close-prompt.md): the PR's
+// state on GitHub, or why it could not be learned. `unsupported` covers a non-GitHub remote and
+// a session that is not eligible for the check. `leftover` is set only for `merged`: work on the
+// local branch the merged PR does not carry (uncommitted changes, commits after its head).
+export type PrCheckState = "open" | "merged" | "closed" | "not_found" | "unsupported" | "no_access" | "rate_limited" | "offline" | "error";
+export type PrCheck = { state: PrCheckState; url?: string; number?: number; leftover?: { dirty: boolean; unpushed: boolean } };
 
 // DTO for creating a new session. All fields are optional as they patch a backlog row.
 export type CreateSessionDto = {

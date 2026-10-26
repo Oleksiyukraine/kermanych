@@ -230,6 +230,29 @@ export class SessionsController {
     }
   }
 
+  // The merged-PR check (docs/specs/2026-10-26-pr-merged-close-prompt.md): GitHub failures come
+  // back as a PrCheck state, so only an unknown session is a 400.
+  @Get(":id/pr")
+  async prCheck(@Param("id") id: string) {
+    try {
+      return await this.sup.prCheck(id);
+    } catch (err) {
+      throw sessionFailure(err);
+    }
+  }
+
+  // «Закрити задачу»: finish without the documentation gate, only once GitHub confirms the
+  // merge; otherwise a 400 `pr is not merged`.
+  @Post(":id/close-merged")
+  async closeMerged(@Param("id") id: string) {
+    try {
+      this.preview.stop(id);
+      return await this.sup.closeMerged(id);
+    } catch (err) {
+      throw sessionFailure(err);
+    }
+  }
+
   @Post(":id/pr")
   async pr(@Param("id") id: string) {
     try {
