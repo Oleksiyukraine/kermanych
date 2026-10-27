@@ -108,6 +108,13 @@ async function openTreeFileAt(path: string): Promise<void> {
   }
 }
 
+// Raw bytes for the viewer's preview mode, from the same source as the tree.
+function loadRaw(path: string): Promise<Blob> {
+  const src = source.value;
+  if (!src) return Promise.reject(new Error('no source'));
+  return src.kind === 'session' ? store.sessionRaw(src.id, path) : store.projectRaw(src.id, path);
+}
+
 function closeTreeFile(): void {
   openTreeFile.value = null;
   treeFile.value = null;
@@ -190,6 +197,7 @@ watch(
           :loading="treeFileLoading"
           :error="treeFileError"
           :maximized="false"
+          :load="loadRaw"
           @close="closeTreeFile"
           @toggle-maximize="toggleTreeFileMaximized"
         />
@@ -221,6 +229,7 @@ watch(
           :loading="treeFileLoading"
           :error="treeFileError"
           :maximized="true"
+          :load="loadRaw"
           @close="closeTreeFile"
           @toggle-maximize="toggleTreeFileMaximized"
         />

@@ -162,6 +162,18 @@ export class ProjectsController {
     }
   }
 
+  @Get(":id/raw")
+  async raw(@Param("id") id: string, @Query("path") path?: string) {
+    let file: { bytes: Buffer; contentType: string } | null;
+    try {
+      file = await this.sup.projectRaw(id, path ?? "");
+    } catch (err) {
+      throw new BadRequestException((err as Error).message);
+    }
+    if (!file) throw new NotFoundException("file not found");
+    return new StreamableFile(file.bytes, { type: file.contentType, length: file.bytes.length });
+  }
+
   @Get(":id/env")
   async getEnv(@Param("id") id: string, @Query("file") file?: string) {
     const p = this.reg.listProjects().find((x) => x.id === id);

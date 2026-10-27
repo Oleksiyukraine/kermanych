@@ -129,6 +129,7 @@ async function createWindow(apiBase: string) {
     webPreferences: {
       contextIsolation: true,
       sandbox: false, // preload needs process.argv to read --api-base and --ui-key
+      plugins: true, // Chromium's built-in PDF viewer — the file viewers' PDF preview
       // More info: https://v2.quasar.dev/quasar-cli-vite/developing-electron-apps/electron-preload-script
       preload: path.resolve(
         currentDir,
