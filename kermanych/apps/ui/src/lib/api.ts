@@ -710,11 +710,18 @@ export const api = {
   sessionFile: (id: string, path: string): Promise<FileContent> =>
     get<FileContent>(`/sessions/${id}/file?path=${encodeURIComponent(path)}`),
 
+  // Raw bytes for the viewer's preview mode — a PDF has no text body for sessionFile to carry.
+  sessionRaw: (id: string, path: string): Promise<Blob> =>
+    getBlob(`/sessions/${id}/raw?path=${encodeURIComponent(path)}`),
+
   projectTree: (id: string, path: string): Promise<TreeEntry[]> =>
     get<TreeEntry[]>(`/projects/${id}/tree${path ? `?path=${encodeURIComponent(path)}` : ''}`),
 
   projectFile: (id: string, path: string): Promise<FileContent> =>
     get<FileContent>(`/projects/${id}/file?path=${encodeURIComponent(path)}`),
+
+  projectRaw: (id: string, path: string): Promise<Blob> =>
+    getBlob(`/projects/${id}/raw?path=${encodeURIComponent(path)}`),
 
   projectDocsTree: (id: string, folder: string, path: string): Promise<TreeEntry[]> =>
     get<TreeEntry[]>(`/projects/${id}/docs/tree?folder=${encodeURIComponent(folder)}${path ? `&path=${encodeURIComponent(path)}` : ''}`),

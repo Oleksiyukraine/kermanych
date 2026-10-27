@@ -39,7 +39,11 @@ export type KIconName =
   | 'start'
   | 'minion'
   | 'decision'
-  | 'notNeeded';
+  | 'notNeeded'
+  | 'viewSource'
+  | 'viewSplit'
+  | 'viewPreview'
+  | 'viewDiff';
 </script>
 
 <script setup lang="ts">
@@ -158,6 +162,24 @@ const ICONS: Record<KIconName, readonly string[]> = {
   // «Не потрібно» — a slashed disc (Lucide's ban): the run found nothing to change and closed
   // the card (KNotNeededMark).
   notNeeded: ['M3 12a9 9 0 1 0 18 0a9 9 0 1 0-18 0', 'm4.9 4.9 14.2 14.2'],
+
+  // The file viewer's three modes (KViewModeToggle): source lines, source beside a page, the
+  // rendered page alone. The same trio an IDE's Markdown editor shows, so it reads at a glance.
+  viewSource: ['M4 6h16', 'M4 10h16', 'M4 14h16', 'M4 18h16'],
+  viewSplit: [
+    'M3 6h6',
+    'M3 10h6',
+    'M3 14h6',
+    'M3 18h6',
+    'M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z',
+  ],
+  viewPreview: [
+    'M5 3h14a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z',
+    'M7 9a2 2 0 1 0 4 0a2 2 0 1 0-4 0',
+    'm21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21',
+  ],
+  // KDiffView's diff on/off: Lucide's «diff», a plus over a minus.
+  viewDiff: ['M12 3v14', 'M5 10h14', 'M5 21h14'],
 };
 
 const props = defineProps<{ name: KIconName }>();

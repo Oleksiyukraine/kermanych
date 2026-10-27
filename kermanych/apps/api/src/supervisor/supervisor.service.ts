@@ -2939,6 +2939,16 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     return this.worktree.readFileContent(dir, path);
   }
 
+  // Same resolution as sessionFile; the bytes back the viewer's preview mode (PDF).
+  async sessionRaw(id: string, path: string): Promise<{ bytes: Buffer; contentType: string } | null> {
+    const s = this.registry.listSessions().find((x) => x.id === id);
+    if (!s) throw new Error("session not found");
+    const g = this.boundProject(s.projectId);
+    if (s.worktree && !s.worktreePath) throw new Error("session has no worktree — reopen it to continue");
+    const dir = s.worktreePath || g.localRepoPath;
+    return this.worktree.readFileBytes(dir, path);
+  }
+
   // The file-manager dock with no session selected: the project's own checkout on this
   // machine. Same readers (and so the same path guard) as the session reads above.
   async projectTree(projectId: string, path: string): Promise<TreeEntry[]> {
@@ -2947,6 +2957,10 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
 
   async projectFile(projectId: string, path: string): Promise<FileContent> {
     return this.worktree.readFileContent(this.boundProject(projectId).localRepoPath, path);
+  }
+
+  async projectRaw(projectId: string, path: string): Promise<{ bytes: Buffer; contentType: string } | null> {
+    return this.worktree.readFileBytes(this.boundProject(projectId).localRepoPath, path);
   }
 
   // Retire the session: commit whatever is loose so nothing is lost, stop the omp child and
