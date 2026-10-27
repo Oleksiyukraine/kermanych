@@ -5,12 +5,19 @@ import type { TranscriptEntry } from "./types";
 
 export type SkillDef = { name: string; description: string; body: string };
 
-// What the UI lists and what the transcript labels a row with. `shadowedByRepo` is the
-// absolute path of the repository skill that won the name, so the override is never silent.
+// The library owners a row can belong to, most specific first — the order the launch
+// resolver applies (user > project > workspace, then the defaults).
+export type SkillScope = "user" | "project" | "workspace";
+
+// What the UI lists and what the transcript labels a row with. `source` is "default" for one
+// of Kermanych's own skills and otherwise the scope that OWNS the library row the session
+// gets — a workspace row that replaces a default says "workspace", so the operator knows which
+// scope to edit. `shadowedByRepo` is the absolute path of the repository skill that won the
+// name, so the override is never silent.
 export type SkillView = {
   name: string;
   description: string;
-  source: "default" | "project";
+  source: "default" | SkillScope;
   shadowedByRepo?: string;
 };
 
@@ -97,11 +104,25 @@ export function normaliseSkillName(raw: string): string {
 // omp reads `<dir>/<name>/SKILL.md` and needs BOTH keys — a custom-directory skill without
 // a description is dropped at discovery. The description is emitted as a JSON string, which
 // is valid YAML and survives colons, quotes and newlines without hand-rolled escaping.
-export function renderSkillFile(s: SkillDef): string {
+//
+// `scope` is the owner of a library row. The body then opens with a comment naming it, so the
+// agent reading `skill://<name>` (and the operator opening the file) sees where the text comes
+// from — and, for a row that replaces one of Kermanych's defaults, which scope to edit to get
+// the default back. A default itself is written without it.
+export function renderSkillFile(s: SkillDef, scope?: SkillScope): string {
   // The name is a plain YAML scalar, so an unvalidated one could close the frontmatter and
   // inject keys (e.g. `alwaysApply`). Both callers must go through this guard.
   if (!isSkillName(s.name)) throw new Error(`invalid skill name: ${s.name}`);
-  return `---\nname: ${s.name}\ndescription: ${JSON.stringify(s.description)}\n---\n\n${s.body.replace(/\s+$/, "")}\n`;
+  const origin = scope ? `${libraryOrigin(s.name, scope)}\n\n` : "";
+  return `---\nname: ${s.name}\ndescription: ${JSON.stringify(s.description)}\n---\n\n${origin}${s.body.replace(/\s+$/, "")}\n`;
+}
+
+// An HTML comment: invisible in rendered markdown, verbatim to a model reading the file. The
+// name passed isSkillName and the scope is a literal, so neither can close the comment.
+function libraryOrigin(name: string, scope: SkillScope): string {
+  const base = `Kermanych library skill, owned at ${scope} scope.`;
+  if (!DEFAULT_SKILLS.some((d) => d.name === name)) return `<!-- ${base} -->`;
+  return `<!-- ${base} It replaces Kermanych's default skill "${name}"; deleting this ${scope} row restores the default. -->`;
 }
 
 // Kermanych's own library: both entries describe THIS harness's instrumentation, which no

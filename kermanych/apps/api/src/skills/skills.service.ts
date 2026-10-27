@@ -52,7 +52,10 @@ export function skillsRoot(): string {
   return join(process.env.KERMANYCH_SKILLS_HOME ?? join(homedir(), ".kermanych"), "skills");
 }
 
-export type Resolved = { def: SkillDef; source: "default" | "project" };
+// `source` is the owner scope of the winning library row, or "default" — never a flattened
+// "project": a workspace row that replaces a default must say so, or the operator cannot tell
+// which scope to edit to get the default back.
+export type Resolved = { def: SkillDef; source: SkillView["source"] };
 
 // The owners one session reads, most-specific first. A session always has a project; the
 // workspace and the launching user are added when known (a local-only project has no
@@ -94,7 +97,7 @@ export function resolveSkills(rows: readonly AiSkill[]): Resolved[] {
       out.delete(r.name);
       continue;
     }
-    out.set(r.name, { def: { name: r.name, description: r.description, body: r.body }, source: "project" });
+    out.set(r.name, { def: { name: r.name, description: r.description, body: r.body }, source: r.owner.scope });
   }
   // Last line of defence before mkdir/write: the DB has the same constraints, but a bad row
   // from an older client must never become a directory name or a description-less skill.
@@ -563,14 +566,18 @@ export class SkillsService {
       }
       if (!repoFailed) {
         const keep = new Set<string>();
-        for (const { def } of resolved) {
+        for (const { def, source } of resolved) {
           if (repo.has(def.name)) continue; // the repository's own skill wins the name
           keep.add(def.name);
           // With no cloud, `resolved` is just the defaults: rewriting a name already on disk
           // would demote an owner's own skill to the default that shares its name.
           if (cloudFailed && (await hasSkillFile(dir, def.name))) continue;
           await mkdir(join(dir, def.name), { recursive: true });
-          await writeFile(join(dir, def.name, "SKILL.md"), renderSkillFile(def), "utf8");
+          await writeFile(
+            join(dir, def.name, "SKILL.md"),
+            renderSkillFile(def, source === "default" ? undefined : source),
+            "utf8",
+          );
         }
         // Runs only after every write succeeded, so a half-written library is never pruned
         // against. Removed AND newly repo-shadowed names both disappear here. Skipped when the

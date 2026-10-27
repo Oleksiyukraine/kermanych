@@ -82,7 +82,7 @@ export function ownerLibraryView(rows: readonly AiSkill[]): SkillView[] {
       out.delete(r.name);
       continue;
     }
-    out.set(r.name, { name: r.name, description: r.description, source: 'project' });
+    out.set(r.name, { name: r.name, description: r.description, source: r.owner.scope });
   }
   return [...out.values()].filter((s) => s.description.trim() !== '');
 }

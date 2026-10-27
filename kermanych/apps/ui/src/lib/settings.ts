@@ -203,18 +203,18 @@ export function sequenceCandidates(
  * WHERE AN ASSIGNED SKILL'S TEXT COMES FROM, as one badge.
  *
  * `shadowedByRepo` is checked BEFORE `source`, and that order is the whole point.
- * `SkillView.source` is `'default' | 'project'` with no repository value, so the endpoint
- * reports a skill the repository provides as `source: 'project'` (SkillsService.view /
+ * `SkillView.source` has no repository value (it is "default" or the owning scope), so the
+ * endpoint reports a skill the repository provides as `source: 'project'` (SkillsService.view /
  * assignedForNames, `hit?.source ?? "project"`). Reading `source` first would tell the
  * operator the project owns a text the repository actually supplies — and the repository
  * always wins the name.
  */
-export type AssignmentBadge = { kind: 'default' | 'project' | 'repo' | 'broken' };
+export type AssignmentBadge = { kind: SkillView['source'] | 'repo' | 'broken' };
 
 export function assignmentBadge(skill: AssignedSkill): AssignmentBadge {
   if (skill.broken) return { kind: 'broken' };
   if (skill.shadowedByRepo) return { kind: 'repo' };
-  return { kind: skill.source === 'default' ? 'default' : 'project' };
+  return { kind: skill.source ?? 'project' };
 }
 
 /**

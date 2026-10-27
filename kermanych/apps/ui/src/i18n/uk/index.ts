@@ -1063,7 +1063,9 @@ export const uk = {
       broken: 'немає навички',
       repo: 'перекрито репо',
       default: 'дефолт',
+      user: 'користувач',
       project: 'проєкт',
+      workspace: 'воркспейс',
     },
     logChannel: {
       operator: 'слова оператора',
@@ -1565,8 +1567,6 @@ export const uk = {
       disable: 'Вимкнути',
       badgeOff: 'вимкнено',
       badgeRepo: 'перекрито репо',
-      badgeDefault: 'дефолт',
-      badgeProject: 'проєкт',
       errName: 'Імʼя: лише малі латинські літери, цифри та дефіс (до 64 символів).',
       errNoDesc: 'Без опису omp проігнорує навичку.',
       importBtn: 'Імпортувати з диска…',

@@ -51,7 +51,7 @@
               @click="edit(row)"
             >{{ t('settings.skillsLibrary.edit') }}</button>
             <button
-              v-if="row.source === 'project'"
+              v-if="row.source !== 'default'"
               type="button"
               class="sk__btn"
               :disabled="!canWrite || rowAction.busyFor(row.name)"
@@ -326,9 +326,7 @@ function badgeKind(row: Row): string {
 function badgeLabel(row: Row): string {
   if (row.off) return t('settings.skillsLibrary.badgeOff');
   if (row.shadowedByRepo) return t('settings.skillsLibrary.badgeRepo');
-  return row.source === 'default'
-    ? t('settings.skillsLibrary.badgeDefault')
-    : t('settings.skillsLibrary.badgeProject');
+  return t(`settings.skillStatus.${row.source}`);
 }
 
 // A row with `enabled: false` whose name is one of Kermanych's own defaults is a TOMBSTONE:
