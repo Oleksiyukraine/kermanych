@@ -26,7 +26,7 @@ export const DEFAULT_THEME: KTheme = 'dark';
 /** Every theme the token sheet ships, in the order the shell's one-click toggle
  *  cycles through — and the allow-list `readTheme` validates a stored value
  *  against, so a key the app no longer ships resolves to the default. */
-export const THEMES: readonly KTheme[] = ['dark', 'light', 'matrix'];
+export const THEMES: readonly KTheme[] = ['dark', 'light', 'matrix', 'hermes'];
 
 // Storage access is fallible on purpose: private-browsing windows and embedded
 // webviews throw on `localStorage` rather than returning null, and a theme that
@@ -86,7 +86,7 @@ export function setTheme(next: KTheme, origin?: DOMRect | null): void {
 }
 
 /**
- * Advance one step through `THEMES` (dark → light → matrix → dark): the shell
+ * Advance one step through `THEMES` (dark → light → matrix → hermes → dark): the shell
  * toggle, where there is no room for a full picker. `origin` is the pressed
  * control, so a circle-wipe destination grows from under it.
  */

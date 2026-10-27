@@ -245,10 +245,10 @@ watch(
   flex-direction: column;
   gap: 2px;
   padding: var(--k-sp-1);
-  background: var(--k-surface);
+  background: var(--k-grad-raise), var(--k-surface);
   border: 1px solid var(--k-line-strong);
   border-radius: var(--k-r);
-  box-shadow: var(--k-shadow-pop);
+  box-shadow: var(--k-sheen), var(--k-shadow-pop);
   opacity: 0;
   transition: opacity 0.12s ease, transform 0.12s cubic-bezier(0.4, 0, 0.2, 1);
   // Rests 3px toward its trigger, so the menu reads as emerging from the button.

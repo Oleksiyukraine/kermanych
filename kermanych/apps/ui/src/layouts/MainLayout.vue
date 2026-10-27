@@ -910,16 +910,17 @@ function onThemeToggle(e: MouseEvent): void {
   toggleTheme(el instanceof HTMLElement ? el.getBoundingClientRect() : null);
 }
 
-// The shell toggle steps through every theme (dark → light → matrix); the glyph
-// and title name the DESTINATION — the theme the next click moves TO. Half-width
-// katakana ﾏ stands in for the Matrix rain, keeping the celestial ☾/☀ pair for
-// the two plain themes.
-const NEXT_THEME: Record<KTheme, KTheme> = { dark: 'light', light: 'matrix', matrix: 'dark' };
-const THEME_GLYPH: Record<KTheme, string> = { dark: '☾', light: '☀', matrix: 'ﾏ' };
+// The shell toggle steps through every theme (dark → light → matrix → hermes); the
+// glyph and title name the DESTINATION — the theme the next click moves TO. Half-width
+// katakana ﾏ stands in for the Matrix rain; ☿ (Mercury, Hermes' Roman name) extends the
+// celestial ☾/☀ pair for Hermes.
+const NEXT_THEME: Record<KTheme, KTheme> = { dark: 'light', light: 'matrix', matrix: 'hermes', hermes: 'dark' };
+const THEME_GLYPH: Record<KTheme, string> = { dark: '☾', light: '☀', matrix: 'ﾏ', hermes: '☿' };
 const THEME_TITLE_KEY: Record<KTheme, string> = {
   dark: 'common.nav.themeDark',
   light: 'common.nav.themeLight',
   matrix: 'common.nav.themeMatrix',
+  hermes: 'common.nav.themeHermes',
 };
 const themeToggleGlyph = computed(() => THEME_GLYPH[NEXT_THEME[theme.value]]);
 const themeToggleTitle = computed(() => t(THEME_TITLE_KEY[NEXT_THEME[theme.value]]));

@@ -64,9 +64,9 @@ const isBusy = computed(() => props.disabled || props.loading);
   }
 }
 
-// primary — the single accent action.
+// primary — the single accent action; the fill is a step lighter at the top.
 .k-btn--primary {
-  background: var(--k-accent);
+  background: var(--k-grad-accent);
   color: var(--k-on-accent);
   border-color: var(--k-accent);
 

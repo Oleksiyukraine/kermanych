@@ -110,19 +110,31 @@
 - `apps/ui/src/layouts/MainLayout.vue` — `NEXT_THEME`, `THEME_GLYPH`, `THEME_TITLE_KEY`.
 - `apps/ui/src/pages/SettingsPage.vue` — fourth segment.
 - i18n uk/en — `common.nav.themeHermes`, `settings.app.themeHermes`.
-- Components per decision 5; `KSessionCard.vue` ring per decision 6.
+- Components per decision 5; `KSessionCard.vue` ring per decision 6. The `KFileManager`
+  viewer takes the sheen only — it is up to 1400px wide, too large a plane for the overlay.
+- `apps/ui/src/lib/attention.ts` — `isRunningStatus(status)` extracted from the sidebar
+  tally, so the ring and the sidebar's «працює» share one definition of «running».
 - `apps/ui/test/theme.spec.ts` — reads `hermes`; cycle `dark → light → matrix → hermes → dark`.
 
 ## Verification
 
-- `apps/ui`: `vitest run --maxWorkers=4` (theme spec, i18n completeness) and `vue-tsc --noEmit`.
-- `packages/tokens`: typecheck of the mirror (`satisfies Record<KTheme, …>` catches a missing
-  theme).
-- Visual check on the seeded preview (api `KERMANYCH_SEED=1 KERMANYCH_PREVIEW=1`, ui
-  `VITE_KERMANYCH_PREVIEW=1`) in all four themes: kit gallery (buttons, cards, modal, toast,
-  menus), Агенти with a running and a finished selected session (ring runs / stands), Чати,
-  composer focus, reduced-motion emulation (ring static), shell toggle cycle and glyphs,
-  reload in `hermes` (no flash, splash in Hermes colours).
+- `apps/ui`: `vitest run --maxWorkers=4 --minWorkers=1` — 66 files, 727 tests pass;
+  `vue-tsc --noEmit` clean.
+- `packages/tokens/src/index.ts`: `tsc --noEmit --strict` clean (`satisfies Record<KTheme, …>`
+  holds for `color`, `shadow`, `depth`).
+- Seeded preview (api `KERMANYCH_SEED=1 KERMANYCH_PREVIEW=1`, ui `VITE_KERMANYCH_PREVIEW=1`):
+  - reload with `kermanych.theme=hermes` paints Hermes (`--k-canvas` `#0a0c11`);
+  - Агенти: selected `thinking` card has `k-session-card--running`, its `--k-ring-angle`
+    advanced between reads (299° → 334°); a selected `waiting_input` card has a static
+    linear frame and no animation; the running rule sits inside
+    `@media (prefers-reduced-motion: no-preference)`, so reduced motion gets the static frame;
+  - the split-button menu, primary button, focused composer (glow), new-task modal and kit
+    gallery kanban cards render with the depth tokens; dark, light and matrix rechecked on the
+    same screen;
+  - Settings → Застосунок shows four segments; the shell toggle stepped light → matrix →
+    hermes → dark with glyphs ﾏ, ☿, ☾.
+  Not exercised: the Electron window background (reads the computed `--k-canvas`, unchanged
+  code); Чати (same `KSessionCard`).
 
 ## Documentation impact
 
