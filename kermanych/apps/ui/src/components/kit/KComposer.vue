@@ -332,13 +332,15 @@ function submit(): void {
   border: 1px solid var(--k-line-strong);
   border-radius: var(--k-r);
   background: var(--k-bg);
+  box-shadow: var(--k-sheen), var(--k-shadow-card);
   padding: var(--k-sp-2) var(--k-sp-3);
-  transition: border-color 0.12s;
+  transition: border-color 0.12s, box-shadow 0.12s;
 }
 
-// red border = keyboard focus lives in this composer.
+// accent border + glow = keyboard focus lives in this composer.
 .k-composer--focused .k-composer__form {
   border-color: var(--k-accent);
+  box-shadow: var(--k-sheen), var(--k-shadow-card), var(--k-glow-focus);
 }
 
 .k-composer--disabled .k-composer__form {

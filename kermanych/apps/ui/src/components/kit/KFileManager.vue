@@ -373,7 +373,8 @@ watch(
   background: var(--k-bg);
   border: 1px solid var(--k-line-strong);
   border-radius: var(--k-r-lg);
-  box-shadow: var(--k-shadow-modal);
+  // Sheen only, no raise overlay: a gradient across a viewer this large would band.
+  box-shadow: var(--k-sheen), var(--k-shadow-modal);
   overflow: hidden;
 }
 </style>

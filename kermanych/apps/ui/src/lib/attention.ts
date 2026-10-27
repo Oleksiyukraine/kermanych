@@ -2,7 +2,7 @@
 // What a sidebar row tells the operator about a project: does it need them, and how badly.
 // One rule for the project rows and the workspace rows above them, so a folded workspace
 // and the projects it hides can never disagree.
-import type { Session } from '@kermanych/core';
+import type { Session, SessionStatus } from '@kermanych/core';
 import { bucketOf } from './buckets';
 
 // How many of the project's sessions sit in each state that deserves a mark.
@@ -86,17 +86,20 @@ export function attentionByProject(
   return out;
 }
 
+/** `queued` / `thinking` / `tool`: the agent is working (or about to). Shared with the
+ *  selected session card, whose frame runs exactly while this holds. */
+export function isRunningStatus(status: SessionStatus): boolean {
+  return status === 'queued' || status === 'thinking' || status === 'tool';
+}
+
 function stateOf(s: Session, unseen: (s: Session) => boolean): keyof Attention | undefined {
+  if (isRunningStatus(s.status)) return 'running';
   switch (s.status) {
     case 'waiting_input':
       return 'input';
     case 'error':
     case 'conflict':
       return 'error';
-    case 'queued':
-    case 'thinking':
-    case 'tool':
-      return 'running';
     case 'done':
     case 'in_review':
       return unseen(s) ? 'result' : undefined;
