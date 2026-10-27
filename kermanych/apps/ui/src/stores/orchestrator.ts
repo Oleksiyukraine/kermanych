@@ -493,12 +493,20 @@ export const useOrchestrator = defineStore('orchestrator', () => {
     return api.sessionFile(id, path);
   }
 
+  function sessionRaw(id: string, path: string) {
+    return api.sessionRaw(id, path);
+  }
+
   function projectTree(id: string, path: string) {
     return api.projectTree(id, path);
   }
 
   function projectFile(id: string, path: string) {
     return api.projectFile(id, path);
+  }
+
+  function projectRaw(id: string, path: string) {
+    return api.projectRaw(id, path);
   }
 
   async function finishSession(id: string) {
@@ -621,8 +629,10 @@ export const useOrchestrator = defineStore('orchestrator', () => {
     fileDiff,
     sessionTree,
     sessionFile,
+    sessionRaw,
     projectTree,
     projectFile,
+    projectRaw,
     finishSession,
     closeMerged,
     createPr,

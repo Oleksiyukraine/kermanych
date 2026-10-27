@@ -513,6 +513,7 @@
                   :diff="fileDiff"
                   :loading="fileDiffLoading"
                   :error="fileDiffError"
+                  :load="loadSessionRaw"
                   @close="closeFile"
                 />
               </li>
@@ -704,6 +705,7 @@
                     :diff="fileDiff"
                     :loading="fileDiffLoading"
                     :error="fileDiffError"
+                    :load="loadSessionRaw"
                     @close="closeFile"
                   />
                 </li>
@@ -2300,6 +2302,13 @@ function closeFile(): void {
   openFile.value = null;
   fileDiffLoading.value = false;
   fileDiffRun++;
+}
+
+// Raw bytes for the diff's preview mode (Markdown/HTML/PDF), read from the session's worktree.
+function loadSessionRaw(path: string): Promise<Blob> {
+  const id = store.selectedSessionId;
+  if (!id) return Promise.reject(new Error('no session selected'));
+  return store.sessionRaw(id, path);
 }
 
 function toggleFile(path: string): void {

@@ -2407,6 +2407,9 @@ export const en: MessageSchema = {
       noChanges: 'This file is identical to the base.',
       original: 'Original',
       changes: 'Changes',
+      showDiff: 'Show changes',
+      hideDiff: 'Show the whole file',
+      fileUnavailable: 'File unavailable — it is missing or larger than 4 MB.',
     },
     dateField: {
       placeholder: 'dd.mm.yyyy',
@@ -2497,6 +2500,17 @@ export const en: MessageSchema = {
       tooLarge: 'File too large to view.',
       maximize: 'Full screen',
       minimize: 'Collapse to panel',
+    },
+    viewMode: {
+      label: 'View mode',
+      source: 'Source',
+      split: 'Source and preview',
+      preview: 'Preview',
+    },
+    docPreview: {
+      label: 'Preview of {path}',
+      loading: 'Rendering…',
+      unavailable: 'Preview unavailable — the file is missing or larger than 4 MB.',
     },
     helperPicker: {
       title: 'Helpers',
@@ -2595,7 +2609,8 @@ export const en: MessageSchema = {
         chat: '08 · Chat',
         composer: '09 · Composer',
         diff: '10 · File diff',
-        async: '11 · Async states',
+        viewMode: '11 · View mode switch',
+        async: '12 · Async states',
       },
       btn: {
         newAgent: '+ New agent',
@@ -2683,6 +2698,7 @@ export const en: MessageSchema = {
         navRow: 'rail row: label + counter — and the same row with a second line of text (the Management section rail)',
         kanban: 'assignee — a square avatar on the right of the title row: a photo, or initials without a photo, or a dashed «—» frame when the task is assigned to no one',
         diff: 'Clicking a file in the «Changes» section opens this block: original on the left, the agent version on the right. Paired rows (mod) sit opposite each other; a one-sided edit leaves the opposite column dimmed.',
+        viewMode: 'Header controls of the diff and file viewers. ± turns the diff off to show the whole current file (not offered for binary or deleted files). Source · split · preview appear for .md, .markdown, .html, .htm and .pdf only; a PDF never opens on source. Both choices are remembered per device across files.',
         sessionFork: 'fork: a branch and a review under the parent agent',
         sessionRemove: 'removed in place: ✕ on card hover',
         sessionFindings: 'findings: ⚑ with the open count — the agent noticed problems outside its task, and they await a decision',
@@ -2763,6 +2779,7 @@ export const en: MessageSchema = {
         notice8: 'Context filled to 82% — compression needed soon.',
         notice9: 'Session stopped: the process exited with code 1.',
       },
+      viewModeSample: '# Sellable stock\n\nThe **server** owns the number; the portal only shows it.\n\n- one number everywhere\n- stages switch listings on and off\n\n> Draft — waiting on design sign-off.',
       diffRow: {
         modOld: "    case 'tool': return 'working';",
         modNew: "    case 'tool': return 'running';",

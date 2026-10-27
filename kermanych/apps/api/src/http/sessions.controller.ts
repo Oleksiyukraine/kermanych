@@ -1,5 +1,5 @@
 // apps/api/src/http/sessions.controller.ts
-import { BadRequestException, Body, Controller, Delete, Get, NotFoundException, Param, Patch, Post, Query, Req } from "@nestjs/common";
+import { BadRequestException, Body, Controller, Delete, Get, NotFoundException, Param, Patch, Post, Query, Req, StreamableFile } from "@nestjs/common";
 import { isNativeHarness, isThinkingLevel, parseFindingTarget } from "@kermanych/core";
 import type { BranchPrefix, DocsWriteKind, ImageInput, Platform, RpcExtensionUIResponse, TaskDraft, ThinkingLevel } from "@kermanych/core";
 import { SupervisorService } from "../supervisor/supervisor.service";
@@ -217,6 +217,20 @@ export class SessionsController {
     } catch (err) {
       throw sessionFailure(err);
     }
+  }
+
+  // Raw bytes for the viewer's preview mode (a PDF has no text body). StreamableFile for the
+  // same reason as /projects/:id/docs/raw: a bare Buffer would be JSON-serialized.
+  @Get(":id/raw")
+  async raw(@Param("id") id: string, @Query("path") path?: string) {
+    let file: { bytes: Buffer; contentType: string } | null;
+    try {
+      file = await this.sup.sessionRaw(id, path ?? "");
+    } catch (err) {
+      throw sessionFailure(err);
+    }
+    if (!file) throw new NotFoundException("file not found");
+    return new StreamableFile(file.bytes, { type: file.contentType, length: file.bytes.length });
   }
 
   // A failing documentation gate is a plain 400 starting `documentation required:`.

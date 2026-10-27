@@ -517,6 +517,34 @@
       </div>
     </section>
 
+    <!-- view mode switch — KDiffView / KFileView header controls for Markdown, HTML and PDF.
+         Local state here, so trying it out never changes the viewers' remembered choice. -->
+    <section class="kit__section">
+      <div class="kit__label">{{ t('kit.gallery.sec.viewMode') }}</div>
+      <div class="kit__row">
+        <KIconButton
+          :title="galleryDiffOn ? t('kit.diff.hideDiff') : t('kit.diff.showDiff')"
+          :active="galleryDiffOn"
+          :aria-pressed="galleryDiffOn"
+          @click="galleryDiffOn = !galleryDiffOn"
+        ><KIcon class="kit__view-icon" name="viewDiff" /></KIconButton>
+        <span class="kit__view-sep" aria-hidden="true"></span>
+        <KViewModeToggle v-model="galleryViewMode" />
+      </div>
+      <div class="kit__view-frame" :class="`kit__view-frame--${galleryViewMode}`">
+        <pre v-if="galleryViewMode !== 'preview'" class="kit__view-source mono">{{ viewModeSample }}</pre>
+        <KDocPreview
+          v-if="galleryViewMode !== 'source'"
+          path="docs/specs/view-mode.md"
+          :load="loadViewModeSample"
+          :text="viewModeSample"
+        />
+      </div>
+      <div class="kit__caption mono">
+        {{ t('kit.gallery.cap.viewMode') }}
+      </div>
+    </section>
+
     <!-- async states — README «Design → Async states» -->
     <section class="kit__section">
       <div class="kit__label">{{ t('kit.gallery.sec.async') }}</div>
@@ -599,6 +627,10 @@ import KCheckbox from 'components/kit/KCheckbox.vue';
 import KSkeleton from 'components/kit/KSkeleton.vue';
 import KProgressBar from 'components/kit/KProgressBar.vue';
 import KDiffView from 'components/kit/KDiffView.vue';
+import KDocPreview from 'components/kit/KDocPreview.vue';
+import KIcon from 'components/kit/KIcon.vue';
+import KViewModeToggle from 'components/kit/KViewModeToggle.vue';
+import type { ViewMode } from '../lib/doc-preview';
 import type { FileDiff } from '../lib/api';
 import type { LaunchMode } from '../lib/native-session';
 
@@ -657,6 +689,13 @@ const diffSample: FileDiff = {
   binary: false,
   truncated: false,
 };
+const galleryDiffOn = ref(true);
+const galleryViewMode = ref<ViewMode>('split');
+const viewModeSample = t('kit.gallery.viewModeSample');
+// KDocPreview reads images and the body through `load`; the sample has neither to fetch.
+function loadViewModeSample(): Promise<Blob> {
+  return Promise.resolve(new Blob([viewModeSample], { type: 'text/markdown' }));
+}
 const thoughtOpen = ref(false);
 // One row per harness mark, then the last row, which deliberately carries neither harness,
 // model nor usage: an agent whose turns were never counted drops the accounting line rather
@@ -1008,6 +1047,37 @@ function onPanelEffort(level: ThinkingLevel) { lastAction.value = `effort: ${lev
   &--fields {
     align-items: flex-start;
   }
+}
+
+// Same sizing as KDiffView's header: the drawn icon at the icon-button's step, a hairline
+// between the ± and the three-way toggle.
+.kit__view-icon { --k-icon-size: var(--k-icon-md); }
+.kit__view-sep {
+  width: 1px;
+  height: 18px;
+  background: var(--k-line-strong);
+}
+.kit__view-frame {
+  display: grid;
+  height: 220px;
+  margin-top: var(--k-sp-3);
+  border: 1px solid var(--k-line-strong);
+  border-radius: var(--k-r);
+  overflow: hidden;
+
+  &--split { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+}
+.kit__view-source {
+  margin: 0;
+  padding: var(--k-sp-3);
+  overflow: auto;
+  font-size: var(--k-fs-xs);
+  line-height: 18px;
+  color: var(--k-text);
+  background: var(--k-bg);
+}
+.kit__view-frame--split .kit__view-source {
+  box-shadow: inset -1px 0 0 0 var(--k-line-strong);
 }
 
 .kit__caption {
