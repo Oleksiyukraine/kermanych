@@ -34,13 +34,17 @@
    * Visible when you look for it, never louder: a 1px top sheen, a vertical
    * overlay a few percent lighter at the top, a card shadow that deepens on
    * hover, a primary fill a step lighter at the top, a focus glow in the accent.
+   * `--k-grad-accent` is a translucent white overlay laid over `--k-accent` as a
+   * background-image, not a fill of its own: hover then changes only the colour
+   * underneath, which transitions (a gradient image does not). White .08 lands on
+   * the same top shade in every theme, so the four sets share the value.
    * Kept off large planes (sidebar, canvas, log): a gradient across a big dark
    * area bands on ordinary panels. Spec: docs/specs/2026-10-28-hermes-theme-and-depth.md. */
   --k-sheen:inset 0 1px 0 rgba(255,255,255,.04);
   --k-grad-raise:linear-gradient(180deg,rgba(255,255,255,.025),rgba(255,255,255,0) 70%);
   --k-shadow-card:0 1px 2px rgba(0,0,0,.25);
   --k-shadow-card-hover:0 4px 14px rgba(0,0,0,.35);
-  --k-grad-accent:linear-gradient(180deg,#ff644c,#ff563c);
+  --k-grad-accent:linear-gradient(180deg,rgba(255,255,255,.08),rgba(255,255,255,0));
   --k-glow-focus:0 0 0 3px rgba(255,86,60,.18);
   /* type */
   --k-font-ui:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
@@ -121,7 +125,7 @@
   --k-grad-raise:linear-gradient(180deg,rgba(255,255,255,.6),rgba(255,255,255,0) 70%);
   --k-shadow-card:0 1px 2px rgba(0,0,0,.05);
   --k-shadow-card-hover:0 4px 14px rgba(0,0,0,.08);
-  --k-grad-accent:linear-gradient(180deg,#cc452d,#c8351b);
+  --k-grad-accent:linear-gradient(180deg,rgba(255,255,255,.08),rgba(255,255,255,0));
   --k-glow-focus:0 0 0 3px rgba(200,53,27,.16);
 }
 
@@ -162,7 +166,7 @@
   --k-grad-raise:linear-gradient(180deg,rgba(150,200,165,.03),rgba(150,200,165,0) 70%);
   --k-shadow-card:0 1px 2px rgba(0,20,0,.35);
   --k-shadow-card-hover:0 4px 14px rgba(0,25,0,.45);
-  --k-grad-accent:linear-gradient(180deg,#6fa884,#63a079);
+  --k-grad-accent:linear-gradient(180deg,rgba(255,255,255,.08),rgba(255,255,255,0));
   --k-glow-focus:0 0 0 3px rgba(99,160,121,.2);
 }
 
@@ -200,6 +204,6 @@
   --k-grad-raise:linear-gradient(180deg,rgba(140,170,240,.035),rgba(140,170,240,0) 70%);
   --k-shadow-card:0 1px 2px rgba(2,4,12,.35);
   --k-shadow-card-hover:0 6px 18px rgba(2,4,12,.5);
-  --k-grad-accent:linear-gradient(180deg,#5dd5e2,#4fd1e0);
+  --k-grad-accent:linear-gradient(180deg,rgba(255,255,255,.08),rgba(255,255,255,0));
   --k-glow-focus:0 0 0 3px rgba(79,209,224,.2);
 }

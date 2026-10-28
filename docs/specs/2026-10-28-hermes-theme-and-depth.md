@@ -65,7 +65,12 @@
      (`linear-gradient(180deg, <2–4% lighter>, transparent)`), layered over the surface colour;
    - `--k-shadow-card` / `--k-shadow-card-hover` — card rest / hover shadow (rest almost
      invisible);
-   - `--k-grad-accent` — primary fill, accent 4–6% lighter at the top;
+   - `--k-grad-accent` — primary fill's lift: a translucent white overlay
+     (`linear-gradient(180deg, rgba(255,255,255,.08), transparent)`, ~4–8% lighter at the top
+     in every theme) layered as a background-image over `--k-accent`. It is an overlay, not a
+     full fill, because a gradient image cannot be transitioned: the first cut swapped an
+     opaque gradient for a plain `--k-accent-hover` fill on hover, so the colour faded in from
+     transparent and the button blinked;
    - `--k-glow-focus` — accent glow around a focused composer.
    Existing `--k-shadow-pop|toast|modal` stay and keep their meaning.
 5. **Where depth goes — targeted:**
@@ -74,7 +79,8 @@
       `--k-grad-raise`;
    2. cards (`KSessionCard`, `KKanbanCard`, `home/HomeTile`): `--k-shadow-card`, deepening to
       `--k-shadow-card-hover` on hover, plus `--k-sheen`;
-   3. primary button (`KBtn` primary): `--k-grad-accent`;
+   3. primary button (`KBtn` primary): `--k-accent` colour + `--k-grad-accent` image; hover
+      (and the open ▾ of `KSplitButton`) changes only the colour to `--k-accent-hover`;
    4. composer (`KComposer`): light shadow at rest, `--k-glow-focus` while focused.
    Large planes (sidebar, canvas, chat log) stay solid. Rejected: gradients on large planes
    (banding on dark gradients, corner glows read as loud); a minimal set (floating layers and

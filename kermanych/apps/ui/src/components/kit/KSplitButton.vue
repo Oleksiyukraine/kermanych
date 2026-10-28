@@ -212,7 +212,7 @@ watch(
 
 // Open: the ▾ half holds its hover fill, so it is plain which part the menu belongs to.
 .k-split-btn--open .k-split-btn__toggle {
-  background: var(--k-accent-hover);
+  background-color: var(--k-accent-hover);
 }
 
 // Drawn like KChipSelect's caret: a clipped box has no baseline to drift off the label's line.
