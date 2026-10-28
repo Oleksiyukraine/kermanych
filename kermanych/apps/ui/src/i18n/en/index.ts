@@ -201,7 +201,6 @@ export const en: MessageSchema = {
       removeStranded: 'Delete local task “{name}”',
     },
     bucket: {
-      tasks: 'Tasks',
       archived: 'Deferred',
       history: 'History',
       active: 'Active',

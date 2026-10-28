@@ -205,7 +205,6 @@ export const uk = {
       removeStranded: 'Видалити локальну задачу «{name}»',
     },
     bucket: {
-      tasks: 'Задачі',
       archived: 'Відкладені',
       history: 'Історія',
       active: 'Активні',
