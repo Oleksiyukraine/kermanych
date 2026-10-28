@@ -32,7 +32,7 @@ const opening = computed(() => !!project.value && !!terminal.opening[project.val
 const phase = useLoadPhase(() => !terminal.loaded && !terminal.listFailed);
 const activePending = computed(() => !!activeId.value && pending.isPending(`terminal:${activeId.value}`));
 
-// The page above keeps at least this much; the header and footer take 90px (MainLayout), and
+// The page above keeps at least this much; the header and footer take 100px (MainLayout), and
 // the panel's own bottom inset (var(--k-sp-3)) another 12px.
 const MIN_PAGE = 160;
 const INSET = 12;
@@ -41,7 +41,7 @@ const { size: height, resizing, startResize, onKeydown } = useResizablePanel({
   defaultSize: 280,
   min: 120,
   edge: 'top',
-  max: () => window.innerHeight - 90 - INSET - MIN_PAGE,
+  max: () => window.innerHeight - 100 - INSET - MIN_PAGE,
 });
 
 // The store refuses a second spawn for the same project while one is in flight.
