@@ -1,6 +1,6 @@
 <template>
   <q-layout view="hHh Lpr fFf" class="shell">
-    <!-- LEFT SIDEBAR — bucket nav + projects + folder binding + account (v3 section 07) -->
+    <!-- LEFT SIDEBAR — bucket nav + projects + folder binding + collapse toggle (v3 section 07) -->
     <q-drawer model-value side="left" :width="collapsed ? 76 : 264" :breakpoint="0" class="shell__sidebar">
       <div class="shell__side-inner" :class="{ 'shell--min': minified }">
         <nav class="shell__buckets">
@@ -119,37 +119,7 @@
             </ul>
           </li>
         </ul>
-        <div class="shell__user">
-          <KUserButton
-            class="shell__account"
-            :label="accountLabel"
-            :avatar-url="auth.profile?.avatarUrl"
-            :title="accountHint"
-            @click="goSettings('app-account')"
-          />
-          <!-- Name and plan spend stack, so the name rides up and the windows sit under it.
-               One row per authenticated provider (in practice one), each window a percent of
-               its rolling quota — the only unit providers meter plans in. -->
-          <div class="shell__account-meta">
-            <span class="shell__account-name">{{ accountName }}</span>
-            <div
-              v-for="p in planLines"
-              :key="p.provider"
-              v-tip="p.hint"
-              class="shell__account-plan mono"
-            >
-              <span v-if="planLines.length > 1" class="shell__plan-provider">{{ p.provider }}</span>
-              <span
-                v-for="w in p.windows"
-                :key="w.id"
-                class="shell__plan-window"
-                :class="{
-                  'shell__plan-window--warn': w.used >= 80 && w.used < 95,
-                  'shell__plan-window--hot': w.used >= 95,
-                }"
-              >{{ w.short }} {{ w.percent }}</span>
-            </div>
-          </div>
+        <div class="shell__side-foot">
           <button
             class="shell__toggle"
             v-tip="collapsed ? t('common.nav.expandPanel') : t('common.nav.collapsePanel')"
@@ -268,10 +238,43 @@
       </div>
     </q-page-container>
 
-    <!-- STATUS BAR — a VS Code-style footer: git pull and the current branch for the selected
-         repo. There is deliberately no Push: work leaves the machine through the PR flow only,
-         never as a blind push of whatever branch the project repo sits on. -->
+    <!-- STATUS BAR — a VS Code-style footer: the account with its plan spend, then git pull and
+         the current branch for the selected repo. There is deliberately no Push: work leaves the
+         machine through the PR flow only, never as a blind push of whatever branch the project
+         repo sits on. -->
     <q-footer class="shell__footer">
+      <!-- Account, at the bar's left edge under the sidebar it used to close: avatar, name over
+           plan spend. One row per authenticated provider (in practice one), each window a
+           percent of its rolling quota — the only unit providers meter plans in. -->
+      <div class="shell__user">
+        <KUserButton
+          class="shell__account"
+          :label="accountLabel"
+          :avatar-url="auth.profile?.avatarUrl"
+          :title="accountHint"
+          @click="goSettings('app-account')"
+        />
+        <div class="shell__account-meta">
+          <span class="shell__account-name">{{ accountName }}</span>
+          <div
+            v-for="p in planLines"
+            :key="p.provider"
+            v-tip="p.hint"
+            class="shell__account-plan mono"
+          >
+            <span v-if="planLines.length > 1" class="shell__plan-provider">{{ p.provider }}</span>
+            <span
+              v-for="w in p.windows"
+              :key="w.id"
+              class="shell__plan-window"
+              :class="{
+                'shell__plan-window--warn': w.used >= 80 && w.used < 95,
+                'shell__plan-window--hot': w.used >= 95,
+              }"
+            >{{ w.short }} {{ w.percent }}</span>
+          </div>
+        </div>
+      </div>
       <!-- File-manager dock, left: shows the selected session's files between the sidebar and
            the page. Clicking it again collapses the dock. -->
       <button
@@ -1627,8 +1630,8 @@ const planLines = computed(() =>
   })),
 );
 
-// The collapsed rail hides the row, and the tile is a bare picture either way — so its
-// tooltip carries the identity, the same figures in short form, and the action.
+// The tile is a bare picture, so its tooltip (and aria-label) carries the identity, the
+// same figures in short form, and the action.
 const accountHint = computed(() => {
   const spend = planLines.value
     .flatMap((p) => p.windows.map((w) => `${w.short} ${w.percent}`))
@@ -1753,15 +1756,12 @@ const pullHint = computed(() => {
 .shell__side-inner:not(.shell--min) :deep(.k-nav-item__icon) {
   display: none;
 }
-// A 76px rail has room for the tile and nothing else; the account tooltip carries the name
-// and the plan figures while the sidebar is minified.
-.shell--min .shell__side-label,
-.shell--min .shell__account-meta {
+// A 76px rail has room for the icons and the toggle, nothing else.
+.shell--min .shell__side-label {
   display: none;
 }
-.shell--min .shell__user {
+.shell--min .shell__side-foot {
   justify-content: center;
-  flex-direction: column;
 }
 .shell--min :deep(.k-nav-item) {
   justify-content: center;
@@ -1826,7 +1826,6 @@ const pullHint = computed(() => {
 }
 .shell__side-inner:not(.shell--min) {
   .shell__side-label,
-  .shell__account-meta,
   :deep(.k-nav-item__text),
   :deep(.k-count),
   :deep(.k-rail__name),
@@ -1959,14 +1958,25 @@ const pullHint = computed(() => {
   &:hover { color: var(--k-text); }
 }
 
-// account chip — pinned to the foot of the sidebar: avatar, name over plan spend, toggle.
-.shell__user {
+// The sidebar's foot: the collapse toggle alone, pinned to the bottom and right-aligned.
+.shell__side-foot {
   margin-top: auto;
+  display: flex;
+  justify-content: flex-end;
+  padding-top: var(--k-sp-3);
+  border-top: 1px solid var(--k-line);
+}
+
+// Account chip at the footer's left edge: avatar, name over plan spend. It shrinks before
+// the git controls do, and the name ellipsises inside it.
+.shell__user {
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 260px;
   display: flex;
   align-items: center;
   gap: var(--k-sp-2);
-  padding-top: var(--k-sp-3);
-  border-top: 1px solid var(--k-line);
+  margin-right: var(--k-sp-3);
 }
 
 .shell__account {
@@ -2313,7 +2323,7 @@ const pullHint = computed(() => {
   display: flex;
   align-items: center;
   gap: var(--k-sp-1);
-  height: 34px;
+  height: 44px;
   padding: 0 var(--k-sp-2);
   background: var(--k-bg);
   border-top: 1px solid var(--k-line-strong);
@@ -2436,7 +2446,7 @@ const pullHint = computed(() => {
 .shell__main {
   display: flex;
   flex-direction: column;
-  height: calc(100vh - 90px);
+  height: calc(100vh - 100px);
   min-height: 0;
   overflow: hidden;
 }
