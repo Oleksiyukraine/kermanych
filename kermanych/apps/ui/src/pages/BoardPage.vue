@@ -308,7 +308,7 @@
       </div>
 
       <template #controls>
-        <KBtn v-if="editingTask" variant="ghost" :disabled="editorBusy" @click="onDelete(editingTask); editorOpen = false">{{ t('board.editor.delete') }}</KBtn>
+        <KBtn v-if="editingTask" variant="ghost" :disabled="editorBusy" @click="onDelete(editingTask)">{{ t('board.editor.delete') }}</KBtn>
         <KBtn
           v-if="editingTask && canForceStop(editingTask)"
           variant="ghost"
@@ -376,6 +376,7 @@
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
 import { useRouter } from 'vue-router';
 import { useI18n } from 'vue-i18n';
+import { confirmAction } from '../lib/confirm';
 import type { Project, ThinkingLevel } from '@kermanych/core';
 import type { Task, TaskStatus, WorkspaceMember } from '@kermanych/cloud';
 import { ACTIVE_STATUSES } from '@kermanych/core/status';
@@ -1363,7 +1364,15 @@ async function submitEditor(): Promise<void> {
   }
 }
 
-function onDelete(task: Task): void {
+// Asks first, like the same delete on the Агенти board; the editor closes only on «yes».
+async function onDelete(task: Task): Promise<void> {
+  const ok = await confirmAction({
+    title: t('confirmations.deleteCard'),
+    message: t('agents.notify.deleteCard', { title: task.title }),
+    confirmLabel: t('confirmations.label.delete'),
+  });
+  if (!ok) return;
+  editorOpen.value = false;
   void board.deleteTask(task.id);
 }
 </script>

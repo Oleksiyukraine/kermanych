@@ -1,5 +1,11 @@
 <template>
-  <div class="k-browser">
+  <!-- Full screen moves the same pane (toolbar, page box, trays) into a layer on <body> that
+       covers the window; the host stays behind so the parent's layout and class keep applying.
+       Not role="dialog": that would read as an overlay (useOverlayOpen) and park the very page
+       this is for. -->
+  <div class="k-browser-host">
+  <Teleport to="body" :disabled="!fullscreen">
+  <div class="k-browser" :class="{ 'k-browser--max': fullscreen }">
     <div class="k-browser__bar">
       <KIconButton :title="t('agents.browser.back')" :disabled="!state?.canGoBack" @click="bridge.back(session.id)">←</KIconButton>
       <KIconButton :title="t('agents.browser.forward')" :disabled="!state?.canGoForward" @click="bridge.forward(session.id)">→</KIconButton>
@@ -66,6 +72,7 @@
         :active="browser.split"
         @click="browser.setSplit(!browser.split)"
       >◫</KIconButton>
+      <KFullscreenButton :on="fullscreen" @click="fullscreen = !fullscreen" />
       <!-- Indeterminate: Chromium reports no load progress worth showing. Absolute, so it
            never shifts the page box (and the native view laid over it). -->
       <span v-if="state?.loading" class="k-browser__progress" aria-hidden="true"></span>
@@ -240,6 +247,8 @@
       </template>
     </KModal>
   </div>
+  </Teleport>
+  </div>
 </template>
 
 <script setup lang="ts">
@@ -264,6 +273,7 @@ import KSkeleton from './KSkeleton.vue';
 import KSpinner from './KSpinner.vue';
 import KChipSelect from './KChipSelect.vue';
 import KField from './KField.vue';
+import KFullscreenButton from './KFullscreenButton.vue';
 import KIconButton from './KIconButton.vue';
 import KModal from './KModal.vue';
 import { useSessionBrowser } from 'stores/browser';
@@ -575,6 +585,15 @@ function onKey(e: KeyboardEvent): void {
     bridge.cancelPick(props.session.id);
     return;
   }
+  // Esc leaves full screen — not from the address bar or the find field, whose own Esc
+  // (reset the address, close find) comes first. With focus in the page, ⤡ does it.
+  if (e.key === 'Escape' && fullscreen.value) {
+    const el = e.target as HTMLElement | null;
+    if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA')) return;
+    e.preventDefault();
+    fullscreen.value = false;
+    return;
+  }
   if (!(e.metaKey || e.ctrlKey) || e.altKey || e.shiftKey) return;
   if (e.code === 'KeyL') {
     e.preventDefault();
@@ -584,6 +603,30 @@ function onKey(e: KeyboardEvent): void {
     runShortcut('find');
   }
 }
+
+// ── Full screen ──────────────────────────────────────────────────────────
+// The pane over the whole window (the Teleport above). Remembered per session on this device,
+// so a reload — or coming back to this agent's Браузер tab — opens it the way it was left; a
+// session switch, another tab or leaving Агенти unmounts the pane and takes it down meanwhile.
+// The native view needs nothing extra — the page box changes size, the ResizeObserver below
+// reports it, and the view follows.
+const fullscreenKey = `kermanych.browser.fullscreen.${props.session.id}`;
+function readFullscreen(): boolean {
+  try {
+    return localStorage.getItem(fullscreenKey) === '1';
+  } catch {
+    return false;
+  }
+}
+const fullscreen = ref(readFullscreen());
+watch(fullscreen, (on) => {
+  try {
+    if (on) localStorage.setItem(fullscreenKey, '1');
+    else localStorage.removeItem(fullscreenKey);
+  } catch {
+    /* storage unavailable: full screen just is not restored */
+  }
+});
 
 // ── Placing the native view ──────────────────────────────────────────────
 const viewEl = ref<HTMLElement | null>(null);
@@ -633,7 +676,7 @@ watch(viewEl, (el, old) => {
   if (el) resize.observe(el);
   sync();
 }, { flush: 'post' });
-watch([overlayOpen, () => props.hold, failed], () => sync(), { flush: 'post' });
+watch([overlayOpen, () => props.hold, failed, fullscreen], () => sync(), { flush: 'post' });
 
 let offShortcut: (() => void) | undefined;
 onMounted(() => {
@@ -667,6 +710,13 @@ onBeforeUnmount(() => {
 </script>
 
 <style scoped lang="scss">
+.k-browser-host {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
 .k-browser {
   flex: 1;
   min-width: 0;
@@ -675,6 +725,13 @@ onBeforeUnmount(() => {
   flex-direction: column;
   // The toolbar's narrow layout keys off the pane's own width, not the window's.
   container: k-browser / inline-size;
+}
+// Edge to edge over the app, under the tooltip layer and the file viewers' overlays.
+.k-browser--max {
+  position: fixed;
+  inset: 0;
+  z-index: 4000;
+  background: var(--k-bg);
 }
 
 // One row while it fits. Narrower (beside the Лог the pane can be a third of the window) it is

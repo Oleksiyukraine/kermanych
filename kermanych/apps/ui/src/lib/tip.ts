@@ -76,9 +76,19 @@ function place(el: HTMLElement, tip: HTMLElement): void {
   tip.style.top = `${Math.round(top)}px`;
 }
 
+// `v-tip.overflow`: the bubble repeats a label the layout cut short (a file name ending in
+// «…»), so it shows only while that label is actually clipped — a name that fits needs no
+// bubble. The clipped element is the one marked `data-tip-clip` inside the control, or the
+// control itself. Judged at show time, so a resize between hovers is taken into account.
+function clipped(el: HTMLElement): boolean {
+  const target = el.querySelector<HTMLElement>('[data-tip-clip]') ?? el;
+  return target.scrollWidth > target.clientWidth + 1;
+}
+
 function show(el: HTMLElement): void {
   const text = el.dataset.tip;
   if (!text) return;
+  if (el.dataset.tipOverflow && !clipped(el)) return;
 
   const tip = ensureBubble();
   host = el;
@@ -128,6 +138,7 @@ const EVENTS: Array<[string, EventListener]> = [
 export const tip: Directive<HTMLElement, string | undefined> = {
   mounted(el, binding) {
     setText(el, binding.value);
+    if (binding.modifiers.overflow) el.dataset.tipOverflow = '1';
     for (const [name, fn] of EVENTS) el.addEventListener(name, fn);
   },
 

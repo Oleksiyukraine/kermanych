@@ -9,6 +9,9 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { useOrchestrator } from 'stores/orchestrator';
 import type { TreeEntry, FileContent } from '@kermanych/core';
+import type { FileDiff } from '../../lib/api';
+import { useFileTreeKeys } from '../../composables/useFileTreeKeys';
+import { useFullscreenPopover } from '../../composables/useFullscreenPopover';
 import KFileTree from './KFileTree.vue';
 import KFileView from './KFileView.vue';
 
@@ -64,6 +67,12 @@ const treeFileError = ref<string | null>(null);
 // tree selection and the viewer stay in lockstep.
 const treeFileMaximized = ref(false);
 let treeFileRun = 0;
+// The opened file's diff against the session's base, for the viewer's ± — read beside the
+// body, under the same run counter. A project checkout has no base, so there the viewer gets
+// no diff prop at all and shows no ±.
+const treeDiff = ref<FileDiff | null>(null);
+const treeDiffLoading = ref(false);
+const treeDiffProp = computed(() => (source.value?.kind === 'session' ? treeDiff.value : undefined));
 
 function listLevel(src: Source, path: string): Promise<TreeEntry[]> {
   return src.kind === 'session' ? store.sessionTree(src.id, path) : store.projectTree(src.id, path);
@@ -87,15 +96,48 @@ async function loadTreeRoot(src: Source): Promise<void> {
   }
 }
 
-async function openTreeFileAt(path: string): Promise<void> {
+// The open file (and whether it is full screen) survives a reload and a restart, per source:
+// each session's worktree and each project's checkout remembers its own. Written on open, on
+// full screen ↔ dock, cleared on a close the operator asked for; a source switch keeps it.
+type SavedView = { path: string; maximized: boolean };
+const viewKey = (key: string) => `kermanych.fileManager.open.${key}`;
+function readView(key: string): SavedView | null {
+  if (!key) return null;
+  try {
+    const v = JSON.parse(localStorage.getItem(viewKey(key)) ?? 'null') as Partial<SavedView> | null;
+    return v && typeof v.path === 'string' && v.path ? { path: v.path, maximized: v.maximized === true } : null;
+  } catch {
+    return null;
+  }
+}
+function writeView(key: string, v: SavedView | null): void {
+  if (!key) return;
+  try {
+    if (v) localStorage.setItem(viewKey(key), JSON.stringify(v));
+    else localStorage.removeItem(viewKey(key));
+  } catch {
+    /* storage unavailable: the viewer still works, it just is not restored */
+  }
+}
+function rememberView(): void {
+  writeView(sourceKey.value, openTreeFile.value ? { path: openTreeFile.value, maximized: treeFileMaximized.value } : null);
+}
+
+// A clicked file opens full screen (the 340px dock is too cramped to read in); a restored
+// one opens the way it was left.
+async function openTreeFileAt(path: string, maximized = true): Promise<void> {
   const src = source.value;
   if (!src) return;
   const run = ++treeFileRun;
   openTreeFile.value = path;
-  treeFileMaximized.value = true;
+  treeFileMaximized.value = maximized;
+  rememberView();
   treeFile.value = null;
   treeFileError.value = null;
   treeFileLoading.value = true;
+  treeDiff.value = null;
+  treeDiffLoading.value = src.kind === 'session';
+  if (src.kind === 'session') void loadTreeDiff(src.id, path, run);
   try {
     const f = src.kind === 'session' ? await store.sessionFile(src.id, path) : await store.projectFile(src.id, path);
     if (run !== treeFileRun) return;
@@ -103,8 +145,23 @@ async function openTreeFileAt(path: string): Promise<void> {
   } catch (e) {
     if (run !== treeFileRun) return;
     treeFileError.value = e instanceof Error ? e.message : String(e);
+    // A remembered file that is gone (deleted, renamed) is not offered again next time.
+    writeView(sourceKey.value, null);
   } finally {
     if (run === treeFileRun) treeFileLoading.value = false;
+  }
+}
+
+// A diff that cannot be read leaves the ± disabled, like an unchanged file: the viewer's body
+// is what this panel is for, and it does not depend on the diff.
+async function loadTreeDiff(id: string, path: string, run: number): Promise<void> {
+  try {
+    const d = await store.fileDiff(id, path);
+    if (run === treeFileRun) treeDiff.value = d;
+  } catch {
+    // stays null
+  } finally {
+    if (run === treeFileRun) treeDiffLoading.value = false;
   }
 }
 
@@ -115,26 +172,50 @@ function loadRaw(path: string): Promise<Blob> {
   return src.kind === 'session' ? store.sessionRaw(src.id, path) : store.projectRaw(src.id, path);
 }
 
-function closeTreeFile(): void {
+// Keyboard in the tree, IDE-style (composables/useFileTreeKeys).
+const treeEl = ref<{ $el: HTMLElement } | null>(null);
+const { onTreeKeydown, focusTree } = useFileTreeKeys(treeEl);
+
+// `refocus` for a close the operator asked for (✕, Escape); a source switch clears the viewer
+// without pulling focus away from wherever it is.
+function closeTreeFile(refocus = true): void {
+  const closed = openTreeFile.value;
+  if (refocus) writeView(sourceKey.value, null);
   openTreeFile.value = null;
   treeFile.value = null;
   treeFileError.value = null;
   treeFileLoading.value = false;
+  treeDiff.value = null;
+  treeDiffLoading.value = false;
   treeFileMaximized.value = false;
   treeFileRun++;
+  if (refocus && closed) focusTree(closed);
 }
+
+// A link in a rendered doc opens its target in the same place, docked or full screen.
+function openLinkedFile(path: string): void {
+  void openTreeFileAt(path, treeFileMaximized.value);
+}
+
+const viewHost = ref<HTMLElement | null>(null);
+useFullscreenPopover(viewHost, treeFileMaximized);
 
 function toggleTreeFileMaximized(): void {
   treeFileMaximized.value = !treeFileMaximized.value;
+  rememberView();
 }
 
-// Escape leaves the full-screen viewer without reaching for the mouse; it only fires while the
-// overlay is actually up, so it never steals the key from anything else.
+// Escape closes the viewer without reaching for the mouse: always while the full-screen
+// overlay is up, and in the dock while focus is inside this panel — so an Escape meant for
+// something else (the chat composer, a menu) never closes the file. Focus returns to the
+// file's row in the tree (closeTreeFile).
+const fmEl = ref<HTMLElement | null>(null);
 function onKeydown(e: KeyboardEvent): void {
-  if (e.key === 'Escape' && openTreeFile.value && treeFileMaximized.value) {
-    e.preventDefault();
-    closeTreeFile();
-  }
+  if (e.key !== 'Escape' || e.defaultPrevented || !openTreeFile.value) return;
+  const inPanel = !!fmEl.value && fmEl.value.contains(e.target as Node);
+  if (!treeFileMaximized.value && !inPanel) return;
+  e.preventDefault();
+  closeTreeFile();
 }
 onMounted(() => window.addEventListener('keydown', onKeydown));
 onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown));
@@ -142,18 +223,23 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown));
 watch(
   sourceKey,
   () => {
-    closeTreeFile();
+    closeTreeFile(false);
     treeRoot.value = [];
     treeError.value = null;
     treeLoading.value = false;
-    if (source.value) void loadTreeRoot(source.value);
+    if (source.value) {
+      void loadTreeRoot(source.value);
+      // This source's file from last time (a reload, a restart, or coming back to the agent).
+      const saved = readView(sourceKey.value);
+      if (saved) void openTreeFileAt(saved.path, saved.maximized);
+    }
   },
   { immediate: true },
 );
 </script>
 
 <template>
-  <aside class="k-fm">
+  <aside ref="fmEl" class="k-fm">
     <header class="k-fm__head">
       <span class="k-fm__title">{{ t('fileManager.title') }}</span>
       <span
@@ -176,6 +262,32 @@ watch(
       >✕</button>
     </header>
     <div class="k-fm__body">
+      <!-- The open file: docked here, or — the default when a file is clicked — full screen
+           over the whole window (useFullscreenPopover: the same viewer, so its mode, ± and
+           scroll survive the switch). The collapse button drops it back into the dock, the ✕
+           or Escape clears it. role="dialog" while full screen parks the session browser's
+           native view (useOverlayOpen). -->
+      <div
+        v-if="openTreeFile"
+        ref="viewHost"
+        popover="manual"
+        class="k-fm__view"
+        :role="treeFileMaximized ? 'dialog' : undefined"
+      >
+        <KFileView
+          :path="openTreeFile"
+          :file="treeFile"
+          :loading="treeFileLoading"
+          :error="treeFileError"
+          :maximized="treeFileMaximized"
+          :load="loadRaw"
+          :diff="treeDiffProp"
+          :diff-loading="treeDiffLoading"
+          @close="closeTreeFile()"
+          @toggle-maximize="toggleTreeFileMaximized"
+          @open="openLinkedFile"
+        />
+      </div>
       <div v-if="!selectedSession && !selectedProject" class="k-fm__blank">
         <p class="k-fm__blank-text">{{ t('fileManager.noSelection') }}</p>
       </div>
@@ -186,55 +298,24 @@ watch(
       <div v-else-if="projectUnbound" class="k-fm__blank">
         <p class="k-fm__blank-text">{{ t('fileManager.notBound') }}</p>
       </div>
-      <p v-else-if="treeLoading" class="k-fm__msg mono">{{ t('agents.changes.preparing') }}</p>
-      <p v-else-if="treeError" class="k-fm__error" role="alert">{{ treeError }}</p>
-      <template v-else>
-        <KFileView
-          v-if="openTreeFile && !treeFileMaximized"
-          class="k-fm__view"
-          :path="openTreeFile"
-          :file="treeFile"
-          :loading="treeFileLoading"
-          :error="treeFileError"
-          :maximized="false"
-          :load="loadRaw"
-          @close="closeTreeFile"
-          @toggle-maximize="toggleTreeFileMaximized"
-        />
-        <KFileTree
-          v-show="!openTreeFile"
-          class="k-fm__tree"
-          :entries="treeRoot"
-          base=""
-          :selected="openTreeFile"
-          :load="loadTreeLevel"
-          @open="openTreeFileAt"
-        />
-      </template>
+      <!-- The tree stays mounted (v-show) under an open file, so its expanded folders are
+           there again when the file closes. A file restored while the tree loads shows alone. -->
+      <p v-else-if="treeLoading && !openTreeFile" class="k-fm__msg mono">{{ t('agents.changes.preparing') }}</p>
+      <p v-else-if="treeError && !openTreeFile" class="k-fm__error" role="alert">{{ treeError }}</p>
+      <KFileTree
+        v-else-if="!treeLoading && !treeError"
+        v-show="!openTreeFile"
+        ref="treeEl"
+        class="k-fm__tree k-scroller"
+        tabindex="0"
+        @keydown="onTreeKeydown"
+        :entries="treeRoot"
+        base=""
+        :selected="openTreeFile"
+        :load="loadTreeLevel"
+        @open="openTreeFileAt"
+      />
     </div>
-
-    <!-- Full-screen viewer — the default when a file is clicked. It sits above everything via a
-         backdrop; clicking the backdrop drops it back into the dock (minimize), the ✕ clears it.
-         Teleported to <body> so no ancestor clip or stacking context can cage it. -->
-    <Teleport to="body">
-      <div
-        v-if="openTreeFile && treeFileMaximized"
-        class="k-fm-overlay"
-        @click.self="toggleTreeFileMaximized"
-      >
-        <KFileView
-          class="k-fm-overlay__view"
-          :path="openTreeFile"
-          :file="treeFile"
-          :loading="treeFileLoading"
-          :error="treeFileError"
-          :maximized="true"
-          :load="loadRaw"
-          @close="closeTreeFile"
-          @toggle-maximize="toggleTreeFileMaximized"
-        />
-      </div>
-    </Teleport>
   </aside>
 </template>
 
@@ -314,9 +395,30 @@ watch(
   padding: 8px 6px;
 }
 
+// The viewer's host. Closed, the popover's UA styles are undone so it fills the dock; open,
+// it covers the window, edge to edge.
 .k-fm__view {
+  position: static;
+  inset: auto;
   flex: 1;
+  width: auto;
+  height: auto;
   min-height: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  color: inherit;
+  background: var(--k-bg);
+
+  &:popover-open {
+    position: fixed;
+    inset: 0;
+    width: 100vw;
+    height: 100vh;
+  }
 }
 
 .k-fm__blank {
@@ -351,30 +453,5 @@ watch(
   padding: 12px;
   color: var(--k-accent);
   font-size: var(--k-fs-xs);
-}
-
-// Full-screen viewer layer — the one shadowed surface this component owns. A dimmed backdrop
-// over the whole viewport with the file panel centred; the panel caps at 1400px so the reading
-// column stays sane on ultrawide displays while still dwarfing the 340px dock it replaces.
-.k-fm-overlay {
-  position: fixed;
-  inset: 0;
-  z-index: 5000;
-  display: flex;
-  padding: 32px;
-  background: rgba(0, 0, 0, 0.62);
-}
-.k-fm-overlay__view {
-  flex: 1;
-  min-width: 0;
-  min-height: 0;
-  max-width: 1400px;
-  margin: 0 auto;
-  background: var(--k-bg);
-  border: 1px solid var(--k-line-strong);
-  border-radius: var(--k-r-lg);
-  // Sheen only, no raise overlay: a gradient across a viewer this large would band.
-  box-shadow: var(--k-sheen), var(--k-shadow-modal);
-  overflow: hidden;
 }
 </style>

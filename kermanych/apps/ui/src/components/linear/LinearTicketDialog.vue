@@ -8,10 +8,12 @@
     <template #head-meta>
       <span class="ltd__headside">
         <span class="ltd__headmeta mono">{{ issue.stateName }}</span>
-        <KIconButton
-          :title="expanded ? t('linear.ticketDialog.collapse') : t('linear.ticketDialog.expand')"
+        <KFullscreenButton
+          :on="expanded"
+          :enter-title="t('linear.ticketDialog.expand')"
+          :exit-title="t('linear.ticketDialog.collapse')"
           @click="expanded = !expanded"
-        >{{ expanded ? '⤡' : '⤢' }}</KIconButton>
+        />
       </span>
     </template>
 
@@ -220,7 +222,7 @@ import type { LinearIssue } from '@kermanych/cloud';
 import KAvatar from 'components/kit/KAvatar.vue';
 import KBtn from 'components/kit/KBtn.vue';
 import KModal from 'components/kit/KModal.vue';
-import KIconButton from 'components/kit/KIconButton.vue';
+import KFullscreenButton from 'components/kit/KFullscreenButton.vue';
 import KSelect, { type KSelectOption } from 'components/kit/KSelect.vue';
 import KSkeleton from 'components/kit/KSkeleton.vue';
 import KSpinner from 'components/kit/KSpinner.vue';

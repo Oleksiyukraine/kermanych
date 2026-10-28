@@ -100,7 +100,7 @@
               class="ai__btn ai__btn--reset"
               :disabled="!canWrite || busy"
               :aria-busy="resetting.busyFor(a.id) || undefined"
-              @click="resetting.run(a.id)"
+              @click="askReset(a.id, t(a.labelKey))"
             >
               <KSpinner v-if="resetting.busyFor(a.id)" :size="10" />
               {{ t('settings.aiAgents.resetDefault') }}
@@ -148,6 +148,7 @@
 // would silently stop tracking the harness the next time a default is improved.
 import { computed, effectScope, onScopeDispose, ref, shallowRef, watch, type EffectScope } from 'vue';
 import { useI18n } from 'vue-i18n';
+import { confirmAction } from '../../lib/confirm';
 import {
   AGENTS,
   ASSIGNED_BLOCK_HEADER,
@@ -473,6 +474,17 @@ const saving = useKeyedAction(async (_agentId: string, def: AgentDef) => {
     savedRow.value = { ...savedRow.value, [def.id]: true };
   }
 });
+
+// Reset deletes the edited instruction, so it asks first; only a «yes» starts the spinner.
+async function askReset(agentId: string, name: string): Promise<void> {
+  if (resetting.busyFor(agentId)) return;
+  const ok = await confirmAction({
+    title: t('confirmations.resetAgent.title'),
+    message: t('confirmations.resetAgent.message', { name }),
+    confirmLabel: t('confirmations.label.reset'),
+  });
+  if (ok) void resetting.run(agentId);
+}
 
 // Reset IS the delete: with no row the effective instruction falls back to the compile-time
 // default, so there is nothing to write. `deleteProjectAgent` throws when it matched nothing — an

@@ -8,6 +8,9 @@ describe('docPreviewKind', () => {
     expect(docPreviewKind('site/index.html')).toBe('html');
     expect(docPreviewKind('legacy/page.HTM')).toBe('html');
     expect(docPreviewKind('contracts/offer.pdf')).toBe('pdf');
+    expect(docPreviewKind('docs/schemas/auth.SVG')).toBe('svg');
+    expect(docPreviewKind('design/shot.png')).toBe('image');
+    expect(docPreviewKind('design/photo.jpeg')).toBe('image');
   });
 
   it('leaves every other file to the source view', () => {
@@ -26,5 +29,20 @@ describe('initialViewMode', () => {
     rememberedViewMode.value = 'split';
     expect(initialViewMode('html')).toBe('split');
     expect(initialViewMode('pdf')).toBe('split');
+  });
+
+  it('never opens a raster image on its source, but an SVG may', () => {
+    rememberedViewMode.value = 'source';
+    expect(initialViewMode('image')).toBe('preview');
+    expect(initialViewMode('svg')).toBe('source');
+  });
+
+  it('opens every previewable file rendered when asked to, over a remembered source', () => {
+    rememberedViewMode.value = 'source';
+    expect(initialViewMode('markdown', true)).toBe('preview');
+    expect(initialViewMode('svg', true)).toBe('preview');
+    expect(initialViewMode(null, true)).toBe('source');
+    rememberedViewMode.value = 'split';
+    expect(initialViewMode('markdown', true)).toBe('split');
   });
 });

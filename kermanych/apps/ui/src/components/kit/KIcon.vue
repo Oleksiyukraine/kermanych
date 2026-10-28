@@ -43,7 +43,11 @@ export type KIconName =
   | 'viewSource'
   | 'viewSplit'
   | 'viewPreview'
-  | 'viewDiff';
+  | 'viewDiff'
+  | 'fullscreen'
+  | 'fullscreenExit'
+  | 'chevronDown'
+  | 'chevronRight';
 </script>
 
 <script setup lang="ts">
@@ -180,6 +184,12 @@ const ICONS: Record<KIconName, readonly string[]> = {
   ],
   // KDiffView's diff on/off: Lucide's «diff», a plus over a minus.
   viewDiff: ['M12 3v14', 'M5 10h14', 'M5 21h14'],
+  // KFullscreenButton: Lucide's maximize-2 / minimize-2 — arrows out to the corners, and back.
+  fullscreen: ['M15 3h6v6', 'M9 21H3v-6', 'm21 3-7 7', 'm3 21 7-7'],
+  fullscreenExit: ['m14 10 7-7', 'M20 10h-6V4', 'm3 21 7-7', 'M4 14h6v6'],
+  // KCodeView's fold gutter: an open block points down, a folded one points at its summary.
+  chevronDown: ['m6 9 6 6 6-6'],
+  chevronRight: ['m9 18 6-6-6-6'],
 };
 
 const props = defineProps<{ name: KIconName }>();

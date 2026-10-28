@@ -227,18 +227,42 @@
            the page, toggled from the footer, and persists across views. Under both sits the
            integrated terminal panel, as in an IDE: it takes its height from the work area. -->
       <div class="shell__main">
-        <div class="shell__workarea">
-          <KFileManager
-            v-if="store.fileManagerVisible && store.fileManagerSide === 'left'"
-            class="shell__fm shell__fm--left"
-          />
+        <div ref="workareaEl" class="shell__workarea">
+          <template v-if="store.fileManagerVisible && store.fileManagerSide === 'left'">
+            <KFileManager class="shell__fm shell__fm--left" :style="{ width: `${fmLeft.size.value}px` }" />
+          <div
+            class="shell__fm-resizer shell__fm-resizer--left"
+            :class="{ 'shell__fm-resizer--on': fmLeft.resizing.value }"
+            role="separator"
+            aria-orientation="vertical"
+            :aria-label="t('common.nav.fileManagerResize')"
+            :aria-valuenow="Math.round(fmLeft.size.value)"
+            :aria-valuemin="FM_MIN"
+            tabindex="0"
+            v-tip="t('common.nav.fileManagerResizeTip')"
+            @pointerdown="fmLeft.startResize"
+            @keydown="fmLeft.onKeydown"
+          ></div>
+          </template>
           <div class="shell__page">
             <router-view />
           </div>
-          <KFileManager
-            v-if="store.fileManagerVisible && store.fileManagerSide === 'right'"
-            class="shell__fm shell__fm--right"
-          />
+          <template v-if="store.fileManagerVisible && store.fileManagerSide === 'right'">
+          <div
+            class="shell__fm-resizer shell__fm-resizer--right"
+            :class="{ 'shell__fm-resizer--on': fmRight.resizing.value }"
+            role="separator"
+            aria-orientation="vertical"
+            :aria-label="t('common.nav.fileManagerResize')"
+            :aria-valuenow="Math.round(fmRight.size.value)"
+            :aria-valuemin="FM_MIN"
+            tabindex="0"
+            v-tip="t('common.nav.fileManagerResizeTip')"
+            @pointerdown="fmRight.startResize"
+            @keydown="fmRight.onKeydown"
+          ></div>
+            <KFileManager class="shell__fm shell__fm--right" :style="{ width: `${fmRight.size.value}px` }" />
+          </template>
         </div>
         <KTerminalPanel v-if="terminal.panelVisible" />
       </div>
@@ -481,6 +505,8 @@
 
     <!-- TOAST STACK — transient notifications (errors etc.) -->
     <KToast :toasts="store.toasts" @dismiss="store.dismissToast" />
+    <!-- Every destructive action asks here first (lib/confirm.ts). -->
+    <KConfirmDialog />
 
     <!-- JIRA MERGE PROMPT — global on purpose: a shadow task reaches `merged` wherever
          the user happens to be, and the «куди перенести тікет?» question must not depend
@@ -491,7 +517,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, onUnmounted, ref, watch } from 'vue';
+import { computed, nextTick, onBeforeUnmount, onMounted, onUnmounted, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { useI18n } from 'vue-i18n';
 import type { MachineResources, ResourceDecision, Session } from '@kermanych/core';
@@ -528,9 +554,11 @@ import KModal from 'components/kit/KModal.vue';
 import KField from 'components/kit/KField.vue';
 import KBtn from 'components/kit/KBtn.vue';
 import KToast from 'components/kit/KToast.vue';
+import KConfirmDialog from 'components/kit/KConfirmDialog.vue';
 import KProgressBar from 'components/kit/KProgressBar.vue';
 import { useActivity } from '../stores/activity';
 import KIconButton from 'components/kit/KIconButton.vue';
+import { useResizablePanel } from '../composables/useResizablePanel';
 import KUserButton from 'components/kit/KUserButton.vue';
 import KFileManager from 'components/kit/KFileManager.vue';
 import KTerminalPanel from 'components/kit/KTerminalPanel.vue';
@@ -804,6 +832,36 @@ function onFileManagerHotkey(e: KeyboardEvent): void {
 }
 onMounted(() => window.addEventListener('keydown', onFileManagerHotkey));
 onBeforeUnmount(() => window.removeEventListener('keydown', onFileManagerHotkey));
+
+// The dock's width, dragged from the seam it shares with the page (or nudged with the arrows
+// once the seam has focus). One remembered width per side, since the seam sits on the dock's
+// inner edge: the right dock grows leftwards, the left one rightwards. The page always keeps
+// FM_PAGE_MIN, so a wide dock cannot squeeze it away.
+const FM_MIN = 240;
+const FM_PAGE_MIN = 420;
+const workareaEl = ref<HTMLElement | null>(null);
+const fmMax = (): number =>
+  workareaEl.value ? workareaEl.value.clientWidth - FM_PAGE_MIN : Number.POSITIVE_INFINITY;
+const fmLeft = useResizablePanel({
+  storageKey: 'kermanych.fileManager.width.left',
+  defaultSize: 340,
+  min: FM_MIN,
+  max: fmMax,
+  edge: 'right',
+});
+const fmRight = useResizablePanel({
+  storageKey: 'kermanych.fileManager.width.right',
+  defaultSize: 340,
+  min: FM_MIN,
+  max: fmMax,
+  edge: 'left',
+});
+// Re-clamp once the work area can be measured, and whenever the dock opens or moves.
+watch(
+  () => [store.fileManagerVisible, store.fileManagerSide] as const,
+  () => void nextTick(() => { fmLeft.refresh(); fmRight.refresh(); }),
+  { immediate: true },
+);
 
 // The integrated terminal (KTerminalPanel). Opening the panel on a bound project that has no
 // shell starts one, as VS Code does — the click means «give me a terminal», not «show me an
@@ -2405,7 +2463,7 @@ const pullHint = computed(() => {
 .shell__workarea > .shell__fm {
   flex: none;
   box-sizing: border-box;
-  width: 340px;
+  // The width itself is inline: dragged from .shell__fm-resizer, 340px until then.
   height: calc(100% - 2 * var(--k-sp-3));
   margin-top: var(--k-sp-3);
   margin-bottom: var(--k-sp-3);
@@ -2415,5 +2473,39 @@ const pullHint = computed(() => {
 }
 .shell__workarea > .shell__fm--right {
   margin-right: var(--k-sp-3);
+}
+
+// The seam between the page and the dock: a 7px grab strip laid over the page's own 12px
+// gutter (negative margin, so it takes no width), with a 1px rule that shows only on hover,
+// focus and drag — the gutter stays a plain gap at rest. Same feel as the Агенти board's
+// resizer.
+.shell__fm-resizer {
+  position: relative;
+  z-index: 3;
+  flex: none;
+  width: 7px;
+  margin-block: var(--k-sp-3);
+  cursor: col-resize;
+  touch-action: none;
+  user-select: none;
+
+  &--right { margin-left: -9px; margin-right: 2px; }
+  &--left { margin-right: -9px; margin-left: 2px; }
+
+  &::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: 50%;
+    width: 1px;
+    transform: translateX(-50%);
+    background: transparent;
+    transition: background 0.12s;
+  }
+  &:hover::before,
+  &:focus-visible::before,
+  &--on::before { background: var(--k-accent); }
+  &:focus-visible { outline: none; }
 }
 </style>

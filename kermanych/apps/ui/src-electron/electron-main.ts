@@ -10,6 +10,7 @@ import type { INestApplication } from '@nestjs/common';
 import { closeLoopback, startLoopbackOAuth } from './oauth-loopback';
 import { routeLinksToDefaultBrowser } from './external-links';
 import { htmlToPdf } from './print-pdf';
+import { readWindowState, trackWindowState } from './window-state';
 import { SessionBrowsers } from './session-browser';
 
 const currentDir = fileURLToPath(new URL('.', import.meta.url));
@@ -93,6 +94,8 @@ async function startBackend(port: number): Promise<void> {
 // Stored in userData rather than read from the renderer's localStorage, which main cannot
 // reach before the page loads.
 const themeFile = path.join(app.getPath('userData'), 'window-theme.json');
+// Size, place, maximized / full screen, restored on the next launch (window-state.ts).
+const windowStateFile = path.join(app.getPath('userData'), 'window-state.json');
 // `--k-canvas` of the dark set in @kermanych/tokens: dark is the app's default theme regardless
 // of the OS preference (lib/theme.ts DEFAULT_THEME), so a first launch paints dark too.
 const DEFAULT_BACKGROUND = '#050505';
@@ -117,11 +120,10 @@ ipcMain.on('kermanych:theme', (_event, background: unknown) => {
 });
 
 async function createWindow(apiBase: string) {
+  const saved = readWindowState(windowStateFile);
   mainWindow = new BrowserWindow({
     icon: path.resolve(currentDir, 'icons/icon.png'), // tray icon
-    width: 1400,
-    height: 900,
-    useContentSize: true,
+    ...saved.bounds,
     // Shown on ready-to-show, i.e. once the splash in index.html has painted, over a
     // background of the operator's theme — never a white or wrong-theme frame.
     show: false,
@@ -138,7 +140,16 @@ async function createWindow(apiBase: string) {
       additionalArguments: [`--api-base=${apiBase}`, `--ui-key=${uiKey}`],
     },
   });
-  mainWindow.once('ready-to-show', () => mainWindow?.show());
+  // Maximized / full screen are applied at the first show, so the window appears in its last
+  // state instead of opening normal and then jumping — and not before ready-to-show:
+  // maximize() shows a hidden window itself, ahead of the splash's first paint.
+  trackWindowState(mainWindow, windowStateFile);
+  mainWindow.once('ready-to-show', () => {
+    if (!mainWindow) return;
+    if (saved.maximized) mainWindow.maximize();
+    if (saved.fullScreen) mainWindow.setFullScreen(true);
+    mainWindow.show();
+  });
   mainWindow.webContents.on('dom-ready', () => mainWindow?.webContents.send('kermanych:boot-status', bootStatus));
   routeLinksToDefaultBrowser(mainWindow, (url) => shell.openExternal(url));
   browsers.attach(mainWindow);
