@@ -10,10 +10,21 @@
       <!-- BOARD — one card per session in scope: one project, or every project of a workspace -->
       <section ref="boardEl" class="agents__board" :style="{ width: detailWidth + 'px' }">
         <header class="agents__board-head">
-          <div class="agents__board-title">
-            <span class="agents__bucket-label">{{ bucketLabel }}</span>
-            <span class="agents__bucket-count mono">{{ boardCount }}</span>
-          </div>
+          <!-- «Карта агентів»: every agent on this machine and what it spawned, in place of the
+               chat (spec docs/specs/2026-10-22-agent-map.md). The count is machine-wide, so an
+               agent working outside this scope is never quiet. A toggle: pressed while open.
+               It takes the place of the bucket's name and count: the sidebar rail already
+               shows both on the selected bucket, and the board gets a row back. -->
+          <button
+            type="button"
+            class="agents__map-btn"
+            :class="{ 'agents__map-btn--on': mapOpen }"
+            :aria-pressed="mapOpen"
+            @click="toggleAgentMap()"
+          >
+            <span class="agents__map-btn-label"><span aria-hidden="true">◈</span> {{ t('agents.map.title') }}</span>
+            <span class="agents__map-btn-count mono">{{ t('agents.map.activeCount', activeAgents) }}</span>
+          </button>
           <div class="agents__board-controls">
             <!-- Creating anything needs ONE project (a session row carries a projectId), so
                  under a workspace scope this is the one control that cannot act. Its reason is
@@ -36,8 +47,8 @@
 
         <!-- SEARCH — sticky at the top of the scrolling column, so a query typed over a long
              board stays reachable while the cards move under it. It narrows the ROWS only:
-             the bucket the rail chose still decides which rows are candidates, the header
-             keeps counting the whole bucket, and «знайдено N з M» beside the box is where the
+             the bucket the rail chose still decides which rows are candidates, the rail keeps
+             counting the whole bucket, and «знайдено N з M» beside the box is where the
              matched figure is stated. -->
         <div class="agents__search">
           <KField
@@ -50,20 +61,6 @@
             {{ t('agents.board.searchCount', { n: matchedCount, total: boardCount }) }}
           </span>
         </div>
-
-        <!-- «Карта агентів»: every agent on this machine and what it spawned, in place of the
-             chat (spec docs/specs/2026-10-22-agent-map.md). The count is machine-wide, so an
-             agent working outside this scope is never quiet. A toggle: pressed while open. -->
-        <button
-          type="button"
-          class="agents__map-btn"
-          :class="{ 'agents__map-btn--on': mapOpen }"
-          :aria-pressed="mapOpen"
-          @click="toggleAgentMap()"
-        >
-          <span class="agents__map-btn-label"><span aria-hidden="true">◈</span> {{ t('agents.map.title') }}</span>
-          <span class="agents__map-btn-count mono">{{ t('agents.map.activeCount', activeAgents) }}</span>
-        </button>
 
         <!-- Why «Нова задача» cannot act — a muted line above the cards the scope decided; the
              rule beneath keeps the cards reading as a separate list. -->
@@ -1916,8 +1913,6 @@ const {
   max: () =>
     contentEl.value ? contentEl.value.clientWidth - MIN_DETAIL : Number.POSITIVE_INFINITY,
 });
-
-const bucketLabel = computed(() => t(`agents.bucket.${store.selectedBucket}`));
 
 // The list is «not loaded» until the socket snapshot has filled `store.sessions` and — under
 // «Задачі» — until the cloud backlog read answers with nothing on screen yet. Before that an
@@ -3915,11 +3910,12 @@ async function submitPreviewConfig(): Promise<void> {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 20px;
+  gap: var(--k-sp-3);
   margin-bottom: 20px;
 }
 
 .agents__board-controls {
+  flex: none;
   display: flex;
   align-items: center;
   gap: 12px;
@@ -3962,19 +3958,6 @@ async function submitPreviewConfig(): Promise<void> {
   color: var(--k-faint);
 }
 
-.agents__bucket-label {
-  font-family: var(--k-font-ui);
-  font-size: var(--k-fs-md);
-  font-weight: var(--k-fw-semibold);
-  color: var(--k-text);
-}
-
-.agents__bucket-count {
-  margin-left: var(--k-sp-2);
-  font-size: var(--k-fs-sm);
-  color: var(--k-faint);
-}
-
 .agents__hint {
   margin: 0;
   font-size: 11px;
@@ -3988,15 +3971,16 @@ async function submitPreviewConfig(): Promise<void> {
   color: var(--k-muted);
 }
 
-// «Карта агентів» — one full-width row under the search: the name on the left, the
-// machine-wide active count on the right, pressed (accent frame) while the map is open.
+// «Карта агентів» — fills the board header beside «Нова задача»: the name on the left, the
+// machine-wide active count on the right, pressed (accent frame) while the map is open. In a
+// narrow board the name gives way (ellipsis) before the count or the split button do.
 .agents__map-btn {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: var(--k-sp-2);
-  width: 100%;
-  margin: 0 0 var(--k-sp-3);
+  flex: 1 1 auto;
+  min-width: 0;
   padding: var(--k-sp-2) var(--k-sp-3);
   border: 1px solid var(--k-line);
   border-radius: var(--k-r);

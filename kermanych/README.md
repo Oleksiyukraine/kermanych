@@ -831,11 +831,11 @@ Every agent on this machine as one tree (spec: `docs/specs/2026-10-22-agent-map.
 workspace → project → session → its discussion / review branches and the subagents it
 spawned → their nested subagents.
 
-- **Opening it.** The «◈ Карта агентів» button under the search on «Агенти» (its right side
-  counts the agents active on the whole machine) swaps the chat pane for the map, pressed
-  while open; press it again to go back. It opens fitted to the project or workspace selected
-  in the sidebar. ◈ in a session's header (shown once it has subagents) opens it on that
-  session, unfolded.
+- **Opening it.** The «◈ Карта агентів» button at the top of the «Агенти» list, beside «Нова
+  задача» (its right side counts the agents active on the whole machine), swaps the chat pane
+  for the map, pressed while open; press it again to go back. It opens fitted to the project
+  or workspace selected in the sidebar. ◈ in a session's header (shown once it has subagents)
+  opens it on that session, unfolded.
 - **What is on it.** Chips choose the buckets: «Активні», «Очікують», «Помилки» by default,
   «Завершені» on demand; the choice is remembered. A fork follows its parent's bucket, as in
   the sidebar. Chats and backlog cards are never on the map. A project with nothing under the
