@@ -113,15 +113,17 @@ function onGripKey(ev: KeyboardEvent): void {
   min-width: 0;
   min-height: 0;
   position: relative;
-  background: var(--k-surface);
+  background: var(--k-grad-raise), var(--k-surface);
   border: 1px solid var(--k-line);
   border-radius: var(--k-r);
+  box-shadow: var(--k-sheen), var(--k-shadow-card);
   overflow: hidden;
   transition: border-color 0.12s, box-shadow 0.12s, transform 0.12s, opacity 0.12s;
 }
 
 .tile:hover {
   border-color: var(--k-line-strong);
+  box-shadow: var(--k-sheen), var(--k-shadow-card-hover);
 }
 
 // The tile being dragged: lifted and dimmed so the live reorder underneath it reads as the

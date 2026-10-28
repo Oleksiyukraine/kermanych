@@ -454,7 +454,4 @@ watch(
   color: var(--k-accent);
   font-size: var(--k-fs-xs);
 }
-
-// Full-screen viewer layer: the whole window, edge to edge — no backdrop to click, so collapse /
-// ✕ / Escape leave it.
 </style>

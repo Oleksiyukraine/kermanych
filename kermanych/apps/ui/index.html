@@ -24,7 +24,7 @@
         var locale = 'uk';
         try {
           var t = localStorage.getItem('kermanych.theme');
-          if (t === 'light' || t === 'matrix') theme = t;
+          if (t === 'light' || t === 'matrix' || t === 'hermes') theme = t;
           if (localStorage.getItem('kermanych.locale') === 'en') locale = 'en';
         } catch (e) {
           /* storage unavailable: the defaults */
@@ -40,6 +40,7 @@
       html { background: #050505; }
       html[data-theme='light'] { background: #f6f6f7; }
       html[data-theme='matrix'] { background: #070c08; }
+      html[data-theme='hermes'] { background: #0a0c11; }
       #k-splash {
         --s-canvas: #050505; --s-muted: #8a8a8a; --s-accent: #ff563c; --s-line: rgba(255,255,255,.08);
         position: fixed;
@@ -60,6 +61,9 @@
       }
       html[data-theme='matrix'] #k-splash {
         --s-canvas: #070c08; --s-muted: #9db3a5; --s-accent: #63a079; --s-line: rgba(150,185,160,.10);
+      }
+      html[data-theme='hermes'] #k-splash {
+        --s-canvas: #0a0c11; --s-muted: #8d93a8; --s-accent: #4fd1e0; --s-line: rgba(150,165,210,.09);
       }
       /* Faded by App.vue on mount, then removed; a fixed overlay, so nothing below moves. */
       #k-splash.k-splash--out { opacity: 0; pointer-events: none; }

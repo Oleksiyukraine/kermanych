@@ -1632,6 +1632,7 @@ const THEMES = computed<readonly { value: KTheme; label: string }[]>(() => [
   { value: 'dark', label: t('settings.app.themeDark') },
   { value: 'light', label: t('settings.app.themeLight') },
   { value: 'matrix', label: t('settings.app.themeMatrix') },
+  { value: 'hermes', label: t('settings.app.themeHermes') },
 ]);
 
 function pickTheme(next: KTheme, e: MouseEvent): void {

@@ -103,14 +103,16 @@ const emit = defineEmits<{ click: [] }>();
   flex-direction: column;
   gap: var(--k-sp-1);
   padding: var(--k-sp-3);
-  background: var(--k-surface2);
+  background: var(--k-grad-raise), var(--k-surface2);
   border: 1px solid var(--k-line);
   border-radius: var(--k-r-lg);
+  box-shadow: var(--k-sheen), var(--k-shadow-card);
   cursor: pointer;
-  transition: border-color 0.12s ease;
+  transition: border-color 0.12s ease, box-shadow 0.12s ease;
 
   &:hover {
     border-color: var(--k-line-strong);
+    box-shadow: var(--k-sheen), var(--k-shadow-card-hover);
   }
 
   &:focus-visible {

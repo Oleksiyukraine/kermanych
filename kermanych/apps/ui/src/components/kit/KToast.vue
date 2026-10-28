@@ -83,7 +83,7 @@ const placement = computed<CSSProperties | undefined>(() => {
   min-width: 240px; // TOAST_MIN
   max-width: 360px; // TOAST_MAX
   padding: 12px 14px;
-  background: var(--k-surface2);
+  background: var(--k-grad-raise), var(--k-surface2);
   border: 1px solid var(--k-line-strong);
   border-left-width: 3px;
   border-radius: var(--k-r-lg);
@@ -92,7 +92,7 @@ const placement = computed<CSSProperties | undefined>(() => {
   font-size: 13px;
   line-height: 1.5;
   cursor: pointer;
-  box-shadow: var(--k-shadow-toast);
+  box-shadow: var(--k-sheen), var(--k-shadow-toast);
 }
 
 .k-toast__action {

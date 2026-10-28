@@ -24,6 +24,7 @@ export const uk = {
       themeDark: 'Темна тема',
       themeLight: 'Світла тема',
       themeMatrix: 'Тема «Матриця»',
+      themeHermes: 'Тема Hermes',
       langUk: 'Українська',
       langEn: 'Англійська',
       pullTip: 'git pull (--ff-only) поточної гілки репозиторію проєкту',
@@ -1328,6 +1329,7 @@ export const uk = {
       themeDark: 'Темна',
       themeLight: 'Світла',
       themeMatrix: 'Матриця',
+      themeHermes: 'Hermes',
       themeNote:
         'Тема належить цьому екрану, а не акаунту: той самий оператор за яскравим ноутбуком і за темним десктопом хоче різних відповідей.',
     },

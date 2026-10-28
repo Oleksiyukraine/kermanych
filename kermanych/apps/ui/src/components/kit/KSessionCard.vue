@@ -12,6 +12,7 @@
       class="k-session-card"
       :class="{
         'k-session-card--selected': selected,
+        'k-session-card--running': selected && running,
         'k-session-card--removable': removable,
         'k-session-card--pending': pending,
       }"
@@ -86,12 +87,17 @@ import KDecisionMark from './KDecisionMark.vue';
 import KNotNeededMark from './KNotNeededMark.vue';
 import KSpinner from './KSpinner.vue';
 import { tokens, usageTokens, usd } from '../../lib/format';
+import { isRunningStatus } from '../../lib/attention';
 import type { LaunchMode } from '../../lib/native-session';
 
 // Session summary card: the agent's name + time header with its branch under it (the branch
 // heads the card only when there is no name), a status row pairing the status dot with a
 // short status line, and the accounting line — which harness and model are running and what
-// they have consumed. Selected / hover lift the card with a subtle surface fill.
+// they have consumed. Hover and selection lift the card (surface fill, sheen, card shadow);
+// the selected card also wears a thin accent frame whose light runs around it while the
+// agent works (`queued`/`thinking`/`tool`) and stands still otherwise — motion that means
+// «this one is working», never decoration. Reduced motion keeps the frame static.
+// Spec: docs/specs/2026-10-28-hermes-theme-and-depth.md, decision 6.
 //
 // `fork` marks the card as a BRANCH of the card above it — a discussion or review session
 // forked off a parent agent's conversation. It is not decoration: the fork is a child in a
@@ -164,6 +170,7 @@ defineEmits<{ click: []; remove: [] }>();
 
 const { t } = useI18n();
 const removeTitleLabel = computed(() => props.removeTitle ?? t('kit.sessionCard.remove'));
+const running = computed(() => isRunningStatus(props.status));
 
 // Same construction as the panel's status row: the facts we have, `·`-joined, so a missing
 // one leaves no dangling separator behind.
@@ -186,6 +193,7 @@ const spend = computed(() => {
 }
 
 .k-session-card {
+  position: relative;
   display: flex;
   flex-direction: column;
   gap: var(--k-sp-2);
@@ -196,10 +204,11 @@ const spend = computed(() => {
   border-radius: var(--k-r-lg);
   padding: var(--k-sp-3);
   cursor: pointer;
-  transition: background 0.12s ease;
+  transition: background 0.12s ease, box-shadow 0.12s ease;
 
   &:hover {
-    background: var(--k-surface2);
+    background: var(--k-grad-raise), var(--k-surface2);
+    box-shadow: var(--k-sheen), var(--k-shadow-card-hover);
   }
 
   &:focus-visible {
@@ -209,7 +218,52 @@ const spend = computed(() => {
 }
 
 .k-session-card--selected {
-  background: var(--k-surface2);
+  background: var(--k-grad-raise), var(--k-surface2);
+  box-shadow: var(--k-sheen), var(--k-shadow-card);
+
+  // The frame: a 1px ring masked out of a gradient fill, so the gradient can move along it.
+  &::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    padding: 1px;
+    border-radius: inherit;
+    background: linear-gradient(
+      135deg,
+      color-mix(in srgb, var(--k-accent) 60%, transparent),
+      color-mix(in srgb, var(--k-accent) 12%, transparent) 50%,
+      color-mix(in srgb, var(--k-accent) 40%, transparent)
+    );
+    -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+    -webkit-mask-composite: xor;
+    mask-composite: exclude;
+    pointer-events: none;
+  }
+}
+
+// Running: one bright arc travels the ring. `--k-ring-angle` is a registered <angle>, so
+// the conic gradient interpolates instead of jumping between keyframes.
+@property --k-ring-angle {
+  syntax: '<angle>';
+  inherits: false;
+  initial-value: 0deg;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .k-session-card--running::after {
+    background: conic-gradient(
+      from var(--k-ring-angle),
+      color-mix(in srgb, var(--k-accent) 14%, transparent) 0turn,
+      var(--k-accent) 0.1turn,
+      color-mix(in srgb, var(--k-accent) 14%, transparent) 0.3turn,
+      color-mix(in srgb, var(--k-accent) 14%, transparent) 1turn
+    );
+    animation: k-session-card-ring 3s linear infinite;
+  }
+}
+
+@keyframes k-session-card-ring {
+  to { --k-ring-angle: 360deg; }
 }
 
 // ── Browsing (the agent drives the session browser) ───────────────────────────────────
@@ -293,7 +347,8 @@ const spend = computed(() => {
 // moment the cursor crosses onto the sibling control, so for a removable card the fill
 // follows the HOST and the row stays lit while it is being acted on.
 .k-session-card-host:hover .k-session-card--removable {
-  background: var(--k-surface2);
+  background: var(--k-grad-raise), var(--k-surface2);
+  box-shadow: var(--k-sheen), var(--k-shadow-card-hover);
 }
 
 // ── Fork (a branch of the card above) ─────────────────────────────────────────────────

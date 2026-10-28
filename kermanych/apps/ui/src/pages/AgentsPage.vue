@@ -4286,10 +4286,10 @@ async function submitPreviewConfig(): Promise<void> {
   padding: var(--k-sp-1);
   display: flex;
   flex-direction: column;
-  background: var(--k-surface);
+  background: var(--k-grad-raise), var(--k-surface);
   border: 1px solid var(--k-line-strong);
   border-radius: var(--k-r);
-  box-shadow: var(--k-shadow-pop, 0 8px 24px rgba(0, 0, 0, 0.4));
+  box-shadow: var(--k-sheen), var(--k-shadow-pop);
 }
 
 .agents__menu-item {
