@@ -29,7 +29,7 @@ import KIcon from './KIcon.vue';
 // is the question the rail gets scanned for. The active row gets a subtle surface
 // highlight — no colour fill, no initials chip. A project where «Посіпака» is activated on this
 // machine (docs/specs/2026-10-23-minion-auto-run.md, decision 6) carries its bot mark before the
-// attention badge: it says the backlog may move without the operator, not that anything waits.
+// name: it says the backlog may move without the operator, not that anything waits.
 const props = withDefaults(
   defineProps<{
     project: RailProject;
@@ -93,10 +93,10 @@ function onDragStart(e: DragEvent): void {
     @dragend="emit('dragend')"
   >
     <span class="k-rail__initials" aria-hidden="true">{{ initials }}</span>
-    <span class="k-rail__name">{{ project.name }}</span>
     <!-- Aria-hidden like the badge: the button's label says it. `k-rail__minion` names the slot
          so the minified rail can hide it with the name. -->
     <KIcon v-if="minion" name="minion" class="k-rail__minion" />
+    <span class="k-rail__name">{{ project.name }}</span>
     <!-- `k-rail__agents` names the slot so the minified rail (MainLayout's .shell--min)
          can hide it; the look lives in KAttentionBadge. -->
     <KAttentionBadge class="k-rail__agents" :attention="attention" />
@@ -162,7 +162,7 @@ function onDragStart(e: DragEvent): void {
 }
 
 // The muted ink of the row, never the accent: the mark is a standing state of the project, and
-// the accent belongs to the attention badge beside it.
+// the accent belongs to the attention badge.
 .k-rail__minion {
   --k-icon-size: var(--k-icon-sm);
   color: var(--k-muted);
