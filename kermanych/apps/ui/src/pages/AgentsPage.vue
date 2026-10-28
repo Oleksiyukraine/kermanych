@@ -196,7 +196,23 @@
               <span class="agents__detail-parent-name mono">{{ parentOfSelected.branch || parentOfSelected.name }}</span>
             </button>
             <KStatusDot :status="selectedSession.status" />
-            <span class="agents__detail-name">{{ selectedSession.name }}</span>
+            <input
+              v-if="renaming"
+              ref="renameInput"
+              v-model="renameDraft"
+              class="agents__detail-rename"
+              :aria-label="t('agents.detail.renameAria')"
+              @keydown.enter.prevent="commitRename"
+              @keydown.esc.prevent.stop="cancelRename"
+              @blur="commitRename"
+            />
+            <span
+              v-else
+              class="agents__detail-name"
+              :class="{ 'agents__detail-name--pending': renameOnScreen && sessionName.pending.value }"
+              v-tip="t('agents.detail.renameHint')"
+              @dblclick="startRename"
+            >{{ shownName }}</span>
             <KTag v-if="selectedSession.branch" class="agents__detail-branch">⑂ {{ selectedSession.branch }}</KTag>
             <KAnalysisMark v-if="selectedSession.deepAnalysis" />
             <KMinionMark v-if="selectedSession.minion" kind="running" />
@@ -514,7 +530,9 @@
                   :loading="fileDiffLoading"
                   :error="fileDiffError"
                   :load="loadSessionRaw"
-                  @close="closeFile"
+                  :start-maximized="openFileMaximized"
+                  @update:maximized="onFileMaximized"
+                  @close="closeFile(true)"
                 />
               </li>
             </ul>
@@ -706,7 +724,9 @@
                     :loading="fileDiffLoading"
                     :error="fileDiffError"
                     :load="loadSessionRaw"
-                    @close="closeFile"
+                    :start-maximized="openFileMaximized"
+                    @update:maximized="onFileMaximized"
+                    @close="closeFile(true)"
                   />
                 </li>
               </ul>
@@ -884,7 +904,7 @@
                 type="button"
                 class="agents-launcher__seg-btn mono"
                 :class="{ 'agents-launcher__seg-btn--active': opt === draftMode }"
-                @click="draftMode = opt"
+                @click="pickLaunchMode(opt)"
               >{{ opt === 'managed' ? t('agents.native.modeManaged') : opt }}</button>
             </div>
             <div class="agents-launcher__hint mono">{{ t('agents.native.modeHint') }}</div>
@@ -1212,6 +1232,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
+import { confirmAction } from '../lib/confirm';
 import {
   buildChatBlocks,
   branchName,
@@ -1301,7 +1322,7 @@ import { EFFORT_OPTIONS } from '../lib/effort';
 import { modelOptions, effortOptions } from '../lib/models';
 import { useResizablePanel } from '../composables/useResizablePanel';
 import { useVirtualList } from '../composables/useVirtualList';
-import { nativeHarnessName, nativeRuntimeFor, sessionCostKnown, sessionLaunchMode, LAUNCH_MODES, type LaunchMode } from '../lib/native-session';
+import { nativeHarnessName, nativeRuntimeFor, sessionCostKnown, sessionLaunchMode, LAUNCH_MODES, readLaunchMode, writeLaunchMode, type LaunchMode } from '../lib/native-session';
 import KTerminalView from 'components/kit/KTerminalView.vue';
 import KBrowserPane from 'components/kit/KBrowserPane.vue';
 import { useSessionBrowser } from 'stores/browser';
@@ -1671,6 +1692,52 @@ const selectedSession = computed(() =>
   store.sessions.find((s) => s.id === store.selectedSessionId),
 );
 const selectedDecision = computed(() => (selectedSession.value ? sessionDecisionReason(t, selectedSession.value) : undefined));
+
+// Inline rename of the open agent: double-click its name in the header. Enter and blur
+// commit, Esc discards; `renaming` also gates the blur so an Enter commit does not save twice
+// (the Чат page's rename works the same way). The new name shows at once and is held until the
+// session row reports it (useOptimisticValue); it belongs to the session it was made on
+// (`renameFor`), so switching agents mid-save never paints it onto another one.
+const renaming = ref(false);
+const renameDraft = ref('');
+const renameInput = ref<HTMLInputElement | null>(null);
+const renameFor = ref<string | null>(null);
+const sessionName = useOptimisticValue<string>(
+  () => (renameFor.value ? store.sessions.find((s) => s.id === renameFor.value)?.name ?? '' : ''),
+  async (name) => {
+    if (renameFor.value) await store.renameSession(renameFor.value, name);
+  },
+);
+const renameOnScreen = computed(() => !!selectedSession.value && renameFor.value === selectedSession.value.id);
+const shownName = computed(() =>
+  renameOnScreen.value ? sessionName.value.value : selectedSession.value?.name ?? '',
+);
+function startRename(): void {
+  if (!selectedSession.value) return;
+  renameDraft.value = shownName.value;
+  renaming.value = true;
+  void nextTick(() => renameInput.value?.select());
+}
+function cancelRename(): void {
+  renaming.value = false;
+}
+// One save at a time (useOptimisticValue ignores a set while one runs): a rename of another
+// agent made while the last one is still saving waits its turn instead of being dropped, and
+// `renameFor` moves only when its own save starts, so the in-flight name stays on its agent.
+let renameQueue: Promise<void> = Promise.resolve();
+function commitRename(): void {
+  if (!renaming.value) return;
+  renaming.value = false;
+  const s = selectedSession.value;
+  const name = renameDraft.value.trim();
+  if (!s || !name || name === shownName.value) return;
+  renameQueue = renameQueue.then(() => {
+    renameFor.value = s.id;
+    return sessionName.set(name);
+  });
+}
+// Another agent opened mid-edit: the draft belonged to the one that was on screen.
+watch(() => store.selectedSessionId, () => { renaming.value = false; });
 const selectedNotNeeded = computed(() => (selectedSession.value ? sessionNotNeededReason(t, selectedSession.value) : undefined));
 
 // The open session is READ, as it stands, for the sidebar's unread-result mark
@@ -2296,12 +2363,53 @@ async function loadFileDiff(id: string, path: string, reset: boolean): Promise<v
   }
 }
 
+// The diff open in «Зміни» / «Документація» (and whether it is full screen) survives a reload
+// and a restart, per agent, like the open tab. Written when a file opens or goes full screen,
+// cleared when the operator closes it; switching agents keeps each agent's own.
+const openFileMaximized = ref(false);
+const openFileKey = (id: string) => `kermanych.agents.openFile.${id}`;
+function rememberOpenFile(): void {
+  const id = store.selectedSessionId;
+  if (!id) return;
+  try {
+    if (openFile.value) localStorage.setItem(openFileKey(id), JSON.stringify({ path: openFile.value, maximized: openFileMaximized.value }));
+    else localStorage.removeItem(openFileKey(id));
+  } catch {
+    /* storage unavailable: the diff is just not restored */
+  }
+}
+function savedOpenFile(id: string): { path: string; maximized: boolean } | null {
+  try {
+    const v = JSON.parse(localStorage.getItem(openFileKey(id)) ?? 'null') as { path?: unknown; maximized?: unknown } | null;
+    return v && typeof v.path === 'string' ? { path: v.path, maximized: v.maximized === true } : null;
+  } catch {
+    return null;
+  }
+}
+function onFileMaximized(on: boolean): void {
+  openFileMaximized.value = on;
+  rememberOpenFile();
+}
+// Once the agent's changed files are listed: reopen the file from last time, if it is still
+// among them.
+function restoreOpenFile(id: string): void {
+  if (store.selectedSessionId !== id || openFile.value) return;
+  const saved = savedOpenFile(id);
+  if (!saved || !changesInfo.value?.files.some((f) => f.path === saved.path)) return;
+  openFileMaximized.value = saved.maximized;
+  openFile.value = saved.path;
+  void loadFileDiff(id, saved.path, true);
+}
+
 // Bumping the run counter is what makes a collapse final: an in-flight reply for the file
-// just closed would otherwise land in the pane the operator dismissed.
-function closeFile(): void {
+// just closed would otherwise land in the pane the operator dismissed. `forget` for a close
+// the operator asked for — the file is not reopened next time.
+function closeFile(forget = false): void {
   openFile.value = null;
+  openFileMaximized.value = false;
   fileDiffLoading.value = false;
   fileDiffRun++;
+  if (forget) rememberOpenFile();
 }
 
 // Raw bytes for the diff's preview mode (Markdown/HTML/PDF), read from the session's worktree.
@@ -2314,10 +2422,12 @@ function loadSessionRaw(path: string): Promise<Blob> {
 function toggleFile(path: string): void {
   const id = store.selectedSessionId;
   if (!id || openFile.value === path) {
-    closeFile();
+    closeFile(true);
     return;
   }
+  openFileMaximized.value = false;
   openFile.value = path;
+  rememberOpenFile();
   void loadFileDiff(id, path, true);
 }
 
@@ -2358,7 +2468,7 @@ watch(
     // session opens, and switching to the pane is then instant. A retired worktree has
     // nothing to read; the pane renders `worktreeGone` instead.
     if (!id || worktreeGone.value) return;
-    void loadChanges(id, true);
+    void loadChanges(id, true).then(() => restoreOpenFile(id));
   },
   { immediate: true },
 );
@@ -2621,7 +2731,12 @@ function onDraftModes(flip: (m: CardModes, on: boolean) => CardModes, on: boolea
 const nameEdited = ref(false);
 const draftBaseBranch = ref('');
 // «Режим»: a launch choice, not a card field — «В беклог» and board launches stay managed.
-const draftMode = ref<LaunchMode>('managed');
+// Each launcher opens on the mode last picked here (remembered per device).
+const draftMode = ref<LaunchMode>(readLaunchMode());
+function pickLaunchMode(mode: LaunchMode): void {
+  draftMode.value = mode;
+  writeLaunchMode(mode);
+}
 const launchNative = computed(() => draftMode.value !== 'managed');
 const launchBranches = ref<string[]>([]);
 const editingTaskId = ref<string | null>(null);
@@ -2776,7 +2891,7 @@ function openLauncher(card?: Task, deepAnalysis = false): void {
   nameEdited.value = !!card;
   launcherError.value = null;
   clearLaunchImages();
-  draftMode.value = 'managed';
+  draftMode.value = readLaunchMode();
   launcherOpen.value = true;
   void nextTick(() => taskInput.value?.focus());
 }
@@ -2805,7 +2920,7 @@ function openTaskFromText(text: string): void {
   nameEdited.value = true;
   launcherError.value = null;
   clearLaunchImages();
-  draftMode.value = 'managed';
+  draftMode.value = readLaunchMode();
   launcherOpen.value = true;
   void nextTick(() => nameField.value?.focus());
 }
@@ -2942,17 +3057,25 @@ const cardDelete = useKeyedAction(async (id: string) => {
   // The editor is this card's only detail view; it must not outlive the row it edits.
   if (editingTaskId.value === id) launcherOpen.value = false;
 });
-function onDeleteCard(card: Task): void {
+async function onDeleteCard(card: Task): Promise<void> {
   if (cardDelete.busyFor(card.id)) return;
-  if (!window.confirm(t('agents.notify.deleteCard', { title: card.title }))) return;
-  void cardDelete.run(card.id);
+  const ok = await confirmAction({
+    title: t('confirmations.deleteCard'),
+    message: t('agents.notify.deleteCard', { title: card.title }),
+    confirmLabel: t('confirmations.label.delete'),
+  });
+  if (ok) void cardDelete.run(card.id);
 }
 
 // A stranded pre-cutover row: local SQLite and nothing else, so this stays a plain delete.
-function onDeleteStranded(s: Session): void {
+async function onDeleteStranded(s: Session): Promise<void> {
   if (isSessionPending(s.id) || deleteAction.busyFor(s.id)) return;
-  if (!window.confirm(t('agents.notify.deleteStranded', { name: s.name }))) return;
-  void deleteAction.run(s.id);
+  const ok = await confirmAction({
+    title: t('confirmations.deleteStranded'),
+    message: t('agents.notify.deleteStranded', { name: s.name }),
+    confirmLabel: t('confirmations.label.delete'),
+  });
+  if (ok) void deleteAction.run(s.id);
 }
 
 // ── One-time publication of pre-cutover local backlog rows ────────────────
@@ -3190,8 +3313,18 @@ async function onRunNow(s: Session): Promise<void> {
 // status, unlike archive which refuses active agents.
 async function onDeleteAgent(s: Session): Promise<void> {
   if (sessionBlocked(s)) return;
-  if (!window.confirm(t('agents.notify.deleteAgent', { name: s.name }))) return;
-  await deleteAction.run(s.id);
+  const ok = await confirmAction({
+    title: t('confirmations.deleteAgent'),
+    // Says what goes with it (apps/api deleteSession): the worktree and the branch, or — for an
+    // agent working in the project folder — the branch, with the project back on its base.
+    message: !s.branch
+      ? t('agents.notify.deleteAgent', { name: s.name })
+      : s.worktree
+        ? t('agents.notify.deleteAgentWorktree', { name: s.name, branch: s.branch })
+        : t('agents.notify.deleteAgentBranch', { name: s.name, branch: s.branch }),
+    confirmLabel: t('confirmations.label.delete'),
+  });
+  if (ok) await deleteAction.run(s.id);
 }
 
 async function onAnswer(res: RpcExtensionUIResponse): Promise<void> {
@@ -3307,8 +3440,12 @@ async function submitMerge(): Promise<void> {
 
 async function onDiscardRow(s: Session): Promise<void> {
   if (sessionBlocked(s)) return;
-  if (!window.confirm(t('agents.notify.discard', { kind: s.kind === 'review' ? t('agents.notify.kindReview') : t('agents.notify.kindBranch'), name: s.name }))) return;
-  await deleteAction.run(s.id);
+  const ok = await confirmAction({
+    title: t('confirmations.discard'),
+    message: t('agents.notify.discard', { kind: s.kind === 'review' ? t('agents.notify.kindReview') : t('agents.notify.kindBranch'), name: s.name }),
+    confirmLabel: t('confirmations.label.discard'),
+  });
+  if (ok) await deleteAction.run(s.id);
 }
 
 async function resolveAuto(): Promise<void> {
@@ -4060,6 +4197,22 @@ async function submitPreviewConfig(): Promise<void> {
 
 // The session's own name — the bar's title, so it carries the UI face at full text colour,
 // not the muted mono the old path label wore.
+// The name's own box while it is edited: same type, an accent underline for the field.
+.agents__detail-rename {
+  min-width: 0;
+  flex: 0 1 auto;
+  padding: 0;
+  font-family: var(--k-font-ui);
+  font-size: var(--k-fs-md);
+  font-weight: var(--k-fw-semibold);
+  color: var(--k-text);
+  background: transparent;
+  border: none;
+  border-bottom: 1px solid var(--k-accent);
+  outline: none;
+}
+// Saved but not yet echoed back by the session row.
+.agents__detail-name--pending { opacity: 0.6; }
 .agents__detail-name {
   min-width: 0;
   overflow: hidden;

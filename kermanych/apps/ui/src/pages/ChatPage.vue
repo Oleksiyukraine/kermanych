@@ -36,8 +36,7 @@
         </header>
 
         <div v-if="threads.length" class="chat__threads">
-          <!-- `branch` is intentionally empty: a chat has none, and KSessionCard heads the
-               card with `branch || title`, so anything passed here would hide the title. -->
+          <!-- `branch` is intentionally empty: a chat has none. -->
           <KSessionCard
             v-for="s in threads"
             :key="s.id"
@@ -494,6 +493,8 @@ const {
   storageKey: 'kermanych.chat.history-width',
   defaultSize: 300,
   min: MIN_HISTORY,
+  // The history rail sits left of the seam, so dragging right widens it.
+  edge: 'right',
   max: () => (contentEl.value ? contentEl.value.clientWidth - MIN_DETAIL : Number.POSITIVE_INFINITY),
 });
 

@@ -6,6 +6,28 @@ import type { NativeHarness, Session, TerminalInfo } from '@kermanych/core';
 export type LaunchMode = 'managed' | 'omp' | 'claude' | 'codex';
 export const LAUNCH_MODES: readonly LaunchMode[] = ['managed', 'omp', 'claude', 'codex'];
 
+// The mode last picked in the launcher, which the next launcher opens with. A device-local
+// screen preference like the locale (lib/locale.ts): localStorage, never Supabase, and every
+// access guarded — an unreadable or unknown value falls back to `managed`.
+const LAUNCH_MODE_KEY = 'kermanych.launcher.mode';
+
+export function readLaunchMode(): LaunchMode {
+  try {
+    const v = typeof localStorage === 'undefined' ? null : localStorage.getItem(LAUNCH_MODE_KEY);
+    return (LAUNCH_MODES as readonly string[]).includes(v ?? '') ? (v as LaunchMode) : 'managed';
+  } catch {
+    return 'managed';
+  }
+}
+
+export function writeLaunchMode(mode: LaunchMode): void {
+  try {
+    if (typeof localStorage !== 'undefined') localStorage.setItem(LAUNCH_MODE_KEY, mode);
+  } catch {
+    // storage refused: the pick holds until the launcher closes
+  }
+}
+
 const HARNESS_MODE: Record<NativeHarness, Exclude<LaunchMode, 'managed'>> = {
   omp: 'omp',
   'claude-code': 'claude',

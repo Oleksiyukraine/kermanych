@@ -157,6 +157,7 @@ import JiraTicketDialog from './JiraTicketDialog.vue';
 import { api } from '../../lib/api';
 import { useAsyncAction } from '../../composables/useAsyncAction';
 import { useLoadPhase } from '../../composables/useLoadPhase';
+import { useRememberedChoice } from '../../composables/useRememberedChoice';
 import {
   assigneeOptions,
   filterByAssignee,
@@ -190,10 +191,6 @@ const phase = useLoadPhase(() => jira.integration === undefined || (jira.loading
 // The search box filters the cards, never the columns: an empty column under a query
 // still says which column it is, so the board keeps its shape while you type.
 const query = ref('');
-// The assignee chip: '' is «anyone» and the board's resting state. Deliberately NOT
-// persisted, exactly like `query` — a filter you cannot see the origin of, restored days
-// later, reads as tickets having disappeared.
-const assignee = ref('');
 // The board name stays in the bar while filtering too — it says WHICH board you are
 // searching, and losing it mid-search reads as the board having changed.
 const boardName = computed(() => jira.integration?.boardName ?? '');
@@ -215,17 +212,22 @@ const assigneeChoices = computed(() => [
   ...assigneeOptions(jira.issues).map((o) => ({ value: o.id, label: o.name })),
 ]);
 
+// The assignee chip: '' is «anyone» and the board's resting state. Remembered per board on
+// this device; the chip shows the pick and the count reads «N of M», so a restored filter is
+// never invisible. A sync (or a reassignment in Jira) can retire the very person it filters
+// by — then it falls back to «anyone» (useRememberedChoice) rather than leave the board empty
+// with no cards to explain why; «Unassigned» is always valid. The search box is not kept.
+const assignee = useRememberedChoice(
+  () => (integrationId.value ? `kermanych.jira.assignee.${integrationId.value}` : ''),
+  () => assigneeChoices.value,
+  () => !jira.loading,
+);
+
 // Both narrowings, one after the other: the search box over the assignee's cards.
 const matched = computed(() => filterByAssignee(filterIssues(jira.issues, query.value), assignee.value));
 const filtering = computed(() => query.value.trim() !== '' || assignee.value !== '');
 const grouped = computed(() => issuesByColumn(jira.columns, matched.value));
 
-// A sync (or a reassignment in Jira) can retire the very person the chip is filtering by,
-// which would leave the board empty with no cards to explain why. Falling back to «anyone»
-// keeps the board readable; «Unassigned» is always a valid choice, so it never expires.
-watch(assigneeChoices, (choices) => {
-  if (assignee.value && !choices.some((c) => c.value === assignee.value)) assignee.value = '';
-});
 
 // ── detail / editors ──────────────────────────────────────────────────────────
 const openedIssueId = ref<string | null>(null);

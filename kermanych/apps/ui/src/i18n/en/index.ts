@@ -32,6 +32,8 @@ export const en: MessageSchema = {
       bindFolder: 'Bind folder',
       fileManagerLeft: 'Files on the left (between the sidebar and the session)',
       fileManagerRight: 'Files on the right (past the main section)',
+      fileManagerResize: 'Resize the file panel',
+      fileManagerResizeTip: 'Drag to resize the file panel',
       terminal: 'Project terminal (Ctrl+`)',
       nameLabel: 'Name',
       workspaceFormHint: 'A workspace groups projects and holds the team roster: one invite opens access to all of its projects.',
@@ -224,6 +226,8 @@ export const en: MessageSchema = {
       blank: 'Pick a session from the list.',
       logEmpty: 'The log is empty.',
       more: 'More actions',
+      renameHint: 'Double-click to rename',
+      renameAria: 'Agent name',
       expandAll: 'Expand all',
       collapseAll: 'Collapse all',
       menu: {
@@ -576,6 +580,8 @@ export const en: MessageSchema = {
     notify: {
       reopened: 'Session “{name}” reopened — the worktree is up, you can continue',
       deleteAgent: 'Delete agent “{name}”?',
+      deleteAgentWorktree: 'Agent “{name}” is deleted together with its worktree and branch {branch}. Work that is not pushed is lost.',
+      deleteAgentBranch: 'Agent “{name}” is deleted together with its branch {branch}, and the project goes back to its base branch. Work that is not pushed is lost.',
       cannotArchive: 'Can’t defer an active agent',
       discard: 'Discard {kind} “{name}”? The conversation will be lost.',
       kindReview: 'the review',
@@ -2409,6 +2415,7 @@ export const en: MessageSchema = {
       changes: 'Changes',
       showDiff: 'Show changes',
       hideDiff: 'Show the whole file',
+      noChangesTip: 'No changes in this file',
       fileUnavailable: 'File unavailable — it is missing or larger than 4 MB.',
     },
     dateField: {
@@ -2500,6 +2507,19 @@ export const en: MessageSchema = {
       tooLarge: 'File too large to view.',
       maximize: 'Full screen',
       minimize: 'Collapse to panel',
+    },
+    code: {
+      fold: 'Fold',
+      unfold: 'Unfold',
+      keys: '{n} key | {n} keys',
+      items: '{n} item | {n} items',
+    },
+    confirm: {
+      cancel: 'Cancel',
+    },
+    split: {
+      resize: 'Resize panes',
+      tip: 'Drag to resize · double-click for half and half',
     },
     viewMode: {
       label: 'View mode',
@@ -2688,7 +2708,7 @@ export const en: MessageSchema = {
         asyncSkeleton: 'KSkeleton — «not loaded yet»: rows, cards, a paragraph, an avatar, a line, a block. Appears after 150 ms and stays at least 300 ms (useLoadPhase); the empty state only once the data has really arrived.',
         asyncPending: 'pending — an action on the entity waits for its result over the socket (stop, delete, fork, moving a ticket): the card is dimmed, spins, and its actions are blocked for up to 15 s.',
         asyncBar: 'KProgressBar — 2 px of accent under the top navigation for work the operator started (useAsyncAction / trackLoad), after 300 ms. Background polling never lights it.',
-        actionButtons: '28×28 · a dense control for groups of glyph actions: table row and panel header (tighter than KBtn variant="icon" 34×34). active = accent. The hint is a custom tooltip (v-tip), not the native title.',
+        actionButtons: '28×28 · a dense control for groups of glyph actions: table row and panel header (tighter than KBtn variant="icon" 34×34). active = accent. The hint is a custom tooltip (v-tip), not the native title. The last one is KFullscreenButton: drawn expand / collapse arrows, the one full-screen control for viewers, dialogs and pages.',
         kbd: 'KKbd · ⌘ and ⏎ carry far less ink than a letter of the same em, so the chip is sized off the ICON scale (--k-icon-sm), never off --k-fs-*, and is never dimmed with opacity. tone="on-accent" inherits the control colour for a chip riding inside a filled button; tone="muted" is the standalone hint. aria-hidden: the keybinding belongs in the control label, not in this span.',
         fields: 'branch={branch} · select(rows)={branchSel} · select(pairs)={wsSel} · select(search)={modelSel} · date={date} — the list shows the name on the right while the model holds the id: a name filter breaks the moment a second workspace with the same name appears. The date lives in the model as YYYY-MM-DD and shows itself as dd.mm.yyyy — either can be typed by hand.',
         lastAction: 'last action: {action}',
@@ -2698,7 +2718,7 @@ export const en: MessageSchema = {
         navRow: 'rail row: label + counter — and the same row with a second line of text (the Management section rail)',
         kanban: 'assignee — a square avatar on the right of the title row: a photo, or initials without a photo, or a dashed «—» frame when the task is assigned to no one',
         diff: 'Clicking a file in the «Changes» section opens this block: original on the left, the agent version on the right. Paired rows (mod) sit opposite each other; a one-sided edit leaves the opposite column dimmed.',
-        viewMode: 'Header controls of the diff and file viewers. ± turns the diff off to show the whole current file (not offered for binary or deleted files). Source · split · preview appear for .md, .markdown, .html, .htm and .pdf only; a PDF never opens on source. Both choices are remembered per device across files.',
+        viewMode: 'Header controls of the diff and file viewers. ± turns the diff off to show the whole current file (not offered for binary or deleted files). Source · split · preview appear for .md, .markdown, .html, .htm and .pdf only; a PDF never opens on source. Both choices are remembered per device across files. In split, the divider drags (KSplitPanes; arrows nudge it, double-click resets to half and half).',
         sessionFork: 'fork: a branch and a review under the parent agent',
         sessionRemove: 'removed in place: ✕ on card hover',
         sessionFindings: 'findings: ⚑ with the open count — the agent noticed problems outside its task, and they await a decision',
@@ -3475,10 +3495,6 @@ export const en: MessageSchema = {
     bindPrompt: 'Bind this project’s local repository to see its documentation.',
     noFolders: 'No documentation folders configured. Add them in the project settings.',
     pickFile: 'Pick a file on the left.',
-    emptyFolder: 'Empty folder',
-    loading: 'Loading…',
-    binary: 'Binary file — no preview available.',
-    zoomHint: 'Enlarge {name}',
     indexHeading: 'Documentation index',
     indexNever: 'Not indexed yet',
     indexSummary: 'Indexed {files} files · {when}',
@@ -3511,5 +3527,91 @@ export const en: MessageSchema = {
     showAnyway: 'Try here anyway',
     blankHint: 'Blank? The site may need a sign-in — open it in your browser.',
     pickLink: 'Pick a link on the left or a card below.',
+  },
+  // Titles, messages and button labels for lib/confirm.ts `confirmAction` — every destructive
+  // action asks first. A message names the thing that goes and what goes with it.
+  confirmations: {
+    label: {
+      delete: 'Delete',
+      remove: 'Remove',
+      discard: 'Discard',
+      disconnect: 'Disconnect',
+      reset: 'Reset',
+      revoke: 'Revoke',
+      clear: 'Clear',
+      kill: 'Stop it',
+      close: 'Close',
+    },
+    deleteCard: 'Delete task?',
+    deleteStranded: 'Delete local task?',
+    deleteAgent: 'Delete agent?',
+    discard: 'Discard branch?',
+    deleteRisk: 'Delete risk?',
+    deletePassword: 'Delete entry?',
+    removeLink: 'Remove link?',
+    removeMember: {
+      title: 'Remove member?',
+      message: '{who} is removed from workspace “{workspace}” and loses access to its projects and tasks.',
+    },
+    resetResources: {
+      title: 'Reset resource limits?',
+      message: 'Every override on this machine goes back to the detected value.',
+    },
+    discardEdits: {
+      title: 'Discard changes?',
+      message: 'Your unsaved changes in this section will be lost.',
+    },
+    deleteSkill: {
+      title: 'Delete skill?',
+      message: 'Skill “{name}” is deleted from the library. Agents that use it no longer get it.',
+    },
+    resetAgent: {
+      title: 'Reset instruction?',
+      message: 'The edited instruction of “{name}” is deleted, and the agent goes back to the default text.',
+    },
+    deleteTrigger: {
+      title: 'Delete trigger?',
+      message: 'Trigger “{name}” is deleted.',
+    },
+    newChat: {
+      title: 'Start a new chat?',
+      message: 'The current conversation with the assistant is cleared and cannot be brought back.',
+    },
+    revokeGrant: {
+      title: 'Revoke access?',
+      message: '{who} loses access to “{title}”.',
+    },
+    deleteTodo: {
+      title: 'Delete item?',
+      message: '“{text}” is deleted from the list.',
+    },
+    resetLayout: {
+      title: 'Reset layout?',
+      message: 'The dashboard goes back to its default tiles and sizes.',
+    },
+    removeToken: {
+      title: 'Remove {service} token?',
+      message: 'Your {service} token is removed. Actions that need it stop working until you add a new one.',
+    },
+    disconnect: {
+      title: 'Disconnect {service}?',
+      message: '{service} is disconnected from this workspace for everyone. You can connect it again later.',
+    },
+    slackAccount: {
+      title: 'Disconnect your Slack account?',
+      message: 'Release notes can no longer be posted as you until you connect again.',
+    },
+    slackChannel: {
+      title: 'Remove the channel?',
+      message: 'Release notes stop going to the Slack channel.',
+    },
+    killTerminal: {
+      title: 'Close the terminal?',
+      message: 'Anything still running in this terminal is stopped.',
+    },
+    killCommand: {
+      title: 'Stop the command?',
+      message: '{alert}\n\nThe process is killed; the agent sees its command fail.',
+    },
   },
 };

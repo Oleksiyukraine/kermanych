@@ -93,7 +93,7 @@
               class="tg__btn"
               :disabled="!canWrite || rowBusy(t)"
               :aria-busy="removing.busyFor(t.id) || undefined"
-              @click="removing.run(t.id)"
+              @click="askRemove(t.id, t.label)"
             >
               <KSpinner v-if="removing.busyFor(t.id)" :size="10" />
               {{ translate('settings.triggers.delete') }}
@@ -270,6 +270,7 @@
 // editor and leaves every trigger on screen exactly as true as it was.
 import { computed, effectScope, onScopeDispose, reactive, ref, watch, type EffectScope } from 'vue';
 import { useI18n } from 'vue-i18n';
+import { confirmAction } from '../../lib/confirm';
 import { AGENTS, SKILL_NAME_RE, type ProjectSkillsPayload, type RepoSkill, type SkillView } from '@kermanych/core';
 import {
   deleteAiTrigger,
@@ -745,6 +746,17 @@ function enabledValue(t: AiTrigger): boolean {
 }
 function enabledPending(t: AiTrigger): boolean {
   return enabledOf(t).pending.value;
+}
+
+// The delete asks first, naming the trigger; only a «yes» starts the row's spinner.
+async function askRemove(id: string, name: string): Promise<void> {
+  if (removing.busyFor(id)) return;
+  const ok = await confirmAction({
+    title: translate('confirmations.deleteTrigger.title'),
+    message: translate('confirmations.deleteTrigger.message', { name }),
+    confirmLabel: translate('confirmations.label.delete'),
+  });
+  if (ok) void removing.run(id);
 }
 
 // `deleteAiTrigger` throws when it removed nothing — an RLS refusal on a DELETE reports no error

@@ -431,7 +431,7 @@
                 :title="t('settings.members.remove')"
                 :loading="removeAction.busyFor(m.userId)"
                 :disabled="roleControl(m).pending"
-                @click="removeAction.run(m.userId, m)"
+                @click="askRemoveMember(m)"
               >✕</KIconButton>
             </div>
             <div v-if="!membersLoading && !members.length" class="set__empty">
@@ -729,7 +729,7 @@
         <span class="set__bar-text">
           {{ dirtyCount === 1 ? t('settings.bar.oneField') : t('settings.bar.manyFields', { count: dirtyCount }) }}
         </span>
-        <KBtn variant="ghost" :disabled="saving" @click="discard">{{ t('settings.bar.discard') }}</KBtn>
+        <KBtn variant="ghost" :disabled="saving" @click="askDiscard">{{ t('settings.bar.discard') }}</KBtn>
         <KBtn variant="primary" :loading="saving" @click="save">
           {{ saving ? t('settings.bar.saving') : t('settings.bar.save') }}
         </KBtn>
@@ -814,6 +814,7 @@
 import { computed, effectScope, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue';
 import { onBeforeRouteLeave, useRoute, useRouter } from 'vue-router';
 import { useI18n } from 'vue-i18n';
+import { confirmAction } from '../lib/confirm';
 import type { EnvFileView, ThinkingLevel, AgentLanguage, DocsPolicyKey, DocsRule, MachineResources } from '@kermanych/core';
 import { AGENT_LANGUAGES, AGENT_LANGUAGE_LABELS, DEFAULT_DOCS_POLICY, DOCS_LAYOUT, DOCS_RULES } from '@kermanych/core';
 import type { AssignableRole, WorkspaceMember, WorkspaceRole } from '@kermanych/cloud';
@@ -1298,6 +1299,20 @@ async function invite(): Promise<void> {
   }
 }
 
+// The ✕ asks first, naming who and where; only a «yes» starts the (spinning) removal.
+async function askRemoveMember(m: WorkspaceMember): Promise<void> {
+  if (removeAction.busyFor(m.userId)) return;
+  const ok = await confirmAction({
+    title: t('confirmations.removeMember.title'),
+    message: t('confirmations.removeMember.message', {
+      who: m.profile?.githubUsername ?? m.userId,
+      workspace: workspaceName.value,
+    }),
+    confirmLabel: t('confirmations.label.remove'),
+  });
+  if (ok) void removeAction.run(m.userId, m);
+}
+
 // Per member: ✕ on one row neither blocks nor spins the others.
 const removeAction = useKeyedAction(
   async (_userId: string, m: WorkspaceMember) => {
@@ -1362,6 +1377,16 @@ const dirtyCount = computed(() => {
   if (section.value.scope === 'workspace') return wsDirty.value.length;
   return resDirty.value.length;
 });
+
+// The save bar's «Відкинути» — unsaved edits are lost, so it asks first.
+async function askDiscard(): Promise<void> {
+  const ok = await confirmAction({
+    title: t('confirmations.discardEdits.title'),
+    message: t('confirmations.discardEdits.message'),
+    confirmLabel: t('confirmations.label.discard'),
+  });
+  if (ok) discard();
+}
 
 function discard(): void {
   paneError.value = null;
@@ -1847,6 +1872,12 @@ async function redetectResources(): Promise<void> {
 
 // Not a draft edit: it clears every override on the server at once, like the spec's button.
 async function resetResources(): Promise<void> {
+  const ok = await confirmAction({
+    title: t('confirmations.resetResources.title'),
+    message: t('confirmations.resetResources.message'),
+    confirmLabel: t('confirmations.label.reset'),
+  });
+  if (!ok) return;
   resBusy.value = true;
   try {
     takeResources(await api.updateMachineResources({ overrides: null }), true);

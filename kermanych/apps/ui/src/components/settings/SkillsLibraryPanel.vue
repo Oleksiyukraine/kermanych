@@ -56,7 +56,7 @@
               class="sk__btn"
               :disabled="!canWrite || rowAction.busyFor(row.name)"
               :aria-busy="rowAction.busyFor(row.name) || undefined"
-              @click="rowAction.run(row.name, 'drop')"
+              @click="askDelete(row.name)"
             >
               <KSpinner v-if="rowAction.busyFor(row.name)" :size="10" />
               {{ t('settings.skillsLibrary.delete') }}
@@ -187,6 +187,7 @@
 // uses for values-vs-names.
 import { computed, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
+import { confirmAction } from '../../lib/confirm';
 import {
   DEFAULT_SKILLS,
   SKILL_NAME_RE,
@@ -543,6 +544,18 @@ const rowAction = useKeyedAction(async (name: string, kind: 'drop' | 'disable') 
   if (kind === 'drop') await dropRow(name);
   else await disable(name);
 });
+
+// «Видалити» asks first; «Увімкнути» (the same drop, of a default's tombstone) does not —
+// it brings a skill back rather than losing one.
+async function askDelete(name: string): Promise<void> {
+  if (rowAction.busyFor(name)) return;
+  const ok = await confirmAction({
+    title: t('confirmations.deleteSkill.title'),
+    message: t('confirmations.deleteSkill.message', { name }),
+    confirmLabel: t('confirmations.label.delete'),
+  });
+  if (ok) void rowAction.run(name, 'drop');
+}
 
 // Both list actions that delete the project's row for a name. What differs is only what the
 // row MEANS: «Видалити» drops a skill the project added, while «Увімкнути» drops the

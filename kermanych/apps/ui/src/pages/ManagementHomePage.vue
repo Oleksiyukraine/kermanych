@@ -47,6 +47,7 @@
 // later.
 import { computed, markRaw, onMounted, onUnmounted, ref, watch, type Component } from 'vue';
 import { useI18n } from 'vue-i18n';
+import { confirmAction } from '../lib/confirm';
 import KBtn from 'components/kit/KBtn.vue';
 import { useJira } from 'stores/jira';
 import HomeTile from 'components/home/HomeTile.vue';
@@ -92,7 +93,13 @@ function persist(): void {
   writeLayout(props.workspaceId, layout.value);
 }
 
-function resetLayout(): void {
+async function resetLayout(): Promise<void> {
+  const ok = await confirmAction({
+    title: t('confirmations.resetLayout.title'),
+    message: t('confirmations.resetLayout.message'),
+    confirmLabel: t('confirmations.label.reset'),
+  });
+  if (!ok) return;
   layout.value = mergeLayout(null);
   persist();
 }

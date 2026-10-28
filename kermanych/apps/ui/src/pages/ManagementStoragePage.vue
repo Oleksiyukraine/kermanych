@@ -383,6 +383,7 @@
 // is drawn here is a courtesy that matches it, never a substitute for it.
 import { computed, reactive, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
+import { confirmAction } from '../lib/confirm';
 import type { PasswordHolder, WorkspacePassword, WorkspacePasswordField, WorkspacePasswordSecretPatch } from '@kermanych/cloud';
 import KTable, { type KTableColumn } from 'components/kit/KTable.vue';
 import KModal from 'components/kit/KModal.vue';
@@ -607,6 +608,12 @@ async function confirmShare(): Promise<void> {
 async function revoke(h: PasswordHolder): Promise<void> {
   const row = sharing.value;
   if (!row) return;
+  const ok = await confirmAction({
+    title: t('confirmations.revokeGrant.title'),
+    message: t('confirmations.revokeGrant.message', { who: holderName(h), title: row.title }),
+    confirmLabel: t('confirmations.label.revoke'),
+  });
+  if (!ok || sharing.value?.id !== row.id) return;
   revoking.value = h.userId;
   shareError.value = null;
   try {
@@ -868,9 +875,13 @@ const deleting = useKeyedAction(async (_id: string, row: WorkspacePassword) => {
   }
   if (viewing.value?.id === row.id) closeView(false);
 });
-function remove(row: WorkspacePassword): void {
-  if (!window.confirm(t('management.storage.deleteConfirm', { title: row.title }))) return;
-  void deleting.run(row.id, row);
+async function remove(row: WorkspacePassword): Promise<void> {
+  const ok = await confirmAction({
+    title: t('confirmations.deletePassword'),
+    message: t('management.storage.deleteConfirm', { title: row.title }),
+    confirmLabel: t('confirmations.label.delete'),
+  });
+  if (ok) void deleting.run(row.id, row);
 }
 </script>
 

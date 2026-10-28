@@ -1,6 +1,6 @@
 // apps/ui/src/stores/orchestrator.ts
 import { defineStore } from 'pinia';
-import { ref } from 'vue';
+import { ref, watch } from 'vue';
 import type { Socket } from 'socket.io-client';
 import type {
   NativeHarness,
@@ -28,6 +28,38 @@ import { globalTr } from '../boot/i18n';
 import type { Bucket } from '../lib/buckets';
 import { unsettledOutgoing, type OutgoingMessage } from '../lib/outgoing';
 import { PENDING_TIMEOUT_MS } from './pending';
+import { confirmAction } from '../lib/confirm';
+
+// The persisted selection (see `savedSelection` in the store). Guarded both ways: a missing
+// or unreadable value is simply «nothing selected».
+const SELECTION_KEY = 'kermanych.selection';
+const BUCKETS: readonly Bucket[] = ['active', 'waiting', 'completed', 'errors', 'tasks'];
+type SavedSelection = { workspace?: string; project?: string; session?: string; bucket?: Bucket };
+const str = (v: unknown): string | undefined => (typeof v === 'string' && v ? v : undefined);
+function readSelection(): SavedSelection {
+  try {
+    const raw = JSON.parse(localStorage.getItem(SELECTION_KEY) ?? '{}') as Record<string, unknown>;
+    const out: SavedSelection = {};
+    const workspace = str(raw.workspace);
+    const project = str(raw.project);
+    const session = str(raw.session);
+    const bucket = BUCKETS.find((x) => x === raw.bucket);
+    if (workspace) out.workspace = workspace;
+    if (project) out.project = project;
+    if (session) out.session = session;
+    if (bucket) out.bucket = bucket;
+    return out;
+  } catch {
+    return {};
+  }
+}
+function writeSelection(sel: { workspace: string | undefined; project: string | undefined; session: string | undefined; bucket: Bucket }): void {
+  try {
+    localStorage.setItem(SELECTION_KEY, JSON.stringify(sel));
+  } catch {
+    // storage refused: the selection still holds until the next reload
+  }
+}
 
 // `action`: one button on the toast (the watchdog's «Зупинити команду»); pressing it runs
 // `run` and dismisses the toast.
@@ -64,13 +96,17 @@ export const useOrchestrator = defineStore('orchestrator', () => {
   // Per-session subagent tree for the agent map: the socket snapshot carries every live
   // session's tree, `subagents_update` keeps each fresh. Keyed by session id, as `transcripts`.
   const subagents = ref<Record<string, SubagentNode[]>>({});
-  const selectedProjectId = ref<string | undefined>(undefined);
-  const selectedWorkspaceId = ref<string | undefined>(undefined);
+  // The selection (workspace / project / agent) and the Агенти bucket survive a reload and a
+  // restart: read once here, written on every change below. An id that no longer exists is
+  // dropped once the first snapshot shows what does (see `reduce`).
+  const savedSelection = readSelection();
+  const selectedProjectId = ref<string | undefined>(savedSelection.project);
+  const selectedWorkspaceId = ref<string | undefined>(savedSelection.workspace);
   // projectId -> workspaceId, pushed in by useProjects.load(). This store must NOT
   // import useProjects — that store already depends on this one for notify() and the
   // registry sync — so the map travels one way, downwards.
   const projectWorkspace = ref<Record<string, string>>({});
-  const selectedSessionId = ref<string | undefined>(undefined);
+  const selectedSessionId = ref<string | undefined>(savedSelection.session);
   const previews = ref<Record<string, string>>({});
   const toasts = ref<Toast[]>([]);
   // The omp model catalog for THIS machine (see loadModels). Empty until it lands — and empty
@@ -78,7 +114,11 @@ export const useOrchestrator = defineStore('orchestrator', () => {
   const models = ref<ModelOption[]>([]);
   // Which Агенти bucket the sidebar shows. Lives here because the sidebar (MainLayout) sets
   // it while the filter lives in AgentsPage. See lib/buckets.ts for what each bucket holds.
-  const selectedBucket = ref<Bucket>('active');
+  const selectedBucket = ref<Bucket>(savedSelection.bucket ?? 'active');
+  watch(
+    [selectedWorkspaceId, selectedProjectId, selectedSessionId, selectedBucket],
+    ([workspace, project, session, bucket]) => writeSelection({ workspace, project, session, bucket }),
+  );
   function setBucket(b: Bucket): void { selectedBucket.value = b; }
 
   // File-manager dock: a global panel (KFileManager) that shows the selected session's
@@ -125,6 +165,13 @@ export const useOrchestrator = defineStore('orchestrator', () => {
       sessions.value = e.sessions;
       // The snapshot is the whole truth on (re)connect: trees of sessions gone meanwhile go too.
       subagents.value = e.subagents;
+      // A restored selection may name a project or agent deleted since (here or by a teammate).
+      if (selectedProjectId.value && !e.projects.some((p) => p.id === selectedProjectId.value)) {
+        selectedProjectId.value = undefined;
+      }
+      if (selectedSessionId.value && !e.sessions.some((x) => x.id === selectedSessionId.value)) {
+        selectedSessionId.value = undefined;
+      }
       snapshotReceived.value = true;
     } else if (e.type === 'project_update') {
       projects.value = [
@@ -225,7 +272,7 @@ export const useOrchestrator = defineStore('orchestrator', () => {
     const { sessionId, pid } = alert;
     const action =
       view.killable && sessionId && pid !== undefined
-        ? { label: globalTr.t('machineAlert.kill'), run: () => killAgentCommand(sessionId, pid) }
+        ? { label: globalTr.t('machineAlert.kill'), run: () => void confirmKill(view.message, sessionId, pid) }
         : undefined;
     // Long enough to read a command name and reach for the button.
     notify(view.message, view.kind, 15_000, action);
@@ -242,6 +289,17 @@ export const useOrchestrator = defineStore('orchestrator', () => {
         }
       };
     }
+  }
+
+  // The toast's «Kill» asks first, quoting the alert (which names the command): killing a
+  // process is not undoable, and the agent sees its command fail.
+  async function confirmKill(alertText: string, sessionId: string, pid: number): Promise<void> {
+    const ok = await confirmAction({
+      title: globalTr.t('confirmations.killCommand.title'),
+      message: globalTr.t('confirmations.killCommand.message', { alert: alertText }),
+      confirmLabel: globalTr.t('confirmations.label.kill'),
+    });
+    if (ok) await killAgentCommand(sessionId, pid);
   }
 
   // Success needs no toast here: the api echoes it as a `machine_alert` with `killed`.

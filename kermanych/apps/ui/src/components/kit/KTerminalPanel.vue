@@ -5,6 +5,7 @@
 // Ctrl+` toggle live in MainLayout; the shells in the api (stores/terminal.ts).
 import { computed } from 'vue';
 import { useI18n } from 'vue-i18n';
+import { confirmAction } from '../../lib/confirm';
 import { useOrchestrator } from 'stores/orchestrator';
 import { useTerminal } from 'stores/terminal';
 import { usePending } from 'stores/pending';
@@ -50,9 +51,15 @@ const { run: newTerminal } = useAsyncAction(async () => {
 
 // `kill` is fire-and-forget over the socket; the tab stays, dimmed, until the api's `exit`
 // removes it from the list.
-function killActive(): void {
+async function killActive(): Promise<void> {
   const id = activeId.value;
   if (!id || pending.isPending(`terminal:${id}`)) return;
+  const ok = await confirmAction({
+    title: t('confirmations.killTerminal.title'),
+    message: t('confirmations.killTerminal.message'),
+    confirmLabel: t('confirmations.label.close'),
+  });
+  if (!ok || pending.isPending(`terminal:${id}`) || !terminal.terminals.some((x) => x.id === id)) return;
   terminal.kill(id);
   pending.mark(`terminal:${id}`, () => !terminal.terminals.some((x) => x.id === id));
 }

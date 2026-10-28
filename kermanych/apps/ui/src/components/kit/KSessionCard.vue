@@ -21,8 +21,8 @@
       <div class="k-session-card__top">
         <span
           class="k-session-card__label"
-          :class="branch ? 'k-session-card__label--branch' : 'k-session-card__label--title'"
-        >{{ branch || title }}</span>
+          :class="title ? 'k-session-card__label--title' : 'k-session-card__label--branch'"
+        >{{ title || branch }}</span>
         <span
           v-if="browsing"
           class="k-session-card__browsing"
@@ -38,6 +38,8 @@
         <KSpinner v-if="pending" :size="10" class="k-session-card__pending" />
         <span class="k-session-card__time">{{ time }}</span>
       </div>
+      <!-- The branch under the name, unless it would only repeat it. -->
+      <div v-if="title && branch && branch !== title" class="k-session-card__branch mono">{{ branch }}</div>
       <div class="k-session-card__status">
         <KStatusDot :status="status" />
         <span v-if="statusLine" class="k-session-card__status-line">{{ statusLine }}</span>
@@ -86,7 +88,8 @@ import KSpinner from './KSpinner.vue';
 import { tokens, usageTokens, usd } from '../../lib/format';
 import type { LaunchMode } from '../../lib/native-session';
 
-// Session summary card: branch + time header, a status row pairing the status dot with a
+// Session summary card: the agent's name + time header with its branch under it (the branch
+// heads the card only when there is no name), a status row pairing the status dot with a
 // short status line, and the accounting line — which harness and model are running and what
 // they have consumed. Selected / hover lift the card with a subtle surface fill.
 //
@@ -345,8 +348,7 @@ const spend = computed(() => {
   background: var(--k-accent);
 }
 
-// A fork carries no branch, so it shows its name — which must not outshout the parent's
-// own label above it.
+// A fork's name must not outshout the parent's own name above it.
 .k-session-card-host--fork .k-session-card__label--title {
   font-size: var(--k-fs-sm);
   color: var(--k-muted);
@@ -375,6 +377,16 @@ const spend = computed(() => {
 .k-session-card__label--title {
   font-size: var(--k-fs-base);
   color: var(--k-text);
+}
+
+// The branch line: reference under the name, in the quiet mono the branch label always had.
+.k-session-card__branch {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--k-fs-xs);
+  color: var(--k-faint);
 }
 
 .k-session-card__time {

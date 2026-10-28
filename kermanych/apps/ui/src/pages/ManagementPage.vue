@@ -253,6 +253,7 @@
 import { computed, nextTick, onUnmounted, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { useI18n } from 'vue-i18n';
+import { confirmAction } from '../lib/confirm';
 import { MANAGEMENT_SECTIONS, prependHelper } from '@kermanych/core';
 import { useOrchestrator } from 'stores/orchestrator';
 import { useProjects } from 'stores/projects';
@@ -392,7 +393,22 @@ function autoGrow(): void {
 
 // «Новий чат» keeps the composer locked until the api has dropped the old conversation
 // (stores/management-chat.ts `resetting`); the store reports a failure in the log itself.
-const { run: newChat } = useAsyncAction(() => chat.reset());
+// It clears the conversation for good, so it asks first — unless there is none to lose. The
+// question comes before the action: reading the dialog is not work in progress, so it neither
+// lights the progress bar nor holds the button busy.
+const resetChat = useAsyncAction(() => chat.reset());
+async function newChat(): Promise<void> {
+  if (resetChat.busy.value) return;
+  if (chat.hasConversation) {
+    const ok = await confirmAction({
+      title: t('confirmations.newChat.title'),
+      message: t('confirmations.newChat.message'),
+      confirmLabel: t('confirmations.label.clear'),
+    });
+    if (!ok) return;
+  }
+  await resetChat.run();
+}
 const composerLocked = computed(() => chat.busy || chat.resetting);
 const canSend = computed(() => (draft.value.trim().length > 0 || attachFiles.value.length > 0) && !composerLocked.value);
 
