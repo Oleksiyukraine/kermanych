@@ -64,14 +64,18 @@ const isBusy = computed(() => props.disabled || props.loading);
   }
 }
 
-// primary — the single accent action; the fill is a step lighter at the top.
+// primary — the single accent action; the fill is a step lighter at the top. The lift is a
+// translucent overlay (`--k-grad-accent`) over the accent COLOUR, and hover changes only that
+// colour: a gradient image cannot be transitioned, and swapping it for a plain fill on hover
+// made the colour fade in from transparent — the button blinked.
 .k-btn--primary {
-  background: var(--k-grad-accent);
+  background-color: var(--k-accent);
+  background-image: var(--k-grad-accent);
   color: var(--k-on-accent);
   border-color: var(--k-accent);
 
   &:hover:not(.k-btn--disabled) {
-    background: var(--k-accent-hover);
+    background-color: var(--k-accent-hover);
   }
 }
 

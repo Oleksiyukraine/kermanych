@@ -82,7 +82,7 @@ export const depth = {
     gradRaise: "linear-gradient(180deg,rgba(255,255,255,.025),rgba(255,255,255,0) 70%)",
     shadowCard: "0 1px 2px rgba(0,0,0,.25)",
     shadowCardHover: "0 4px 14px rgba(0,0,0,.35)",
-    gradAccent: "linear-gradient(180deg,#ff644c,#ff563c)",
+    gradAccent: "linear-gradient(180deg,rgba(255,255,255,.08),rgba(255,255,255,0))",
     glowFocus: "0 0 0 3px rgba(255,86,60,.18)",
   },
   light: {
@@ -90,7 +90,7 @@ export const depth = {
     gradRaise: "linear-gradient(180deg,rgba(255,255,255,.6),rgba(255,255,255,0) 70%)",
     shadowCard: "0 1px 2px rgba(0,0,0,.05)",
     shadowCardHover: "0 4px 14px rgba(0,0,0,.08)",
-    gradAccent: "linear-gradient(180deg,#cc452d,#c8351b)",
+    gradAccent: "linear-gradient(180deg,rgba(255,255,255,.08),rgba(255,255,255,0))",
     glowFocus: "0 0 0 3px rgba(200,53,27,.16)",
   },
   matrix: {
@@ -98,7 +98,7 @@ export const depth = {
     gradRaise: "linear-gradient(180deg,rgba(150,200,165,.03),rgba(150,200,165,0) 70%)",
     shadowCard: "0 1px 2px rgba(0,20,0,.35)",
     shadowCardHover: "0 4px 14px rgba(0,25,0,.45)",
-    gradAccent: "linear-gradient(180deg,#6fa884,#63a079)",
+    gradAccent: "linear-gradient(180deg,rgba(255,255,255,.08),rgba(255,255,255,0))",
     glowFocus: "0 0 0 3px rgba(99,160,121,.2)",
   },
   hermes: {
@@ -106,7 +106,7 @@ export const depth = {
     gradRaise: "linear-gradient(180deg,rgba(140,170,240,.035),rgba(140,170,240,0) 70%)",
     shadowCard: "0 1px 2px rgba(2,4,12,.35)",
     shadowCardHover: "0 6px 18px rgba(2,4,12,.5)",
-    gradAccent: "linear-gradient(180deg,#5dd5e2,#4fd1e0)",
+    gradAccent: "linear-gradient(180deg,rgba(255,255,255,.08),rgba(255,255,255,0))",
     glowFocus: "0 0 0 3px rgba(79,209,224,.2)",
   },
 } as const satisfies Record<KTheme, Record<string, string>>;
