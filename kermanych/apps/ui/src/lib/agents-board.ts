@@ -167,6 +167,35 @@ export function agentsOrder(rows: readonly Session[]): Session[] {
   return out;
 }
 
+/** How a row of the board hangs in the one-level fork tree — what KSessionCard draws. */
+export interface ForkMark {
+  // A branch of the agent above it: indented and tied back to it by an elbow.
+  fork: boolean;
+  // A fork with a sibling right under it: the spine runs on to that sibling.
+  continues: boolean;
+}
+
+/**
+ * The fork marks of an ordered run of rows. Both board orders (agentsOrder and the other tabs'
+ * parent-then-children sweep) put every fork right under its parent and its siblings, and only
+ * an agent can be forked (supervisor branchSession), so a row is a fork exactly when its parent
+ * is the nearest non-fork row above it. A fork whose parent is not there — in another tab, or
+ * swept to the end as an orphan — is a plain row: an elbow would tie it to a stranger.
+ */
+export function forkMarks(rows: readonly Session[]): ForkMark[] {
+  const marks: ForkMark[] = [];
+  let head: Session | undefined;
+  for (const s of rows) {
+    const fork = !!head && !!s.parentSessionId && s.parentSessionId === head.id;
+    if (!fork) head = s;
+    marks.push({ fork, continues: false });
+  }
+  for (let i = 0; i + 1 < marks.length; i++) {
+    if (marks[i]!.fork && marks[i + 1]!.fork) marks[i]!.continues = true;
+  }
+  return marks;
+}
+
 /**
  * Group order for the «Агенти» tab under a workspace scope: a project with a row that needs
  * the operator leads, the rest follow by their newest launch — the tab's own rule one level

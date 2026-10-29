@@ -143,8 +143,12 @@
               @click="openLauncher(item.card)"
               @remove="onDeleteCard(item.card)"
             />
+            <!-- A discussion/review branch sits right under its agent (boardRows/agentsOrder
+                 keep it there) and draws as its fork: indented, tied back by an elbow. -->
             <KSessionCard
               v-else-if="item.kind === 'session'"
+              :fork="item.fork"
+              :fork-continues="item.forkContinues"
               :branch="item.session.branch"
               :title="item.session.name"
               :time="renderTime(t, relativeTime(item.session.lastActivityAt, now))"
@@ -1311,6 +1315,7 @@ import {
   byNewestTask,
   filterSessions,
   filterTaskCards,
+  forkMarks,
   newestActivityAt,
   newestUpdateAt,
 } from '../lib/agents-board';
@@ -1634,7 +1639,7 @@ type BoardItem =
   | { kind: 'group'; key: string; name: string; lead: boolean }
   | { kind: 'note'; key: string }
   | { kind: 'card'; key: string; card: Task }
-  | { kind: 'session'; key: string; session: Session };
+  | { kind: 'session'; key: string; session: Session; fork: boolean; forkContinues: boolean };
 
 const boardItems = computed<BoardItem[]>(() => {
   const items: BoardItem[] = [];
@@ -1649,7 +1654,12 @@ const boardItems = computed<BoardItem[]>(() => {
   for (const g of boardGroups.value) {
     if (groupByProject.value)
       items.push({ kind: 'group', key: `sg:${g.projectId}`, name: g.name, lead: !items.length });
-    for (const s of g.rows) items.push({ kind: 'session', key: `s:${s.id}`, session: s });
+    // A fork and its parent share a project, so a group never splits a family.
+    const marks = forkMarks(g.rows);
+    g.rows.forEach((s, i) => {
+      const m = marks[i]!;
+      items.push({ kind: 'session', key: `s:${s.id}`, session: s, fork: m.fork, forkContinues: m.continues });
+    });
   }
   return items;
 });
@@ -4444,8 +4454,11 @@ async function submitPreviewConfig(): Promise<void> {
 // row (.agents__vrow) so that the height useVirtualList measures CONTAINS it — a flex gap
 // lives between children instead, and the spacers would then be short by one gap per page,
 // which reads as a scrollbar drifting as the column is scrolled.
+// `--k-fork-gap` is the gap a fork's elbow crosses up to its parent (KSessionCard) — here the
+// .agents__vrow padding, so the spine meets the card above instead of stopping short of it.
 .agents__cards {
   display: block;
+  --k-fork-gap: var(--k-sp-3);
 }
 
 // One virtualised row: a card, a group label or the stranded note, plus the vertical gap

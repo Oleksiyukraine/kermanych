@@ -4,6 +4,7 @@
     :class="{
       'k-session-card-host--fork': fork,
       'k-session-card-host--fork-lit': fork && selected,
+      'k-session-card-host--fork-continues': fork && forkContinues,
       'k-session-card-host--actions': !!$slots.actions,
     }"
   >
@@ -105,6 +106,8 @@ import type { LaunchMode } from '../../lib/native-session';
 // agent that merely happens to sit there. The list is expected to keep a fork directly
 // under its parent, alone with its siblings in one container, and to leave `--k-fork-gap`
 // (default `--k-sp-2`) as the vertical gap between them — the spine crosses exactly that.
+// A list that cannot keep the siblings in one container (a virtualised one wraps every row)
+// passes `forkContinues` on every fork but the last, which `:last-child` would decide there.
 //
 // `removable` gives the card a ✕ that appears under the cursor and emits `remove` — for a
 // list whose rows are deletable in place, such as the backlog, where the card's own click
@@ -157,13 +160,14 @@ const props = withDefaults(
     notNeeded?: string | undefined;
     selected?: boolean;
     fork?: boolean;
+    forkContinues?: boolean;
     removable?: boolean;
     removeTitle?: string;
     browsing?: boolean;
     findings?: number;
     pending?: boolean | undefined;
   }>(),
-  { selected: false, fork: false, removable: false, browsing: false, findings: 0, pending: false },
+  { selected: false, fork: false, forkContinues: false, removable: false, browsing: false, findings: 0, pending: false },
 );
 
 defineEmits<{ click: []; remove: [] }>();
@@ -392,7 +396,8 @@ const spend = computed(() => {
 
 // Every fork but the last runs its spine on to the next sibling, so several branches of
 // one agent read as one bracket instead of a chain hanging off each other.
-.k-session-card-host--fork:not(:last-child)::before {
+.k-session-card-host--fork:not(:last-child)::before,
+.k-session-card-host--fork-continues::before {
   height: calc(100% + var(--k-fork-gap, var(--k-sp-2)));
 }
 

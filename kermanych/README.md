@@ -314,7 +314,10 @@ they filter, not in the sidebar:
 - «Завершені» — merged and set-aside agents, the history; no count on the tab.
 - «Задачі» — your backlog inbox (below).
 
-A branch is always in its parent's tab. The count on «Агенти» and «Задачі» is exactly the
+A branch is always in its parent's tab, right under its parent, and its card is drawn as the
+parent's fork: indented, tied to the parent by a line (lit while the branch is open), with
+several branches of one agent sharing one bracket. A branch whose parent is not in the list
+(another tab, or filtered out) is a plain card. The count on «Агенти» and «Задачі» is exactly the
 list under it. The magnifier at the end of the row drops a search field under the tabs; it
 stays open while it holds text, folds when you leave it empty, and <kbd>Esc</kbd> or the
 magnifier again clears it. A tab or scope change clears it too.
