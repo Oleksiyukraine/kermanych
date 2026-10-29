@@ -9,6 +9,7 @@ import {
   byNewestTask,
   filterSessions,
   filterTaskCards,
+  forkMarks,
   newestActivityAt,
 } from '../src/lib/agents-board';
 
@@ -226,5 +227,28 @@ describe('byAgentsGroup', () => {
     const urgent = [session({ id: 'u', status: 'conflict', createdAt: at(1) })];
     const groups = [calm, older, urgent].sort(byAgentsGroup).map((g) => g[0]!.id);
     expect(groups).toEqual(['u', 'c', 'o']);
+  });
+});
+
+describe('forkMarks', () => {
+  const fork = (id: string, parent: string) =>
+    session({ id, kind: 'discussion', parentSessionId: parent });
+
+  // Siblings read as one bracket: every fork but the last carries the spine on.
+  it('ties the forks under their parent and ends the spine at the last one', () => {
+    const rows = [session({ id: 'p' }), fork('f1', 'p'), fork('f2', 'p'), session({ id: 'next' })];
+    expect(forkMarks(rows)).toEqual([
+      { fork: false, continues: false },
+      { fork: true, continues: true },
+      { fork: true, continues: false },
+      { fork: false, continues: false },
+    ]);
+  });
+
+  // Orphans are swept to the end of the other tabs' list, often next to an unrelated agent
+  // or to a sibling orphan; an elbow there would claim a parent that is not on screen.
+  it('leaves a fork whose parent is not directly above it a plain row', () => {
+    const rows = [session({ id: 'other' }), fork('o1', 'gone'), fork('o2', 'gone')];
+    expect(forkMarks(rows).map((m) => m.fork)).toEqual([false, false, false]);
   });
 });
