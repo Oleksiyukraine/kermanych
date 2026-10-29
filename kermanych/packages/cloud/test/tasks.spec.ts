@@ -63,6 +63,7 @@ const taskRow = {
   hidden: false,
   deep_analysis: false,
   auto_run: false,
+  design: false,
   finding_kind: null,
   created_at: "2026-08-21T00:00:00.000Z",
   updated_at: "2026-08-21T00:10:00.000Z",
@@ -87,6 +88,7 @@ describe("listTasks", () => {
       hidden: false,
       deepAnalysis: false,
       autoRun: false,
+      design: false,
       createdAt: "2026-08-21T00:00:00.000Z",
       updatedAt: "2026-08-21T00:10:00.000Z",
     });
@@ -279,6 +281,24 @@ describe("deepAnalysis on a task", () => {
   });
 });
 
+// «Дизайн»: a NOT NULL boolean set on insert only. A design card read back as an ordinary one
+// would relaunch as an ordinary agent, without its design folder.
+describe("design on a task", () => {
+  it("maps the column when true", async () => {
+    const { client } = fakeClient({ data: { ...taskRow, design: true }, error: null });
+    expect((await getTask(client, "t1"))!.design).toBe(true);
+  });
+
+  it("sends design:true on create and nothing for an ordinary card", async () => {
+    const { client, queries } = fakeClient({ data: { ...taskRow, design: true }, error: null });
+    await createTask(client, { projectId: "p1", title: "T", prefix: "design", design: true, createdBy: "u1" });
+    expect(queries[0]!.ops[0]).toEqual(["insert", { project_id: "p1", created_by: "u1", title: "T", prefix: "design", design: true }]);
+    const plain = fakeClient({ data: taskRow, error: null });
+    await createTask(plain.client, { projectId: "p1", title: "T", design: false, createdBy: "u1" });
+    expect(plain.queries[0]!.ops[0]).toEqual(["insert", { project_id: "p1", created_by: "u1", title: "T" }]);
+  });
+});
+
 // The reports the api leaves on the card for the «Документація» and «Сесія» tabs. jsonb with a
 // `{}` default: a card no session has reported on yet must read as «no report», not as an empty
 // one, and a write must touch nothing but the two columns.
@@ -405,12 +425,13 @@ describe("releaseLaunchClaim", () => {
 
 describe("minion candidates and claim", () => {
   // Every condition is part of the trust rule: only the caller's own backlog cards that allow
-  // auto-run, never a deep analysis, a Jira/Linear shadow card, or a colleague's assignment.
+  // auto-run, never a deep analysis, a design, a Jira/Linear shadow card, or a colleague's assignment.
   const predicate = (ops: Op[]) => [
     ["eq", "status", "backlog"],
     ["eq", "auto_run", true],
     ["eq", "created_by", "u1"],
     ["eq", "deep_analysis", false],
+    ["eq", "design", false],
     ["is", "jira_key", null],
     ["is", "linear_key", null],
     ["or", "assignee_id.is.null,assignee_id.eq.u1"],

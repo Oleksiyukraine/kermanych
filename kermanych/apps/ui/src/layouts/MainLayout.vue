@@ -779,6 +779,20 @@ watch(
   },
 );
 
+// A design's one view is «Дизайн» (docs/specs/2026-10-29-design-tab.md): «Агенти» has no row
+// for it. Whatever selects one — a desktop notification, a machine alert, a card on «Карта
+// агентів» — lands on that page with the design open, and «Агенти» keeps no selection it cannot
+// draw. The page itself switches to the design's project (its `session` query watcher).
+watch(
+  () => store.selectedSessionId,
+  (id) => {
+    const s = id ? store.sessions.find((x) => x.id === id) : undefined;
+    if (!s?.designDir) return;
+    store.selectSession(undefined);
+    void router.push({ name: 'design', query: { session: s.id } });
+  },
+);
+
 // A sidebar click changes SCOPE and never navigates (Requirement 5). It used to push
 // /agents from any non-project-scoped view, which meant the team board threw the operator
 // out the moment they touched the tree; both the board and Агенти read the scope, so there
@@ -976,6 +990,7 @@ const VIEWS = [
   { value: 'agents', label: 'common.nav.viewAgents', route: 'agents', section: 'agents' },
   { value: 'board', label: 'common.nav.viewBoard', route: 'board', section: 'board' },
   { value: 'chat', label: 'common.nav.viewChat', route: 'chat', section: 'chat' },
+  { value: 'design', label: 'common.nav.viewDesign', route: 'design', section: 'design' },
   {
     value: 'management',
     label: 'common.nav.viewManagement',

@@ -94,8 +94,14 @@ Rejected:
 - **One page for one view of a design.** Design sessions are hidden from «Агенти», as chats are.
   - They appear on «Карта агентів» with a design mark, because they are running agents.
   - On the board their card carries the same mark.
-- **Web build.** The page lists designs and opens their saved folder, but has no canvas. It
-  says that the canvas needs the desktop app, because the web build has no session browser.
+- **Web build.** The page lists designs and shows the selected design's saved folder (the
+  screenshots and the rendered README, `components/design/DesignFolder.vue`) in place of the
+  canvas, and says that the canvas needs the desktop app, because the web build has no session
+  browser.
+- **Every way into a design lands here.** A desktop notification, a machine alert or a card on
+  «Карта агентів» that selects a design opens it on this page (MainLayout's selection watcher).
+- **The prefix pickers** of the board and the launcher do not offer `design`: a design card
+  comes only from «+ Новий дизайн». A stored card with that prefix still shows it.
 
 ### The session
 
@@ -162,12 +168,13 @@ docs/design/YYYY-MM-DD-<slug>/
   - write the screenshots with `path`, deleting the ones whose screen or state is gone;
   - make the README match the prototype;
   - commit with the message `design: <topic>`.
-- **Its instruction** is a new `design-save` entry in `AGENTS`, kind `procedure`, so the
-  operator can edit it.
-- **Feedback.** The button runs through `useAsyncAction`. The design stays `pending` until the
-  transcript shows the commit.
-- **«Створити ПР» and «Завершити»** are the existing flows. Through the PR, the design reaches
-  the default branch the way code does, after review.
+- **Feedback.** The button runs through `useAsyncAction` and stays pending until the turn it
+  started has run and settled.
+- **No review flag.** Unlike «Закомітити», saving does not arm the PR-review state: the agent
+  commits on its own branch and the turn settles like any other.
+- **«Створити ПР» and «Завершити»** are the existing flows (the finish sheet is shared with
+  «Агенти», `components/agents/FinishSheet.vue`). Through the PR, the design reaches the
+  default branch the way code does, after review.
 
 ### Documentation policy
 
@@ -177,12 +184,17 @@ docs/design/YYYY-MM-DD-<slug>/
     `implement-from-design`.
   - With `off`, other sessions are not told. Design sessions still write their folder.
 - **The gate for a design session checks only its own folder.** PR, commit and finish need
-  `{designDir}/README.md` on the branch. The spec, plan and docs-impact rules do not apply,
-  because the design README is that branch's task document.
+  `{designDir}/README.md` on the branch; a missing one is the gate failure `design-readme`,
+  and «Доповнити документацію» asks for it with the `design-spec` skill and the folder named.
+  The spec, plan and docs-impact rules do not apply, because the design README is that
+  branch's task document. As for every gate, it runs only while the project's documentation
+  switch is on.
   - Without this, the default policy blocks every design branch on `task-spec`.
+  - A `docs/design/**` file on an ordinary branch is neither its task document nor living
+    documentation.
 - **Tagging.** The session «Документація» tab tags `docs/design/**` as «дизайн».
-- **Settings.** The «Документація» subsection gains the row «Дизайн · `docs/design/` ·
-  off · optional».
+- **Settings.** The «Документація» subsection gains the group «Екрани» with the row
+  «Дизайн · `docs/design/` · off · optional».
 
 ### From design to implementation
 
@@ -235,20 +247,43 @@ docs/design/YYYY-MM-DD-<slug>/
   - The docs gate takes the design branch.
   - `browser_screenshot` `path`, with its guard.
 - **ui**
-  - `DesignPage.vue`, a `VIEWS` row, a route, and uk/en strings.
-  - Picks sending moves out of AgentsPage into a composable shared by both pages.
-  - AgentsPage filters out design sessions.
-  - Map and board design marks.
-  - The «Задача →» dialog accepts `design` and attaches screenshots.
-  - The Settings docs row, and the «дизайн» tag.
+  - `DesignPage.vue`, a `VIEWS` row, a route, and uk/en strings; `components/design/DesignFolder.vue`
+    for the web build.
+  - Picks sending moves out of AgentsPage into `composables/useSendPicks.ts`; the finish sheet
+    into `components/agents/FinishSheet.vue`; «Задача з документа» into
+    `components/docs/DocTaskDialog.vue` (rules in `lib/doc-task.ts`, screenshots read by
+    `lib/design-screens.ts`). All shared by both pages.
+  - AgentsPage filters out design sessions; MainLayout sends any design selection to «Дизайн».
+  - `KDesignMark` on the map, the board card and the session card.
+  - The Settings docs row, the «дизайн» tag, the `design-readme` gate label, and the
+    «ШІ-команда» role labels.
+  - `KBrowserPane` gains `splittable` (the Дизайн page hides ◫ «Поруч із логом»).
 
 ## Verification
 
-- **core:** the gate passes a design branch that has `{designDir}/README.md` and fails one that
-  lacks it, under the default policy. A non-design branch is unaffected by `docs/design/**`.
-- **api:** `browser_screenshot` with `path` writes a PNG under `docs/` in the worktree, and
-  refuses `../`, absolute paths and paths outside `docs/`.
-- **Manual,** in the desktop app on a project with a `previewCommand`:
+- **core** (`pnpm --filter @kermanych/core test`, 232 passed): the gate passes a design branch
+  with `{designDir}/README.md` and fails one without it (`design-readme`) under the default
+  policy; a `docs/design/**` file on an ordinary branch satisfies neither `task-spec` nor
+  `docs-impact`; the policy line names `docs/design/` and `implement-from-design` unless the
+  rule is `off`.
+- **cloud** (`pnpm --filter @kermanych/cloud test`, 168 passed): `design` is mapped on read,
+  sent only when true on insert, and the minion queries skip design cards.
+- **api** (`vitest run`, 1162 passed): a design card launches on `design/<slug>` with
+  `designDir` and the Дизайнер prompt (managed and native); the registry round-trips
+  `designDir`; the gate and `saveDesign` behave as above and refuse non-design sessions;
+  `browser_screenshot` with `path` writes the PNG under the worktree's `docs/` and refuses
+  `../`, absolute paths, paths outside `docs/`, non-PNG names, symlinks out of `docs/` and
+  sessions without a worktree.
+- **ui** (`vitest run`, 773 passed; `vue-tsc` clean): the «Задача →» rules
+  (`lib/doc-task.ts`), the role catalogue and the i18n completeness check.
+- **Smoke** (web build against a seeded preview api): «Дизайн» sits between «Чат» and
+  «Менеджмент»; the rail lists the seeded design; opening it shows the toolbar, the log and,
+  with a README and three PNGs in its folder, «Задача →» and the folder view with the
+  screenshots widest first. «Задача →» refuses with the «not published» notice on a project
+  that is not in the cloud, as the existing dialog did.
+- **Not exercised here:** the desktop canvas (session browser, preview start, «◎ Вказати»),
+  creating a card against the cloud, a live Дизайнер turn and «Зберегти дизайн» end to end.
+  Steps for the manual check in the desktop app on a project with a `previewCommand`:
   1. Create a design and watch the preview start on the canvas.
   2. Point at an element with «◎ Вказати» and see the change.
   3. «Зберегти дизайн» → the folder holds the README and screenshots at both widths, committed.

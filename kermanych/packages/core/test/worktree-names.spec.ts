@@ -27,8 +27,8 @@ test("branchName defaults to the feature prefix", () => {
 test("branchName uses the given prefix", () => {
   expect(branchName("fix-login", "fix")).toBe("fix/fix-login");
 });
-test("BRANCH_PREFIXES lists the four allowed prefixes", () => {
-  expect([...BRANCH_PREFIXES]).toEqual(["feature", "fix", "refactoring", "chore"]);
+test("BRANCH_PREFIXES lists the allowed prefixes", () => {
+  expect([...BRANCH_PREFIXES]).toEqual(["feature", "fix", "refactoring", "chore", "design"]);
 });
 test("uniqueSlug suffixes on collision", () => {
   expect(uniqueSlug("fix", new Set(["fix", "fix-2"]))).toBe("fix-3");

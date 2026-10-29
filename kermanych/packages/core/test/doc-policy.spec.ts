@@ -17,7 +17,7 @@ const impact = (line: string) => `# Task\n\n## Documentation impact\n\n${line}\n
 const gate = (paths: string[], specBodies: string[] = []) => docsGateFailures({ policy: DEFAULT_DOCS_POLICY, paths, specBodies });
 const ruled = (over: Partial<DocsPolicy>, paths: string[], specBodies: string[] = []) =>
   docsGateFailures({ policy: { ...DEFAULT_DOCS_POLICY, ...over }, paths, specBodies });
-const ALL_OFF: DocsPolicy = { spec: "off", plan: "off", schemas: "off", handoff: "off", apiRequest: "off" };
+const ALL_OFF: DocsPolicy = { spec: "off", plan: "off", schemas: "off", handoff: "off", apiRequest: "off", design: "off" };
 
 test("a change without a task document fails task-spec", () => {
   expect(gate(["README.md"])).toEqual(["task-spec"]);
@@ -78,7 +78,7 @@ test("an empty change set has nothing to document", () => {
 
 test("off and optional rules never block", () => {
   expect(docsGateFailures({ policy: ALL_OFF, paths: [CODE], specBodies: [] })).toEqual([]);
-  const optional: DocsPolicy = { spec: "optional", plan: "optional", schemas: "optional", handoff: "optional", apiRequest: "optional" };
+  const optional: DocsPolicy = { spec: "optional", plan: "optional", schemas: "optional", handoff: "optional", apiRequest: "optional", design: "optional" };
   expect(docsGateFailures({ policy: optional, paths: [CODE], specBodies: [] })).toEqual([]);
   // The default handoff is written where it applies, never demanded.
   expect(gate([SPEC])).toEqual([]);
@@ -94,11 +94,26 @@ test("a required handoff must be present", () => {
   expect(ruled({ handoff: "required" }, [SPEC, "docs/handoffs/x.md"])).toEqual([]);
 });
 
-test("every failure kind comes back in display order", () => {
+test("every failure kind of an ordinary branch comes back in display order", () => {
   // An API request is never `required` in a stored policy (docsPolicy drops it); the gate
-  // itself treats every kind alike.
-  const strict: DocsPolicy = { spec: "required", plan: "required", schemas: "required", handoff: "required", apiRequest: "required" };
-  expect(docsGateFailures({ policy: strict, paths: [CODE], specBodies: [] })).toEqual(DOCS_GATE_FAILURES);
+  // itself treats every kind alike. `design-readme` belongs to a design session alone.
+  const strict: DocsPolicy = { spec: "required", plan: "required", schemas: "required", handoff: "required", apiRequest: "required", design: "optional" };
+  expect(docsGateFailures({ policy: strict, paths: [CODE], specBodies: [] })).toEqual(DOCS_GATE_FAILURES.filter((f) => f !== "design-readme"));
+});
+
+test("a design branch is judged by its own README alone", () => {
+  const designDir = "docs/design/2026-10-29-orders";
+  const design = (paths: string[]) => docsGateFailures({ policy: DEFAULT_DOCS_POLICY, paths, specBodies: [], designDir });
+  // The default policy requires a task document and living docs; a design branch needs neither.
+  expect(design([`${designDir}/README.md`, `${designDir}/screens/list-data@390.png`, "src/__design/orders/List.vue"])).toEqual([]);
+  expect(design([`${designDir}/screens/list-data@390.png`, "src/__design/orders/List.vue"])).toEqual(["design-readme"]);
+  // Another design's README does not count.
+  expect(design(["docs/design/2026-10-28-other/README.md", "src/x.ts"])).toEqual(["design-readme"]);
+  expect(design([])).toEqual([]);
+});
+
+test("a design folder on an ordinary branch is neither a task document nor living documentation", () => {
+  expect(gate(["docs/design/2026-10-29-orders/README.md", CODE])).toEqual(["task-spec", "docs-impact"]);
 });
 
 test("docsPolicy fills gaps and drops unsupported rules with the kind's default", () => {
@@ -116,6 +131,7 @@ test("docsLayoutKind classifies by repo-root prefix", () => {
   expect(docsLayoutKind("docs/schemas/sub/flow.svg")).toBe("schema");
   expect(docsLayoutKind("docs/handoffs/a.md")).toBe("handoff");
   expect(docsLayoutKind("docs/api-requests/a.md")).toBe("api-request");
+  expect(docsLayoutKind("docs/design/2026-10-29-x/screens/a@390.png")).toBe("design");
   expect(docsLayoutKind("docs/other/a.md")).toBeUndefined();
   expect(docsLayoutKind("docs/specsx/a.md")).toBeUndefined();
   expect(docsLayoutKind("app/docs/specs/a.md")).toBeUndefined();
@@ -134,6 +150,10 @@ test("the policy append names only the kinds that are on, and blocks only when s
   const def = docsPolicyAppend(DEFAULT_DOCS_POLICY);
   for (const dir of ["docs/specs/", "docs/plans/", "docs/schemas/", "docs/handoffs/"]) expect(def).toContain(dir);
   expect(def).not.toContain("docs/api-requests/");
+  // Designs are on by default: every session learns where they live and how to implement one.
+  expect(def).toContain("docs/design/");
+  expect(def).toContain("implement-from-design");
+  expect(docsPolicyAppend({ ...DEFAULT_DOCS_POLICY, design: "off" })).not.toContain("docs/design/");
   expect(def).toMatch(/begins with `None`/);
   expect(def).toMatch(/refuses to open a pull request/);
 });
@@ -151,4 +171,5 @@ test("the completion prompt asks only for the failing items", () => {
 test("the completion skills follow the failures, none for docs-impact", () => {
   expect(docsFailureSkills(["docs-impact"])).toEqual([]);
   expect(docsFailureSkills(["api-request", "task-spec", "plan", "handoff"])).toEqual(["task-spec", "task-plan", "frontend-handoff", "api-request"]);
+  expect(docsFailureSkills(["design-readme"])).toEqual(["design-spec"]);
 });

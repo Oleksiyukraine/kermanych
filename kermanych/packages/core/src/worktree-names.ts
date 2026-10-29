@@ -35,7 +35,8 @@ export function taskNameFromText(text: string): string {
   const clean = firstLine.replace(/^[#>\-*\d.)\s]+/, "").replace(/[*_`]/g, "").trim();
   return (clean || firstLine).slice(0, 60);
 }
-export const BRANCH_PREFIXES = ["feature", "fix", "refactoring", "chore"] as const;
+// `design` is a «Дизайн» session's branch (docs/specs/2026-10-29-design-tab.md).
+export const BRANCH_PREFIXES = ["feature", "fix", "refactoring", "chore", "design"] as const;
 export type BranchPrefix = (typeof BRANCH_PREFIXES)[number];
 
 export function branchName(slug: string, prefix: BranchPrefix = "feature"): string {

@@ -114,6 +114,9 @@ export {
   TASK_PLAN_SKILL,
   FRONTEND_HANDOFF_SKILL,
   API_REQUEST_SKILL,
+  DESIGN_SPEC_SKILL,
+  IMPLEMENT_FROM_DESIGN_SKILL,
+  DESIGN_README,
   docsPolicy,
   docsPolicyAppend,
   docsLayoutKind,
@@ -150,6 +153,8 @@ export {
 export {
   AGENTS,
   MINION_AGENT_ID,
+  DESIGNER_AGENT_ID,
+  DESIGN_SAVE_AGENT_ID,
   PR_CONVENTIONS_FALLBACK,
   KERMANYCH_COAUTHOR,
   COAUTHOR_DIRECTIVE,
@@ -164,6 +169,15 @@ export {
   type AgentKind,
 } from "./agents";
 export { DEEP_ANALYSIS_SKILL, deepAnalysisPrompt } from "./deep-analysis";
+export {
+  DESIGN_SCREENS_DIR,
+  DESIGN_WIDTHS,
+  designDirFor,
+  designReadmePath,
+  designDirOf,
+  designScreenshots,
+  designCommitMessage,
+} from "./design";
 export {
   FINDING_KINDS,
   FINDING_STATUSES,

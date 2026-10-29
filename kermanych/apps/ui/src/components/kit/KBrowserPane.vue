@@ -68,6 +68,7 @@
         <span class="mono">&lt;/&gt;</span>
       </KIconButton>
       <KIconButton
+        v-if="splittable"
         :title="browser.split ? t('agents.browser.splitOff') : t('agents.browser.splitOn')"
         :active="browser.split"
         @click="browser.setSplit(!browser.split)"
@@ -286,10 +287,12 @@ import { PENDING_TIMEOUT_MS } from 'stores/pending';
 import { addressToUrl } from '../../lib/browser-url';
 
 // `starting`: the parent is starting this session's preview (▶), whose first load lands here —
-// the empty pane says so instead of «ще немає відкритої сторінки».
+// the empty pane says so instead of «ще немає відкритої сторінки». `splittable`: the host page
+// has a Браузер tab that ◫ «Поруч із логом» can move beside the Лог; the «Дизайн» page lays the
+// pane beside its log already and has no such tab, so it hides the toggle.
 const props = withDefaults(
-  defineProps<{ session: Session; sending: boolean; hold?: boolean; starting?: boolean | undefined }>(),
-  { hold: false, starting: false },
+  defineProps<{ session: Session; sending: boolean; hold?: boolean; starting?: boolean | undefined; splittable?: boolean }>(),
+  { hold: false, starting: false, splittable: true },
 );
 const emit = defineEmits<{ send: [] }>();
 
