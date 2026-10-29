@@ -44,7 +44,8 @@ export type KIconName =
   | 'fullscreen'
   | 'fullscreenExit'
   | 'chevronDown'
-  | 'chevronRight';
+  | 'chevronRight'
+  | 'coins';
 </script>
 
 <script setup lang="ts">
@@ -183,6 +184,9 @@ const ICONS: Record<KIconName, readonly string[]> = {
   // KCodeView's fold gutter: an open block points down, a folded one points at its summary.
   chevronDown: ['m6 9 6 6 6-6'],
   chevronRight: ['m9 18 6-6-6-6'],
+  // A session card's spend (KSessionCard): Lucide's coins. The model, tokens and cost live in
+  // its tooltip; the mark has to say «what it cost is in here» before anyone hovers it.
+  coins: ['M2 8a6 6 0 1 0 12 0a6 6 0 1 0-12 0', 'M18.09 10.37A6 6 0 1 1 10.34 18', 'M7 6h1v4', 'm16.71 13.88.7.71-2.82 2.82'],
 };
 
 const props = defineProps<{ name: KIconName }>();

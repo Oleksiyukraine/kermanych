@@ -322,6 +322,14 @@ list under it. The magnifier at the end of the row drops a search field under th
 stays open while it holds text, folds when you leave it empty, and <kbd>Esc</kbd> or the
 magnifier again clears it. A tab or scope change clears it too.
 
+A card is the name and time, the branch, and one row: the status on a single line (hover it for
+the full text when it is cut short), the harness and the «аналіз» / «Посіпака» marks, and a
+coins icon whose tooltip gives the model, tokens and cost. The card keeps its height while the
+agent works. Every agent that is thinking or running a tool has light running around its card's
+frame, in step with the others; the open agent's ring is the brightest. An agent queued for a
+slot, waiting for you or finished has no ring. In «Задачі» the row shows the description as one
+line of plain text, without its markdown.
+
 **«Задачі» in «Агенти» is your inbox, not a local list.** It shows the cloud cards in
 `backlog` assigned to you within the current scope — including the ones a colleague
 filed for you. Unclaimed team cards are deliberately absent: they live on «Дошка»
