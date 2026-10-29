@@ -13,8 +13,8 @@
           <!-- «Карта агентів»: every agent on this machine and what it spawned, in place of the
                chat (spec docs/specs/2026-10-22-agent-map.md). The count is machine-wide, so an
                agent working outside this scope is never quiet. A toggle: pressed while open.
-               It takes the place of the bucket's name and count: the sidebar rail already
-               shows both on the selected bucket, and the board gets a row back. -->
+               It takes the place of the bucket's name and count: the tab row below shows
+               both on the selected bucket, and the board gets a row back. -->
           <button
             type="button"
             class="agents__map-btn"
@@ -45,21 +45,50 @@
           </div>
         </header>
 
-        <!-- SEARCH — sticky at the top of the scrolling column, so a query typed over a long
-             board stays reachable while the cards move under it. It narrows the ROWS only:
-             the bucket the rail chose still decides which rows are candidates, the rail keeps
-             counting the whole bucket, and «знайдено N з M» beside the box is where the
-             matched figure is stated. -->
-        <div class="agents__search">
-          <KField
-            v-model="query"
-            class="agents__search-field"
-            type="search"
-            :placeholder="t('agents.board.searchPlaceholder')"
-          />
-          <span v-if="filtering" class="agents__search-count mono">
-            {{ t('agents.board.searchCount', { n: matchedCount, total: boardCount }) }}
-          </span>
+        <!-- TABS + SEARCH — sticky at the top of the scrolling column, so they stay reachable
+             while the cards move under them. The tabs choose the bucket (lib/buckets.ts); they
+             live here, on the list they filter, rather than in the sidebar, so focus mode can
+             hide the sidebar without taking the filter with it (spec
+             docs/specs/2026-10-29-agents-tab-and-focus-mode.md). Counts only on «Агенти» and
+             «Задачі»: work waiting, not the size of the archive.
+             The search is a magnifier until asked for. Its field drops under the tabs and
+             stays open while it holds a query — a narrowed list always shows why it is narrow;
+             empty, it folds on blur. Esc or the magnifier again clears and folds it. It
+             narrows the ROWS only: the tab still counts its whole bucket, and «знайдено N з M»
+             is where the matched figure is stated. -->
+        <div class="agents__filter">
+          <div class="agents__tabs-row">
+            <KSubNav
+              class="agents__tabs"
+              :model-value="store.selectedBucket"
+              :items="bucketTabs"
+              :aria-label="t('agents.board.tabsAria')"
+              @update:model-value="onBucketTab"
+            />
+            <KIconButton
+              class="agents__search-btn"
+              :active="searchShown"
+              :title="searchShown ? t('agents.board.searchClose') : t('agents.board.searchOpen')"
+              @click="toggleSearch"
+            ><KIcon name="search" /></KIconButton>
+          </div>
+          <div
+            v-if="searchShown"
+            class="agents__search"
+            @focusout="onSearchFocusOut"
+            @keydown.esc.stop.prevent="closeSearch"
+          >
+            <KField
+              ref="searchField"
+              v-model="query"
+              class="agents__search-field"
+              type="search"
+              :placeholder="t('agents.board.searchPlaceholder')"
+            />
+            <span v-if="filtering" class="agents__search-count mono">
+              {{ t('agents.board.searchCount', { n: matchedCount, total: boardCount }) }}
+            </span>
+          </div>
         </div>
 
         <!-- Why «Нова задача» cannot act — a muted line above the cards the scope decided; the
@@ -1260,7 +1289,7 @@ import { useSeen } from 'stores/seen';
 import { api, type FileDiff, type MessageMode } from '../lib/api';
 import { EXPAND_ALL_NONE, nextExpandAll, type ExpandAllCommand } from '../lib/expand-all';
 import { sessionScopedProjectIds } from '../lib/scope';
-import type { Bucket } from '../lib/buckets';
+import { BUCKETS, bucketOf, type Bucket } from '../lib/buckets';
 import { activeAgentCount, projectNodeId, sessionNodeId, workspaceNodeId } from '../lib/agentMap';
 import { changedDocsView, ownReports, unionInOrder } from '../lib/session-reports';
 import { imageToFile } from '../lib/images';
@@ -1276,13 +1305,13 @@ import {
 } from '../lib/tasks-view';
 import { planBacklogPublication } from '../lib/publish-backlog';
 import {
-  byNewestLaunch,
+  agentsOrder,
+  byAgentsGroup,
   byNewestSession,
   byNewestTask,
   filterSessions,
   filterTaskCards,
   newestActivityAt,
-  newestLaunchAt,
   newestUpdateAt,
 } from '../lib/agents-board';
 import KPanel from 'components/kit/KPanel.vue';
@@ -1298,7 +1327,8 @@ import KDecisionMark from 'components/kit/KDecisionMark.vue';
 import KNotNeededMark from 'components/kit/KNotNeededMark.vue';
 import { cardDecisionReason, cardNotNeededReason, sessionDecisionReason, sessionNotNeededReason } from '../lib/minion';
 import KSplitButton from 'components/kit/KSplitButton.vue';
-import { type KIconName } from 'components/kit/KIcon.vue';
+import KIcon, { type KIconName } from 'components/kit/KIcon.vue';
+import KSubNav from 'components/kit/KSubNav.vue';
 import KTabs from 'components/kit/KTabs.vue';
 import KDiffView from 'components/kit/KDiffView.vue';
 import KBtn from 'components/kit/KBtn.vue';
@@ -1396,33 +1426,57 @@ const now = useNow();
 
 const router = useRouter();
 
-// Board buckets mirror the sidebar (lib/buckets.ts): completed (merged or set aside) wins,
-// then backlog → Задачі, error/conflict → Помилки, done/in_review/stopped → Очікують,
-// everything else → Активні. Driven by store.selectedBucket.
-const WAITING_STATUSES: readonly SessionStatus[] = ['done', 'in_review', 'stopped'];
-const ERROR_STATUSES: readonly SessionStatus[] = ['error', 'conflict'];
-// Active = an agent whose process is alive or is blocked on the operator. Shared: archiving
-// refuses these (the API re-checks with core's ACTIVE_STATUSES).
+// The tabs (lib/buckets.ts): Агенти / Завершені / Задачі, driven by store.selectedBucket.
+// Active = an agent whose process is alive or is blocked on the operator. Archiving and a
+// review refuse these (the API re-checks with core's ACTIVE_STATUSES).
 const ACTIVE_STATUSES: readonly SessionStatus[] = ['queued', 'thinking', 'tool', 'waiting_input'];
 // The one bucket whose ACTIONS differ (unarchive vs. the full control set) keys off the
 // session's own `archived` flag, not this — a merged agent shares the «Завершені» view but
 // keeps its reopen/delete controls.
 const showCompleted = computed(() => store.selectedBucket === 'completed');
 const showTasks = computed(() => store.selectedBucket === 'tasks');
+const agentsTab = computed(() => store.selectedBucket === 'agents');
+function onBucketTab(value: string): void {
+  const bucket = BUCKETS.find((b) => b === value);
+  if (bucket) store.setBucket(bucket);
+}
 
 // ── Search ────────────────────────────────────────────────────────────────
 // One query over both kinds of row the column holds. It narrows what is RENDERED and nothing
-// else: the rail still decides which bucket, and the header still counts that bucket whole.
+// else: the tab still decides which bucket, and still counts that bucket whole.
 const query = ref('');
 const filtering = computed(() => query.value.trim() !== '');
+// The field behind the magnifier. Shown while asked for, and for as long as it holds text, so
+// a narrowed list is never on screen without the query that narrowed it.
+const searchOpen = ref(false);
+const searchShown = computed(() => searchOpen.value || query.value !== '');
+const searchField = ref<InstanceType<typeof KField> | null>(null);
+function closeSearch(): void {
+  query.value = '';
+  searchOpen.value = false;
+}
+function toggleSearch(): void {
+  if (searchShown.value) {
+    closeSearch();
+    return;
+  }
+  searchOpen.value = true;
+  void nextTick(() => searchField.value?.focus());
+}
+// An empty field folds when focus leaves it — unless focus went to the magnifier, whose own
+// click is about to close it (folding here first would let that click open it again).
+function onSearchFocusOut(e: FocusEvent): void {
+  if (query.value !== '') return;
+  const to = e.relatedTarget as HTMLElement | null;
+  if (to?.closest('.agents__search, .agents__search-btn')) return;
+  searchOpen.value = false;
+}
 // A query belongs to the list in front of the operator, so it dies with that list: a
-// leftover «auth» after a click on another bucket or another project reads as an empty
-// board, and that bucket's own empty-state text would then be a lie about what is there.
+// leftover «auth» after a click on another tab or another project reads as an empty board,
+// and that tab's own empty-state text would then be a lie about what is there.
 watch(
   () => [store.selectedBucket, store.selectedProjectId, store.selectedWorkspaceId],
-  () => {
-    query.value = '';
-  },
+  closeSearch,
 );
 
 // ── Scope: workspace → project → session ──────────────────────────────────
@@ -1434,8 +1488,8 @@ watch(
 // The rule itself lives in lib/scope.ts, with its three cases and the reason each is what it
 // is. It is there rather than here because it decides whether a developer's running agents
 // render at all, apps/ui has no component tests, and a `.vue` file is where that decision
-// cannot be covered (scope.ts:1-3). MainLayout's bucket counters ask the same function, so
-// the rail and this header cannot disagree about what is in scope.
+// cannot be covered (scope.ts:1-3). The tab counts ask the same function, so a count and the
+// list under it cannot disagree about what is in scope.
 const scopedIds = computed(() =>
   sessionScopedProjectIds(
     { workspaceId: store.selectedWorkspaceId, projectId: store.selectedProjectId },
@@ -1445,39 +1499,35 @@ const scopedIds = computed(() =>
 );
 const inScope = computed(() => new Set(scopedIds.value));
 
-// Every row the bucket holds, before the search box narrows it. The header's count and the
-// «знайдено N з M» line are both stated against this, which is what keeps the figure beside
-// the bucket label agreeing with the rail's badge while a query is open.
+// Every non-chat session in scope, with the tab bucketOf files it under — the one rule the
+// counts, the list and the agent map share, so a fork sits in its parent's tab here exactly
+// as it is counted there.
+const scopedBuckets = computed(() => {
+  const byId = new Map(store.sessions.map((s) => [s.id, s]));
+  const out: { session: Session; bucket: Bucket }[] = [];
+  for (const s of store.sessions) {
+    if (s.kind === 'chat' || !inScope.value.has(s.projectId)) continue;
+    out.push({ session: s, bucket: bucketOf(s, (id) => byId.get(id)) });
+  }
+  return out;
+});
+
+// Every row the selected tab holds, before the search box narrows it. The tab's count and the
+// «знайдено N з M» line are both stated against this.
 const scopedSessions = computed(() =>
-  store.sessions.filter((s) => {
-    if (!inScope.value.has(s.projectId)) return false;
-    if (store.selectedBucket === 'completed') return !!s.archived || s.status === 'merged';
-    if (s.archived) return false;
-    if (store.selectedBucket === 'tasks') return s.status === 'backlog';
-    if (store.selectedBucket === 'errors') return ERROR_STATUSES.includes(s.status);
-    if (store.selectedBucket === 'waiting') return WAITING_STATUSES.includes(s.status);
-    return ACTIVE_STATUSES.includes(s.status);
-  }),
+  scopedBuckets.value.filter((r) => r.bucket === store.selectedBucket).map((r) => r.session),
 );
 
-// What the column orders: the rows the query kept, newest first.
-//
-// «Активні» orders by LAUNCH (createdAt): every running agent stamps lastActivityAt on each
-// event, so ordering live rows by it made two agents working at once trade places on every
-// tool call. A launch time never moves mid-run — each card keeps its slot until its run ends
-// and it leaves the bucket. Every other bucket holds agents that have stopped, so recency
-// there is stable and still means «the one that finished last leads».
-const activeBucket = computed(() => store.selectedBucket === 'active');
-const projectSessions = computed(() =>
-  [...filterSessions(scopedSessions.value, query.value)].sort(
-    activeBucket.value ? byNewestLaunch : byNewestSession,
-  ),
-);
-
-// Board order: each discussion child immediately follows its parent (a one-level
-// tree). Orphans (parent filtered out by the completed/project view) still render.
+// Board order. «Агенти» puts the agents that need the operator first, then the rest, both in
+// LAUNCH order (lib/agents-board.ts agentsOrder): every running agent stamps lastActivityAt on
+// each event, so ordering live rows by it made two agents working at once trade places on
+// every tool call. The other tabs hold work that has stopped moving, so recency there is
+// stable and still means «the one that finished last leads»; each discussion child follows
+// its parent (a one-level tree), and orphans (parent in another tab) still render, at the end.
 const boardRows = computed<Session[]>(() => {
-  const all = projectSessions.value.filter((s) => s.kind !== 'chat');
+  const matched = filterSessions(scopedSessions.value, query.value);
+  if (agentsTab.value) return agentsOrder(matched);
+  const all = [...matched].sort(byNewestSession);
   const parents = all.filter((s) => !s.parentSessionId);
   const out: Session[] = [];
   for (const p of parents) {
@@ -1498,29 +1548,30 @@ function projectName(id: string): string {
 // Under a workspace scope the cards come from several projects, and KSessionCard names only
 // the branch — so the project is stated once per run of cards rather than once per card: the
 // column is 300px wide and a per-card label would cost more than it tells. Under a project
-// scope there is one group and no label — the rail already says which project that is.
+// scope there is one group and no label — the switcher already says which project that is.
 //
-// Group ORDER follows the rows' own promise: a project leads on its freshest row, so «newest
-// at the top» holds across the whole column and not merely inside each group. Taken from the
-// group's rows rather than from the first one pushed into it, which is not equivalent: a fork
-// may be newer than the parent it follows, and boardRows sweeps orphans (a child whose parent
-// the bucket filtered out) to the very END.
+// Group ORDER follows the rows' own promise. Under «Агенти» that is the tab's rule one level
+// up — a project with an agent that needs the operator leads, then the newest launch
+// (byAgentsGroup). Elsewhere a project leads on its freshest row, so «newest at the top»
+// holds across the whole column and not merely inside each group — taken from the group's
+// rows rather than from the first one pushed into it, which is not equivalent: a fork may be
+// newer than the parent it follows, and boardRows sweeps orphans to the very END.
 const groupByProject = computed(() => !store.selectedProjectId);
-type BoardGroup = { projectId: string; name: string; newest: number; rows: Session[] };
+type BoardGroup = { projectId: string; name: string; rows: Session[] };
 const boardGroups = computed<BoardGroup[]>(() => {
   const groups = new Map<string, BoardGroup>();
   for (const s of boardRows.value) {
     let group = groups.get(s.projectId);
     if (!group) {
-      group = { projectId: s.projectId, name: projectName(s.projectId), newest: 0, rows: [] };
+      group = { projectId: s.projectId, name: projectName(s.projectId), rows: [] };
       groups.set(s.projectId, group);
     }
     group.rows.push(s);
   }
   const out = [...groups.values()];
-  const newestOf = activeBucket.value ? newestLaunchAt : newestActivityAt;
-  for (const g of out) g.newest = newestOf(g.rows);
-  return out.sort((a, b) => b.newest - a.newest);
+  if (agentsTab.value) return out.sort((a, b) => byAgentsGroup(a.rows, b.rows));
+  const newest = new Map(out.map((g) => [g.projectId, newestActivityAt(g.rows)]));
+  return out.sort((a, b) => newest.get(b.projectId)! - newest.get(a.projectId)!);
 });
 
 // My backlog inbox: the cards I have to work, in the same scope the session list uses, so
@@ -1552,17 +1603,26 @@ const taskGroups = computed<TaskGroup[]>(() => {
   return out.sort((a, b) => b.newest - a.newest);
 });
 
-// The header counts what the BUCKET holds — the same sum the rail's badge shows — and not
-// what the search box left on screen: a header disagreeing with the badge is the drift
-// MainLayout.bucketCounts exists to avoid. The matched figure gets its own line, beside the
-// box that produced it.
-const boardCount = computed(
-  () =>
-    scopedSessions.value.filter((s) => s.kind !== 'chat').length +
-    (showTasks.value ? scopedCards.value.length : 0),
-);
+// What each tab holds, whatever the search box left on screen: «знайдено N з M» states the
+// matched figure beside the box that produced it. «Задачі» holds my backlog cards too, so
+// its count includes them — a count that disagrees with the list it counts is worse than none.
+const bucketCounts = computed(() => {
+  const counts: Record<Bucket, number> = { agents: 0, completed: 0, tasks: scopedCards.value.length };
+  for (const r of scopedBuckets.value) counts[r.bucket]++;
+  return counts;
+});
+const boardCount = computed(() => bucketCounts.value[store.selectedBucket]);
 const matchedCount = computed(
   () => boardRows.value.length + (showTasks.value ? taskCards.value.length : 0),
+);
+// The tabs. «Завершені» carries no number: it is the size of the archive, not work waiting,
+// and it grows without bound — at the 300px column a third count would not fit the row.
+const bucketTabs = computed(() =>
+  BUCKETS.map((b) => ({
+    value: b,
+    label: t(`agents.bucket.${b}`),
+    ...(b === 'completed' ? {} : { count: bucketCounts.value[b] }),
+  })),
 );
 
 // ── The rendered list ─────────────────────────────────────────────────────
@@ -1932,8 +1992,6 @@ const emptyText = computed(() => {
   // its own cure: change the words, not the scope.
   if (filtering.value) return t('agents.board.searchEmpty', { q: query.value.trim() });
   if (showCompleted.value) return t('agents.empty.completed');
-  if (store.selectedBucket === 'waiting') return t('agents.empty.waiting');
-  if (store.selectedBucket === 'errors') return t('agents.empty.errors');
   const pickFirst = !store.selectedProjectId;
   if (showTasks.value) {
     return pickFirst ? t('agents.empty.backlog') : t('agents.empty.backlogScoped');
@@ -2166,10 +2224,10 @@ const deleteAction = useKeyedAction(async (id: string) => {
   if (store.selectedSessionId === id) store.selectSession(undefined);
 });
 // Reopen a merged session: the server re-forks its worktree/branch from the base (seconds);
-// jump to Активні and select it so the operator can continue and finish again.
+// jump to «Агенти» and select it so the operator can continue and finish again.
 const reopenAction = useAsyncAction(async (s: Session) => {
   const session = await pendingWhile(s.id, () => findSession(s.id)?.status !== 'merged', () => store.reopenSession(s.id));
-  store.setBucket('active');
+  store.setBucket('agents');
   if (session?.id) store.selectSession(session.id);
   store.notify(t('agents.notify.reopened', { name: s.name }));
 });
@@ -2999,7 +3057,7 @@ async function submitLauncher(asTask: boolean): Promise<void> {
     if (cardFiles.length) void board.addTaskImages(cardId, cardFiles);
     launcherOpen.value = false;
     clearLaunchImages();
-    store.setBucket('active');
+    store.setBucket('agents');
     store.selectSession(session.id);
   } catch (e) {
     // Keep the launcher open so the name and body are not lost. The card, if it was created,
@@ -3921,27 +3979,60 @@ async function submitPreviewConfig(): Promise<void> {
   gap: 12px;
 }
 
-// The search box, pinned to the top of the scrolling column so a query typed over a long
-// board stays reachable while the cards move under it. The cards pass BEHIND the bar — hence
-// the opaque fill (the same --k-bg the board sits on) and the rule beneath it, which is what
-// tells a scrolled card from the box.
+// The tabs + search bar, pinned to the top of the scrolling column so both stay reachable
+// while the cards move under them. The cards pass BEHIND the bar — hence the opaque fill (the
+// same --k-bg the board sits on) and the rule beneath it, which is what tells a scrolled card
+// from the bar.
 //
 // The offsets are the column's own padding, twice over, and neither is decoration. A sticky
 // element is constrained to its scroller's CONTENT box, so `top: 0` parks the bar 16px below
 // the scrollport edge and cards ride visibly through the band above it — measured in
 // Chromium at exactly --k-sp-4. The negative side margins are the same story sideways: the
 // bar has to reach the padding edges, or a card shows through the strips either side of it.
-.agents__search {
+.agents__filter {
   position: sticky;
   top: calc(-1 * var(--k-sp-4));
   z-index: 2;
+  margin: 0 calc(-1 * var(--k-sp-4)) var(--k-sp-2);
+  padding: 0 var(--k-sp-4);
+  background: var(--k-bg);
+}
+
+// One rule under the whole row, magnifier included: KSubNav's own baseline would stop where
+// its last tab does. The tab bar is pulled 1px down so its accent bar lies ON the rule, the
+// way it does in a bare KSubNav.
+.agents__tabs-row {
+  display: flex;
+  align-items: flex-end;
+  gap: var(--k-sp-2);
+  border-bottom: var(--k-rule-thin) solid var(--k-line);
+}
+
+// 16px between tabs rather than KSubNav's 20: three labels, two counts and the magnifier have
+// to share the column's 268px of content at its narrowest.
+.agents__tabs {
+  flex: 1 1 auto;
+  min-width: 0;
+  gap: var(--k-sp-4);
+  margin-bottom: calc(-1 * var(--k-rule-thin));
+
+  &::after {
+    display: none;
+  }
+}
+
+.agents__search-btn {
+  flex: none;
+  margin-bottom: 6px;
+  --k-icon-size: var(--k-icon-sm);
+}
+
+.agents__search {
   display: flex;
   flex-wrap: wrap;
   align-items: baseline;
   gap: var(--k-sp-2);
-  margin: 0 calc(-1 * var(--k-sp-4)) var(--k-sp-2);
-  padding: var(--k-sp-2) var(--k-sp-4);
-  background: var(--k-bg);
+  padding: var(--k-sp-2) 0;
   border-bottom: var(--k-rule-thin) solid var(--k-line);
 }
 

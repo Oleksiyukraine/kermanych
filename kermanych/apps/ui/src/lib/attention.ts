@@ -86,6 +86,23 @@ export function attentionByProject(
   return out;
 }
 
+// The header switcher's mark: everything that needs the operator in the projects they are
+// NOT looking at. In focus mode the sidebar's per-project marks are off screen, and this is
+// the one place a question asked in another project can still be seen without opening the
+// list. The projects in scope are left out — their agents are already the list on screen.
+export function attentionOutside(
+  byProject: ReadonlyMap<string, Attention>,
+  projectIds: Iterable<string>,
+  inScope: ReadonlySet<string>,
+): Attention {
+  const others: Attention[] = [];
+  for (const id of projectIds) {
+    const a = byProject.get(id);
+    if (a && !inScope.has(id)) others.push(a);
+  }
+  return sumAttention(others);
+}
+
 /** `queued` / `thinking` / `tool`: the agent is working (or about to). Shared with the
  *  selected session card, whose frame runs exactly while this holds. */
 export function isRunningStatus(status: SessionStatus): boolean {

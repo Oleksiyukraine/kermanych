@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import type { Session } from '@kermanych/core';
-import { attentionByProject, flagsError, isUnseen, levelOf, sumAttention, NO_ATTENTION } from '../src/lib/attention';
+import { attentionByProject, attentionOutside, flagsError, isUnseen, levelOf, sumAttention, NO_ATTENTION } from '../src/lib/attention';
 
 function session(over: Partial<Session> & { id: string }): Session {
   return {
@@ -101,6 +101,26 @@ describe('sumAttention', () => {
         { input: 0, error: 1, running: 1, result: 3 },
       ]),
     ).toEqual({ input: 1, error: 1, running: 3, result: 3 });
+  });
+});
+
+describe('attentionOutside', () => {
+  // The switcher's mark: what waits in the projects off screen. The scope's own agents are
+  // the list in front of the operator and must not light it.
+  it('sums only the listed projects outside the scope', () => {
+    const byProject = new Map([
+      ['here', { input: 1, error: 0, running: 0, result: 0 }],
+      ['fe', { input: 0, error: 1, running: 2, result: 0 }],
+      ['be', { input: 1, error: 0, running: 0, result: 1 }],
+      ['unlisted', { input: 5, error: 0, running: 0, result: 0 }],
+    ]);
+    expect(attentionOutside(byProject, ['here', 'fe', 'be', 'quiet'], new Set(['here']))).toEqual({
+      input: 1,
+      error: 1,
+      running: 2,
+      result: 1,
+    });
+    expect(attentionOutside(byProject, ['here'], new Set(['here']))).toEqual(NO_ATTENTION);
   });
 });
 

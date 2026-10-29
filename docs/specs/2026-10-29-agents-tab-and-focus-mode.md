@@ -148,10 +148,11 @@ All three ship together in this task (interview, question 8).
 12. **Focus toggle: an icon button in the header between «Керманич» and the switcher.** A drawn
     `KIcon` glyph `focus` (corner brackets) — not a «panel» glyph, which ◧ / ◨ already mean in
     the footer (file manager). Pressed state while on (`aria-pressed`), tooltip «Режим фокусу
-    (⌘\)». **Hotkey `⌘\` on macOS, `Ctrl+\` elsewhere**, matched on `e.code === 'Backslash'` so
-    the Ukrainian layout works. It fires in text fields too (the composer is where a focused
-    operator types; the chord types nothing). Exception: on Windows/Linux, with focus inside the
-    integrated terminal, `Ctrl+\` stays with the shell (`SIGQUIT`).
+    (Ctrl/⌘ \)». **Hotkey `Ctrl+\` or `⌘\`**, matched on `e.code === 'Backslash'` so the
+    Ukrainian layout works, listened for in the capture phase. It fires in text fields too (the
+    composer is where a focused operator types; the chord types nothing). Exception: with focus
+    inside the integrated terminal, `Ctrl+\` stays with the shell (`SIGQUIT`) on every OS;
+    `⌘\` never reaches a shell and works there. Listed in Settings → «Гарячі клавіші».
 
 13. **The 76px rail stays**, without the bucket icons: «Розпочати» and the workspace marks remain.
     `KIcon` glyphs left with no user after the bucket nav goes are deleted.
@@ -163,6 +164,24 @@ All three ship together in this task (interview, question 8).
     `agents.empty.waiting` and `agents.empty.errors` are deleted, as are the i18n keys of the
     removed buckets (`common.nav.bucketActive/Waiting/Errors`, `agents.bucket.active/waiting/
     errors`, `kit` nav labels) in both locales.
+
+16. **Selection hints point at the switcher.** The blank-state texts that said «виберіть … у
+    лівій панелі» (Агенти, «Нова задача»'s hint, Settings, ШІ-команда, Менеджмент) now say «у
+    перемикачі вгорі»: the switcher is on screen in both modes, the sidebar is not. Texts about
+    CREATING a workspace or project still point at the sidebar, where creation stays.
+
+## Implementation notes
+
+- `lib/buckets.ts`: `Bucket`, `BUCKETS`, `bucketOf`, `readBucket` (retired names → `agents`),
+  used by `stores/orchestrator.ts` (saved selection) and `lib/agentMap.ts` (`parseMapBuckets`).
+- `lib/agents-board.ts`: `needsHuman`, `agentsOrder` (families ranked by any member that needs
+  a human), `byAgentsGroup`.
+- `lib/attention.ts`: `attentionOutside` for the switcher's summary mark.
+- Kit: `KSubNav` items take an optional `count`; `KAttentionBadge` takes `still` (no pulse);
+  new `KProjectSwitcher` (selection only, rows are `KRailItem`); `KIcon` gains `search` and
+  `focus`, loses `activity` / `waiting` / `done` / `alert` / `tasks`.
+- `MainLayout.vue`: the bucket nav and its tally are gone; the drawer's `model-value` is
+  `!focusMode` (`kermanych.focus-mode`); the divider under «Розпочати» shows only with it.
 
 ## Out of scope
 

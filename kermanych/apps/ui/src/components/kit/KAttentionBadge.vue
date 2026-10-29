@@ -1,5 +1,5 @@
 <template>
-  <span v-if="level !== 'idle'" class="k-att" :class="`k-att--${level}`" aria-hidden="true"
+  <span v-if="level !== 'idle'" class="k-att" :class="[`k-att--${level}`, { 'k-att--still': still }]" aria-hidden="true"
     >{{ digits }}<span v-if="flagged" class="k-att__flag"></span
   ></span>
 </template>
@@ -19,7 +19,10 @@
 import { computed } from 'vue';
 import { flagsError, levelOf, type Attention } from '../../lib/attention';
 
-const props = defineProps<{ attention: Attention }>();
+// `still` stops the `input` pulse: the header switcher's summary mark sits beside work the
+// operator chose to focus on, and a blinking pill there is a pull away from it. The colour
+// still says «somebody asks».
+const props = defineProps<{ attention: Attention; still?: boolean }>();
 
 const level = computed(() => levelOf(props.attention));
 const flagged = computed(() => flagsError(props.attention));
@@ -61,6 +64,10 @@ const digits = computed(() =>
 .k-att--input {
   background: var(--k-warning);
   animation: k-att-pulse 1.1s ease-in-out infinite;
+}
+
+.k-att--still {
+  animation: none;
 }
 
 // The two presence marks share the 7px footprint the old idle dot had.

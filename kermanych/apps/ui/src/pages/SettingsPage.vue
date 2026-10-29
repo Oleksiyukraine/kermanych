@@ -491,6 +491,12 @@
                  account settings, and both apply on click with no save bar. -->
             <KLangToggle />
           </div>
+          <!-- The app's version. It used to sit beside the logo; the header gave that room to
+               the project switcher, and «what am I running» is a settings-page question. -->
+          <div class="set__group">
+            <span class="set__label">{{ t('settings.appGeneral.version') }}</span>
+            <span class="set__note mono">{{ APP_VERSION }}</span>
+          </div>
         </div>
 
         <!-- ── APP · ГАРЯЧІ КЛАВІШІ ─────────────────────────────────────────── -->
@@ -1704,6 +1710,10 @@ const languagePick = reactive(
   ),
 );
 
+// The app version shown under «Загальне». The one place it is written: a release bumps it
+// here (it used to be the header's label, beside the logo).
+const APP_VERSION = 'v1.1.2';
+
 // Every binding the app actually listens to, and the file that owns it. A
 // read-only sheet is the honest shape: none of these is stored anywhere, so there
 // is nothing a remap could write to.
@@ -1716,6 +1726,7 @@ const KEYMAP: readonly { act: string; keys: string; where: string }[] = [
   { act: 'settings.keymap.acts.switchNav', keys: '← → ⇱ ⇲', where: 'settings.keymap.where.navBars' },
   { act: 'settings.keymap.acts.openRow', keys: '⏎', where: 'settings.keymap.where.tables' },
   { act: 'settings.keymap.acts.toggleFiles', keys: '⌘B', where: 'settings.keymap.where.everywhere' },
+  { act: 'settings.keymap.acts.focusMode', keys: '⌘\\', where: 'settings.keymap.where.everywhere' },
   { act: 'settings.keymap.acts.saveSettings', keys: '⌘S', where: 'settings.keymap.where.thisScreen' },
   { act: 'settings.keymap.acts.closeWindow', keys: '⎋', where: 'settings.keymap.where.everywhere' },
 ];

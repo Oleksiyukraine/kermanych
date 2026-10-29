@@ -1,20 +1,10 @@
 <template>
   <q-layout view="hHh Lpr fFf" class="shell">
-    <!-- LEFT SIDEBAR — bucket nav + projects + folder binding + collapse toggle (v3 section 07) -->
-    <q-drawer model-value side="left" :width="collapsed ? 76 : 264" :breakpoint="0" class="shell__sidebar">
+    <!-- LEFT SIDEBAR — first-run checklist + workspaces/projects + collapse toggle (v3 section 07).
+         Focus mode takes it off screen entirely (the header's ⛶ / ⌘\); «« / »» only changes its
+         width, and leaving focus mode brings back whichever width was set. -->
+    <q-drawer :model-value="!focusMode" side="left" :width="collapsed ? 76 : 264" :breakpoint="0" class="shell__sidebar">
       <div class="shell__side-inner" :class="{ 'shell--min': minified }">
-        <nav class="shell__buckets">
-          <KNavItem
-            v-for="b in buckets"
-            :key="b.key"
-            :label="t(b.label)"
-            :icon="b.icon"
-            :count="bucketCounts[b.key]"
-            :tip="minified ? t(b.label) : undefined"
-            :active="store.selectedBucket === b.key"
-            @click="onBucket(b.key)"
-          />
-        </nav>
         <!-- FIRST-RUN CHECKLIST — stays until the account dismisses it (stores/onboarding.ts).
              Its hint doubles as a progress read (done/total); the row opens the modal. -->
         <KNavItem
@@ -26,7 +16,7 @@
           :active="onb.open"
           @click="onb.show()"
         />
-        <div class="shell__divider"></div>
+        <div v-if="onb.sidebarVisible" class="shell__divider"></div>
         <div class="shell__side-label shell__side-label--row">
           <span>{{ t('common.nav.workspaces') }}</span>
           <button
@@ -130,7 +120,9 @@
       </div>
     </q-drawer>
 
-    <!-- TOP BAR — brand + segmented view nav + project actions (v3) -->
+    <!-- TOP BAR — brand, focus toggle, project switcher + segmented view nav + app actions (v3).
+         The version lives under Settings → «Загальне», not here: this row is where the
+         operator reads where they are, and the switcher needs the room. -->
     <q-header class="shell__header">
       <div class="shell__brand">
         <svg class="shell__mark" viewBox="0 0 1024 1024" aria-hidden="true">
@@ -139,7 +131,35 @@
           <rect x="636" y="726" width="300" height="84" fill="#f3f2f2" />
         </svg>
         <span class="shell__logo">{{ t('common.nav.logo') }}</span>
-        <span class="shell__ver mono">v1.1.2</span>
+        <!-- FOCUS MODE — hides the left sidebar so the work area takes the screen; the footer
+             stays. Here rather than in the sidebar because the sidebar is what it hides: the
+             way back has to be where the way in was. Ctrl/⌘ \ does the same. -->
+        <KIconButton
+          class="shell__focus"
+          :active="focusMode"
+          :aria-pressed="focusMode"
+          :title="t('common.nav.focusMode')"
+          @click="toggleFocusMode"
+        ><KIcon name="focus" /></KIconButton>
+        <!-- Where the operator is, and the way to anywhere else — always on screen, the only
+             project list in focus mode (spec docs/specs/2026-10-29-agents-tab-and-focus-mode.md). -->
+        <KProjectSwitcher
+          :groups="switcherGroups"
+          :ungrouped="sidebarProjects.ungrouped"
+          :ungrouped-label="localOnlyLabel"
+          :project-id="store.selectedProjectId"
+          :workspace-id="store.selectedWorkspaceId"
+          :attention-of="attentionOf"
+          :workspace-attention="workspaceAttention"
+          :minion="minionProjects"
+          :outside="outsideAttention"
+          :empty-label="t('common.nav.switcherEmpty')"
+          :all-projects-label="(name: string) => t('common.nav.switcherAllProjects', { name })"
+          :menu-label="t('common.nav.switcher')"
+          :outside-hint="outsideHint"
+          @select-project="selectProject"
+          @select-workspace="selectWorkspace"
+        />
       </div>
       <KTopNav
         class="shell__nav"
@@ -523,7 +543,7 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, onUnmounted, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { useI18n } from 'vue-i18n';
-import type { MachineResources, ResourceDecision, Session } from '@kermanych/core';
+import type { MachineResources, ResourceDecision } from '@kermanych/core';
 import { useOrchestrator } from 'stores/orchestrator';
 import { useProjects } from 'stores/projects';
 import { useAuth } from 'stores/auth';
@@ -535,9 +555,7 @@ import { IS_PREVIEW } from '../lib/preview';
 import { api } from '../lib/api';
 import { MANAGEMENT_DEFAULT_SECTION } from '@kermanych/core';
 import { canDropProject, sessionScopedProjectIds } from '../lib/scope';
-import { myBacklogTasks } from '../lib/tasks-view';
-import { bucketOf, type Bucket } from '../lib/buckets';
-import { attentionByProject, sumAttention, NO_ATTENTION, type Attention } from '../lib/attention';
+import { attentionByProject, attentionOutside, describeAttention, levelOf, sumAttention, NO_ATTENTION, type Attention } from '../lib/attention';
 import { theme, toggleTheme } from '../lib/theme';
 import type { KTheme } from '@kermanych/tokens';
 import { locale, toggleLocale } from '../lib/locale';
@@ -552,6 +570,7 @@ import { useProviderSignIn } from '../composables/useProviderSignIn';
 import KRailItem, { type RailProject } from 'components/kit/KRailItem.vue';
 import KWorkspaceRow from 'components/kit/KWorkspaceRow.vue';
 import KTopNav from 'components/kit/KTopNav.vue';
+import KProjectSwitcher from 'components/kit/KProjectSwitcher.vue';
 import KNavItem from 'components/kit/KNavItem.vue';
 import KModal from 'components/kit/KModal.vue';
 import KField from 'components/kit/KField.vue';
@@ -600,11 +619,37 @@ const route = useRoute();
 const router = useRouter();
 const { t, te } = useI18n();
 
-// The left sidebar collapses to give the board full width; the choice persists so a reload
-// keeps the operator's layout. breakpoint:0 means the drawer never self-closes, so this
-// model-value is the only thing that shows/hides it.
+// The left sidebar narrows to a 76px rail to give the board more width; the choice persists
+// so a reload keeps the operator's layout. breakpoint:0 means the drawer never self-closes, so
+// its model-value — `!focusMode` — is the only thing that shows/hides it.
 const collapsed = ref(localStorage.getItem('kermanych.sidebar-collapsed') === '1');
 watch(collapsed, (v) => localStorage.setItem('kermanych.sidebar-collapsed', v ? '1' : '0'));
+
+// FOCUS MODE — the sidebar off screen entirely, on every route; the footer stays (account
+// limits, terminal, file manager and git are needed mid-task). Independent of `collapsed`:
+// leaving focus mode brings back whichever width the operator had. The header switcher is the
+// project list meanwhile. Persisted like the width.
+// Spec: docs/specs/2026-10-29-agents-tab-and-focus-mode.md, decisions 11–12.
+const FOCUS_KEY = 'kermanych.focus-mode';
+const focusMode = ref(localStorage.getItem(FOCUS_KEY) === '1');
+watch(focusMode, (v) => localStorage.setItem(FOCUS_KEY, v ? '1' : '0'));
+function toggleFocusMode(): void {
+  focusMode.value = !focusMode.value;
+}
+// Ctrl/⌘ \ — matched on the PHYSICAL key (`code`), so the Ukrainian layout, where that key
+// types «ґ», works too. Unlike ⌘B it fires inside text fields: the composer is where a
+// focused operator types, and the chord types nothing there. The one exception is Ctrl+\
+// inside the integrated terminal, which is the shell's SIGQUIT and stays the shell's; ⌘\
+// never reaches a shell. Capture phase, so the terminal's own keydown handling cannot
+// swallow the chord first.
+function onFocusHotkey(e: KeyboardEvent): void {
+  if (e.code !== 'Backslash' || !(e.metaKey || e.ctrlKey) || e.altKey || e.shiftKey) return;
+  if (!e.metaKey && (e.target as HTMLElement | null)?.closest?.('.xterm')) return;
+  e.preventDefault();
+  toggleFocusMode();
+}
+onMounted(() => window.addEventListener('keydown', onFocusHotkey, true));
+onBeforeUnmount(() => window.removeEventListener('keydown', onFocusHotkey, true));
 
 // The rail's WIDTH tweens (css/app.scss transitions the drawer's inline width), but the
 // content swap between labels and icons is a `display` switch that no transition can carry,
@@ -814,8 +859,8 @@ onMounted(async () => {
   }
 });
 
-// The board store is app-wide now: Агенти renders my backlog cards from it and the sidebar
-// counts them, so it must be live on every route, not only on /#/board. subscribe() is
+// The board store is app-wide now: Агенти renders my backlog cards from it and its «Задачі»
+// tab counts them, so it must be live on every route, not only on /#/board. subscribe() is
 // idempotent — BoardPage no longer owns this.
 onMounted(() => void board.subscribe());
 onUnmounted(() => board.unsubscribe());
@@ -994,55 +1039,6 @@ function onLangToggle(e: MouseEvent): void {
   toggleLocale(locale.value === 'uk' ? 'en' : 'uk', el instanceof HTMLElement ? el.getBoundingClientRect() : null);
 }
 
-// The marks are drawn (KIcon), not typed. They only ever show while the rail is minified,
-// which is precisely where the label is gone and the mark alone has to say which bucket it
-// opens — a job the text glyphs this replaced could not do: ◉ read as a radio button, ☰ as a
-// menu, ⤓ as a download and ↺ as a reload.
-const buckets = [
-  { key: 'active', label: 'common.nav.bucketActive', icon: 'activity' },
-  { key: 'waiting', label: 'common.nav.bucketWaiting', icon: 'waiting' },
-  { key: 'completed', label: 'common.nav.bucketCompleted', icon: 'done' },
-  { key: 'errors', label: 'common.nav.bucketErrors', icon: 'alert' },
-  { key: 'tasks', label: 'common.nav.bucketTasks', icon: 'tasks' },
-] as const;
-function onBucket(key: Bucket): void {
-  store.setBucket(key);
-  if (route.name !== 'agents') void router.push({ name: 'agents' });
-}
-// Fleet tally per sidebar bucket (replaces the old footer KStatusBar). Uses bucketOf so the
-// rail count and the Агенти list can never disagree about which bucket a session lands in.
-//
-// Scoped by ASKING the Агенти page's predicate, not by re-deriving it. It used to test
-// `s.projectId !== store.selectedProjectId`, which was true while a workspace-only selection
-// rendered a blank page and became a falsehood the moment that page started listing a whole
-// workspace: every session was skipped and the rail printed «Активні 0 / Задачі 0» two
-// columns from a header counting real cards. «Задачі 0» is the costly one — an operator
-// scanning the rail concludes the workspace has no backlog and never opens it. One answer in
-// one place is the only version of this that stays true.
-const bucketCounts = computed(() => {
-  const inScope = new Set(
-    sessionScopedProjectIds(
-      { workspaceId: store.selectedWorkspaceId, projectId: store.selectedProjectId },
-      { projects: projects.projects, listRead: projects.listRead },
-      store.projectWorkspace,
-    ),
-  );
-  const byId = new Map(store.sessions.map((s) => [s.id, s]));
-  const parent = (id: string): Session | undefined => byId.get(id);
-  const c: Record<Bucket, number> = { active: 0, waiting: 0, completed: 0, errors: 0, tasks: 0 };
-  for (const s of store.sessions) {
-    if (!inScope.has(s.projectId)) continue;
-    if (s.kind === 'chat') continue;
-    c[bucketOf(s, parent)]++;
-  }
-  // «Задачі» shows two things now: my cloud backlog cards, and any stranded pre-cutover
-  // local row. The badge counts both, because a count that disagrees with the list it counts
-  // is worse than no count (lib/buckets.ts:2-4). myBacklogTasks applies the same scope, so
-  // the set is passed to it rather than re-tested here.
-  c.tasks += myBacklogTasks(board.tasks, auth.user?.id ?? '', [...inScope]).length;
-  return c;
-});
-
 // The tree: cloud workspaces, each with its own cloud projects, in cloud order.
 // `groupProjectsByWorkspace` DROPS a project whose workspace is not in the list — RLS
 // decides which workspaces this user can read, and inventing a group for one they cannot
@@ -1143,6 +1139,30 @@ const localOnlyLabel = computed(() =>
 function workspaceAttention(workspaceId: string): Attention {
   return sumAttention((sidebarProjects.value.byWorkspace.get(workspaceId) ?? []).map((p) => attentionOf(p.id)));
 }
+
+// THE HEADER SWITCHER reads the same tree, tiles and marks as the sidebar — one copy of
+// each — so a project looks the same in both places.
+const switcherGroups = computed(() =>
+  tree.value.map((g) => ({ workspace: g.workspace, projects: sidebarProjects.value.byWorkspace.get(g.workspace.id) ?? [] })),
+);
+// Its mark: what needs the operator in the projects outside the current scope — the scope
+// the Агенти list shows (lib/scope.ts), so nothing on screen is counted twice.
+const outsideAttention = computed(() => {
+  const inScope = new Set(
+    sessionScopedProjectIds(
+      { workspaceId: store.selectedWorkspaceId, projectId: store.selectedProjectId },
+      { projects: projects.projects, listRead: projects.listRead },
+      store.projectWorkspace,
+    ),
+  );
+  const listed = [...sidebarProjects.value.byWorkspace.values()].flat().concat(sidebarProjects.value.ungrouped);
+  return attentionOutside(attentionById.value, listed.map((p) => p.id), inScope);
+});
+const outsideHint = computed(() =>
+  levelOf(outsideAttention.value) === 'idle'
+    ? ''
+    : ` · ${t('common.nav.switcherElsewhere')}${describeAttention(outsideAttention.value, t)}`,
+);
 
 // DRAG A PROJECT INTO ANOTHER WORKSPACE — hand-rolled HTML5 DnD. It is one gesture, and a
 // drag-and-drop library would bring its own reactivity model along for it.
@@ -1859,12 +1879,6 @@ const pullHint = computed(() => {
   }
 }
 
-.shell__buckets {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-
 // The right margin is 1px, not the 4px on the other three sides: the rows below carry a
 // 1px transparent border and this heading does not, so that pixel is what puts this row's
 // «+» in the same column as the one on KWorkspaceRow.
@@ -2070,6 +2084,7 @@ const pullHint = computed(() => {
   display: flex;
   align-items: center;
   gap: var(--k-sp-2);
+  min-width: 0;
 }
 
 .shell__mark {
@@ -2086,9 +2101,12 @@ const pullHint = computed(() => {
   color: var(--k-text);
 }
 
-.shell__ver {
-  font-size: var(--k-fs-xs);
-  color: var(--k-muted);
+// The ⚙ / theme buttons' control, so the header has one kind of glyph button; its accent
+// frame (`active`) says focus mode is on.
+.shell__focus {
+  flex: none;
+  margin-left: var(--k-sp-2);
+  --k-icon-size: var(--k-icon-md);
 }
 
 // The selected workspace, centred in the gap between the brand and the segmented nav.
