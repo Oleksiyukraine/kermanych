@@ -45,6 +45,23 @@ type Running = {
   exited: boolean;
 };
 
+// The serializer restores mouse tracking (?1000h/?1002h…) but not the encoding the reports
+// go out in. A TUI that does its own scrolling and selection (claude) asks for SGR (?1006h);
+// a view repainted without it reports in the default X10 bytes the TUI cannot parse, so
+// wheel and drag die until the TUI re-sends its modes (on the next focus-in). xterm keeps
+// the encoding only on its private mouse service, hence the cast; the replay test pins it.
+function mouseEncoding(screen: Terminal): string {
+  const core = (screen as unknown as { _core?: { coreMouseService?: { activeEncoding?: string } } })._core;
+  switch (core?.coreMouseService?.activeEncoding) {
+    case "SGR":
+      return "\x1b[?1006h";
+    case "SGR_PIXELS":
+      return "\x1b[?1016h";
+    default:
+      return "";
+  }
+}
+
 // The integrated terminal's shells (docs/specs/2026-09-29-project-terminal.md). A shell
 // belongs to the api, not to a socket: it outlives a UI reload and a project switch, and
 // ends when it exits, when it is killed, or when the api stops. The working directory is
@@ -160,7 +177,9 @@ export class TerminalService implements OnModuleDestroy {
     const t = this.terms.get(id);
     if (!t) throw new TerminalRefusal("terminal_not_found", "terminal not found");
     const { promise, resolve } = Promise.withResolvers<{ terminal: TerminalInfo; replay: string }>();
-    t.screen.write("", () => resolve({ terminal: t.info, replay: t.serializer.serialize({ scrollback: TERMINAL_SCROLLBACK }) }));
+    t.screen.write("", () =>
+      resolve({ terminal: t.info, replay: t.serializer.serialize({ scrollback: TERMINAL_SCROLLBACK }) + mouseEncoding(t.screen) }),
+    );
     return promise;
   }
 

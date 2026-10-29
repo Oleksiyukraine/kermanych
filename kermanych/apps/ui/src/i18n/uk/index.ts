@@ -2337,6 +2337,9 @@ export const uk = {
     },
   },
   kit: {
+    toast: {
+      close: 'Закрити',
+    },
     composer: {
       helpers: 'Хелпери',
       helpersTip: 'Хелпери — команди-настанови',
