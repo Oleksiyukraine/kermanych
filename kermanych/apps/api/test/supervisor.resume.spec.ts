@@ -4,7 +4,7 @@ import type { OmpMessage } from "../src/supervisor/messages-to-transcript";
 
 // Every spawned RpcSession is captured so the test can inspect which child a message was
 // delivered to and can simulate a child dying (a provider outage killing the omp process).
-type LaunchOpts = { cwd?: string; resume?: string; fork?: string; noTools?: boolean; tools?: string[] };
+type LaunchOpts = { cwd?: string; resume?: string; fork?: string; noTools?: boolean; tools?: string[]; appendSystemPrompt?: string };
 type FakeChild = { opts: LaunchOpts; alive: boolean; prompts: number; followUps: number; steers: number };
 const instances: FakeChild[] = [];
 
@@ -73,6 +73,7 @@ import { SupervisorService } from "../src/supervisor/supervisor.service";
 import { RegistryService } from "../src/registry/registry.service";
 import { offlineAuth } from "./offline-auth";
 import { stubSkills } from "./skills-stub";
+import { DISCUSSION_NO_TOOLS_APPEND } from "../src/supervisor/chat-tools";
 
 function make() {
   const registry = new RegistryService(":memory:");
@@ -269,8 +270,10 @@ describe("waking a discussion or review branch", () => {
     await sup.resume(review.id);
 
     expect(instances[0].opts).toMatchObject({ noTools: true, cwd: "/tmp/wt" });
+    expect(instances[0].opts.appendSystemPrompt).toContain(DISCUSSION_NO_TOOLS_APPEND);
     expect(instances[1].opts).toMatchObject({ tools: ["read", "grep", "glob"], cwd: "/tmp/wt" });
     expect(instances[1].opts.noTools).toBeUndefined();
+    expect(instances[1].opts.appendSystemPrompt ?? "").not.toContain(DISCUSSION_NO_TOOLS_APPEND);
   });
 
   it("falls back to the project root once the parent's worktree is retired", async () => {
