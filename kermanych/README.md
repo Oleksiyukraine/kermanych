@@ -810,7 +810,7 @@ ChatGPT app is not used. A missing binary shows `command not found` in the «Л�
 - **Nothing of Kermanych enters the agent's context**: no project skills, triggers,
   language or documentation directives, co-author trailer, model or effort flags. Your own
   `~/.claude` / `~/.omp` / `~/.codex` configuration applies unchanged; switch model with the harness's
-  own `/model`. Model, effort and images are hidden in the launcher for this mode. The
+  own `/model`. Model, effort, images and Хелпери are hidden in the launcher for this mode. The
   exceptions are the [session browser](#session-browser)'s tools, passed on the launch in the
   desktop app, and a «Глибокий аналіз» card's opening prompt: the TUI receives the task
   wrapped in the deep-analysis instructions, because that is the task you chose.
@@ -946,7 +946,9 @@ live. The web build has no session browser.
   `browser_click` (refuses, naming the cover, when another element covers the target),
   `browser_type`, `browser_press`, `browser_hover`, `browser_select` (native `<select>`),
   `browser_history` (back / forward / reload), `browser_wait_for`, `browser_resize`,
-  `browser_screenshot` (viewport, full page or one element), `browser_upload`,
+  `browser_screenshot` (viewport, full page or one element; with `path` — a worktree-relative
+  `.png` under `docs/` — it writes the image into the worktree and answers with the path
+  instead of the image), `browser_upload`,
   `browser_dialog`, `browser_console` (console, failed / 4xx / 5xx requests, downloads,
   popups, blocked links), `browser_network` (the request log) and `browser_evaluate`.
   claude shows them as `mcp__kermanych__browser_*`. Managed sessions get them on launch and
@@ -972,6 +974,48 @@ live. The web build has no session browser.
   idle for 20 minutes). A closed one remembers its last address, and the empty tab offers
   **Відкрити знову**; the agent's `browser_navigate` opens a new page, its other browser tools
   refuse until then and name the last address. It is deleted with its session.
+
+## Designs («Дизайн»)
+
+The «Дизайн» tab, right after «Чат», is where a screen is designed with an agent (spec:
+`docs/specs/2026-10-29-design-tab.md`). A design is a **prototype built on the project's own UI
+kit with fixtures**, not a drawing, so it cannot drift from the code; what lands in the
+repository is a folder that people and implementing agents read.
+
+- **The page.** Left: the selected project's designs and «+ Новий дизайн». Centre: the
+  design's session browser on the running preview, with the width presets, «◎ Вказати» and the
+  picks tray (picks go to the agent, as on «Агенти»). Right: the agent's log and composer.
+  The web build has no canvas (the session browser needs the desktop app): it shows the
+  design's saved folder instead — the screenshots and the rendered README. A project without a
+  preview command says so on the canvas, with a link to its settings. The page opens a design
+  from a desktop notification or «Карта агентів» too.
+- **A design is an agent session.** «+ Новий дизайн» asks for a topic, an optional description
+  and base branch, files a card on the board (`tasks.design`, migration
+  `20261029090000_task_design.sql`) assigned to you, and launches it. The session runs on a
+  `design/<slug>` branch in its own worktree, stamped with its folder
+  `docs/design/YYYY-MM-DD-<slug>/`. Commit, PR, finish and resume work as for any agent.
+  Designs are hidden from «Агенти» but stay on «Карта агентів», and their card on the board
+  carries the design mark. «Посіпака» never takes a design card.
+- **«Дизайнер»** (`designer` in «ШІ-команда → Агенти», editable) opens the session: reuse kit
+  components only (a missing one is a kit gap in the README), one dev-only route per screen
+  (`/__design/<design>/<screen>`), every state (data, empty, loading, error, long content,
+  narrow), and a `browser_screenshot` check at 390 and 1280 after each change. Its method and
+  README template are the default skill `design-spec`.
+- **The folder.** `README.md` (purpose, screens, states, decisions, open questions,
+  acceptance criteria, prototype files and routes, kit gaps) and
+  `screens/<screen>-<state>@<width>.png`. The prototype code stays in the app's source and is
+  merged with the design; the task that implements the screen turns it into the real one and
+  deletes it.
+- **«Зберегти дизайн»** sends the procedure `design-save` (editable too): screenshot every
+  screen and state at 390 and 1280 into `screens/`, delete stale ones, make the README match
+  the prototype, commit as `design: <topic>`. The design reaches the default branch through
+  «Створити ПР» and review, like code.
+- **From design to implementation.** «Задача →» on a design's README (on the page and in the
+  session's «Документація» tab) creates a card in the same project by default, platform
+  `web`, with the README as the description and the screenshots attached as card images. An
+  agent working from such a card follows the default skill `implement-from-design`: read the
+  README and screenshots, reuse the prototype, build every state, compare its own screenshots,
+  delete the prototype.
 
 ## Monorepo layout
 
@@ -1000,6 +1044,9 @@ The visual source of truth lives in [`design/`](./design/):
   chevron plus an input cursor. Regenerate the whole favicon/Electron icon
   set from it with `python3 scripts/gen-icons.py` (stdlib only; the macOS
   `.icns` step needs `iconutil`).
+
+These HTML files are historical. New screens are designed on the «Дизайн» tab (see
+«Designs» above) and land in `docs/design/`.
 
 Custom `K*` components implement this look; Quasar is used only for the
 framework, layout, build, and state plumbing.
@@ -1056,7 +1103,11 @@ developer's machine. The direction is always task → session.
    unassigned unless its author picks someone; a card filed from «Агенти» or «Чат» is
    assigned to its author, because that is the machine about to run it. Either way it is a
    row in the cloud `tasks` — there is no local-only task — so the whole workspace sees it.
-   It starts in `backlog`, which exists only in the cloud.
+   It starts in `backlog`, which exists only in the cloud. The task text (the description)
+   takes Хелпери as a chat message does: <kbd>/</kbd> on an empty field or the «/ Хелпери»
+   button opens the picker, the pick lands at the front of the text, and the launch expands it
+   into the agent's opening prompt (the «Лог» keeps the slash plus a notice naming the helper).
+   A native launch sends the text as it is.
 2. **Assign** — the assignee may hand a card over or release it, and the workspace owner
    may take one back from someone who is gone. Anyone may claim an UNASSIGNED card, and
    pressing «Запустити» on one self-assigns it atomically — in the same write that moves it
@@ -1332,6 +1383,7 @@ default, superpowers' `docs/superpowers/specs|plans` included. Each kind has its
 | Жива документація | how the service works | `docs/schemas/` (or the project's own docs) | off · optional · required | required |
 | Фронтенд ↔ бекенд | frontend handoff | `docs/handoffs/YYYY-MM-DD-<topic>.md` | off · optional · required | optional |
 | | API extension request | `docs/api-requests/YYYY-MM-DD-<topic>.md` | off · optional | off |
+| Екрани | design folder | `docs/design/YYYY-MM-DD-<topic>/` | off · optional | optional |
 
 - **off** — the agent is not told about the kind; nothing is checked.
 - **optional** («За потреби») — the agent writes it where it applies; nothing blocks.
@@ -1357,11 +1409,18 @@ every required document is on the branch:
   document has a `## Documentation impact` section whose first line starts with `None`,
   followed by the reason. The reviewer sees that reason in the diff.
 
+A design session's branch is judged by its own folder only: it needs
+`docs/design/<date>-<slug>/README.md`, and the task-document, plan and living-documentation
+rules do not apply to it. The design rule itself never blocks: `optional` tells every other
+session where designs live and that a task naming one is implemented with
+`implement-from-design`; `off` keeps them from being told.
+
 The finish sheet («Завершити сесію») lists whatever is still missing in plain language; it has
 no documentation checkboxes. «Доповнити документацію» sends the agent one prompt naming
 exactly the missing documents and closes the sheet. You watch the agent write and commit them
 in the transcript, and it pushes them if the PR is already open. Changed documents appear in
-the session's «Документація» tab tagged специфікація / план / схема / хендоф / запит API.
+the session's «Документація» tab tagged специфікація / план / схема / хендоф / запит API /
+дизайн.
 
 The tab survives an API restart and «Завершити». The documents a session read, the documents
 it changed and the skills on «Сесія» are kept on its card (`tasks.docs_report`,

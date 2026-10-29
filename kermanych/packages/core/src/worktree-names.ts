@@ -1,5 +1,6 @@
 import { homedir } from "os";
 import { join } from "path";
+import { stripHelpers } from "./helpers";
 
 // Cyrillic → Latin transliteration so a task written in Ukrainian (or Russian)
 // still yields a readable branch slug instead of collapsing to "session".
@@ -26,14 +27,16 @@ export function slugify(name: string): string {
 
 // A short human label for a task, derived from the text that started it (a chat's
 // first message, a transcript selection). First non-empty line, leading markdown
-// decoration and inline emphasis stripped, capped so it reads as a label. Empty
-// text yields "" so the caller can fall back to a name of its own.
+// decoration and inline emphasis stripped, capped so it reads as a label. A leading
+// Хелпер run (`/el10 …`) is not part of the label. Empty text yields "" so the caller
+// can fall back to a name of its own.
 export function taskNameFromText(text: string): string {
-  const firstLine = text.split("\n").map((l) => l.trim()).find((l) => l.length > 0) ?? "";
+  const firstLine = stripHelpers(text).split("\n").map((l) => l.trim()).find((l) => l.length > 0) ?? "";
   const clean = firstLine.replace(/^[#>\-*\d.)\s]+/, "").replace(/[*_`]/g, "").trim();
   return (clean || firstLine).slice(0, 60);
 }
-export const BRANCH_PREFIXES = ["feature", "fix", "refactoring", "chore"] as const;
+// `design` is a «Дизайн» session's branch (docs/specs/2026-10-29-design-tab.md).
+export const BRANCH_PREFIXES = ["feature", "fix", "refactoring", "chore", "design"] as const;
 export type BranchPrefix = (typeof BRANCH_PREFIXES)[number];
 
 export function branchName(slug: string, prefix: BranchPrefix = "feature"): string {

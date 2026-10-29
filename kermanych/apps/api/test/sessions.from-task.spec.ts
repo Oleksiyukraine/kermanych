@@ -4,7 +4,8 @@ import type { WorktreeService } from "../src/worktree/worktree.service";
 import type { AuthService } from "../src/auth/auth.service";
 import type { ModelsService } from "../src/models/models.service";
 import type { CloudProject, Task } from "@kermanych/cloud";
-import { DEFAULT_DOCS_POLICY, docsPolicyAppend, deepAnalysisPrompt } from "@kermanych/core";
+import { DEFAULT_DOCS_POLICY, DEFAULT_HELPERS, docsPolicyAppend, deepAnalysisPrompt, designDirFor } from "@kermanych/core";
+import { todayIso } from "../src/management/management-prompt";
 
 // The runtime-aware model guard (ModelsService.validModel) is not under test here; an identity
 // stub returns the wanted model unchanged so createSessionFromTask keeps task.model as before.
@@ -132,6 +133,7 @@ function task(over: Partial<Task> = {}): Task {
     updatedAt: NOW,
     worktree: true,
     autoRun: false,
+    design: false,
     ...over,
   };
   cloudTasks.set(t.id, t);
@@ -464,6 +466,46 @@ describe("createSessionFromTask", () => {
     expect(first).toMatchObject({ kind: "user_text", text: "wire GitHub OAuth" });
   });
 
+  // «Дизайн» (docs/specs/2026-10-29-design-tab.md): a design card is always a `design/` branch,
+  // whatever prefix it carries; the row is stamped with its folder (launch day + branch slug),
+  // and the model's opening turn is the Дизайнер's instruction naming that folder and the card.
+  it("opens a design card on a design branch with its folder and the Дизайнер instruction", async () => {
+    const { sup, registry } = make();
+    bind(registry);
+    task({ assigneeId: USER, createdBy: USER, design: true, prefix: "feature" });
+
+    const session = await sup.createSessionFromTask("task-1", USER);
+
+    const row = registry.listSessions().find((s) => s.id === session.id)!;
+    expect(row.branch).toBe("design/add-login");
+    expect(row.prefix).toBe("design");
+    expect(row.designDir).toBe(designDirFor(todayIso(), "add-login"));
+    const [text] = prompts.at(-1) as [string];
+    expect(text).toMatch(/^You are «Дизайнер»/);
+    expect(text).toContain(`${row.designDir}/README.md`);
+    expect(text).toContain("## Design\nAdd login\n\nwire GitHub OAuth");
+    expect(text).toMatch(/Co-Authored-By: Kermanych </);
+    const first = sup.getTranscript(session.id).find((e) => e.kind === "user_text");
+    expect(first).toMatchObject({ kind: "user_text", text: "wire GitHub OAuth" });
+  });
+
+  // A Хелпер picked in the launcher or the board editor sits at the head of the card's text;
+  // the launch expands it like a chat message, so the token is never sent to the model as-is.
+  it("expands a leading helper in the card's text and says so in the transcript", async () => {
+    const { sup, registry } = make();
+    bind(registry);
+    task({ assigneeId: USER, createdBy: USER, description: "/el10 wire GitHub OAuth" });
+
+    const session = await sup.createSessionFromTask("task-1", USER);
+
+    const el10 = DEFAULT_HELPERS.find((h) => h.name === "el10")!;
+    const [text] = prompts.at(-1) as [string];
+    expect(text.startsWith(`${el10.body.trim()}\n\nwire GitHub OAuth\n\n`)).toBe(true);
+    const entries = sup.getTranscript(session.id);
+    expect(entries.find((e) => e.kind === "user_text")).toMatchObject({ text: "/el10 wire GitHub OAuth" });
+    expect(entries.find((e) => e.kind === "notice")).toMatchObject({ code: "helper_added_instruction" });
+  });
+
   // docs/specs/2026-10-14-create-pr-base-sync.md, decision 4: origin could not be asked before
   // the fork, so the session starts from the last-known origin base and the transcript says so.
   it("says in the transcript when the base could not be refreshed from origin", async () => {
@@ -497,7 +539,9 @@ describe("createSessionFromTask", () => {
 
     const session = await sup.createSessionFromTask("task-1", USER);
 
-    expect("deepAnalysis" in registry.listSessions().find((s) => s.id === session.id)!).toBe(false);
+    const plain = registry.listSessions().find((s) => s.id === session.id)!;
+    expect("deepAnalysis" in plain).toBe(false);
+    expect("designDir" in plain).toBe(false);
     expect((prompts.at(-1) as [string])[0]).toMatch(/^wire GitHub OAuth\n\n/);
   });
 

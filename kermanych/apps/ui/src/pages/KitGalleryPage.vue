@@ -422,6 +422,15 @@
       </div>
       <div class="kit__caption mono">{{ t('kit.gallery.cap.sessionDeep') }}</div>
 
+      <!-- DESIGN — a «Дизайн» session (KDesignMark), beside the analysis mark for the same reason. -->
+      <div class="kit__cards">
+        <KSessionCard
+          branch="design/orders-list" :title="t('kit.gallery.sessionCard.designTitle')" :time="t('kit.gallery.sessionCard.designTime')"
+          status="tool" :status-line="t('kit.gallery.sessionCard.designStatus')" model="opus-5" harness="managed" design
+        />
+      </div>
+      <div class="kit__caption mono">{{ t('kit.gallery.cap.sessionDesign') }}</div>
+
       <!-- «ПОСІПАКА» — a session the minion runs (KMinionMark), one whose run stopped on a
            choice for the operator (KDecisionMark, the reason in its tooltip), and one that found
            nothing to change (KNotNeededMark, muted, the evidence in its tooltip). -->

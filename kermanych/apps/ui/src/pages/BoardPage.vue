@@ -155,6 +155,7 @@
           :assignee="resolveAssignee(task.assigneeId, membersOf(task.projectId))"
           :assignee-loading="!!task.assigneeId && rosterPending(task.projectId)"
           :deep-analysis="task.deepAnalysis"
+          :design="task.design"
           :auto-run="task.autoRun"
           :needs-decision="cardDecisionReason(t, task)"
           :not-needed="cardNotNeededReason(t, task)"
@@ -191,29 +192,44 @@
           :placeholder="t('board.editor.projectPlaceholder')"
         />
         <KField v-model="draftTitle" :label="t('board.editor.title')" :placeholder="t('board.editor.titlePlaceholder')" />
-        <KField
-          v-model="draftDescription"
-          :label="t('board.editor.description')"
-          :placeholder="t('board.editor.descriptionPlaceholder')"
-          multiline
-          :rows="6"
-          @paste="editingId ? undefined : onDraftPaste($event)"
-          @drop.prevent="editingId ? undefined : onDraftDrop($event)"
-          @dragover.prevent
-        />
-        <div v-if="!editingId" class="board__attach">
-          <button type="button" class="board__attach-btn mono" @click="draftFileInput?.click()">
-            {{ t('board.editor.image') }}
-          </button>
-          <input
-            ref="draftFileInput"
-            type="file"
-            accept="image/png,image/jpeg,image/gif,image/webp"
-            multiple
-            class="board__file"
-            @change="onDraftFilePick"
+        <!-- Хелпери, the same panel as the chat composer's: `/` on an empty description or the
+             «/ Хелпери» button below prepends a helper, and the launch expands it. -->
+        <div class="board__desc">
+          <KHelperPicker :open="helperOpen" placement="below" @select="onDraftHelper" @close="closeDraftHelper" />
+          <KField
+            ref="descriptionField"
+            v-model="draftDescription"
+            :label="t('board.editor.description')"
+            :placeholder="t('board.editor.descriptionPlaceholder')"
+            multiline
+            :rows="6"
+            @keydown="onDescriptionKeydown"
+            @paste="editingId ? undefined : onDraftPaste($event)"
+            @drop.prevent="editingId ? undefined : onDraftDrop($event)"
+            @dragover.prevent
           />
-          <span class="board__attach-note mono">{{ t('board.editor.dragHint') }}</span>
+        </div>
+        <div class="board__attach">
+          <button
+            type="button"
+            class="board__attach-btn mono"
+            v-tip="t('board.editor.helpersTip')"
+            @click="helperOpen = !helperOpen"
+          >{{ t('board.editor.helpers') }}</button>
+          <template v-if="!editingId">
+            <button type="button" class="board__attach-btn mono" @click="draftFileInput?.click()">
+              {{ t('board.editor.image') }}
+            </button>
+            <input
+              ref="draftFileInput"
+              type="file"
+              accept="image/png,image/jpeg,image/gif,image/webp"
+              multiple
+              class="board__file"
+              @change="onDraftFilePick"
+            />
+            <span class="board__attach-note mono">{{ t('board.editor.dragHint') }}</span>
+          </template>
         </div>
         <KAttachStrip v-if="!editingId && draftImages.length" :images="draftImages" @remove="removeDraftImage" />
         <p v-if="!editingId && draftImageError" class="board__error" role="alert">{{ draftImageError }}</p>
@@ -377,7 +393,7 @@ import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
 import { useRouter } from 'vue-router';
 import { useI18n } from 'vue-i18n';
 import { confirmAction } from '../lib/confirm';
-import type { Project, ThinkingLevel } from '@kermanych/core';
+import { BRANCH_PREFIXES, prependHelper, type Project, type ThinkingLevel } from '@kermanych/core';
 import type { Task, TaskStatus, WorkspaceMember } from '@kermanych/cloud';
 import { ACTIVE_STATUSES } from '@kermanych/core/status';
 import { useAuth } from 'stores/auth';
@@ -395,6 +411,7 @@ import { useLoadPhase } from '../composables/useLoadPhase';
 import KKanbanColumn from 'components/kit/KKanbanColumn.vue';
 import KAvatar from 'components/kit/KAvatar.vue';
 import KAttachStrip from 'components/kit/KAttachStrip.vue';
+import KHelperPicker from 'components/kit/KHelperPicker.vue';
 import KDirPicker from 'components/kit/KDirPicker.vue';
 import { useNow } from '../composables/useNow';
 import { useDelayedTrue } from '../composables/useDelayedTrue';
@@ -1175,7 +1192,9 @@ const effortPickOptions = computed(() => {
   const allowed = effortOptions(local.models, draftModel.value || undefined);
   return EFFORT_OPTIONS.filter((o) => allowed.includes(o.value)).map((o) => ({ value: o.value, label: t(o.labelKey) }));
 });
-const PREFIX_OPTIONS = ['feature', 'fix', 'refactoring', 'chore'];
+// Core's prefixes, less `design`: a design card comes only from «+ Новий дизайн», which also marks
+// it `design`. A stored design card still shows its prefix — KSelect lists a held value it lacks.
+const PREFIX_OPTIONS = BRANCH_PREFIXES.filter((p) => p !== 'design');
 const PLATFORM_OPTIONS = ['backend', 'web', 'mobile'];
 
 const editorOpen = ref(false);
@@ -1238,6 +1257,29 @@ function onDraftFilePick(e: Event): void {
   const input = e.target as HTMLInputElement;
   if (input.files) void addDraftFiles(input.files);
   input.value = '';
+}
+
+// Хелпери in the description: `/` on an EMPTY description opens the picker instead of typing
+// the slash, exactly as in KComposer — mid-text a slash is a path. A pick lands at the front of
+// the description (prependHelper says why), which is the text the launch expands.
+const descriptionField = ref<InstanceType<typeof KField> | null>(null);
+const helperOpen = ref(false);
+// An editor reopened on a panel left open would hide the description it opens for.
+watch(editorOpen, (open) => {
+  if (!open) helperOpen.value = false;
+});
+function closeDraftHelper(): void {
+  helperOpen.value = false;
+  descriptionField.value?.focus();
+}
+function onDraftHelper(name: string): void {
+  draftDescription.value = prependHelper(draftDescription.value, name);
+}
+function onDescriptionKeydown(e: KeyboardEvent): void {
+  if (e.key === '/' && draftDescription.value === '') {
+    e.preventDefault();
+    helperOpen.value = true;
+  }
 }
 
 // The editor's assignee picker reads the roster of the picker's OWN project, which is not
@@ -1631,6 +1673,10 @@ async function onDelete(task: Task): Promise<void> {
   gap: 8px;
 }
 
+// The anchor the Хелпери panel hangs from.
+.board__desc {
+  position: relative;
+}
 .board__attach {
   display: flex;
   flex-wrap: wrap;

@@ -4,11 +4,14 @@
 // the right session and project. The host is a fake BrowserHost.
 import { HttpException } from "@nestjs/common";
 import type { HttpAdapterHost } from "@nestjs/core";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { RegistryService } from "../src/registry/registry.service";
 import type { PreviewService } from "../src/preview/preview.service";
 import { setBrowserHost, type BrowserActionResult, type BrowserHost, type BrowserNetworkEntry } from "../src/browser/browser-host";
-import { BrowserMcpService, NETWORK_OUTPUT_LIMIT } from "../src/browser/browser-mcp.service";
+import { BrowserMcpService, NETWORK_OUTPUT_LIMIT, screenshotFile } from "../src/browser/browser-mcp.service";
 import { BrowserMcpController } from "../src/http/browser-mcp.controller";
 
 const http = { httpAdapter: { getHttpServer: () => ({ address: () => ({ port: 4317 }) }) } } as unknown as HttpAdapterHost;
@@ -41,10 +44,13 @@ function fakeHost() {
   } satisfies BrowserHost;
 }
 
-function make(previewUrl?: string) {
+function make(previewUrl?: string, where: { worktreePath?: string; worktree?: boolean } = {}) {
   const registry = new RegistryService(":memory:");
   registry.upsertProject({ id: "p1", name: "p", localRepoPath: "/tmp/p1" });
-  const s = registry.createSession({ projectId: "p1", name: "n", task: "t", worktreePath: "", branch: "b" });
+  const s = registry.createSession({
+    projectId: "p1", name: "n", task: "t", worktreePath: where.worktreePath ?? "", branch: "b",
+    ...(where.worktree === undefined ? {} : { worktree: where.worktree }),
+  });
   const preview = { urlOf: vi.fn(() => previewUrl) } as unknown as PreviewService;
   const mcp = new BrowserMcpService(registry, preview, http);
   const host = fakeHost();
@@ -57,7 +63,17 @@ function make(previewUrl?: string) {
   return { mcp, host, s, call };
 }
 
-afterEach(() => setBrowserHost(undefined));
+const tmpDirs: string[] = [];
+function tmp(): string {
+  const dir = mkdtempSync(join(tmpdir(), "kermanych-shot-"));
+  tmpDirs.push(dir);
+  return dir;
+}
+
+afterEach(() => {
+  setBrowserHost(undefined);
+  for (const dir of tmpDirs.splice(0)) rmSync(dir, { recursive: true, force: true });
+});
 
 describe("bearer and binding", () => {
   it("one token per session, reused until revoked; the controller refuses anything else", async () => {
@@ -306,5 +322,80 @@ describe("tools/call", () => {
     expect((await call("browser_network")).content[0].text).toBe("(no requests)");
     expect((await call("browser_dialog", { accept: true })).isError).toBeUndefined();
     expect((await clicking).isError).toBeUndefined();
+  });
+});
+
+describe("browser_screenshot with path", () => {
+  // "iVBORw0K" is the fake host's base64 — the PNG signature's first 6 bytes.
+  const png = Buffer.from("iVBORw0K", "base64");
+
+  it("saves the PNG under the worktree's docs/ and answers with the path, not the image", async () => {
+    const worktree = tmp();
+    const { host, s, call } = make(undefined, { worktreePath: worktree });
+    const path = "docs/design/2026-10-29-orders/screens/list-empty@390.png";
+    expect(await call("browser_screenshot", { path, full_page: true })).toEqual({ content: [{ type: "text", text: `saved ${path} (${png.length} bytes)` }] });
+    expect(host.screenshot).toHaveBeenCalledWith({ sessionId: s.id, projectId: "p1" }, { fullPage: true });
+    expect(readFileSync(join(worktree, path))).toEqual(png);
+  });
+
+  it("refuses a bad path or a session without its own worktree, capturing and writing nothing", async () => {
+    const worktree = tmp();
+    const inWorktree = make(undefined, { worktreePath: worktree });
+    for (const path of ["../x.png", "src/x.png", "docs/x.jpg"]) {
+      const out = await inWorktree.call("browser_screenshot", { path });
+      expect(out.isError, path).toBe(true);
+    }
+    expect(inWorktree.host.screenshot).not.toHaveBeenCalled();
+
+    const checkout = tmp();
+    const inCheckout = make(undefined, { worktreePath: checkout, worktree: false });
+    const out = await inCheckout.call("browser_screenshot", { path: "docs/x.png" });
+    expect(out.isError).toBe(true);
+    expect(out.content[0].text).toMatch(/worktree/);
+    expect(inCheckout.host.screenshot).not.toHaveBeenCalled();
+    expect(existsSync(join(checkout, "docs"))).toBe(false);
+  });
+});
+
+describe("screenshotFile", () => {
+  it("accepts a .png under docs/, resolved inside the worktree", () => {
+    const worktree = tmp();
+    const file = screenshotFile(worktree, "docs/a/b@390.png");
+    expect(file.endsWith(join("docs", "a", "b@390.png"))).toBe(true);
+    expect(screenshotFile(worktree, "docs/Shot.PNG").endsWith("Shot.PNG")).toBe(true);
+  });
+
+  it.each([
+    ["../x.png"],
+    ["/abs/docs/x.png"],
+    ["docs/../x.png"],
+    ["docs/./x.png"],
+    ["docs//x.png"],
+    ["docs\\x.png"],
+    ["src/x.png"],
+    ["docs"],
+    ["docs/x.jpg"],
+    ["docs/.png"],
+  ])("refuses %s", (path) => {
+    expect(() => screenshotFile(tmp(), path)).toThrow(/`path`/);
+  });
+
+  it("refuses a path that a symlink inside docs/ leads out of the worktree", () => {
+    const worktree = tmp();
+    const outside = tmp();
+    mkdirSync(join(worktree, "docs"));
+    symlinkSync(outside, join(worktree, "docs", "link"));
+    expect(() => screenshotFile(worktree, "docs/link/x.png")).toThrow(/outside/);
+    expect(() => screenshotFile(worktree, "docs/link/deeper/x.png")).toThrow(/outside/);
+    // A symlink to /tmp itself, as an agent might plant it.
+    symlinkSync("/tmp", join(worktree, "docs", "tmp"));
+    expect(() => screenshotFile(worktree, "docs/tmp/x.png")).toThrow(/outside/);
+  });
+
+  it("refuses a dangling symlink at the file itself", () => {
+    const worktree = tmp();
+    mkdirSync(join(worktree, "docs"));
+    symlinkSync(join(tmp(), "missing.png"), join(worktree, "docs", "x.png"));
+    expect(() => screenshotFile(worktree, "docs/x.png")).toThrow(/outside/);
   });
 });

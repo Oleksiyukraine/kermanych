@@ -17,9 +17,10 @@ export const DOCS_LAYOUT = {
   schemas: "docs/schemas",
   handoffs: "docs/handoffs",
   apiRequests: "docs/api-requests",
+  design: "docs/design",
 } as const;
 
-export type DocsLayoutKind = "spec" | "plan" | "schema" | "handoff" | "api-request";
+export type DocsLayoutKind = "spec" | "plan" | "schema" | "handoff" | "api-request" | "design";
 
 const LAYOUT_KINDS: readonly [string, DocsLayoutKind][] = [
   [`${DOCS_LAYOUT.specs}/`, "spec"],
@@ -27,6 +28,7 @@ const LAYOUT_KINDS: readonly [string, DocsLayoutKind][] = [
   [`${DOCS_LAYOUT.schemas}/`, "schema"],
   [`${DOCS_LAYOUT.handoffs}/`, "handoff"],
   [`${DOCS_LAYOUT.apiRequests}/`, "api-request"],
+  [`${DOCS_LAYOUT.design}/`, "design"],
 ];
 
 // Which layout folder a repo-relative path sits in, judged by its repo-root prefix only — a
@@ -49,21 +51,25 @@ export interface DocsPolicy {
   schemas: DocsRule; // docs/schemas — living docs; `required` is the docs-impact rule
   handoff: DocsRule; // docs/handoffs — backend → frontend
   apiRequest: DocsRule; // docs/api-requests — frontend → backend: an API that is missing
+  design: DocsRule; // docs/design — designs made on the «Дизайн» tab, one folder each
 }
 
 export type DocsPolicyKey = keyof DocsPolicy;
 
-export const DOCS_POLICY_KEYS: readonly DocsPolicyKey[] = ["spec", "plan", "schemas", "handoff", "apiRequest"];
+export const DOCS_POLICY_KEYS: readonly DocsPolicyKey[] = ["spec", "plan", "schemas", "handoff", "apiRequest", "design"];
 
 // The rules each kind supports, in the order the settings screen offers them. An API request
 // has no `required`: one exists only when something is missing, so demanding it on every
-// branch would force fake documents.
+// branch would force fake documents. A design has none either: most tasks have no screen to
+// design. `design` does not ask anything of other sessions' branches; it says whether they are
+// told that designs live there (a design session writes its folder whatever the rule).
 export const DOCS_RULES: { readonly [K in DocsPolicyKey]: readonly DocsRule[] } = {
   spec: ["off", "optional", "required"],
   plan: ["off", "optional", "required"],
   schemas: ["off", "optional", "required"],
   handoff: ["off", "optional", "required"],
   apiRequest: ["off", "optional"],
+  design: ["off", "optional"],
 };
 
 // What a project stored with an empty policy gets: the bundle the single «Обовʼязкова
@@ -75,6 +81,7 @@ export const DEFAULT_DOCS_POLICY: Readonly<DocsPolicy> = {
   schemas: "required",
   handoff: "optional",
   apiRequest: "off",
+  design: "optional",
 };
 
 // The stored policy (cloud jsonb, registry JSON text) is read through this: a missing key,
@@ -92,10 +99,10 @@ export function docsPolicy(raw: unknown): DocsPolicy {
 // The documents the «Документація» tab asks the agent for mid-session.
 export type DocsWriteKind = "handoff" | "apiRequest";
 
-export type DocsGateFailure = "task-spec" | "plan" | "docs-impact" | "handoff" | "api-request";
+export type DocsGateFailure = "task-spec" | "plan" | "docs-impact" | "handoff" | "api-request" | "design-readme";
 
 // Display order — the gate returns its failures in this order, and the ui lists them so.
-export const DOCS_GATE_FAILURES: readonly DocsGateFailure[] = ["task-spec", "plan", "docs-impact", "handoff", "api-request"];
+export const DOCS_GATE_FAILURES: readonly DocsGateFailure[] = ["task-spec", "plan", "docs-impact", "handoff", "api-request", "design-readme"];
 
 export interface DocsGateInput {
   policy: DocsPolicy;
@@ -103,6 +110,9 @@ export interface DocsGateInput {
   paths: readonly string[];
   // The text of the changed task documents (markup files under docs/specs/).
   specBodies: readonly string[];
+  // A design session's folder (Session.designDir). Its README is that branch's task document,
+  // so the gate asks for it alone and none of the policy's rules apply.
+  designDir?: string | undefined;
 }
 
 export interface DocsGate {
@@ -134,9 +144,13 @@ function declaresNoImpact(body: string): boolean {
 // or the task document says in writing why it did not have to. An EMPTY change set fails
 // nothing — the policy covers "every task that changes the repository", and a session that
 // changed nothing has no task to document (finishing it must stay possible).
+//
+// A design session's branch (`designDir` set) is judged by its folder's README alone: that README
+// is the branch's task document, and the prototype it carries is not a change to document.
 export function docsGateFailures(input: DocsGateInput): DocsGateFailure[] {
-  const { policy, paths, specBodies } = input;
+  const { policy, paths, specBodies, designDir } = input;
   if (paths.length === 0) return [];
+  if (designDir) return paths.includes(`${designDir}/${DESIGN_README}`) ? [] : ["design-readme"];
   const need = (key: DocsPolicyKey) => policy[key] === "required";
   // Pushed in DOCS_GATE_FAILURES order.
   const failures: DocsGateFailure[] = [];
@@ -191,6 +205,8 @@ function policyLine(key: DocsPolicyKey, rule: DocsRule, policy: DocsPolicy): str
         : `- \`${DOCS_LAYOUT.handoffs}/${DATED}\` — a frontend handoff, whenever the change affects the frontend: endpoints, events, config, breaking changes.`;
     case "apiRequest":
       return `- \`${DOCS_LAYOUT.apiRequests}/${DATED}\` — an API request. When this work needs something the API does not provide yet (an endpoint, a field, a filter, an event), do not invent the backend side and do not fake it silently: write the request — what is needed and why, the proposed contract, and what the client does until it ships — and name it in the handoff or pull request.`;
+    case "design":
+      return `- \`${DOCS_LAYOUT.design}/YYYY-MM-DD-<topic>/\` — designs made in Kermanych's «Дизайн» tab: a \`${DESIGN_README}\` (screens, states, decisions, acceptance criteria, where the prototype lives) and \`screens/*.png\`. When a task names a design folder, implement it with the \`${IMPLEMENT_FROM_DESIGN_SKILL}\` skill.`;
   }
 }
 
@@ -221,12 +237,20 @@ export const TASK_SPEC_SKILL = "task-spec";
 export const TASK_PLAN_SKILL = "task-plan";
 export const FRONTEND_HANDOFF_SKILL = "frontend-handoff";
 export const API_REQUEST_SKILL = "api-request";
+// The Дизайнер's method and README template, and the order an agent that implements a design
+// follows (docs/specs/2026-10-29-design-tab.md).
+export const DESIGN_SPEC_SKILL = "design-spec";
+export const IMPLEMENT_FROM_DESIGN_SKILL = "implement-from-design";
+
+// The file that makes a design folder: its task document.
+export const DESIGN_README = "README.md";
 
 const FAILURE_SKILLS: Partial<Record<DocsGateFailure, string>> = {
   "task-spec": TASK_SPEC_SKILL,
   plan: TASK_PLAN_SKILL,
   handoff: FRONTEND_HANDOFF_SKILL,
   "api-request": API_REQUEST_SKILL,
+  "design-readme": DESIGN_SPEC_SKILL,
 };
 
 // The skills «Доповнити документацію» inlines for a set of failures, in display order.
@@ -243,6 +267,7 @@ const FAILURE_ASKS: Record<DocsGateFailure, string> = {
   "docs-impact": `- The code changed but no living documentation did. Update \`${DOCS_LAYOUT.schemas}/\` (or the project's other existing docs) to match the new behaviour — or, if behaviour did not change, make the task document's \`${IMPACT_HEADING}\` section begin with \`None\` followed by the reason.`,
   handoff: `- Write a frontend handoff in \`${DOCS_LAYOUT.handoffs}/${DATED}\` for a frontend developer who did not see this work.`,
   "api-request": `- Write the API request in \`${DOCS_LAYOUT.apiRequests}/${DATED}\`: what this work needs from the API that it does not provide yet, the proposed contract, and what the client does until it ships.`,
+  "design-readme": `- Write this design's \`${DESIGN_README}\` in the design folder your instruction names: purpose, screens, states, decisions, open questions, acceptance criteria, the prototype's files and routes, and kit gaps.`,
 };
 
 // The one Kermanych prompt «Доповнити документацію» sends: exactly the failing items, then

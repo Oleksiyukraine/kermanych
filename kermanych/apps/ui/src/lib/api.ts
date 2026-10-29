@@ -772,6 +772,10 @@ export const api = {
   // «Написати запит на API» / «Написати хендоф»: the agent writes that one document now, mid-task.
   writeDoc: (id: string, kind: DocsWriteKind): Promise<{ sent: true }> => post(`/sessions/${id}/docs/write`, { kind }),
 
+  // «Зберегти дизайн»: one Kermanych prompt asking the Дизайнер to screenshot every listed state,
+  // bring the README in line and commit; 400 for a session that is not a design.
+  saveDesign: (id: string): Promise<{ sent: true }> => post(`/sessions/${id}/design/save`, {}),
+
   archiveSession: (id: string): Promise<{ ok: boolean }> =>
     post<{ ok: boolean }>(`/sessions/${id}/archive`, {}),
 

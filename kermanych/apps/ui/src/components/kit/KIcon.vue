@@ -36,6 +36,7 @@ export type KIconName =
   | 'minion'
   | 'decision'
   | 'notNeeded'
+  | 'design'
   | 'viewSource'
   | 'viewSplit'
   | 'viewPreview'
@@ -151,6 +152,14 @@ const ICONS: Record<KIconName, readonly string[]> = {
   // «Не потрібно» — a slashed disc (Lucide's ban): the run found nothing to change and closed
   // the card (KNotNeededMark).
   notNeeded: ['M3 12a9 9 0 1 0 18 0a9 9 0 1 0-18 0', 'm4.9 4.9 14.2 14.2'],
+  // «Дизайн» — a pen nib (Lucide's pen-tool): a design session and its card (KDesignMark), the
+  // agent that drafts screens rather than code.
+  design: [
+    'M15.707 21.293a1 1 0 0 1-1.414 0l-1.586-1.586a1 1 0 0 1 0-1.414l5.586-5.586a1 1 0 0 1 1.414 0l1.586 1.586a1 1 0 0 1 0 1.414z',
+    'm18 13-1.375-6.874a1 1 0 0 0-.746-.776L3.235 2.028a1 1 0 0 0-1.207 1.207L5.35 15.879a1 1 0 0 0 .776.746L13 18',
+    'm2.3 2.3 7.286 7.286',
+    'M9 11a2 2 0 1 0 4 0a2 2 0 1 0-4 0',
+  ],
 
   // The file viewer's three modes (KViewModeToggle): source lines, source beside a page, the
   // rendered page alone. The same trio an IDE's Markdown editor shows, so it reads at a glance.

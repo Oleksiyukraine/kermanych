@@ -97,12 +97,18 @@ import {
   type PrCheckState,
   DEFAULT_SKILLS,
   type SkillView,
+  DESIGNER_AGENT_ID,
+  DESIGN_SAVE_AGENT_ID,
+  DESIGN_SPEC_SKILL,
+  designDirFor,
+  designCommitMessage,
 } from "@kermanych/core";
 import { claimTaskForLaunch, createTask, getTask, listProjects, patchTask, releaseLaunchClaim, type CloudProject, type AiTrigger, type Task, type TaskPatch } from "@kermanych/cloud";
 import { AuthService } from "../auth/auth.service";
 import { ModelsService } from "../models/models.service";
 import { NativeSessionService, nativeUnsupported } from "../native/native-session.service";
 import { CodedError } from "../management/coded-error";
+import { todayIso } from "../management/management-prompt";
 import { firstPrUrl } from "./pr-url";
 import { launchAppendFor, launchToolsFor } from "./chat-tools";
 import { MachineResourcesService } from "../machine/machine-resources.service";
@@ -1094,9 +1100,14 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
 
     // The board stores launch params as free text; validate them against the local
     // vocabularies instead of casting, so a bad card cannot produce a bogus branch prefix.
-    const prefix: BranchPrefix = (BRANCH_PREFIXES as readonly string[]).includes(task.prefix ?? "")
-      ? (task.prefix as BranchPrefix)
-      : "feature";
+    // A design card is always a `design/` branch, whatever the card says
+    // (docs/specs/2026-10-29-design-tab.md); a minion never runs one (its queries skip them).
+    const design = task.design && !minion;
+    const prefix: BranchPrefix = design
+      ? "design"
+      : (BRANCH_PREFIXES as readonly string[]).includes(task.prefix ?? "")
+        ? (task.prefix as BranchPrefix)
+        : "feature";
     const platform = (PLATFORMS as readonly string[]).includes(task.platform ?? "")
       ? (task.platform as Session["platform"])
       : undefined;
@@ -1123,6 +1134,9 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     // than running the wrong provider's model; an unreadable catalog keeps the id untouched.
     // A native session carries neither model nor effort: the harness's own `/model` owns them.
     const model = native ? undefined : await this.models.validModel(this.runtimeFor(), task.model);
+    // The design's folder is named once, from the launch day and the branch's own slug (already
+    // made unique), and stays on the row: a resume or a slot replay reads it back, never re-derives.
+    const designDir = design ? designDirFor(todayIso(), branch.slice("design/".length)) : undefined;
     const session = this.registry.createSession({
       projectId: project.id,
       taskId: task.id,
@@ -1144,6 +1158,7 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
       // A «Глибокий аналіз» card opens with the wrapped prompt (launch → openingPrompt). The
       // minion never takes one: that agent interviews a person.
       ...(task.deepAnalysis && !minion ? { deepAnalysis: true } : {}),
+      ...(designDir ? { designDir } : {}),
       ...(minion ? { minion: true } : {}),
       // A minion run of a finding card carries the kind for its opening prompt (decision 14).
       ...(minion && task.findingKind ? { findingKind: task.findingKind } : {}),
@@ -1498,8 +1513,13 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
         // documentation current is deterministic, not left to the model reading the librarian
         // skill. A locally-created session with no card carries the trailer alone.
         this.appendEntry(id, this.userEntry(firstPrompt, images));
+        // A task's text is the operator's ask, so a leading Хелпер (`/el10`, picked in the
+        // launcher or the board editor) expands here exactly as in a chat message: the row
+        // keeps the slash, a notice says what was added, the model reads the instruction.
+        const helped = expandHelpers(firstPrompt);
+        if (helped.used.length) this.appendEntry(id, this.noticeEntry(helperNotice(helped.used)));
         const directives = saved.taskId ? `${COAUTHOR_DIRECTIVE}\n\n${DOC_MAINTAIN_DIRECTIVE}` : COAUTHOR_DIRECTIVE;
-        const modelPrompt = await this.openingPrompt(saved, firstPrompt, cwd);
+        const modelPrompt = await this.openingPrompt(saved, helped.text, cwd);
         rpc.prompt(`${modelPrompt}\n\n${directives}`, images);
         // A minion run's time cap counts from this spawn to its first verdict (decision 9).
         if (saved.minion) this.startMinionClock(id);
@@ -1562,6 +1582,15 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
       const card = firstPrompt.trim() === session.name.trim() ? session.name : `${session.name}\n\n${firstPrompt}`;
       const about = kind ? `\n\n${minionFindingLine(kind)}` : "";
       return `${renderInstruction(agentById(MINION_AGENT_ID)!, { task: card }, template)}${about}${block}\n\n${MINION_OUTCOME_CONTRACT}`;
+    }
+    // A «Дизайн» session (docs/specs/2026-10-29-design-tab.md) opens with the Дизайнер's
+    // instruction around the card — its folder, topic and description — plus the `design-spec`
+    // skill after the assigned ones, like the minion's extra. Native sessions take it too: the
+    // instruction is the task the operator chose, as with deep analysis.
+    if (session.designDir && firstPrompt.trim()) {
+      const { template, block } = await this.agentPrompt(session.projectId, DESIGNER_AGENT_ID, cwd, [DESIGN_SPEC_SKILL]);
+      const description = firstPrompt.trim() === session.name.trim() ? "" : firstPrompt.trim();
+      return renderInstruction(agentById(DESIGNER_AGENT_ID)!, { designDir: session.designDir, topic: session.name, description }, template).trimEnd() + block;
     }
     if (!session.deepAnalysis || !firstPrompt.trim()) return firstPrompt;
     let block = "";
@@ -2601,6 +2630,24 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     }
     return { ok: true };
   }
+
+  // «Зберегти дизайн» (docs/specs/2026-10-29-design-tab.md): one Kermanych prompt into the
+  // Дизайнер — screenshots of every listed screen and state, the README brought in line with the
+  // prototype, one commit `design: <topic>`. Ungated, like «Написати хендоф»: saving is how the
+  // README the gate wants gets written. Nothing is armed: the agent commits on its own branch, so
+  // the turn settles like any other.
+  async saveDesign(id: string): Promise<{ sent: true }> {
+    const s = this.registry.listSessions().find((x) => x.id === id);
+    if (!s) throw new Error("session not found");
+    if (s.kind !== "agent" || !s.designDir) throw new Error(`only design sessions can save a design (this is ${s.kind === "agent" ? "an ordinary agent" : `a ${s.kind}`})`);
+    const dir = s.worktreePath || this.project(s.projectId).localRepoPath;
+    const { template, block } = await this.agentPrompt(s.projectId, DESIGN_SAVE_AGENT_ID, dir);
+    const prompt =
+      renderInstruction(agentById(DESIGN_SAVE_AGENT_ID)!, { designDir: s.designDir, branch: s.branch, message: designCommitMessage(s.name) }, template) + block;
+    // Parked for an agent slot: replayed whole later, like commitChanges.
+    await this.sendAsKermanych(id, prompt, "prompt", () => this.saveDesign(id));
+    return { sent: true };
+  }
   answerUi(id: string, res: RpcExtensionUIResponse) {
     if (this.registry.listSessions().find((x) => x.id === id)?.native) throw nativeUnsupported();
     this.map.get(id)?.rpc.answerUi(res);
@@ -2772,7 +2819,7 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     const dirty = await this.worktree.hasUncommitted(dir);
     const conflicts = await this.worktree.unmergedFiles(dir);
     const files = await this.worktree.changedFiles(dir, from);
-    const docsGate = await this.evaluateDocsGate(g, dir, files);
+    const docsGate = await this.evaluateDocsGate(g, dir, files, s.designDir);
     if (!conflicts.length) this.clearConflict(s);
     return { branch: s.branch, target, ahead, behind, dirty, conflicts, files, docsGate };
   }
@@ -2827,22 +2874,25 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     const g = this.boundProject(s.projectId);
     if (s.worktree && !s.worktreePath) throw new Error("session has no worktree — reopen it to continue");
     const { dir, from } = await this.branchBase(s, g);
-    return this.evaluateDocsGate(g, dir, await this.worktree.changedFiles(dir, from));
+    return this.evaluateDocsGate(g, dir, await this.worktree.changedFiles(dir, from), s.designDir);
   }
 
   // The pure gate (core docsGateFailures) over an already-listed change set. Only the changed
   // task documents are read — for their `## Documentation impact` declaration; a deleted or
-  // unreadable one reads as empty, so it can never declare `None`.
-  private async evaluateDocsGate(project: Project, dir: string, files: readonly ChangedFile[]): Promise<DocsGate> {
+  // unreadable one reads as empty, so it can never declare `None`. A design session
+  // (`designDir`) is checked for its own folder's README only (docs/specs/2026-10-29-design-tab.md).
+  private async evaluateDocsGate(project: Project, dir: string, files: readonly ChangedFile[], designDir?: string): Promise<DocsGate> {
     if (!project.docsRequired) return { enabled: false, failures: [] };
     const policy = docsPolicy(project.docsPolicy);
     const paths = files.map((f) => f.path);
-    const specBodies = await Promise.all(
-      paths
-        .filter((p) => docsLayoutKind(p) === "spec" && isMarkupPath(p))
-        .map((p) => this.worktree.readFileContent(dir, p).then((f) => f.content, () => "")),
-    );
-    return { enabled: true, failures: docsGateFailures({ policy, paths, specBodies }) };
+    const specBodies = designDir
+      ? []
+      : await Promise.all(
+          paths
+            .filter((p) => docsLayoutKind(p) === "spec" && isMarkupPath(p))
+            .map((p) => this.worktree.readFileContent(dir, p).then((f) => f.content, () => "")),
+        );
+    return { enabled: true, failures: docsGateFailures({ policy, paths, specBodies, ...(designDir ? { designDir } : {}) }) };
   }
 
   // PR, commit-to-PR and finish refuse while the gate fails — right after each action's own
@@ -2873,7 +2923,10 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
         console.warn(`[supervisor] no documentation skills for ${id}: ${(err as Error).message}`);
       }
     }
-    await this.sendAsKermanych(id, docsCompletionPrompt(failures) + block, "prompt");
+    // The core ask says "the design folder your instruction names"; the folder is named here too,
+    // because the instruction may be far back in a long conversation.
+    const folder = failures.includes("design-readme") && s.designDir ? `\n\nThe design folder is \`${s.designDir}\`.` : "";
+    await this.sendAsKermanych(id, docsCompletionPrompt(failures) + folder + block, "prompt");
     return { sent: true, failures };
   }
 

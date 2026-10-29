@@ -528,7 +528,7 @@ test("a ticket.create without a project is refused rather than filed on a guess"
 test("a ticket.create refuses a prefix or a platform outside the app's vocabulary", () => {
   expect(
     validateManagementAction({ kind: "ticket.create", project: "Альфа", ticket: TICKET, prefix: "hotfix" }),
-  ).toMatchObject({ error: { code: "ticket_prefix_unknown", text: 'невідомий тип задачі "hotfix" (feature, fix, refactoring, chore)' } });
+  ).toMatchObject({ error: { code: "ticket_prefix_unknown", text: 'невідомий тип задачі "hotfix" (feature, fix, refactoring, chore, design)' } });
   expect(
     validateManagementAction({ kind: "ticket.create", project: "Альфа", ticket: TICKET, platform: "desktop" }),
   ).toMatchObject({ error: { code: "ticket_platform_unknown", text: 'невідома платформа "desktop" (backend, web, mobile)' } });

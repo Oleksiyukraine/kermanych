@@ -198,17 +198,9 @@ const HELPER_BY_NAME: Record<string, HelperDef | undefined> = Object.fromEntries
 // a prefix of one. Nothing but an exact known name is ever touched.
 const HELPER_TOKEN_RE = /^\/(\S+)(?=\s|$)/;
 
-/**
- * Expand the LEADING run of helper tokens in an operator's message.
- *
- * Leading run only, and stopping at the first token that is not a helper, is what makes this
- * safe to run on every message: a path (`/usr/bin/env`), a typo (`/xyz`) and a slash in prose
- * all leave the text byte-identical, exactly as an unknown slash command falls through in omp.
- *
- * The returned `text` is what the child is given; `used` is what the transcript reports, so a
- * helper is never invisible. `used` is empty ⇒ `text` is the original string, untouched.
- */
-export function expandHelpers(text: string): { text: string; used: HelperDef[] } {
+// The leading run of helper tokens and what follows it. Stops at the first token that is not a
+// helper; a helper named twice is listed once.
+function leadingHelpers(text: string): { used: HelperDef[]; rest: string } {
   const used: HelperDef[] = [];
   let rest = text;
   for (;;) {
@@ -221,6 +213,21 @@ export function expandHelpers(text: string): { text: string; used: HelperDef[] }
     if (!used.some((h) => h.name === hit.name)) used.push(hit);
     rest = head.slice(m[0].length);
   }
+  return { used, rest };
+}
+
+/**
+ * Expand the LEADING run of helper tokens in an operator's message.
+ *
+ * Leading run only, and stopping at the first token that is not a helper, is what makes this
+ * safe to run on every message: a path (`/usr/bin/env`), a typo (`/xyz`) and a slash in prose
+ * all leave the text byte-identical, exactly as an unknown slash command falls through in omp.
+ *
+ * The returned `text` is what the child is given; `used` is what the transcript reports, so a
+ * helper is never invisible. `used` is empty ⇒ `text` is the original string, untouched.
+ */
+export function expandHelpers(text: string): { text: string; used: HelperDef[] } {
+  const { used, rest } = leadingHelpers(text);
   if (used.length === 0) return { text, used };
 
   // Instructions go above the request so they are read before what they apply to — the shape
@@ -229,6 +236,16 @@ export function expandHelpers(text: string): { text: string; used: HelperDef[] }
   const keywords = used.filter((h) => h.kind === "keyword").map((h) => h.body);
   const inline = [...keywords, rest.trimStart()].filter((s) => s !== "").join(" ");
   return { text: [...instructions, inline].filter((s) => s !== "").join("\n\n"), used };
+}
+
+/**
+ * The operator's request without its leading helper run — what a label derived from the text
+ * (a task's name) should read, since `/el10` says how to answer, not what the task is.
+ * No leading helper ⇒ the text, untouched.
+ */
+export function stripHelpers(text: string): string {
+  const { used, rest } = leadingHelpers(text);
+  return used.length ? rest.trimStart() : text;
 }
 
 /**

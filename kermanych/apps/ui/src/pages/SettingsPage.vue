@@ -94,7 +94,7 @@
 
           <!-- DOCUMENTATION POLICY. A framed subsection of its own: the master switch
                (`docsRequired`, off by default — the operator's choice, never a migration's)
-               and, while it is on, one rule per document kind in three groups. Each kind
+               and, while it is on, one rule per document kind in four groups. Each kind
                offers exactly DOCS_RULES[key]; the note under it explains the selected rule.
                The rules keep their values while the switch is off, so turning it back on
                restores them. `required` makes the api refuse «Створити ПР», «Закоміти» and
@@ -1007,17 +1007,19 @@ interface ProjectDraft {
   docsSchemas: DocsRule;
   docsHandoff: DocsRule;
   docsApiRequest: DocsRule;
+  docsDesign: DocsRule;
 }
 
-// The policy rows of the «Документація» subsection: three groups, the draft field each
+// The policy rows of the «Документація» subsection: four groups, the draft field each
 // kind edits, and the folder shown beside its label.
-type DocsDraftField = 'docsSpec' | 'docsPlan' | 'docsSchemas' | 'docsHandoff' | 'docsApiRequest';
+type DocsDraftField = 'docsSpec' | 'docsPlan' | 'docsSchemas' | 'docsHandoff' | 'docsApiRequest' | 'docsDesign';
 const DOCS_DRAFT_FIELD: Record<DocsPolicyKey, DocsDraftField> = {
   spec: 'docsSpec',
   plan: 'docsPlan',
   schemas: 'docsSchemas',
   handoff: 'docsHandoff',
   apiRequest: 'docsApiRequest',
+  design: 'docsDesign',
 };
 const DOCS_KIND_PATH: Record<DocsPolicyKey, string> = {
   spec: `${DOCS_LAYOUT.specs}/`,
@@ -1025,11 +1027,15 @@ const DOCS_KIND_PATH: Record<DocsPolicyKey, string> = {
   schemas: `${DOCS_LAYOUT.schemas}/`,
   handoff: `${DOCS_LAYOUT.handoffs}/`,
   apiRequest: `${DOCS_LAYOUT.apiRequests}/`,
+  design: `${DOCS_LAYOUT.design}/`,
 };
-const DOCS_GROUPS: { key: 'task' | 'living' | 'frontBack'; kinds: DocsPolicyKey[] }[] = [
+const DOCS_GROUPS: { key: 'task' | 'living' | 'frontBack' | 'screens'; kinds: DocsPolicyKey[] }[] = [
   { key: 'task', kinds: ['spec', 'plan'] },
   { key: 'living', kinds: ['schemas'] },
   { key: 'frontBack', kinds: ['handoff', 'apiRequest'] },
+  // «Дизайн» sessions write their folder whatever the rule; it only decides whether every other
+  // session of the project is told that designs live there (policyLine).
+  { key: 'screens', kinds: ['design'] },
 ];
 
 const draft = ref<ProjectDraft | null>(null);
@@ -1066,6 +1072,7 @@ function seedProject(): void {
     docsSchemas: policy.schemas,
     docsHandoff: policy.handoff,
     docsApiRequest: policy.apiRequest,
+    docsDesign: policy.design,
   };
   draft.value = { ...next, carryFiles: [...next.carryFiles], docFolders: [...next.docFolders] };
   base.value = next;
@@ -1457,6 +1464,7 @@ async function saveProject(): Promise<void> {
         schemas: d.docsSchemas,
         handoff: d.docsHandoff,
         apiRequest: d.docsApiRequest,
+        design: d.docsDesign,
       },
       ...(envKeys ? { envKeys } : {}),
       ...(moved ? { workspaceId: d.workspaceId } : {}),

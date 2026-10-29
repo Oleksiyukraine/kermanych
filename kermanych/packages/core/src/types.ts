@@ -72,6 +72,11 @@ export type Session = {
   // Stamped when the session is created and never changed. Absent means a session a person
   // started, even when its card allows auto-run.
   minion?: boolean;
+  // A «Дизайн» session (docs/specs/2026-10-29-design-tab.md): the repository-relative folder
+  // its design lands in, e.g. `docs/design/2026-10-29-orders-list`. Stamped from a design card
+  // at launch (designDirFor) and never changed; its presence is what makes the session a design.
+  // Absent for every other session.
+  designDir?: string;
   // A minion run of a card filed from a «Знахідка»: the finding's kind, stamped from the card
   // when the run is created, so its opening prompt — a relaunch's too — carries the per-kind rules
   // (docs/specs/2026-10-23-minion-auto-run.md, decision 14). Absent for every other session.

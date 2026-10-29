@@ -285,6 +285,17 @@ export class SessionsController {
     }
   }
 
+  // «Зберегти дизайн» (docs/specs/2026-10-29-design-tab.md): `{ sent: true }`; a 400 for a
+  // session that is not a design.
+  @Post(":id/design/save")
+  async saveDesign(@Param("id") id: string) {
+    try {
+      return await this.sup.saveDesign(id);
+    } catch (err) {
+      throw sessionFailure(err);
+    }
+  }
+
   // «Доповнити документацію»: one Kermanych prompt for exactly the missing documents.
   // `{ sent: false }` when nothing was missing.
   @Post(":id/docs")
