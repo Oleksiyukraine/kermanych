@@ -66,13 +66,13 @@ export function byNewestSession(a: Session, b: Session): number {
 }
 
 /**
- * Launch order, newest first: the order of the «Активні» column.
+ * Launch order, newest first: the order inside each group of the «Агенти» tab.
  *
  * Every running agent stamps `lastActivityAt` on each event, so ordering live rows by it made
  * two agents working at once swap places on every tool call — the card under the cursor
  * jumped away. `createdAt` never moves while an agent runs: a row keeps its slot for the
- * whole run, and only a new launch (which lands at the top) or a run ending (which leaves the
- * bucket) changes the list. The id breaks a same-millisecond tie (a batch launch), so the
+ * whole run, and only a new launch (which lands at the top) or a change of group changes the
+ * list. The id breaks a same-millisecond tie (a batch launch), so the
  * order never depends on the order the store happened to hand the rows over.
  */
 export function byNewestLaunch(a: Session, b: Session): number {
@@ -119,4 +119,60 @@ export function newestUpdateAt(rows: readonly Task[]): number {
     if (at > newest) newest = at;
   }
   return newest;
+}
+
+// The states in which an agent cannot move on without the operator: it asked a question, it
+// crashed, or its worktree is mid-merge. «Агенти» puts these first — with the sidebar's
+// «Помилки N» gone, the list's top is the one place such an agent is shown without the
+// operator having to spot a red dot among twenty green ones.
+const NEEDS_HUMAN: readonly Session['status'][] = ['waiting_input', 'error', 'conflict'];
+export function needsHuman(s: Session): boolean {
+  return NEEDS_HUMAN.includes(s.status);
+}
+
+/**
+ * The order of the «Агенти» tab: the rows that need a human first, then the rest, each part
+ * in launch order. A card moves only when it enters or leaves the first part — exactly the
+ * moment worth noticing — and two agents working at once never trade places.
+ *
+ * A fork stays right under its parent, so it is the FAMILY that is ranked: a parent leads the
+ * first part when it or any fork under it needs the operator (a discussion waiting for an
+ * answer is the operator's business as much as its parent's question). Inside a family the
+ * forks follow in launch order. A fork whose parent is not in `rows` heads its own family.
+ */
+export function agentsOrder(rows: readonly Session[]): Session[] {
+  const ids = new Set(rows.map((s) => s.id));
+  const children = new Map<string, Session[]>();
+  const heads: Session[] = [];
+  for (const s of rows) {
+    const parent = s.parentSessionId;
+    if (parent && ids.has(parent)) {
+      const list = children.get(parent);
+      if (list) list.push(s);
+      else children.set(parent, [s]);
+    } else {
+      heads.push(s);
+    }
+  }
+  const rank = new Map<string, number>(
+    heads.map((h) => [h.id, needsHuman(h) || children.get(h.id)?.some(needsHuman) ? 0 : 1]),
+  );
+  heads.sort((a, b) => rank.get(a.id)! - rank.get(b.id)! || byNewestLaunch(a, b));
+  const out: Session[] = [];
+  for (const head of heads) {
+    out.push(head);
+    const forks = children.get(head.id);
+    if (forks) out.push(...forks.sort(byNewestLaunch));
+  }
+  return out;
+}
+
+/**
+ * Group order for the «Агенти» tab under a workspace scope: a project with a row that needs
+ * the operator leads, the rest follow by their newest launch — the tab's own rule one level
+ * up, so the top of the column is the top of the list inside it.
+ */
+export function byAgentsGroup(a: readonly Session[], b: readonly Session[]): number {
+  const urgent = Number(b.some(needsHuman)) - Number(a.some(needsHuman));
+  return urgent !== 0 ? urgent : newestLaunchAt(b) - newestLaunchAt(a);
 }

@@ -257,6 +257,24 @@ arrives with the «Проєкти» filter already set to that project. The boar
 filter, «Виконавці», narrows by assignee and offers «Не призначено» for unclaimed
 cards.
 
+**The header switcher sets the same scope.** Right after «Керманич» the header names where
+you are — the project with its workspace's marker, «FS · усі проєкти» for a workspace, or
+«Вибрати проєкт» — and a click opens the sidebar's tree as a list: a workspace row scopes to
+the workspace, a project row to the project, each with the sidebar's mark and «Посіпака»
+icon. It only selects; creating, moving and folding stay in the sidebar. Beside the name
+sits one still (never pulsing) mark summed over every project **outside** the current
+scope, so an agent asking a question in another project shows even when the sidebar is
+hidden. The app version moved from the header to Settings → «Загальне».
+
+**Focus mode hides the sidebar.** The ⛶ button between «Керманич» and the switcher, or
+<kbd>Ctrl</kbd>/<kbd>⌘</kbd>+<kbd>\</kbd> anywhere (also while typing in the composer;
+matched by the physical key, so the Ukrainian layout works), slides the left sidebar off
+screen on every page and gives its width to the work area; the footer stays. Press it again
+to bring back the sidebar at the width it had — full or the collapsed rail. The choice is
+kept per machine. Inside the integrated terminal <kbd>Ctrl</kbd>+<kbd>\</kbd> stays the
+shell's (SIGQUIT); <kbd>⌘</kbd>+<kbd>\</kbd> still works there.
+(Spec: `docs/specs/2026-10-29-agents-tab-and-focus-mode.md`.)
+
 **The mark at the end of a sidebar row says whether the project needs you.** Only the
 most urgent state shows, and hovering the row lists all of them:
 
@@ -284,6 +302,23 @@ Click the mark again to close it. Every workspace starts closed each time the si
 collapsed, and a project selected from outside the sidebar (a notification, say) opens its
 own workspace so the selection stays visible.
 
+**«Агенти» has three tabs: «Агенти», «Завершені», «Задачі».** They sit on top of the list
+they filter, not in the sidebar:
+
+- «Агенти» — every agent that exists and is not closed out: working, asking you, finished
+  but not merged or retired, stopped, crashed or in conflict. The ones that need you
+  (`waiting_input`, `error`, `conflict`) come first, then the rest; both parts in launch
+  order, so agents working at the same time never trade places. A discussion or review
+  branch stays under its parent and lifts it to the top when it is the one asking. Under a
+  workspace scope a project with such an agent leads.
+- «Завершені» — merged and set-aside agents, the history; no count on the tab.
+- «Задачі» — your backlog inbox (below).
+
+A branch is always in its parent's tab. The count on «Агенти» and «Задачі» is exactly the
+list under it. The magnifier at the end of the row drops a search field under the tabs; it
+stays open while it holds text, folds when you leave it empty, and <kbd>Esc</kbd> or the
+magnifier again clears it. A tab or scope change clears it too.
+
 **«Задачі» in «Агенти» is your inbox, not a local list.** It shows the cloud cards in
 `backlog` assigned to you within the current scope — including the ones a colleague
 filed for you. Unclaimed team cards are deliberately absent: they live on «Дошка»
@@ -296,7 +331,7 @@ the list under the note «Лише на цій машині: проєкт цих
 launcher's checkbox, off by default, marks the card as yours alone to look at: it
 never reaches the kanban columns, and neither does its status while it runs. It is
 still an ordinary task in every other respect — it sits in your «Задачі» inbox and
-in the sidebar's count, it launches a session the usual way, it pushes status back,
+in the «Задачі» tab's count, it launches a session the usual way, it pushes status back,
 and every member of the workspace can still read the row. Hiding is a view, never a
 permission. Un-hiding is the same checkbox: open the card from «Задачі», clear it,
 «Зберегти». That is the only way back, because a hidden card has no card on the
@@ -834,11 +869,12 @@ spawned → their nested subagents.
 - **Opening it.** The «◈ Карта агентів» button at the top of the «Агенти» list, beside «Нова
   задача» (its right side counts the agents active on the whole machine), swaps the chat pane
   for the map, pressed while open; press it again to go back. It opens fitted to the project
-  or workspace selected in the sidebar. ◈ in a session's header (shown once it has subagents)
+  or workspace currently selected. ◈ in a session's header (shown once it has subagents)
   opens it on that session, unfolded.
-- **What is on it.** Chips choose the buckets: «Активні», «Очікують», «Помилки» by default,
-  «Завершені» on demand; the choice is remembered. A fork follows its parent's bucket, as in
-  the sidebar. Chats and backlog cards are never on the map. A project with nothing under the
+- **What is on it.** Chips choose the buckets, the same as the «Агенти» tabs: «Агенти» by
+  default, «Завершені» on demand; the choice is remembered (a choice saved before the three
+  agent buckets merged reads as «Агенти»). A fork follows its parent's bucket, as in the
+  tabs. Chats and backlog cards are never on the map. A project with nothing under the
   chips is not drawn; projects outside any workspace you can see hang under «Без
   воркспейсу».
 - **Reading it.** Dashed lines mean «belongs to», solid ones «spawned». A working agent has a
@@ -1094,7 +1130,7 @@ developer's machine. The direction is always task → session.
    - the finish sheet says how many commits of `origin/<base>` the branch still lacks
      (against the last fetch, no network);
    - a turn that ends with the worktree mid-merge settles the card at `conflict` (the red dot,
-     «Помилки», the finish sheet's conflict view with «Вирішити автоматично»). It clears when
+     top of «Агенти», the finish sheet's conflict view with «Вирішити автоматично»). It clears when
      a later turn ends without unmerged files, or when the finish sheet or «Зміни» finds the
      merge resolved;
    - after the turn that lands on «На ревʼю», the API fetches `origin/<base>` and the pushed

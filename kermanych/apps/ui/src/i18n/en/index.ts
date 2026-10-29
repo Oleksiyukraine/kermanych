@@ -50,13 +50,11 @@ export const en: MessageSchema = {
       viewChat: 'Chat',
       viewManagement: 'Management',
       viewAiTeam: 'AI team',
-      bucketActive: 'Active',
-      bucketTasks: 'Tasks',
-      bucketWaiting: 'Waiting',
-      bucketCompleted: 'Completed',
-      bucketErrors: 'Errors',
-      bucketArchived: 'Deferred',
-      bucketHistory: 'History',
+      focusMode: 'Focus mode: hide the sidebar (Ctrl/⌘ \\)',
+      switcher: 'Project',
+      switcherEmpty: 'Choose a project',
+      switcherAllProjects: '{name} · all projects',
+      switcherElsewhere: 'in other projects',
       localOnly: 'Only on this machine',
       workspaceUnknown: 'Workspace unknown',
       notifyMoved: '“{name}” moved to “{target}”',
@@ -179,7 +177,7 @@ export const en: MessageSchema = {
     },
     blank: {
       eyebrow: 'KERMANYCH',
-      text: 'Pick a workspace or project in the left panel to see agents.',
+      text: 'Pick a workspace or project in the switcher at the top to see agents.',
     },
     board: {
       newTask: 'New task',
@@ -194,6 +192,9 @@ export const en: MessageSchema = {
       searchCount: '{n} of {total} matched',
       searchEmpty: 'Nothing matched “{q}”',
       resizeAria: 'Resize the chat section',
+      tabsAria: 'What to show: agents, completed or tasks',
+      searchOpen: 'Search',
+      searchClose: 'Close search',
       resizeTip: 'Drag to resize the chat section',
       stranded: 'Only on this machine: these tasks’ project isn’t in the cloud yet, so the team can’t see them. Publish the project and they’ll move to the board.',
       unknownProject: 'Unknown project',
@@ -201,19 +202,12 @@ export const en: MessageSchema = {
       removeStranded: 'Delete local task “{name}”',
     },
     bucket: {
-      archived: 'Deferred',
-      history: 'History',
-      active: 'Active',
-      waiting: 'Waiting',
+      agents: 'Agents',
       completed: 'Completed',
-      errors: 'Errors',
+      tasks: 'Tasks',
     },
     empty: {
-      archived: 'No deferred agents.',
-      history: 'History is empty.',
-      waiting: 'No waiting agents.',
       completed: 'No completed agents.',
-      errors: 'No errors.',
       backlog: 'Backlog is empty.',
       backlogScoped: 'Backlog is empty. Create a task with “New task”.',
       none: 'No agents yet.',
@@ -429,7 +423,7 @@ export const en: MessageSchema = {
     hints: {
       bind: 'Bind the local repository folder',
       publishFirst: 'This project lives only on this machine — publish it to a workspace and the task becomes visible to the team.',
-      pickProject: 'A new task belongs to one project — pick a project in the left panel.',
+      pickProject: 'A new task belongs to one project — pick a project in the switcher at the top.',
       previewBind: '{bind} to open a branch preview.',
     },
     merge: {
@@ -1055,6 +1049,7 @@ export const en: MessageSchema = {
   settings: {
     appGeneral: {
       language: 'Language',
+      version: 'Version',
     },
     scope: {
       project: 'Project',
@@ -1171,8 +1166,8 @@ export const en: MessageSchema = {
     },
     blank: {
       eyebrow: 'KERMANYCH',
-      project: 'Pick a project in the left panel to configure it.',
-      workspace: 'Pick a workspace or project in the left panel.',
+      project: 'Pick a project in the switcher at the top to configure it.',
+      workspace: 'Pick a workspace or project in the switcher at the top.',
     },
     project: {
       name: 'Project name',
@@ -1338,6 +1333,7 @@ export const en: MessageSchema = {
         switchNav: 'Switch the navigation segment',
         openRow: 'Open a table row',
         toggleFiles: 'Open / collapse the file manager',
+        focusMode: 'Focus mode: hide / show the sidebar',
         saveSettings: 'Save settings',
         closeWindow: 'Close window / tooltip',
       },
@@ -1691,8 +1687,8 @@ export const en: MessageSchema = {
     blank: {
       eyebrow: 'KERMANYCH',
       user: 'Sign in to configure your own AI team.',
-      project: 'Pick a project in the left panel to configure its AI team.',
-      workspace: 'Pick a workspace in the left panel to configure the shared AI team.',
+      project: 'Pick a project in the switcher at the top to configure its AI team.',
+      workspace: 'Pick a workspace in the switcher at the top to configure the shared AI team.',
     },
     helpersUserScope: 'Helpers are a shared reference shown at the workspace and project level.',
     helpersCatalog: {
@@ -1718,7 +1714,7 @@ export const en: MessageSchema = {
     },
     blank: {
       eyebrow: 'KERMANYCH',
-      text: 'Select a workspace in the left panel to see its management.',
+      text: 'Select a workspace in the switcher at the top to see its management.',
       note: 'The selected project exists only locally — it has no workspace, and therefore no management. Publish it or select a workspace.',
     },
     assistant: {
@@ -2685,13 +2681,9 @@ export const en: MessageSchema = {
         dateLocked: 'Locked date',
       },
       nav: {
-        active: 'Active',
-        tasks: 'Tasks',
-        waiting: 'Waiting',
+        agents: 'Agents',
         completed: 'Completed',
-        errors: 'Errors',
-        archived: 'Archived',
-        history: 'History',
+        tasks: 'Tasks',
       },
       topNav: {
         agents: 'Agents',

@@ -330,10 +330,8 @@
            hides it whenever the labels are on screen. Passing one would document a
            combination the app never renders. -->
       <div class="kit__sidebar">
-        <KNavItem :label="t('kit.gallery.nav.active')" :count="3" :active="navActive === 'active'" @click="navActive = 'active'" />
-        <KNavItem :label="t('kit.gallery.nav.waiting')" :count="2" :active="navActive === 'waiting'" @click="navActive = 'waiting'" />
+        <KNavItem :label="t('kit.gallery.nav.agents')" :count="3" :active="navActive === 'agents'" @click="navActive = 'agents'" />
         <KNavItem :label="t('kit.gallery.nav.completed')" :count="12" :active="navActive === 'completed'" @click="navActive = 'completed'" />
-        <KNavItem :label="t('kit.gallery.nav.errors')" :count="1" :active="navActive === 'errors'" @click="navActive = 'errors'" />
         <KNavItem :label="t('kit.gallery.nav.tasks')" :count="5" :active="navActive === 'tasks'" @click="navActive = 'tasks'" />
       </div>
       <div class="kit__caption mono">
@@ -655,7 +653,7 @@ const subNavItems = [
   { value: 'risks', label: 'Risk Registry' },
   { value: 'releases', label: 'Release Notes' },
 ];
-const navActive = ref('active');
+const navActive = ref('agents');
 const navStacked = ref('skills');
 const detailTab = ref('log');
 const detailTabs = [

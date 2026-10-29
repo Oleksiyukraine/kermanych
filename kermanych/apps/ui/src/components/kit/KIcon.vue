@@ -1,12 +1,11 @@
 <script lang="ts">
 // A line icon, drawn rather than typed. The app writes its dense action clusters as text
 // glyphs (KIconButton) because those sit BESIDE a label or a tooltip that says what they
-// mean. This component exists for the one place where a mark stands alone and must carry
-// the meaning by itself: the minified sidebar rail, where the bucket labels are gone.
+// mean. This component exists for the places where a mark stands alone and must carry the
+// meaning by itself: the minified sidebar rail, the header's focus toggle, the «Агенти» search.
 //
-// Unicode has no legible mark for «Задачі» or «Очікують» — the nearest glyphs (☰, ⧗) read as
-// «menu» and «reload», which is exactly the misreading this replaces. Drawn paths also hold
-// their weight at 18px, where a font-rendered triangle or arrow thins out.
+// Drawn paths hold their weight at 18px, where a font-rendered triangle or arrow thins out,
+// and they never fall back to a font that lacks the glyph.
 //
 // Geometry follows Lucide (ISC) so the marks are the ones users already know from other
 // tools, inlined as bare path data — a handful of icons does not justify a dependency, and
@@ -21,11 +20,8 @@
 // the label is right beside it, but Unicode's nearest mark (⑂) exists in no font this app
 // loads, so it came out as a half-weight smudge off the row's centre line.
 export type KIconName =
-  | 'activity'
-  | 'tasks'
-  | 'waiting'
-  | 'done'
-  | 'alert'
+  | 'search'
+  | 'focus'
   | 'home'
   | 'storage'
   | 'docs'
@@ -54,30 +50,18 @@ export type KIconName =
 // Stroke, never fill: `currentColor` then inherits the row's muted/active colour for free,
 // and a 1.75 stroke matches the weight of the UI text beside it.
 const ICONS: Record<KIconName, readonly string[]> = {
-  // Активні — a live pulse. Says «something is running», which is what the bucket holds:
-  // working agents plus the ones that stopped to ask.
-  activity: ['M3 12h3.5l2.5-6.5 4.5 13L16 12h5'],
-  // Задачі — a checklist: queued work, not yet started. Two ticks and two lines read as a
-  // list at 18px, where three rows would smear.
-  tasks: ['M3 7.5l2 2 4-4', 'M13 8h8', 'M3 16.5l2 2 4-4', 'M13 17h8'],
-  // Очікують — an hourglass. The agent finished but the task hangs, waiting on a merge or a
-  // PR; sand caught mid-fall is «settled but not over», which no clock or check would say.
-  waiting: [
-    'M5 22h14',
-    'M5 2h14',
-    'M17 22v-4.172a2 2 0 0 0-.586-1.414L12 12l-4.414 4.414A2 2 0 0 0 7 17.828V22',
-    'M7 2v4.172a2 2 0 0 0 .586 1.414L12 12l4.414-4.414A2 2 0 0 0 17 6.172V2',
-  ],
-  // Завершені — a check inside a circle. Says «closed out» for both the merged branch and the
-  // one the operator set aside; the ring keeps it from reading as the bare list tick above.
-  done: ['M22 11.08V12a10 10 0 1 1-5.93-9.14', 'm9 11 3 3L22 4'],
-  // Помилки — an octagon with a bar. The stop-sign silhouette is the one urgent mark here and
-  // deliberately NOT the warning triangle the Risk Registry rail already owns, so the two
-  // never blur in peripheral vision.
-  alert: [
-    'M2.586 16.726A2 2 0 0 1 2 15.312V8.688a2 2 0 0 1 .586-1.414l4.688-4.688A2 2 0 0 1 8.688 2h6.624a2 2 0 0 1 1.414.586l4.688 4.688A2 2 0 0 1 22 8.688v6.624a2 2 0 0 1-.586 1.414l-4.688 4.688a2 2 0 0 1-1.414.586H8.688a2 2 0 0 1-1.414-.586z',
-    'M12 8v4',
-    'M12 16h.01',
+  // «Агенти» search — a magnifier (Lucide's search). The operator asked for exactly this mark;
+  // it is the shape `analysis` borrows, and the two never share a control.
+  search: ['M3 11a8 8 0 1 0 16 0a8 8 0 1 0-16 0', 'm21 21-4.3-4.3'],
+  // Focus mode — four corners round a point (Lucide's focus): «frame the work», not a panel
+  // glyph, which ◧ / ◨ already mean in the footer (the file-manager docks), and not the
+  // arrows `fullscreen` uses for a viewer.
+  focus: [
+    'M9 12a3 3 0 1 0 6 0a3 3 0 1 0-6 0',
+    'M3 7V5a2 2 0 0 1 2-2h2',
+    'M17 3h2a2 2 0 0 1 2 2v2',
+    'M21 17v2a2 2 0 0 1-2 2h-2',
+    'M7 21H5a2 2 0 0 1-2-2v-2',
   ],
 
   // Home — a house. The section is the workspace's front page, and the roof/door pair is
@@ -141,9 +125,9 @@ const ICONS: Record<KIconName, readonly string[]> = {
   // «Глибокий аналіз» — a magnifier: «look closely first». Also the mark a deep-analysis card
   // carries (KAnalysisMark), so the menu row and the card it produces share one shape.
   analysis: ['M3 11a8 8 0 1 0 16 0a8 8 0 1 0-16 0', 'm21 21-4.3-4.3'],
-  // «Розпочати» / Get started — a rocket (Lucide's): the first-run checklist sits under the
-  // buckets in the same rail, and it borrowed the `tasks` checklist mark, so the minified rail
-  // showed two identical rows. Launch is what the checklist walks toward («ready to run»).
+  // «Розпочати» / Get started — a rocket (Lucide's): the first-run checklist's row in the
+  // minified rail, where the mark alone has to say what it opens. Launch is what the
+  // checklist walks toward («ready to run»).
   start: [
     'M4.5 16.5c-1.5 1.26-2 5-2 5s3.74-.5 5-2c.71-.84.7-2.13-.09-2.91a2.18 2.18 0 0 0-2.91-.09z',
     'm12 15-3-3a22 22 0 0 1 2-3.95A12.88 12.88 0 0 1 22 2c0 2.72-.78 7.5-6 11a22.35 22.35 0 0 1-4 2z',

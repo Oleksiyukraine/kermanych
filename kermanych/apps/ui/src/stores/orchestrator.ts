@@ -25,7 +25,7 @@ import { api, type MessageMode } from '../lib/api';
 import { applyTranscriptUpdate } from './transcript-update';
 import { machineAlertView } from '../lib/machine-alert';
 import { globalTr } from '../boot/i18n';
-import type { Bucket } from '../lib/buckets';
+import { readBucket, type Bucket } from '../lib/buckets';
 import { unsettledOutgoing, type OutgoingMessage } from '../lib/outgoing';
 import { PENDING_TIMEOUT_MS } from './pending';
 import { confirmAction } from '../lib/confirm';
@@ -33,7 +33,8 @@ import { confirmAction } from '../lib/confirm';
 // The persisted selection (see `savedSelection` in the store). Guarded both ways: a missing
 // or unreadable value is simply «nothing selected».
 const SELECTION_KEY = 'kermanych.selection';
-const BUCKETS: readonly Bucket[] = ['active', 'waiting', 'completed', 'errors', 'tasks'];
+// A bucket saved before «Активні», «Очікують» and «Помилки» merged reads as «Агенти»
+// (lib/buckets.ts readBucket), so the operator lands where those cards went.
 type SavedSelection = { workspace?: string; project?: string; session?: string; bucket?: Bucket };
 const str = (v: unknown): string | undefined => (typeof v === 'string' && v ? v : undefined);
 function readSelection(): SavedSelection {
@@ -43,7 +44,7 @@ function readSelection(): SavedSelection {
     const workspace = str(raw.workspace);
     const project = str(raw.project);
     const session = str(raw.session);
-    const bucket = BUCKETS.find((x) => x === raw.bucket);
+    const bucket = readBucket(raw.bucket);
     if (workspace) out.workspace = workspace;
     if (project) out.project = project;
     if (session) out.session = session;
@@ -112,9 +113,10 @@ export const useOrchestrator = defineStore('orchestrator', () => {
   // The omp model catalog for THIS machine (see loadModels). Empty until it lands — and empty
   // for good if omp cannot be read — so every picker built on it degrades to «за замовчуванням».
   const models = ref<ModelOption[]>([]);
-  // Which Агенти bucket the sidebar shows. Lives here because the sidebar (MainLayout) sets
-  // it while the filter lives in AgentsPage. See lib/buckets.ts for what each bucket holds.
-  const selectedBucket = ref<Bucket>(savedSelection.bucket ?? 'active');
+  // Which «Агенти» tab the page shows. Lives here, not in AgentsPage, because launching from
+  // Чат (promote, «В беклог») picks the tab before the page mounts. See lib/buckets.ts for
+  // what each bucket holds.
+  const selectedBucket = ref<Bucket>(savedSelection.bucket ?? 'agents');
   watch(
     [selectedWorkspaceId, selectedProjectId, selectedSessionId, selectedBucket],
     ([workspace, project, session, bucket]) => writeSelection({ workspace, project, session, bucket }),

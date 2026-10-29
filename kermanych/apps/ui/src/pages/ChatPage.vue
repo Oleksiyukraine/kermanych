@@ -807,7 +807,7 @@ async function promoteChat(): Promise<void> {
   });
   if (!card) return; // the store has already said why
   await store.promoteChat(id, card.id);
-  store.setBucket('active');
+  store.setBucket('agents');
   store.selectSession(id);
   void router.push({ name: 'agents' });
 }
