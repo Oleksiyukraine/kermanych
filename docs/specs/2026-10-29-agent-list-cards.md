@@ -117,9 +117,12 @@ markdown description (headings, checkboxes, code spans) as one tall paragraph.
   `--running` class keys off a local `working` computed (`thinking | tool`) and no longer needs
   `selected`. The frame (`::after`) is drawn for `--selected` or `--running`; a non-selected
   running card dims it. The phase delay is a CSS variable set when `working` turns true.
+  The row's minimum height is a mark chip's (`--k-icon-xs` + 4px), so cards with and without a
+  chip are the same height (found in the live check: 84 vs 86px without it).
 - `KIcon.vue`: `coins` added to `KIconName` and the path table.
 - `AgentsPage.vue`: the backlog card passes the preview of `item.card.description`.
-- New `lib` helper (plain-text one-line preview of a markdown description) + unit test.
+- New `lib/markdown-preview.ts` (`markdownPreview`, a plain-text one-line preview of a markdown
+  description) + `test/markdown-preview.spec.ts`.
 - `isRunningStatus` and `lib/attention.ts` unchanged.
 
 ## Out of scope

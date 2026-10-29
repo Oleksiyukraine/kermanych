@@ -130,7 +130,7 @@
               :title="item.card.title"
               :time="renderTime(t, relativeTime(item.card.updatedAt, now))"
               :status="item.card.status"
-              :status-line="item.card.description ?? ''"
+              :status-line="markdownPreview(item.card.description)"
               :model="item.card.model"
               :deep-analysis="item.card.deepAnalysis"
               :auto-run="item.card.autoRun"
@@ -1361,6 +1361,7 @@ import { useSessionBrowser } from 'stores/browser';
 import { composePicksMessage, picksImages } from '../lib/browser-picks';
 import { historyLoadFor } from '../lib/open-session-history';
 import { slotWaitLabel } from '../lib/slot-wait';
+import { markdownPreview } from '../lib/markdown-preview';
 import KSkeleton from 'components/kit/KSkeleton.vue';
 import { useAsyncAction, useKeyedAction, errorText } from '../composables/useAsyncAction';
 import { useOptimisticValue } from '../composables/useOptimisticValue';
