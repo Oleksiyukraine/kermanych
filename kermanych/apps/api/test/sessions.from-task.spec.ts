@@ -4,7 +4,7 @@ import type { WorktreeService } from "../src/worktree/worktree.service";
 import type { AuthService } from "../src/auth/auth.service";
 import type { ModelsService } from "../src/models/models.service";
 import type { CloudProject, Task } from "@kermanych/cloud";
-import { DEFAULT_DOCS_POLICY, docsPolicyAppend, deepAnalysisPrompt } from "@kermanych/core";
+import { DEFAULT_DOCS_POLICY, DEFAULT_HELPERS, docsPolicyAppend, deepAnalysisPrompt } from "@kermanych/core";
 
 // The runtime-aware model guard (ModelsService.validModel) is not under test here; an identity
 // stub returns the wanted model unchanged so createSessionFromTask keeps task.model as before.
@@ -462,6 +462,23 @@ describe("createSessionFromTask", () => {
     expect(text).toMatch(/Co-Authored-By: Kermanych </);
     const first = sup.getTranscript(session.id).find((e) => e.kind === "user_text");
     expect(first).toMatchObject({ kind: "user_text", text: "wire GitHub OAuth" });
+  });
+
+  // A Хелпер picked in the launcher or the board editor sits at the head of the card's text;
+  // the launch expands it like a chat message, so the token is never sent to the model as-is.
+  it("expands a leading helper in the card's text and says so in the transcript", async () => {
+    const { sup, registry } = make();
+    bind(registry);
+    task({ assigneeId: USER, createdBy: USER, description: "/el10 wire GitHub OAuth" });
+
+    const session = await sup.createSessionFromTask("task-1", USER);
+
+    const el10 = DEFAULT_HELPERS.find((h) => h.name === "el10")!;
+    const [text] = prompts.at(-1) as [string];
+    expect(text.startsWith(`${el10.body.trim()}\n\nwire GitHub OAuth\n\n`)).toBe(true);
+    const entries = sup.getTranscript(session.id);
+    expect(entries.find((e) => e.kind === "user_text")).toMatchObject({ text: "/el10 wire GitHub OAuth" });
+    expect(entries.find((e) => e.kind === "notice")).toMatchObject({ code: "helper_added_instruction" });
   });
 
   // docs/specs/2026-10-14-create-pr-base-sync.md, decision 4: origin could not be asked before

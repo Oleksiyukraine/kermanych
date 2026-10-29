@@ -817,19 +817,38 @@
               <span class="agents-launcher__label agents-launcher__label--strong">{{ t('agents.launcher.taskLabel') }}</span>
               <span class="agents-launcher__hint-inline mono">{{ t('agents.launcher.taskKbd') }}</span>
             </div>
-            <textarea
-              ref="taskInput"
-              v-model="draftTask"
-              class="agents-launcher__task"
-              rows="9"
-              :placeholder="t('agents.launcher.taskPlaceholder')"
-              @paste="!launchNative && onLaunchPaste($event)"
-              @drop.prevent="!launchNative && onLaunchDrop($event)"
-              @dragover.prevent
-            />
+            <!-- Хелпери, the same panel as the chat composer's: `/` on an empty task or the
+                 «/ Хелпери» button below prepends a helper, and the launch expands it. A native
+                 harness gets the text as-is, so it is not offered there. -->
+            <div class="agents-launcher__task-wrap">
+              <KHelperPicker
+                v-if="!launchNative"
+                :open="launchHelperOpen"
+                placement="below"
+                @select="onLaunchHelper"
+                @close="closeLaunchHelper"
+              />
+              <textarea
+                ref="taskInput"
+                v-model="draftTask"
+                class="agents-launcher__task"
+                rows="9"
+                :placeholder="t('agents.launcher.taskPlaceholder')"
+                @keydown="onTaskKeydown"
+                @paste="!launchNative && onLaunchPaste($event)"
+                @drop.prevent="!launchNative && onLaunchDrop($event)"
+                @dragover.prevent
+              />
+            </div>
           </div>
 
           <div v-if="!launchNative" class="agents-launcher__attach">
+            <button
+              type="button"
+              class="agents-launcher__attach-btn mono"
+              v-tip="t('agents.launcher.helpersTip')"
+              @click="launchHelperOpen = !launchHelperOpen"
+            >{{ t('agents.launcher.helpers') }}</button>
             <button type="button" class="agents-launcher__attach-btn mono" @click="launchFileInput?.click()">
               {{ t('agents.launcher.image') }}
             </button>
@@ -1341,11 +1360,12 @@ import KKbd from 'components/kit/KKbd.vue';
 import KIconButton from 'components/kit/KIconButton.vue';
 import KModal from 'components/kit/KModal.vue';
 import KAttachStrip from 'components/kit/KAttachStrip.vue';
+import KHelperPicker from 'components/kit/KHelperPicker.vue';
 import KCheckbox from 'components/kit/KCheckbox.vue';
 import KField from 'components/kit/KField.vue';
 import KSelect, { type KSelectOption } from 'components/kit/KSelect.vue';
 import { handleOf } from '../lib/members';
-import { BRANCH_PREFIXES, PLATFORMS, type BranchPrefix, type Platform } from '@kermanych/core';
+import { BRANCH_PREFIXES, PLATFORMS, prependHelper, type BranchPrefix, type Platform } from '@kermanych/core';
 import { useImageAttach } from '../composables/useImageAttach';
 import { useNow } from '../composables/useNow';
 import { relativeTime, renderTime } from '../lib/time';
@@ -2890,6 +2910,28 @@ function onLauncherKeydown(e: KeyboardEvent): void {
   if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
     e.preventDefault();
     if (canLaunch.value && isBound.value) void submitLauncher(false);
+  }
+}
+
+// Хелпери in the task text: `/` on an EMPTY task opens the picker instead of typing the slash,
+// exactly as in KComposer — mid-text a slash is a path. A pick lands at the front of the task
+// (prependHelper says why), where the launch expands it.
+const launchHelperOpen = ref(false);
+// A launcher reopened on a panel left open would hide the task it opens for.
+watch(launcherOpen, (open) => {
+  if (!open) launchHelperOpen.value = false;
+});
+function closeLaunchHelper(): void {
+  launchHelperOpen.value = false;
+  taskInput.value?.focus();
+}
+function onLaunchHelper(name: string): void {
+  draftTask.value = prependHelper(draftTask.value, name);
+}
+function onTaskKeydown(e: KeyboardEvent): void {
+  if (e.key === '/' && draftTask.value === '' && !launchNative.value) {
+    e.preventDefault();
+    launchHelperOpen.value = true;
   }
 }
 
@@ -4944,6 +4986,10 @@ async function submitPreviewConfig(): Promise<void> {
 }
 .agents-launcher__task::placeholder {
   color: var(--k-muted);
+}
+// The anchor the Хелпери panel hangs from.
+.agents-launcher__task-wrap {
+  position: relative;
 }
 
 .agents-launcher__attach {
