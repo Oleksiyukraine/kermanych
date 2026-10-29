@@ -104,7 +104,7 @@ import { ModelsService } from "../models/models.service";
 import { NativeSessionService, nativeUnsupported } from "../native/native-session.service";
 import { CodedError } from "../management/coded-error";
 import { firstPrUrl } from "./pr-url";
-import { launchToolsFor } from "./chat-tools";
+import { launchAppendFor, launchToolsFor } from "./chat-tools";
 import { MachineResourcesService } from "../machine/machine-resources.service";
 import { WatchdogService } from "../machine/watchdog.service";
 import { BranchNameService, type BranchContext } from "./branch-name.service";
@@ -1181,7 +1181,7 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     const extensionPath = await this.ompTriggers(project.id, project.localRepoPath, session.id);
     const browserMcp = this.browser?.bindingFor(session.id);
     const runtime = managedRuntime(session.runtime);
-    const rpc = createRuntime(runtime, { cwd: project.localRepoPath, ...launchToolsFor("chat"), ...(await this.spawnOpts(session.id, runtime, project.localRepoPath, configPath)), ...(extensionPath ? { extensionPath } : {}), ...(browserMcp ? { mcp: browserMcp } : {}), ...this.systemAppendOpts(project.id) });
+    const rpc = createRuntime(runtime, { cwd: project.localRepoPath, ...launchToolsFor("chat"), ...(await this.spawnOpts(session.id, runtime, project.localRepoPath, configPath)), ...(extensionPath ? { extensionPath } : {}), ...(browserMcp ? { mcp: browserMcp } : {}), ...this.systemAppendOpts(project.id, "chat") });
     const live = this.wireLive(session.id, rpc, "queued");
     try {
       await this.startChild(session.id, rpc);
@@ -1366,16 +1366,17 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
 
   // The system-prompt append for one spawn, shaped for a spread into any createRuntime() opts:
   // the user's agent communication language, then — when the project's documentation switch is
-  // on — the policy built from its per-kind rules (docsPolicyAppend). Every createRuntime site
+  // on — the policy built from its per-kind rules (docsPolicyAppend), then what the session
+  // kind's tool restriction means for the model (launchAppendFor). Every createRuntime site
   // passes it, so the policy reaches chats, agents, discussions, reviews and resumes alike on
-  // both runtimes. Empty object when neither applies, so the agent keeps its own default. Read
+  // both runtimes. Empty object when nothing applies, so the agent keeps its own default. Read
   // fresh per spawn: a preference or setting change takes on the next spawn without a restart.
-  private systemAppendOpts(projectId: string): { appendSystemPrompt?: string } {
+  private systemAppendOpts(projectId: string, kind: Session["kind"]): { appendSystemPrompt?: string } {
     const language = languageAppendFor(this.registry.getAuthSession()?.agentLanguage);
     const project = this.registry.listProjects().find((p) => p.id === projectId);
     const docs = project?.docsRequired ? docsPolicyAppend(docsPolicy(project.docsPolicy)) : undefined;
     // The machine resource paragraph (test workers, no watch mode) while limits apply.
-    const append = [language, docs, this.resources?.promptParagraph()].filter(Boolean).join("\n\n");
+    const append = [language, docs, this.resources?.promptParagraph(), launchAppendFor(kind)].filter(Boolean).join("\n\n");
     return append ? { appendSystemPrompt: append } : {};
   }
 
@@ -1469,7 +1470,7 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     const extensionPath = await this.ompTriggers(project.id, cwd, id);
     const browserMcp = this.browser?.bindingFor(id);
     const runtime = managedRuntime(saved.runtime);
-    const rpc = createRuntime(runtime, { cwd, model, ...(effort ? { thinking: effort } : {}), ...(fork ? { fork } : {}), ...(await this.spawnOpts(id, runtime, cwd, configPath)), ...(extensionPath ? { extensionPath } : {}), ...(browserMcp ? { mcp: browserMcp } : {}), ...this.systemAppendOpts(project.id) });
+    const rpc = createRuntime(runtime, { cwd, model, ...(effort ? { thinking: effort } : {}), ...(fork ? { fork } : {}), ...(await this.spawnOpts(id, runtime, cwd, configPath)), ...(extensionPath ? { extensionPath } : {}), ...(browserMcp ? { mcp: browserMcp } : {}), ...this.systemAppendOpts(project.id, saved.kind) });
     const live = this.wireLive(id, rpc, "queued");
     try {
       await this.startChild(id, rpc);
@@ -1620,7 +1621,7 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
 
     const configPath = await this.ompSkills(s.projectId, cwd, child.id);
     const extensionPath = await this.ompTriggers(s.projectId, cwd, child.id);
-    const rpc = createRuntime(parentRuntime, { cwd, fork: forkHandle, ...launchToolsFor("discussion"), ...(await this.spawnOpts(child.id, parentRuntime, cwd, configPath)), ...(extensionPath ? { extensionPath } : {}), ...this.systemAppendOpts(s.projectId) });
+    const rpc = createRuntime(parentRuntime, { cwd, fork: forkHandle, ...launchToolsFor("discussion"), ...(await this.spawnOpts(child.id, parentRuntime, cwd, configPath)), ...(extensionPath ? { extensionPath } : {}), ...this.systemAppendOpts(s.projectId, "discussion") });
     const childLive = this.wireLive(child.id, rpc, "queued");
     try {
       await this.startChild(child.id, rpc);
@@ -1693,7 +1694,7 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     const configPath = await this.ompSkills(s.projectId, cwd, child.id);
     const extensionPath = await this.ompTriggers(s.projectId, cwd, child.id);
     const childRuntime = managedRuntime(child.runtime);
-    const rpc = createRuntime(childRuntime, { cwd, ...launchToolsFor("review"), ...(await this.spawnOpts(child.id, childRuntime, cwd, configPath)), ...(extensionPath ? { extensionPath } : {}), ...this.systemAppendOpts(s.projectId) });
+    const rpc = createRuntime(childRuntime, { cwd, ...launchToolsFor("review"), ...(await this.spawnOpts(child.id, childRuntime, cwd, configPath)), ...(extensionPath ? { extensionPath } : {}), ...this.systemAppendOpts(s.projectId, "review") });
     const childLive = this.wireLive(child.id, rpc, "queued");
     try {
       await this.startChild(child.id, rpc);
@@ -3677,7 +3678,7 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     // Forks (discussion/review) never get the session browser; agents and chats do.
     const browserMcp = s.kind === "discussion" || s.kind === "review" ? undefined : this.browser?.bindingFor(id);
     const handle = refork ? { fork: refork } : runtimeKind === "claude-code" && resumeHandle ? { resume: resumeHandle } : {};
-    const rpc = createRuntime(runtimeKind, { cwd: dir, ...launchToolsFor(s.kind), ...handle, ...(await this.spawnOpts(id, runtimeKind, dir, configPath)), ...(extensionPath ? { extensionPath } : {}), ...(browserMcp ? { mcp: browserMcp } : {}), ...this.systemAppendOpts(s.projectId) });
+    const rpc = createRuntime(runtimeKind, { cwd: dir, ...launchToolsFor(s.kind), ...handle, ...(await this.spawnOpts(id, runtimeKind, dir, configPath)), ...(extensionPath ? { extensionPath } : {}), ...(browserMcp ? { mcp: browserMcp } : {}), ...this.systemAppendOpts(s.projectId, s.kind) });
     const live = this.wireLive(id, rpc, s.status);
     try {
       await this.startChild(id, rpc);
