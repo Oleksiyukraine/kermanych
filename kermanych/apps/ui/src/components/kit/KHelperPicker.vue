@@ -1,5 +1,5 @@
 <template>
-  <div v-if="open" class="k-hp">
+  <div v-if="open" class="k-hp" :class="{ 'k-hp--below': placement === 'below' }">
     <!-- Click-away. `mousedown` rather than `click` so the panel closes before the textarea
          underneath can take the caret, and `.prevent` so focus never leaves on the way out. -->
     <div class="k-hp__scrim" @mousedown.prevent="emit('close')"></div>
@@ -53,10 +53,15 @@ import { DEFAULT_HELPERS, type CommandDef } from '@kermanych/core';
 //
 // `commands` are harness actions (e.g. `/compact`) the host makes available; they render above
 // the helpers with a badge. Empty by default, so a surface that only offers helpers (the
-// Менеджмент composer) passes nothing and shows the list it always did.
-const props = withDefaults(defineProps<{ open: boolean; commands?: readonly CommandDef[] }>(), {
-  commands: () => [],
-});
+// Менеджмент composer, the task forms) passes nothing and shows the list it always did.
+//
+// `placement`: the panel opens above its anchor by default — a chat composer sits at the
+// bottom of its screen. A field near the top of a modal opens it below instead, where the
+// dialog has room for it rather than clipping it at its own top edge.
+const props = withDefaults(
+  defineProps<{ open: boolean; commands?: readonly CommandDef[]; placement?: 'above' | 'below' }>(),
+  { commands: () => [], placement: 'above' },
+);
 const emit = defineEmits<{ select: [name: string]; close: [] }>();
 
 const { t } = useI18n();
@@ -122,6 +127,9 @@ function onKeydown(e: KeyboardEvent): void {
     if (hit) pick(hit.name);
   } else if (e.key === 'Escape' || e.key === 'Tab') {
     e.preventDefault();
+    // Escape closes the panel and nothing else: inside a KModal the dialog's own Escape
+    // (Quasar's window listener) would otherwise close the whole form with it.
+    if (e.key === 'Escape') e.stopPropagation();
     emit('close');
   }
 }
@@ -133,6 +141,11 @@ function onKeydown(e: KeyboardEvent): void {
   bottom: calc(100% - var(--k-sp-2));
   left: var(--k-sp-3);
   z-index: 20;
+}
+
+.k-hp--below {
+  top: calc(100% - var(--k-sp-2));
+  bottom: auto;
 }
 
 .k-hp__scrim {

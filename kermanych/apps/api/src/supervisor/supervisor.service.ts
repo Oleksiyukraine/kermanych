@@ -1498,8 +1498,13 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
         // documentation current is deterministic, not left to the model reading the librarian
         // skill. A locally-created session with no card carries the trailer alone.
         this.appendEntry(id, this.userEntry(firstPrompt, images));
+        // A task's text is the operator's ask, so a leading Хелпер (`/el10`, picked in the
+        // launcher or the board editor) expands here exactly as in a chat message: the row
+        // keeps the slash, a notice says what was added, the model reads the instruction.
+        const helped = expandHelpers(firstPrompt);
+        if (helped.used.length) this.appendEntry(id, this.noticeEntry(helperNotice(helped.used)));
         const directives = saved.taskId ? `${COAUTHOR_DIRECTIVE}\n\n${DOC_MAINTAIN_DIRECTIVE}` : COAUTHOR_DIRECTIVE;
-        const modelPrompt = await this.openingPrompt(saved, firstPrompt, cwd);
+        const modelPrompt = await this.openingPrompt(saved, helped.text, cwd);
         rpc.prompt(`${modelPrompt}\n\n${directives}`, images);
         // A minion run's time cap counts from this spawn to its first verdict (decision 9).
         if (saved.minion) this.startMinionClock(id);
