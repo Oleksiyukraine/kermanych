@@ -456,7 +456,12 @@ const spend = computed(() => {
   gap: var(--k-sp-2);
 }
 
+// A backlog card's line is its description, which often carries a path, a URL or an id with
+// no break opportunity. Without `min-width: 0` and `anywhere`, such a word sets the flex
+// item's minimum width, pushes the card past the column and gives the board a sideways scroll.
 .k-session-card__status-line {
+  min-width: 0;
+  overflow-wrap: anywhere;
   font-size: var(--k-fs-sm);
   color: var(--k-muted);
 }
