@@ -802,7 +802,7 @@ ChatGPT app is not used. A missing binary shows `command not found` in the «Л�
 - **Nothing of Kermanych enters the agent's context**: no project skills, triggers,
   language or documentation directives, co-author trailer, model or effort flags. Your own
   `~/.claude` / `~/.omp` / `~/.codex` configuration applies unchanged; switch model with the harness's
-  own `/model`. Model, effort and images are hidden in the launcher for this mode. The
+  own `/model`. Model, effort, images and Хелпери are hidden in the launcher for this mode. The
   exceptions are the [session browser](#session-browser)'s tools, passed on the launch in the
   desktop app, and a «Глибокий аналіз» card's opening prompt: the TUI receives the task
   wrapped in the deep-analysis instructions, because that is the task you chose.
@@ -1095,7 +1095,11 @@ developer's machine. The direction is always task → session.
    unassigned unless its author picks someone; a card filed from «Агенти» or «Чат» is
    assigned to its author, because that is the machine about to run it. Either way it is a
    row in the cloud `tasks` — there is no local-only task — so the whole workspace sees it.
-   It starts in `backlog`, which exists only in the cloud.
+   It starts in `backlog`, which exists only in the cloud. The task text (the description)
+   takes Хелпери as a chat message does: <kbd>/</kbd> on an empty field or the «/ Хелпери»
+   button opens the picker, the pick lands at the front of the text, and the launch expands it
+   into the agent's opening prompt (the «Лог» keeps the slash plus a notice naming the helper).
+   A native launch sends the text as it is.
 2. **Assign** — the assignee may hand a card over or release it, and the workspace owner
    may take one back from someone who is gone. Anyone may claim an UNASSIGNED card, and
    pressing «Запустити» on one self-assigns it atomically — in the same write that moves it

@@ -48,6 +48,11 @@ test("taskNameFromText caps the name at 60 characters", () => {
 test("taskNameFromText returns empty for blank text so callers can fall back", () => {
   expect(taskNameFromText("   \n\n ")).toBe("");
 });
+test("taskNameFromText leaves a leading helper run out of the name", () => {
+  expect(taskNameFromText("/el10 /deep Полагодити логін")).toBe("Полагодити логін");
+  // Only a known helper is dropped: a path or an unknown command is part of the ask.
+  expect(taskNameFromText("/usr/bin/env падає")).toBe("/usr/bin/env падає");
+});
 // A base branch reaches `git fetch origin <base>` and the agent's own commands; a project's
 // default branch is typed by a person and shared through the cloud.
 test("isGitBranchName accepts the names git takes as branches", () => {
