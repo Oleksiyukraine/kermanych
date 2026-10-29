@@ -398,6 +398,54 @@ export const DEFAULT_SKILLS: readonly SkillDef[] = [
       "- If the code is what is wrong, that is `needs_decision`; leave the code alone.",
     ].join("\n"),
   },
+  // «Дизайн» (docs/specs/2026-10-29-design-tab.md): the Дизайнер's method and README template.
+  // The launch pastes it into a design session's opening prompt; overridable by name.
+  {
+    name: "design-spec",
+    description:
+      "Use in a «Дизайн» session (the «Дизайнер» role): build the screen as a prototype on the project's UI kit with fixtures, cover every state, and keep the design folder's README and screenshots current.",
+    body: [
+      "# Designing a screen as a prototype",
+      "",
+      "1. Read the conventions, UI kit and routing first. Kit components only; a missing one is a",
+      "   kit gap in the README, not an inline invention.",
+      "2. One dev-only route per screen, `/__design/<design>/<screen>`, with a state switch",
+      "   (`?state=empty`). Fixtures sit beside the prototype; nothing calls a real backend.",
+      "3. States: data, empty, loading, error, long content, narrow width (390).",
+      "4. After each change, `browser_screenshot` at 390 and 1280 and look before you answer.",
+      "5. Screenshots: `<designDir>/screens/<screen>-<state>@<width>.png`, via `path`.",
+      "",
+      "## README template",
+      "",
+      "```markdown",
+      "# <Topic>",
+      "## Purpose — who uses the screen and for what",
+      "## Screens — each with its route and prototype files",
+      "## States — per screen, with its screenshots",
+      "## Decisions — what was chosen, and what was rejected and why",
+      "## Open questions",
+      "## Acceptance criteria — checkable statements for the implementation",
+      "## Kit gaps — components the kit lacks",
+      "```",
+    ].join("\n"),
+  },
+  // The order an agent follows when its task implements a saved design. The documentation policy
+  // line names it, so every session of a project that keeps designs learns of it.
+  {
+    name: "implement-from-design",
+    description:
+      "Use when a task implements a design from docs/design/<date>-<topic>/: build the real screen from its README, screenshots and prototype, then delete the prototype.",
+    body: [
+      "# Implementing a saved design",
+      "",
+      "1. Read the design's README and look at every screenshot in its `screens/`.",
+      "2. Reuse the prototype's components and the shape of its fixtures for the real data.",
+      "3. Implement every state the README lists.",
+      "4. `browser_screenshot` the real screen at the same widths and compare it with the saved",
+      "   ones; list every deliberate difference in your handoff or pull request.",
+      "5. Delete the prototype's route and files. Keep the design folder.",
+    ].join("\n"),
+  },
 ];
 
 // Which skills a session actually pulled in, in order of first use. Derived from the

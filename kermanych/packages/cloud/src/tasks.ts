@@ -7,7 +7,7 @@ import type { Task, TaskInsert, TaskPatch, TaskStatus } from "./types";
 import { isFindingKind, readDocsReport, readSessionReport, type QaChecklist } from "@kermanych/core";
 
 const TASK_COLUMNS =
-  "id, project_id, title, description, status, assignee_id, created_by, model, effort, prefix, platform, kind, branch, worktree, hidden, deep_analysis, auto_run, finding_kind, image_paths, jira_key, linear_key, qa_checklist, docs_report, session_report, created_at, updated_at";
+  "id, project_id, title, description, status, assignee_id, created_by, model, effort, prefix, platform, kind, branch, worktree, hidden, deep_analysis, auto_run, design, finding_kind, image_paths, jira_key, linear_key, qa_checklist, docs_report, session_report, created_at, updated_at";
 
 type TaskRow = {
   id: string;
@@ -26,6 +26,7 @@ type TaskRow = {
   hidden: boolean;
   deep_analysis: boolean;
   auto_run: boolean;
+  design: boolean;
   finding_kind: string | null;
   kind: string | null;
   branch: string | null;
@@ -52,6 +53,8 @@ export function toTask(row: TaskRow): Task {
     deepAnalysis: row.deep_analysis,
     // `not null default false`; `=== true` keeps a row from a pre-migration select an ordinary card.
     autoRun: row.auto_run === true,
+    // `not null default false`, like auto_run.
+    design: row.design === true,
   };
   // Optional keys are omitted rather than set to undefined, so a mapped task deep-equals a
   // hand-written literal in tests and carries no null noise into Vue's reactivity.
@@ -180,6 +183,8 @@ export async function createTask(
     }),
     // Insert-only, so not part of toTaskRow: tasks_guard() keeps it frozen on every update.
     ...(input.findingKind ? { finding_kind: input.findingKind } : {}),
+    // Insert-only too: a card is a design from the moment «+ Новий дизайн» files it.
+    ...(input.design ? { design: true } : {}),
   };
   const { data, error } = await client.from("tasks").insert(row).select(TASK_COLUMNS).single();
   if (error) throw new Error(error.message);
@@ -312,6 +317,8 @@ export async function listMinionCandidates(
     .eq("auto_run", true)
     .eq("created_by", userId)
     .eq("deep_analysis", false)
+    // A design is drawn with a person watching; nobody watches a minion run.
+    .eq("design", false)
     .is("jira_key", null)
     .is("linear_key", null)
     .or(`assignee_id.is.null,assignee_id.eq.${userId}`)
@@ -333,6 +340,7 @@ export async function claimMinionTask(client: SupabaseClient, id: string, userId
     .eq("auto_run", true)
     .eq("created_by", userId)
     .eq("deep_analysis", false)
+    .eq("design", false)
     .is("jira_key", null)
     .is("linear_key", null)
     .or(`assignee_id.is.null,assignee_id.eq.${userId}`)

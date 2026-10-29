@@ -108,6 +108,21 @@ test("session round-trips deepAnalysis", () => {
   expect("deepAnalysis" in byId.get(absent.id)!).toBe(false);
 });
 
+// A design session's folder is stamped once at creation; a later status write keeps it, and an
+// ordinary row carries no key at all.
+test("session round-trips designDir", () => {
+  const r = new RegistryService(":memory:");
+  const proj = r.upsertProject({ id: "p-1", name: "test" });
+  const base = { projectId: proj.id, name: "task", task: "do it", worktreePath: "/tmp/wt", branch: "design/orders" };
+  const design = r.createSession({ ...base, designDir: "docs/design/2026-10-29-orders" });
+  const plain = r.createSession(base);
+
+  r.updateSession(design.id, { status: "done" });
+  const byId = new Map(r.listSessions(proj.id).map((s) => [s.id, s]));
+  expect(byId.get(design.id)?.designDir).toBe("docs/design/2026-10-29-orders");
+  expect("designDir" in byId.get(plain.id)!).toBe(false);
+});
+
 test("session guards runtime with isAgentRuntime", () => {
   const r = new RegistryService(":memory:");
   const proj = r.upsertProject({ id: "p-1", name: "test" });

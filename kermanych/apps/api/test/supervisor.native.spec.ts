@@ -99,6 +99,7 @@ function card(over: Partial<Task> = {}): Task {
     createdAt: "",
     updatedAt: "",
     worktree: true,
+    design: false,
     model: "claude-opus-4-8",
     effort: "high",
     ...over,
@@ -152,6 +153,19 @@ describe("a native launch", () => {
     const opts = terminal.openSession.mock.calls[0][0] as { args: string[] };
     expect(opts.args.at(-2)).toBe("--");
     expect(opts.args.at(-1)).toBe(deepAnalysisPrompt("wire GitHub OAuth"));
+  });
+
+  // A design card opened natively: the harness starts on the design branch with the Дизайнер's
+  // instruction naming the stamped folder (docs/specs/2026-10-29-design-tab.md).
+  it("a design card opens the harness with the Дизайнер instruction", async () => {
+    const { sup, terminal } = make();
+    card({ design: true });
+    const s = await sup.createSessionFromTask("task-1", USER, undefined, "omp");
+    expect(s.branch).toBe("design/add-login");
+    expect(s.designDir).toMatch(/^docs\/design\/\d{4}-\d{2}-\d{2}-add-login$/);
+    const opts = terminal.openSession.mock.calls[0][0] as { args: string[] };
+    expect(opts.args.at(-1)).toMatch(/^You are «Дизайнер»/);
+    expect(opts.args.at(-1)).toContain(`${s.designDir}/README.md`);
   });
 
   // docs/specs/2026-10-14-create-pr-base-sync.md, decision 6: the harness stopped with the tree

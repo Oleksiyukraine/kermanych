@@ -133,6 +133,7 @@
               :status-line="item.card.description ?? ''"
               :model="item.card.model"
               :deep-analysis="item.card.deepAnalysis"
+              :design="item.card.design"
               :auto-run="item.card.autoRun"
               :needs-decision="cardDecisionReason(t, item.card)"
               :not-needed="cardNotNeededReason(t, item.card)"
@@ -157,6 +158,7 @@
               :model="item.session.model"
               :harness="item.session.kind === 'task' ? undefined : sessionLaunchMode(item.session)"
               :deep-analysis="item.session.deepAnalysis"
+              :design="!!item.session.designDir"
               :minion="item.session.minion"
               :needs-decision="sessionDecisionReason(t, item.session)"
               :not-needed="sessionNotNeededReason(t, item.session)"
@@ -245,6 +247,7 @@
             >{{ shownName }}</span>
             <KTag v-if="selectedSession.branch" class="agents__detail-branch">⑂ {{ selectedSession.branch }}</KTag>
             <KAnalysisMark v-if="selectedSession.deepAnalysis" />
+            <KDesignMark v-if="selectedSession.designDir" />
             <KMinionMark v-if="selectedSession.minion" kind="running" />
             <KDecisionMark v-if="selectedDecision" :reason="selectedDecision" />
             <KNotNeededMark v-else-if="selectedNotNeeded" :reason="selectedNotNeeded" />
@@ -739,8 +742,8 @@
                       </span>
                     </button>
                     <button
-                      v-if="docsLayoutKind(d.path) === 'api-request' || docsLayoutKind(d.path) === 'handoff'"
-                      v-tip="t('agents.docs.toTaskHint')"
+                      v-if="canTaskFromDoc(d.path)"
+                      v-tip="t(isDesignReadme(d.path) ? 'agents.docs.toTaskHintDesign' : 'agents.docs.toTaskHint')"
                       type="button"
                       class="agents__docs-handover mono"
                       @click="openDocTask(d.path)"
@@ -1114,71 +1117,7 @@
     </KModal>
 
     <!-- FINISH — retire the session: the worktree goes, the branch stays for its pull request -->
-    <KModal v-model="finishOpen" :title="t('agents.finish.title')" persistent>
-      <div class="agents__form">
-        <div v-show="finishFiles.length">
-          <p class="agents__error" role="alert">
-            {{ t('agents.finish.conflictError') }}
-          </p>
-          <p class="agents__hint mono">{{ t('agents.finish.conflictFiles') }}</p>
-          <ul class="agents__conflict mono">
-            <li v-for="f in finishFiles" :key="f">{{ f }}</li>
-          </ul>
-          <p class="agents__hint mono">
-            {{ t('agents.finish.conflictHint') }}
-          </p>
-        </div>
-        <div v-show="!finishFiles.length">
-          <p v-if="finishData">
-            {{ t('agents.finish.action') }} <code class="mono">{{ finishData.branch }}</code>
-          </p>
-          <p v-if="finishData" class="agents__hint mono">
-            {{ t('agents.finish.aheadInfo', { n: finishData.ahead, base: finishData.target, dirty: finishData.dirty ? t('agents.finish.aheadDirty') : '' }, finishData.ahead) }}
-          </p>
-          <p v-else class="agents__hint mono">{{ t('agents.changes.preparing') }}</p>
-          <p v-if="finishData && finishData.behind > 0" class="agents__hint">
-            {{ t('agents.finish.behindInfo', { n: finishData.behind, base: finishData.target, action: finishHasPr ? t('agents.finish.commit') : t('agents.finish.createPr') }, finishData.behind) }}
-          </p>
-          <!-- DOCUMENTATION POLICY — only for a project that switched it on: what the api will
-               refuse PR / commit / finish over. A handoff or an API request the operator wants
-               on this branch is asked for from the «Документація» tab, not here. -->
-          <template v-if="finishData?.docsGate.enabled">
-            <template v-if="docsFailures.length">
-              <p class="agents__error" role="alert">{{ t('agents.finish.docsMissing') }}</p>
-              <ul class="agents__conflict">
-                <li v-for="f in docsFailures" :key="f">{{ t(DOCS_FAILURE_KEYS[f]) }}</li>
-              </ul>
-              <p class="agents__hint mono">{{ t('agents.finish.docsBlocked') }}</p>
-            </template>
-          </template>
-        </div>
-        <p v-if="finishError" class="agents__error" role="alert">{{ finishError }}</p>
-      </div>
-      <template #controls>
-        <KBtn variant="ghost" @click="finishOpen = false">{{ t('agents.finish.close') }}</KBtn>
-        <KBtn v-show="finishFiles.length" variant="secondary" :loading="resolveBusy" @click="resolveAuto">{{ t('agents.finish.resolveAuto') }}</KBtn>
-        <KBtn
-          v-if="!finishFiles.length && docsFailures.length"
-          variant="secondary"
-          :loading="docsBusy"
-          :disabled="prBusy || finishBusy"
-          @click="submitDocs"
-        >{{ t('agents.finish.completeDocs') }}</KBtn>
-        <KBtn
-          v-show="!finishFiles.length"
-          variant="secondary"
-          :loading="prBusy"
-          :disabled="finishBusy || docsBusy || !finishData || !!docsFailures.length"
-          @click="finishHasPr ? submitCommit() : submitPr()"
-        >{{ finishHasPr ? t('agents.finish.commit') : t('agents.finish.createPr') }}</KBtn>
-        <KBtn
-          variant="primary"
-          :loading="finishBusy"
-          :disabled="prBusy || docsBusy || !!finishFiles.length || !finishData || !!docsFailures.length"
-          @click="submitFinish"
-        >{{ t('agents.finish.action') }}</KBtn>
-      </template>
-    </KModal>
+    <FinishSheet v-model="finishOpen" :session="finishFor" @focus="store.selectSession" />
 
     <!-- MERGED PR — the PR this session opened is merged on GitHub: offer to retire the session
          the way «Завершити» does (the api re-checks the merge and skips the documentation gate).
@@ -1221,41 +1160,7 @@
       </template>
     </KModal>
 
-    <!-- DOCUMENT → CARD — an API request (or handoff) becomes a task on another project's board
-         mid-task: the other side's agent starts from the card, this session keeps working. -->
-    <KModal v-model="docTaskOpen" :title="t('agents.docTask.title')" width="720px">
-      <div class="agents__form">
-        <p class="agents__hint mono">{{ t('agents.docTask.source', { path: docTaskPath }) }}</p>
-        <KSelect
-          v-model="docTaskProject"
-          :label="t('agents.docTask.project')"
-          :options="docTaskProjectOptions"
-          :placeholder="t('agents.docTask.projectPlaceholder')"
-        />
-        <KSkeleton v-if="docTaskReadPhase === 'skeleton'" variant="line" :label="t('agents.docTask.taskTitle')" />
-        <KField v-else v-model="docTaskTitle" :label="t('agents.docTask.taskTitle')" />
-        <KSelect
-          v-model="docTaskAssignee"
-          :label="t('agents.docTask.assignee')"
-          :options="docTaskAssigneeOptions"
-          :placeholder="t('agents.docTask.unassigned')"
-          :loading="docTaskMembersLoading"
-        />
-        <KSkeleton v-if="docTaskReadPhase === 'skeleton'" variant="lines" :rows="8" :label="t('agents.docTask.description')" />
-        <KField v-else v-model="docTaskDescription" :label="t('agents.docTask.description')" multiline :rows="12" />
-        <p v-if="docTaskError" class="agents__error" role="alert">{{ docTaskError }}</p>
-      </div>
-      <template #controls>
-        <KBtn variant="ghost" @click="docTaskOpen = false">{{ t('agents.finish.close') }}</KBtn>
-        <KBtn variant="secondary" :disabled="!docTaskDescription.trim()" @click="copyDocTask">{{ t('agents.docTask.copy') }}</KBtn>
-        <KBtn
-          variant="primary"
-          :loading="docTaskBusy"
-          :disabled="!docTaskTitle.trim() || !projects.byId.has(docTaskProject)"
-          @click="submitDocTask"
-        >{{ t('agents.docTask.create') }}</KBtn>
-      </template>
-    </KModal>
+    <DocTaskDialog v-model="docTaskOpen" :session="docTaskSession" :path="docTaskPath" />
   </main>
 </template>
 
@@ -1272,7 +1177,6 @@ import {
   isDocPath,
   docsLayoutKind,
   type DocsWriteKind,
-  type DocsGateFailure,
   type ImageInput,
   type PrCheck,
   type PrCheckState,
@@ -1327,6 +1231,9 @@ import KTag from 'components/kit/KTag.vue';
 import KSessionCard from 'components/kit/KSessionCard.vue';
 import SessionFindings from 'components/agents/SessionFindings.vue';
 import KAnalysisMark from 'components/kit/KAnalysisMark.vue';
+import KDesignMark from 'components/kit/KDesignMark.vue';
+import DocTaskDialog from 'components/docs/DocTaskDialog.vue';
+import { canTaskFromDoc, isDesignReadme } from '../lib/doc-task';
 import KMinionMark from 'components/kit/KMinionMark.vue';
 import KDecisionMark from 'components/kit/KDecisionMark.vue';
 import KNotNeededMark from 'components/kit/KNotNeededMark.vue';
@@ -1343,8 +1250,7 @@ import KModal from 'components/kit/KModal.vue';
 import KAttachStrip from 'components/kit/KAttachStrip.vue';
 import KCheckbox from 'components/kit/KCheckbox.vue';
 import KField from 'components/kit/KField.vue';
-import KSelect, { type KSelectOption } from 'components/kit/KSelect.vue';
-import { handleOf } from '../lib/members';
+import KSelect from 'components/kit/KSelect.vue';
 import { BRANCH_PREFIXES, PLATFORMS, type BranchPrefix, type Platform } from '@kermanych/core';
 import { useImageAttach } from '../composables/useImageAttach';
 import { useNow } from '../composables/useNow';
@@ -1357,8 +1263,9 @@ import { useVirtualList } from '../composables/useVirtualList';
 import { nativeHarnessName, nativeRuntimeFor, sessionCostKnown, sessionLaunchMode, LAUNCH_MODES, readLaunchMode, writeLaunchMode, type LaunchMode } from '../lib/native-session';
 import KTerminalView from 'components/kit/KTerminalView.vue';
 import KBrowserPane from 'components/kit/KBrowserPane.vue';
+import FinishSheet from 'components/agents/FinishSheet.vue';
 import { useSessionBrowser } from 'stores/browser';
-import { composePicksMessage, picksImages } from '../lib/browser-picks';
+import { useSendPicks } from '../composables/useSendPicks';
 import { historyLoadFor } from '../lib/open-session-history';
 import { slotWaitLabel } from '../lib/slot-wait';
 import KSkeleton from 'components/kit/KSkeleton.vue';
@@ -1403,7 +1310,8 @@ function openAgentMapAt(sessionId: string): void {
   mapOpen.value = true;
 }
 
-// A session card on the map, like a card in the list, means «go to this agent».
+// A session card on the map, like a card in the list, means «go to this agent». A design opens
+// on «Дизайн» instead (MainLayout's selection watcher), since this page has no row for it.
 function onMapOpenSession(id: string): void {
   mapOpen.value = false;
   store.selectSession(id);
@@ -1504,14 +1412,15 @@ const scopedIds = computed(() =>
 );
 const inScope = computed(() => new Set(scopedIds.value));
 
-// Every non-chat session in scope, with the tab bucketOf files it under — the one rule the
-// counts, the list and the agent map share, so a fork sits in its parent's tab here exactly
-// as it is counted there.
+// Every non-chat, non-design session in scope, with the tab bucketOf files it under — the one
+// rule the counts and the list share, so a fork sits in its parent's tab here exactly as it is
+// counted there. Chats live on Чат and designs on Дизайн, each its only view; «Карта агентів»
+// still shows designs, because they are running agents (AgentMap reads the store itself).
 const scopedBuckets = computed(() => {
   const byId = new Map(store.sessions.map((s) => [s.id, s]));
   const out: { session: Session; bucket: Bucket }[] = [];
   for (const s of store.sessions) {
-    if (s.kind === 'chat' || !inScope.value.has(s.projectId)) continue;
+    if (s.kind === 'chat' || s.designDir || !inScope.value.has(s.projectId)) continue;
     out.push({ session: s, bucket: bucketOf(s, (id) => byId.get(id)) });
   }
   return out;
@@ -2765,9 +2674,10 @@ const draftModel = ref('');
 const draftEffort = ref<ThinkingLevel | ''>('');
 // The segmented pickers offer core's vocabularies verbatim — the same constants openLauncher
 // validates a card's free-text launch params against, so a prefix added to core cannot show
-// up as accepted-but-unpickable here.
-const prefixOptions = BRANCH_PREFIXES;
+// up as accepted-but-unpickable here. Except `design`: a design card comes only from
+// «+ Новий дизайн», which also marks it `design`; a stored design card still shows its own.
 const draftPrefix = ref<BranchPrefix>('feature');
+const prefixOptions = computed(() => BRANCH_PREFIXES.filter((p) => p !== 'design' || draftPrefix.value === 'design'));
 const platformOptions = PLATFORMS;
 const modelPickOptions = computed(() => modelOptions(store.models));
 // The effort ladder narrows to the chosen model's own (empty for a non-reasoning model);
@@ -3245,32 +3155,14 @@ async function onSend(text: string, images: ImageInput[]): Promise<void> {
   }
 }
 
-// Браузер → «Надіслати агенту»: the picks tray as ONE message, through the same send the Лог
-// composer uses. A managed session gets the crops as images; a native one their file paths in
-// the text (it takes text only — lib/browser-picks.ts). A refusal (`native_busy`, a dead child)
-// keeps the tray so nothing the operator wrote is lost.
-const sendingPicks = ref(false);
-async function onSendPicks(s: Session): Promise<void> {
-  const picks = sessionBrowser.picks[s.id];
-  if (!picks?.length || sendingPicks.value) return;
-  const native = !!s.native;
-  sendingPicks.value = true;
-  try {
-    await store.sendMessage(
-      s.id,
-      composePicksMessage(picks, { native, comment: sessionBrowser.notes[s.id] }),
-      nextMode(s),
-      picksImages(picks, { native }),
-    );
-    sessionBrowser.clearPicks(s.id);
-    // Beside the Лог the operator already sees where the message went.
+// Браузер → «Надіслати агенту» (composables/useSendPicks.ts). Beside the Лог the operator
+// already sees where the message went; otherwise the Лог tab opens on it.
+const { send: onSendPicks, sending: sendingPicks } = useSendPicks({
+  mode: nextMode,
+  onSent: (s) => {
     if (store.selectedSessionId === s.id && !browserSplit.value) detailTab.value = 'log';
-  } catch (e) {
-    store.notify(e instanceof Error ? e.message : String(e), 'error');
-  } finally {
-    sendingPicks.value = false;
-  }
-}
+  },
+});
 
 // Composer ↻ — wake a dormant session so its history comes back. After an app restart the
 // api has no omp child for the session, so the transcript endpoint can only serve a "dormant"
@@ -3416,47 +3308,14 @@ async function onUnarchive(s: Session): Promise<void> {
 }
 
 // ── Finish (retire the worktree; the branch stays for its PR) ──────────────
+// The sheet itself is components/agents/FinishSheet.vue, shared with Дизайн; it reads the
+// branch on open. `finishFor` is the session as it was when ✓ was pressed.
 const finishOpen = ref(false);
 const finishFor = ref<Session | null>(null);
-const finishData = ref<Awaited<ReturnType<typeof store.finishInfo>> | null>(null);
-const finishError = ref<string | null>(null);
-const finishBusy = ref(false);
-const prBusy = ref(false);
-const resolveBusy = ref(false);
-// Documentation policy (project setting): the gate's failures, as the api reported them.
-const docsBusy = ref(false);
-const docsFailures = computed<DocsGateFailure[]>(() => finishData.value?.docsGate.failures ?? []);
-const DOCS_FAILURE_KEYS: Record<DocsGateFailure, string> = {
-  'task-spec': 'agents.finish.docsFailure.taskSpec',
-  plan: 'agents.finish.docsFailure.plan',
-  'docs-impact': 'agents.finish.docsFailure.docsImpact',
-  handoff: 'agents.finish.docsFailure.handoff',
-  'api-request': 'agents.finish.docsFailure.apiRequest',
-};
 
-// Files still to resolve in the worktree: a tree left mid-merge (the agent folded the base
-// in) cannot be retired, so the modal shows them instead of the finish summary.
-const finishFiles = computed(() => finishData.value?.conflicts ?? []);
-
-// A session whose branch already has an open PR: its secondary finish action is «Закоміти»
-// (land follow-up work onto that PR), never «Створити ПР» (which would try to open a second
-// one and find nothing to push). Keyed off the DURABLE `prOpened`, not the transient
-// `in_review` status — the operator keeps prompting the agent after «Створити ПР», which
-// drives the card back through thinking/tool and would otherwise flip the button back.
-const finishHasPr = computed(() => finishFor.value?.prOpened === true || finishFor.value?.status === 'in_review');
-
-async function openFinish(s: Session): Promise<void> {
+function openFinish(s: Session): void {
   finishFor.value = s;
-  finishData.value = null;
-  finishError.value = null;
-  finishBusy.value = false;
-  docsBusy.value = false;
   finishOpen.value = true;
-  try {
-    finishData.value = await store.finishInfo(s.id);
-  } catch (e) {
-    finishError.value = e instanceof Error ? e.message : String(e);
-  }
 }
 
 // ⧉ / ⌘E. A failure (no editor configured, a worktree gone) is a toast, not a silent no-op.
@@ -3511,92 +3370,6 @@ async function onDiscardRow(s: Session): Promise<void> {
   if (ok) await deleteAction.run(s.id);
 }
 
-async function resolveAuto(): Promise<void> {
-  const s = finishFor.value;
-  if (!s) return;
-  resolveBusy.value = true;
-  finishError.value = null;
-  try {
-    await store.resolveConflict(s.id);
-    finishOpen.value = false; // agent resolves in the background — watch it on the card
-    store.selectSession(s.id);
-  } catch (e) {
-    finishError.value = e instanceof Error ? e.message : String(e);
-  } finally {
-    resolveBusy.value = false;
-  }
-}
-
-async function submitFinish(): Promise<void> {
-  const s = finishFor.value;
-  if (!s) return;
-  finishBusy.value = true;
-  finishError.value = null;
-  try {
-    await store.finishSession(s.id);
-    finishOpen.value = false;
-  } catch (e) {
-    finishError.value = e instanceof Error ? e.message : String(e);
-  } finally {
-    finishBusy.value = false;
-  }
-}
-
-async function submitPr(): Promise<void> {
-  const s = finishFor.value;
-  if (!s) return;
-  prBusy.value = true;
-  finishError.value = null;
-  try {
-    await store.createPr(s.id);
-    finishOpen.value = false; // agent pushes + opens the PR in the background — watch it in chat
-    store.selectSession(s.id);
-    store.notify(t('agents.notify.prCreating', { name: s.name }), 'info');
-  } catch (e) {
-    finishError.value = e instanceof Error ? e.message : String(e);
-  } finally {
-    prBusy.value = false;
-  }
-}
-
-async function submitCommit(): Promise<void> {
-  const s = finishFor.value;
-  if (!s) return;
-  prBusy.value = true;
-  finishError.value = null;
-  try {
-    await store.commitChanges(s.id);
-    finishOpen.value = false; // agent commits + pushes to the open PR in the background — watch it in chat
-    store.selectSession(s.id);
-    store.notify(t('agents.notify.committing', { name: s.name }), 'info');
-  } catch (e) {
-    finishError.value = e instanceof Error ? e.message : String(e);
-  } finally {
-    prBusy.value = false;
-  }
-}
-
-// «Доповнити документацію»: the api sends the agent one prompt listing exactly the missing
-// documents (with the project's task-spec / frontend-handoff skills inlined), so the sheet
-// closes and the work is watched in the transcript, like «Створити ПР». `sent: false` means the
-// gate passed in the meantime — nothing was asked of the agent.
-async function submitDocs(): Promise<void> {
-  const s = finishFor.value;
-  if (!s) return;
-  docsBusy.value = true;
-  finishError.value = null;
-  try {
-    const res = await store.completeDocs(s.id);
-    finishOpen.value = false;
-    store.selectSession(s.id);
-    store.notify(t(res.sent ? 'agents.notify.docsCompleting' : 'agents.notify.docsComplete', { name: s.name }), 'info');
-  } catch (e) {
-    finishError.value = e instanceof Error ? e.message : String(e);
-  } finally {
-    docsBusy.value = false;
-  }
-}
-
 // ── Mid-task documents (Документація tab) ─────────────────────────────────
 // «Написати запит на API» / «Написати хендоф»: one Kermanych prompt for that document, sent
 // whatever the project's rules say.
@@ -3617,112 +3390,16 @@ async function writeDoc(kind: DocsWriteKind): Promise<void> {
   }
 }
 
-// «Задача з документа»: an API request (or a handoff) becomes a card on another project of the
-// same workspace, so the other side's agent starts from it while this session keeps working.
-// The text is read from the worktree, so an uncommitted document can go too.
+// «Задача з документа» (components/docs/DocTaskDialog.vue): the dialog reads the document from
+// the session it is opened on, which stays fixed while the operator switches agents behind it.
 const docTaskOpen = ref(false);
 const docTaskSession = ref<Session | null>(null);
 const docTaskPath = ref('');
-const docTaskProject = ref('');
-const docTaskTitle = ref('');
-const docTaskAssignee = ref('');
-const docTaskDescription = ref('');
-const docTaskError = ref<string | null>(null);
-const docTaskBusy = ref(false);
-// The document text and the workspace's members are read after the dialog opens; until they
-// answer the title/description are skeletons and the assignee picker spins.
-const docTaskReading = ref(false);
-const docTaskMembersLoading = ref(false);
-const docTaskReadPhase = useLoadPhase(() => docTaskReading.value);
-const docTaskWorkspace = computed(() => projects.byId.get(docTaskSession.value?.projectId ?? '')?.workspaceId);
-const docTaskProjectOptions = computed<KSelectOption[]>(() =>
-  projects.projects
-    .filter((p) => p.workspaceId === docTaskWorkspace.value && p.id !== docTaskSession.value?.projectId)
-    .map((p) => ({ value: p.id, label: p.name })),
-);
-const docTaskAssigneeOptions = computed<KSelectOption[]>(() =>
-  (projects.members[docTaskWorkspace.value ?? ''] ?? []).map((m) => ({ value: m.userId, label: handleOf(m) })),
-);
 
-async function openDocTask(path: string): Promise<void> {
-  const s = selectedSession.value;
-  const home = projects.byId.get(s?.projectId ?? '');
-  if (!s || !home) {
-    store.notify(t('agents.docTask.notCloud'), 'error');
-    return;
-  }
-  docTaskSession.value = s;
+function openDocTask(path: string): void {
+  docTaskSession.value = selectedSession.value ?? null;
   docTaskPath.value = path;
-  docTaskProject.value = docTaskProjectOptions.value[0]?.value ?? '';
-  docTaskTitle.value = '';
-  docTaskAssignee.value = '';
-  docTaskDescription.value = '';
-  docTaskError.value = null;
-  docTaskBusy.value = false;
   docTaskOpen.value = true;
-  if (!projects.members[home.workspaceId]) {
-    docTaskMembersLoading.value = true;
-    void projects
-      .loadMembers(home.workspaceId)
-      .catch(() => undefined)
-      .finally(() => { docTaskMembersLoading.value = false; });
-  }
-  docTaskReading.value = true;
-  try {
-    const file = await api.sessionFile(s.id, path);
-    // The operator may have closed this dialog and opened it on another document meanwhile.
-    if (docTaskSession.value?.id !== s.id || docTaskPath.value !== path) return;
-    if (file.binary || file.truncated) {
-      docTaskError.value = t('agents.docTask.unreadable');
-      return;
-    }
-    // The document's first heading, else its file name without the date prefix.
-    docTaskTitle.value =
-      /^#\s+(.+)$/m.exec(file.content)?.[1]?.trim() ||
-      (path.split('/').pop() ?? path).replace(/\.[^.]+$/, '').replace(/^\d{4}-\d{2}-\d{2}-/, '');
-    docTaskDescription.value = `${t('agents.docTask.origin', { project: home.name, branch: s.branch, path })}\n\n${file.content.trim()}\n`;
-  } catch (e) {
-    if (docTaskPath.value === path) docTaskError.value = errorText(e);
-  } finally {
-    if (docTaskSession.value?.id === s.id && docTaskPath.value === path) docTaskReading.value = false;
-  }
-}
-
-async function copyDocTask(): Promise<void> {
-  try {
-    await navigator.clipboard.writeText(docTaskDescription.value);
-    store.notify(t('agents.docTask.copied'), 'info');
-  } catch (e) {
-    store.notify(e instanceof Error ? e.message : String(e), 'error');
-  }
-}
-
-// A card like the board's own «Нова задача»: the target project's default model and effort,
-// unassigned unless picked. An API request is backend work by definition.
-async function submitDocTask(): Promise<void> {
-  const target = projects.byId.get(docTaskProject.value);
-  const title = docTaskTitle.value.trim();
-  if (!target || !title || docTaskBusy.value) return;
-  docTaskBusy.value = true;
-  docTaskError.value = null;
-  try {
-    const card = await board.createTask({
-      projectId: target.id,
-      title,
-      description: docTaskDescription.value,
-      prefix: 'feature',
-      worktree: true,
-      ...(docsLayoutKind(docTaskPath.value) === 'api-request' ? { platform: 'backend' } : {}),
-      ...(target.defaultModel ? { model: target.defaultModel } : {}),
-      ...(target.defaultEffort ? { effort: target.defaultEffort } : {}),
-      ...(docTaskAssignee.value ? { assigneeId: docTaskAssignee.value } : {}),
-    });
-    if (!card) return; // the store has already said why
-    docTaskOpen.value = false;
-    store.notify(t('agents.docTask.created', { title, project: target.name }), 'info');
-  } finally {
-    docTaskBusy.value = false;
-  }
 }
 
 // ── Live preview (per-session worktree app on a free port) ─────────────────

@@ -607,6 +607,10 @@ export const useOrchestrator = defineStore('orchestrator', () => {
     return api.writeDoc(id, kind);
   }
 
+  function saveDesign(id: string) {
+    return api.saveDesign(id);
+  }
+
   // Minimal transient notifications. notify() pushes a toast that auto-dismisses;
   // components read `toasts` and may dismiss one early.
   function notify(message: string, kind: Toast['kind'] = 'info', ms = 4000, action?: Toast['action']) {
@@ -699,6 +703,7 @@ export const useOrchestrator = defineStore('orchestrator', () => {
     commitChanges,
     completeDocs,
     writeDoc,
+    saveDesign,
     archiveSession,
     unarchiveSession,
     renameSession,

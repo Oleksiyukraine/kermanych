@@ -155,6 +155,7 @@
           :assignee="resolveAssignee(task.assigneeId, membersOf(task.projectId))"
           :assignee-loading="!!task.assigneeId && rosterPending(task.projectId)"
           :deep-analysis="task.deepAnalysis"
+          :design="task.design"
           :auto-run="task.autoRun"
           :needs-decision="cardDecisionReason(t, task)"
           :not-needed="cardNotNeededReason(t, task)"
@@ -377,7 +378,7 @@ import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
 import { useRouter } from 'vue-router';
 import { useI18n } from 'vue-i18n';
 import { confirmAction } from '../lib/confirm';
-import type { Project, ThinkingLevel } from '@kermanych/core';
+import { BRANCH_PREFIXES, type Project, type ThinkingLevel } from '@kermanych/core';
 import type { Task, TaskStatus, WorkspaceMember } from '@kermanych/cloud';
 import { ACTIVE_STATUSES } from '@kermanych/core/status';
 import { useAuth } from 'stores/auth';
@@ -1175,7 +1176,9 @@ const effortPickOptions = computed(() => {
   const allowed = effortOptions(local.models, draftModel.value || undefined);
   return EFFORT_OPTIONS.filter((o) => allowed.includes(o.value)).map((o) => ({ value: o.value, label: t(o.labelKey) }));
 });
-const PREFIX_OPTIONS = ['feature', 'fix', 'refactoring', 'chore'];
+// Core's prefixes, less `design`: a design card comes only from «+ Новий дизайн», which also marks
+// it `design`. A stored design card still shows its prefix — KSelect lists a held value it lacks.
+const PREFIX_OPTIONS = BRANCH_PREFIXES.filter((p) => p !== 'design');
 const PLATFORM_OPTIONS = ['backend', 'web', 'mobile'];
 
 const editorOpen = ref(false);

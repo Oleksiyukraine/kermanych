@@ -20,7 +20,8 @@ import { Injectable, Optional } from "@nestjs/common";
 import { HttpAdapterHost } from "@nestjs/core";
 import { randomBytes } from "node:crypto";
 import { Subject } from "rxjs";
-import { isAbsolute } from "node:path";
+import { mkdirSync, realpathSync, lstatSync, writeFileSync } from "node:fs";
+import { basename, dirname, isAbsolute, join, relative, sep } from "node:path";
 import { RegistryService } from "../registry/registry.service";
 import { PreviewService } from "../preview/preview.service";
 import { FINDING_TOOLS, FINDING_TOOL_NAMES, callFindingTool } from "../findings/findings-tools";
@@ -167,12 +168,19 @@ const TOOLS = [
     name: "browser_screenshot",
     description:
       `${SHARED} A PNG of the visible viewport, the whole page (\`full_page\`) or one element (\`ref\`). Use it to check layout and visuals; ` +
-      "to find elements or read text, browser_snapshot is cheaper and gives refs.",
+      "to find elements or read text, browser_snapshot is cheaper and gives refs. With `path` the PNG is saved into this session's worktree " +
+      "instead of being shown to you — use it to keep a screenshot as a file, e.g. a design's screens as `<designDir>/screens/<screen>-<state>@<width>.png`.",
     inputSchema: {
       type: "object",
       properties: {
         full_page: { type: "boolean", description: "Capture the whole scrollable page (default false).", default: false },
         ref: { ...REF, description: "Capture only this element: a ref from the latest browser_snapshot, or a CSS selector." },
+        path: {
+          type: "string",
+          description:
+            "Save the PNG to this worktree-relative path under `docs/` (e.g. `docs/design/2026-10-29-orders/screens/list-empty@390.png`) " +
+            "and answer with the saved path instead of the image. Only in a session with its own worktree.",
+        },
       },
       additionalProperties: false,
     },
@@ -319,6 +327,45 @@ function int(args: Record<string, unknown>, key: string, min: number, max: numbe
   if (v === undefined || v === null) return undefined;
   if (typeof v !== "number" || !Number.isInteger(v) || v < min || v > max) throw new Error(`\`${key}\` must be an integer from ${min} to ${max}`);
   return v;
+}
+
+// Where `browser_screenshot` may write: a worktree-relative `.png` under `docs/`, spelled with
+// plain forward-slash segments, whose real location (symlinks of the existing chain resolved)
+// stays inside the worktree's own `docs/`. Answers the absolute path to write; throws the
+// reason otherwise. Reads the disk (realpath), writes nothing.
+export function screenshotFile(worktreePath: string, path: string): string {
+  if (path.includes("\\")) throw new Error(`\`path\` must use forward slashes: ${path}`);
+  if (isAbsolute(path)) throw new Error(`\`path\` must be relative to the worktree: ${path}`);
+  const segments = path.split("/");
+  if (segments.some((s) => s === ".." || s === "." || s === "")) throw new Error(`\`path\` must not contain empty, "." or ".." segments: ${path}`);
+  if (segments[0] !== "docs" || segments.length < 2) throw new Error(`\`path\` must be under docs/: ${path}`);
+  if (!path.toLowerCase().endsWith(".png") || segments[segments.length - 1].length <= ".png".length)
+    throw new Error(`\`path\` must name a .png file: ${path}`);
+  const root = realpathSync(worktreePath);
+  const docs = join(root, "docs");
+  // The deepest entry that exists (lstat: a dangling symlink counts and then fails realpath),
+  // resolved; the part not yet on disk is appended as written — it holds no symlinks yet.
+  let existing = join(root, ...segments);
+  const rest: string[] = [];
+  for (;;) {
+    try {
+      lstatSync(existing);
+      break;
+    } catch {
+      rest.unshift(basename(existing));
+      existing = dirname(existing);
+    }
+  }
+  let real: string;
+  try {
+    real = join(realpathSync(existing), ...rest);
+  } catch {
+    throw new Error(`\`path\` resolves outside the worktree's docs/: ${path}`);
+  }
+  const inside = relative(docs, real);
+  if (!inside || inside.startsWith(`..${sep}`) || inside === ".." || isAbsolute(inside))
+    throw new Error(`\`path\` resolves outside the worktree's docs/: ${path}`);
+  return real;
 }
 
 @Injectable()
@@ -497,9 +544,19 @@ export class BrowserMcpService {
       case "browser_screenshot": {
         const fullPage = bool(args, "full_page", false);
         const ref = optStr(args, "ref");
+        const path = optStr(args, "path");
         if (fullPage && ref) throw new Error("`full_page` and `ref` cannot be combined.");
+        // A chat in the operator's checkout has no worktree of its own: writing there would
+        // change the operator's files behind their back.
+        if (path !== undefined && (!session.worktree || !session.worktreePath))
+          throw new Error("`path` needs a session with its own worktree; this one works in the operator's checkout.");
+        const file = path === undefined ? undefined : screenshotFile(session.worktreePath, path);
         const shot = await host.screenshot(target, ref ? { fullPage, ref } : { fullPage });
-        return { content: [{ type: "image", data: shot.data, mimeType: shot.mimeType }] };
+        if (!file) return { content: [{ type: "image", data: shot.data, mimeType: shot.mimeType }] };
+        const bytes = Buffer.from(shot.data, "base64");
+        mkdirSync(dirname(file), { recursive: true });
+        writeFileSync(file, bytes);
+        return text(`saved ${path} (${bytes.length} bytes)`);
       }
       case "browser_upload": {
         const ref = str(args, "ref");

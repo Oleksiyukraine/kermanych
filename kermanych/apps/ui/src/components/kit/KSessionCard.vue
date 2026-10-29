@@ -47,9 +47,10 @@
         <span v-if="statusLine" class="k-session-card__status-line">{{ statusLine }}</span>
       </div>
       <!-- who is running it, how, on what, and what it has cost — absent whenever we know none -->
-      <div v-if="harness || deepAnalysis || minion || autoRun || needsDecision || notNeeded || model || spend" class="k-session-card__meta mono">
+      <div v-if="harness || deepAnalysis || design || minion || autoRun || needsDecision || notNeeded || model || spend" class="k-session-card__meta mono">
         <KHarnessMark v-if="harness" :harness="harness" />
         <KAnalysisMark v-if="deepAnalysis" />
+        <KDesignMark v-if="design" />
         <KMinionMark v-if="minion" kind="running" />
         <KMinionMark v-else-if="autoRun" kind="allowed" />
         <KDecisionMark v-if="needsDecision" :reason="needsDecision" />
@@ -83,6 +84,7 @@ import type { SessionStatus, Usage } from '@kermanych/core';
 import KStatusDot from './KStatusDot.vue';
 import KHarnessMark from './KHarnessMark.vue';
 import KAnalysisMark from './KAnalysisMark.vue';
+import KDesignMark from './KDesignMark.vue';
 import KMinionMark from './KMinionMark.vue';
 import KDecisionMark from './KDecisionMark.vue';
 import KNotNeededMark from './KNotNeededMark.vue';
@@ -126,6 +128,7 @@ import type { LaunchMode } from '../../lib/native-session';
 //
 // `deepAnalysis` marks a «Глибокий аналіз» card (KAnalysisMark) in the accounting line, right
 // after the harness: it is HOW this agent works, and it must not be the field that clips.
+// `design` marks a «Дизайн» session or card (KDesignMark) beside it, for the same reason.
 //
 // `minion` marks a session «Посіпака» runs, `autoRun` a card it may take (KMinionMark, the same
 // shape, a different tooltip); `needsDecision` is the worded reason of a run that stopped on a
@@ -150,6 +153,8 @@ const props = withDefaults(
     harness?: LaunchMode | undefined;
     // A «Глибокий аналіз» task or session: the agent interviews before it codes.
     deepAnalysis?: boolean | undefined;
+    // A «Дизайн» session (`designDir`) or card (`task.design`).
+    design?: boolean | undefined;
     // Run by «Посіпака».
     minion?: boolean | undefined;
     // A card with «Дозволити автовиконання».
