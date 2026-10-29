@@ -2325,6 +2325,9 @@ export const en: MessageSchema = {
     },
   },
   kit: {
+    toast: {
+      close: 'Close',
+    },
     composer: {
       helpers: 'Helpers',
       helpersTip: 'Helpers — instruction commands',
