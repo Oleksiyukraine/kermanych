@@ -499,6 +499,30 @@
           </div>
         </div>
 
+        <!-- ── APP · СПОВІЩЕННЯ ─────────────────────────────────────────────── -->
+        <!-- docs/specs/2026-11-01-dock-attention.md. The switches apply on click, with no save
+             bar, like the theme: both are this machine's screen preferences. -->
+        <div v-else-if="section.key === 'app-notifications'" class="set__form">
+          <template v-if="hasDock">
+            <div class="set__group">
+              <KCheckbox v-model="badgeOn" :label="t('settings.notifications.badge')" />
+              <p class="set__note">{{ t('settings.notifications.badgeNote') }}</p>
+            </div>
+            <div class="set__group">
+              <KCheckbox v-model="bounceOn" :label="t('settings.notifications.bounce')" />
+              <p class="set__note">{{ t('settings.notifications.bounceNote') }}</p>
+            </div>
+            <div class="set__group">
+              <span class="set__label">{{ t('settings.notifications.popups') }}</span>
+              <KSkeleton v-if="popupsPhase === 'skeleton'" variant="line" width="60%" />
+              <p v-else-if="popupsPhase === 'ready'" class="set__note">
+                {{ popupsBlocked ? t('settings.notifications.popupsBlocked') : t('settings.notifications.popupsAllowed') }}
+              </p>
+            </div>
+          </template>
+          <p v-else class="set__note">{{ t('settings.notifications.desktopOnly') }}</p>
+        </div>
+
         <!-- ── APP · ГАРЯЧІ КЛАВІШІ ─────────────────────────────────────────── -->
         <div v-else-if="section.key === 'app-keymap'" class="set__form set__form--wide">
           <div class="set__table">
@@ -840,6 +864,7 @@ import { hardwareLine, useResourcesConsent } from '../composables/useResourcesCo
 import { errorText, useAsyncAction, useKeyedAction } from '../composables/useAsyncAction';
 import { useOptimisticValue } from '../composables/useOptimisticValue';
 import { useLoadPhase } from '../composables/useLoadPhase';
+import { dockBadgeOn, dockBounceOn } from '../lib/dock';
 import { isMoveRefusal, memberErrorText, moveRefusalText, NO_ROWS } from '../lib/cloud-errors';
 import {
   buildEnvRows,
@@ -1783,6 +1808,26 @@ watch(
     } catch {
       outbox.value = null;
     }
+  },
+  { immediate: true },
+);
+
+// ── NOTIFICATIONS ───────────────────────────────────────────────────────────
+// The Dock icon's two switches are device-local refs (lib/dock.ts) that apply on click. Pop-ups
+// are only reported: macOS shows them for an app signed by an Apple team alone, and main reads
+// the signature once per launch. The web build has neither, and says so.
+const hasDock = typeof window !== 'undefined' && !!window.kermanych?.dock;
+const badgeOn = dockBadgeOn;
+const bounceOn = dockBounceOn;
+// `undefined` until main answers: a skeleton, not a guess.
+const popupsBlocked = ref<boolean | undefined>(undefined);
+const popupsPhase = useLoadPhase(() => popupsBlocked.value === undefined);
+watch(
+  () => section.value.key,
+  async (key) => {
+    const read = window.kermanych?.notificationsBlocked;
+    if (key !== 'app-notifications' || !read || popupsBlocked.value !== undefined) return;
+    popupsBlocked.value = await read();
   },
   { immediate: true },
 );

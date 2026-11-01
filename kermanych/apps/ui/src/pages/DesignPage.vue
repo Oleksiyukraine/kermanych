@@ -271,6 +271,7 @@ import { relativeTime, renderTime } from '../lib/time';
 import { sessionLaunchMode } from '../lib/native-session';
 import { historyLoadFor } from '../lib/open-session-history';
 import { useNow } from '../composables/useNow';
+import { useMarkSeen } from '../composables/useMarkSeen';
 import { useResizablePanel } from '../composables/useResizablePanel';
 import { errorText, useAsyncAction, useKeyedAction } from '../composables/useAsyncAction';
 import { useOptimisticValue } from '../composables/useOptimisticValue';
@@ -351,6 +352,9 @@ function initialDesign(projectId: string | undefined): string | undefined {
 
 const designId = ref<string | undefined>(initialDesign(store.selectedProjectId));
 const design = computed(() => designs.value.find((s) => s.id === designId.value));
+// The open design is read by the rule of «Агенти», which never opens one: without this a design's
+// result would light the sidebar and the Dock icon's number for good.
+useMarkSeen(() => design.value);
 
 function select(id: string): void {
   designId.value = id;

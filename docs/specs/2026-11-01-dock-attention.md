@@ -9,8 +9,8 @@
 - **Builds on:** `docs/specs/2026-09-29-sidebar-attention-status.md` (the attention tally and the
   seen marks), `docs/superpowers/specs/2026-08-10-desktop-electron-packaging-design.md` §3.4 (the
   native notifications).
-- **Status:** decisions agreed with the operator in the deep-analysis interview (2026-10-31); not
-  implemented yet.
+- **Status:** decisions agreed with the operator in the deep-analysis interview (2026-10-31),
+  approved 2026-11-01, implemented on this branch (see «Verification»).
 
 ## Goal
 
@@ -236,41 +236,65 @@ approving the document covers them.
   - `settings.categories.app-notifications.{label,sub,blurb}`;
   - `settings.notifications.*`: the two checkboxes, their hints, the two pop-up lines and the
     web-build note.
+- `src/stores/board.ts`: its comment on the `@kermanych/core/status` import no longer points at
+  `orchestrator.ts`, which no longer has that import.
 - `test/attention.spec.ts`: the count and the event predicate.
 - `kermanych/README.md`: see «Documentation impact».
 
-## Verification (plan)
+## Verification
 
-- **Unit tests.** `apps/ui` vitest with `--maxWorkers=4`, in `test/attention.spec.ts`:
-  - The number: it counts input, error and unread results. It does not count running, `stopped`,
-    chats, completed work or backlog cards. A fork follows its parent.
-  - The event:
-    - it fires on a move into each «ваш хід» status from another status;
-    - it never fires on a repeat of the same status;
-    - it never fires for a chat or a completed session;
-    - it fires for a result that is already read.
-- **Static checks.** `pnpm --filter @kermanych/ui typecheck`, and the i18n completeness spec
-  (part of the suite).
-- **Smoke in an isolated desktop instance from this worktree.** The instance gets:
-  - `--user-data-dir` in a temp directory (Electron 43 honours it,
-    `shell/app/electron_main_delegate.cc:251-255`);
-  - a temp `KERMANYCH_DB`;
-  - `KERMANYCH_SEED=1`, `KERMANYCH_PREVIEW=1` and `VITE_KERMANYCH_PREVIEW=1`.
-
-  So the operator's running app, registry and seen marks stay untouched. The checks:
-  - The Dock badge equals the seeded «ваш хід» count (a screenshot of the Dock region only). It
-    drops when a seeded unread result is opened in «Агенти», and when a design is opened in
-    «Дизайн».
-  - «Число на іконці» off clears the badge; on restores it.
-  - A real status transition into a «ваш хід» status, while another app is active, bounces the
-    icon once. «Підстрибувати» off: no bounce.
-  - Minimise the window, then click the Dock icon: the window comes back. If the click cannot be
-    automated without new system permissions, this check goes to the operator.
-  - «Налаштування → Сповіщення» says that macOS blocks pop-ups.
-  - The web build shows the desktop-only note and throws nothing.
+- **Unit tests.** `apps/ui`: `vitest run --minWorkers=1 --maxWorkers=4` — 71 files, 781 tests
+  pass. `test/attention.spec.ts` adds:
+  - `yourTurnCount` over two projects: it counts the question, the conflict, the failure and the
+    unread result (4). It leaves out two running sessions, a read `in_review` and a `stopped` one.
+  - `isYourTurnEvent`:
+    - it fires on a move into each of the five statuses, and for a session first seen in `error`;
+    - it stays quiet on a repeat, and on moves into `thinking`, `stopped` and `merged`;
+    - it stays quiet for a chat, an archived agent and a fork of a merged parent.
+  - The planned case «fires for a result that is already read» was dropped. The predicate takes
+    no read state, so such a test could not fail.
+- **Static checks.** `vue-tsc --noEmit` in `apps/ui`, which covers `src-electron` too: clean. The
+  i18n completeness spec is part of the suite and passes.
+- **Smoke** (2026-11-01), in an isolated desktop instance from this worktree:
+  - **Setup.**
+    - `quasar dev -m electron -- --user-data-dir=<tmp> --remote-debugging-port=9333`.
+    - `KERMANYCH_DB` and `KERMANYCH_SKILLS_HOME` in a temp dir; `KERMANYCH_SEED=1`,
+      `KERMANYCH_PREVIEW=1`, `VITE_KERMANYCH_PREVIEW=1`.
+    - The operator's dev `Electron.app` binary through `ELECTRON_OVERRIDE_DIST_PATH`.
+    - The renderer was driven through CDP, and main through its inspector. The operator's app,
+      registry and seen marks were not touched, and everything was removed afterwards.
+  - **The number.**
+    - The seed gave 4: the question, two failures and the conflict. One failure is the seeded
+      `queued` agent, which failed to start at boot.
+    - `app.getBadgeCount()` returned 4, and a screenshot of the Dock region showed «4» on the
+      instance's icon.
+    - «Число на іконці» off → 0; on → 4.
+  - **Unread results.**
+    - With the seen baseline moved back, the number was 10 (six results).
+    - Opening an agent in «Агенти» and then a design in «Дизайн», while the window was visible,
+      took it to 9 and then 8. The sidebar marks agreed.
+    - While the window was covered, opening marked nothing: the visibility rule.
+    - Two seeded rows were flipped to `native` in the temp DB first. Otherwise opening a seeded
+      `done` agent resumes it, the inert seed's resume fails, and the agent turns `error`. The
+      number then swaps a result for an error and stays put. This is the preview's existing
+      behaviour.
+  - **The bounce.**
+    - The instance was hidden (`app.hide()`). Then `GET /api/sessions/:id/finish` on the
+      conflicted agent, whose worktree was real and had no merge in progress, moved it
+      `conflict → done`.
+    - `app.dock.bounce`, wrapped through the inspector, was called once with `informational` and
+      returned request 0. A Dock screenshot caught the icon mid-bounce.
+    - With «Підстрибувати» off, the same transition requested no bounce.
+  - **The window comes back.** A minimised window was restored and shown on
+    `app.emit('activate')`. The real Dock click was not automated, because it needs Accessibility
+    permission; it is left to the operator.
+  - **Settings.** In the instance, «Налаштування → Сповіщення» showed both switches on, and
+    «macOS їх блокує…», because the dev `Electron.app` has no team identifier.
+  - **Web build.** The same dev server, opened in a plain browser against a standalone preview api,
+    has no bridge. The pane shows only the desktop-only note, and the console has no errors.
 - **For the operator after merge, in their own app.** An agent finishes a turn while they work in
   another app: one bounce, and the number goes up by one. Opening the agent takes the number down
-  by one.
+  by one. With the window minimised, a click on the Dock icon brings it back.
 
 ## Out of scope
 

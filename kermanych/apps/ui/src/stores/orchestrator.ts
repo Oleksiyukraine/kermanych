@@ -16,10 +16,6 @@ import type {
   DocsWriteKind,
   MachineAlert,
 } from '@kermanych/core';
-// Import from core's status module directly (not the barrel): @kermanych/core is a CJS
-// workspace dep whose named exports vite/rollup only sees once its dist is commonjs-
-// transformed (see quasar.config commonjsOptions.include); status.js has a direct export.
-import { shouldNotify } from '@kermanych/core/status';
 import { connectSocket } from '../lib/socket';
 import { api, type MessageMode } from '../lib/api';
 import { applyTranscriptUpdate } from './transcript-update';
@@ -29,6 +25,8 @@ import { readBucket, type Bucket } from '../lib/buckets';
 import { unsettledOutgoing, type OutgoingMessage } from '../lib/outgoing';
 import { PENDING_TIMEOUT_MS } from './pending';
 import { confirmAction } from '../lib/confirm';
+import { isYourTurnEvent } from '../lib/attention';
+import { bounceDock } from '../lib/dock';
 
 // The persisted selection (see `savedSelection` in the store). Guarded both ways: a missing
 // or unreadable value is simply «nothing selected».
@@ -206,23 +204,24 @@ export const useOrchestrator = defineStore('orchestrator', () => {
       if (prev !== undefined && prev !== 'merged' && e.session.status === 'merged' && selectedSessionId.value === e.session.id) {
         selectedSessionId.value = undefined;
       }
-      // Native notification on an attention-worthy transition, only while the desktop
-      // window is unfocused. Guarded so the browser build (no Notification) never throws.
-      if (
-        shouldNotify(prev, e.session.status) &&
-        typeof document !== 'undefined' &&
-        !document.hasFocus() &&
-        typeof Notification !== 'undefined'
-      ) {
-        const key = STATUS_LABEL_KEY[e.session.status];
-        const n = new Notification(e.session.name, {
-          body: key ? globalTr.t(key) : e.session.status,
-        });
-        n.onclick = () => {
-          window.kermanych?.focus();
-          selectProject(e.session.projectId);
-          selectSession(e.session.id);
-        };
+      // The operator's turn (docs/specs/2026-11-01-dock-attention.md, decisions 4 and 7): one Dock
+      // bounce, and a native notification while the window is unfocused — same trigger for both,
+      // over the sessions the sidebar tracks. Guarded so the browser build (no Notification) never
+      // throws. A snapshot (every socket (re)connect) never gets here: it only sets the number.
+      const parent = (id: string): Session | undefined => sessions.value.find((x) => x.id === id);
+      if (isYourTurnEvent(prev, e.session, parent)) {
+        bounceDock();
+        if (typeof document !== 'undefined' && !document.hasFocus() && typeof Notification !== 'undefined') {
+          const key = STATUS_LABEL_KEY[e.session.status];
+          const n = new Notification(e.session.name, {
+            body: key ? globalTr.t(key) : e.session.status,
+          });
+          n.onclick = () => {
+            window.kermanych?.focus();
+            selectProject(e.session.projectId);
+            selectSession(e.session.id);
+          };
+        }
       }
     } else if (e.type === 'session_removed') {
       sessions.value = sessions.value.filter((x) => x.id !== e.sessionId);
@@ -267,8 +266,9 @@ export const useOrchestrator = defineStore('orchestrator', () => {
     }
   }
 
-  // A watchdog finding (spec decision 7): an in-app toast, plus a native notification while
-  // the window is unfocused — the operator is likely in the very app eating the memory.
+  // A watchdog finding (spec decision 7): an in-app toast, plus a Dock bounce and a native
+  // notification while the window is unfocused — the operator is likely in the very app eating
+  // the memory.
   function onMachineAlert(alert: MachineAlert): void {
     const view = machineAlertView(alert, (k, named) => globalTr.t(k, named ?? {}));
     const { sessionId, pid } = alert;
@@ -280,6 +280,7 @@ export const useOrchestrator = defineStore('orchestrator', () => {
     notify(view.message, view.kind, 15_000, action);
     // A warn-level kill is the echo of the operator's own click: they are looking already.
     const ownKill = alert.killed && alert.level === 'warn';
+    if (!ownKill) bounceDock();
     if (!ownKill && typeof document !== 'undefined' && !document.hasFocus() && typeof Notification !== 'undefined') {
       const n = new Notification(globalTr.t('machineAlert.title'), { body: view.message });
       n.onclick = () => {

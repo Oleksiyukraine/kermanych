@@ -1,4 +1,5 @@
-import { ref, watch, type Ref } from 'vue';
+import type { Ref } from 'vue';
+import { persisted } from './persisted';
 
 // Which files the viewers (KDiffView, KFileView) can show rendered, not just as source.
 // Judged by extension alone: the toggle has to appear before any body is fetched. `svg` is a
@@ -19,28 +20,6 @@ export function docPreviewKind(path: string): DocPreviewKind | null {
 // The viewer's three modes (KViewModeToggle).
 export type ViewMode = 'source' | 'split' | 'preview';
 const VIEW_MODES: readonly ViewMode[] = ['source', 'split', 'preview'];
-
-// Device-local screen preferences for the file viewers, like the locale (lib/locale.ts):
-// localStorage, never Supabase. Every read and write is guarded — a refused storage (private
-// mode, quota, vitest's node env) only means the choice lasts until the app restarts.
-function persisted<T>(key: string, fallback: T, parse: (raw: string) => T | null, write: (v: T) => string): Ref<T> {
-  let initial = fallback;
-  try {
-    const raw = typeof localStorage === 'undefined' ? null : localStorage.getItem(key);
-    initial = (raw === null ? null : parse(raw)) ?? fallback;
-  } catch {
-    // unreadable storage: the fallback
-  }
-  const r = ref(initial) as Ref<T>;
-  watch(r, (v) => {
-    try {
-      if (typeof localStorage !== 'undefined') localStorage.setItem(key, write(v));
-    } catch {
-      // storage refused: kept in memory only
-    }
-  });
-  return r;
-}
 
 /** The view mode last picked in either viewer (KDiffView, KFileView), shared across files. */
 export const rememberedViewMode: Ref<ViewMode> = persisted<ViewMode>(

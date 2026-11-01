@@ -1212,7 +1212,6 @@ import { useRouter } from 'vue-router';
 import { useProjects } from 'stores/projects';
 import { useBoard } from 'stores/board';
 import { useAuth } from 'stores/auth';
-import { useSeen } from 'stores/seen';
 import { api, type FileDiff, type MessageMode } from '../lib/api';
 import { EXPAND_ALL_NONE, nextExpandAll, type ExpandAllCommand } from '../lib/expand-all';
 import { sessionScopedProjectIds } from '../lib/scope';
@@ -1274,6 +1273,7 @@ import KSelect from 'components/kit/KSelect.vue';
 import { BRANCH_PREFIXES, PLATFORMS, prependHelper, type BranchPrefix, type Platform } from '@kermanych/core';
 import { useImageAttach } from '../composables/useImageAttach';
 import { useNow } from '../composables/useNow';
+import { useMarkSeen } from '../composables/useMarkSeen';
 import { relativeTime, renderTime } from '../lib/time';
 import { tokens, usageTokens, usd } from '../lib/format';
 import { EFFORT_OPTIONS } from '../lib/effort';
@@ -1737,19 +1737,8 @@ function commitRename(): void {
 watch(() => store.selectedSessionId, () => { renaming.value = false; });
 const selectedNotNeeded = computed(() => (selectedSession.value ? sessionNotNeededReason(t, selectedSession.value) : undefined));
 
-// The open session is READ, as it stands, for the sidebar's unread-result mark
-// (stores/seen.ts). Re-marked whenever it moves while open, so a result that lands under the
-// operator's eyes never lights the sidebar — but only while the window is actually visible:
-// a result that arrives behind another app has not been seen, and is marked the moment the
-// window comes back.
-const seen = useSeen();
-function markOpenSessionSeen(): void {
-  const s = selectedSession.value;
-  if (s && document.visibilityState === 'visible') seen.markSeen(s.id, s.lastActivityAt);
-}
-watch(() => [selectedSession.value?.id, selectedSession.value?.lastActivityAt], markOpenSessionSeen, { immediate: true });
-onMounted(() => document.addEventListener('visibilitychange', markOpenSessionSeen));
-onBeforeUnmount(() => document.removeEventListener('visibilitychange', markOpenSessionSeen));
+// The open session is read for the sidebar's unread-result ring and the Dock icon's number.
+useMarkSeen(() => selectedSession.value);
 
 // A session whose worktree has been retired keeps `worktree: true` but loses its
 // `worktreePath` — this is every finished/merged agent now in «Завершені» or «Очікують». The
