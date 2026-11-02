@@ -199,6 +199,11 @@
               @expand-all="onExpandAll"
               @effort="effortPick.set"
               @set-model="onSetModel"
+              :voiceable="true"
+              :voice="voicePanel.bar.value"
+              @voice-start="voicePanel.start"
+              @voice-mute="voicePanel.mute"
+              @voice-end="voicePanel.end"
             >
               <!-- The log of this thread has not arrived yet: a skeleton, never «Порожній чат»,
                    which would claim a history-less chat. -->
@@ -259,6 +264,7 @@ import { relativeTime, renderTime } from '../lib/time';
 import { useNow } from '../composables/useNow';
 import { useResizablePanel } from '../composables/useResizablePanel';
 import { useAsyncAction, useKeyedAction } from '../composables/useAsyncAction';
+import { useVoicePanel } from '../composables/useVoicePanel';
 import { useOptimisticValue } from '../composables/useOptimisticValue';
 import { useLoadPhase } from '../composables/useLoadPhase';
 import { LAUNCH_MODES, nativeHarnessName, nativeRuntimeFor, sessionLaunchMode, type LaunchMode } from '../lib/native-session';
@@ -336,6 +342,8 @@ const BIND_HINT = computed(() => t('chat.page.bindHint'));
 const selectedProject = computed(() => store.projects.find((p) => p.id === store.selectedProjectId));
 const isBound = computed(() => !!selectedProject.value?.localRepoPath);
 const chatSession = computed(() => store.sessions.find((s) => s.id === chatId.value));
+// The voice conversation (docs/specs/2026-11-02-voice-conversation.md) with this thread.
+const voicePanel = useVoicePanel(() => chatSession.value);
 // Promotion grows a worktree, so it is refused without a local binding; the strip states why.
 // A native chat has no ▶ at all, so there is nothing for the strip to explain.
 const promoteBlocked = computed(() => !!chatSession.value && !chatSession.value.native && !isBound.value);

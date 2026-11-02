@@ -18,10 +18,11 @@
 // rows here; it is its own top-nav screen now (lib/ai-team.ts, pages/AiTeamPage.vue), so
 // nothing about agents, triggers or the skill library is registered below any more — the
 // pure merge those panels still share lives on in this file. Nothing here is a
-// placeholder: harness paths, provider API keys, spend caps, a context-warning threshold
-// and remappable keys have no storage, no endpoint and no column anywhere in the repo, so
-// they get no panel. The parallel agent limit does: it is part of «Ресурси машини», stored
-// per machine by the api (`/machine/resources`).
+// placeholder: harness paths, provider API keys for the agents, spend caps, a context-warning
+// threshold and remappable keys have no storage, no endpoint and no column anywhere in the repo,
+// so they get no panel. The parallel agent limit does: it is part of «Ресурси машини», stored
+// per machine by the api (`/machine/resources`); so does the voice conversation's OpenAI key
+// («Голос», stored per machine by the api, `/voice/key`).
 
 import { DESIGN_SAVE_AGENT_ID, DESIGNER_AGENT_ID, MINION_AGENT_ID, type AgentDef, type EnvEntry, type MachineResources, type RepoSkill, type ResourceLimits, type ResourcesUpdate, type SkillView } from '@kermanych/core';
 import type { AiAgentSkill, TriggerSource } from '@kermanych/cloud';
@@ -56,6 +57,7 @@ export const SETTINGS_CATEGORIES: readonly SettingsCategory[] = [
   { key: 'app-notifications', scope: 'app' },
   { key: 'app-keymap', scope: 'app' },
   { key: 'app-runtime', scope: 'app' },
+  { key: 'app-voice', scope: 'app' },
   { key: 'app-resources', scope: 'app' },
   { key: 'app-account', scope: 'app' },
 ];

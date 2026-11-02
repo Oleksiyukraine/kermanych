@@ -114,7 +114,16 @@ export type ApiErrorCode =
   // supervisor.service.ts resolveLaunchParams — an in-place (non-worktree) launch refused:
   | "inplace_tree_dirty" // the project checkout has uncommitted changes (params: { count, files } — files: the first few paths, comma-joined, `…` when cut)
   | "inplace_already_active" // another in-place agent already owns the project checkout (params: none)
-  | "inplace_detached_head"; // the project checkout is on no branch (params: none)
+  | "inplace_detached_head" // the project checkout is on no branch (params: none)
+  // voice/voice.service.ts — a voice conversation that could not start, or a key check:
+  | "voice_key_missing" // no OpenAI key stored and no OPENAI_API_KEY (params: none)
+  | "voice_key_invalid" // OpenAI refused the key, 401 (params: none)
+  | "voice_no_access" // the key's project cannot use gpt-live-1, 403/404 (params: none)
+  | "voice_quota" // OpenAI rate limit or quota, 429 (params: none)
+  | "voice_network" // OpenAI unreachable (params: none)
+  | "voice_upstream" // any other OpenAI refusal (params: { status })
+  | "voice_offer_invalid" // the SDP offer is missing or too large (params: none)
+  | "voice_voice_invalid"; // the voice is not one of VOICE_IDS (params: none)
 
 // Runtime mirrors of the unions above. MUST list every member of their type exactly once;
 // the exhaustiveness test in test/i18n-codes.spec.ts fails on a drift or a duplicate.
@@ -196,6 +205,14 @@ export const API_ERROR_CODES = [
   "inplace_tree_dirty",
   "inplace_already_active",
   "inplace_detached_head",
+  "voice_key_missing",
+  "voice_key_invalid",
+  "voice_no_access",
+  "voice_quota",
+  "voice_network",
+  "voice_upstream",
+  "voice_offer_invalid",
+  "voice_voice_invalid",
 ] as const satisfies readonly ApiErrorCode[];
 
 // Compile-time exhaustiveness (checked by `tsc` at build; test/ is not compiled). The

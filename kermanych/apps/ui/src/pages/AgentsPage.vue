@@ -466,6 +466,11 @@
               @expand-all="onExpandAll"
               @effort="onEffort"
               @set-model="onSetModel"
+              :voiceable="true"
+              :voice="voicePanel.bar.value"
+              @voice-start="voicePanel.start"
+              @voice-mute="voicePanel.mute"
+              @voice-end="voicePanel.end"
             >
               <!-- Not loaded yet ≠ empty: «Журнал порожній» only once the transcript answered. -->
               <KSkeleton v-if="logPhase === 'skeleton'" variant="lines" :rows="6" />
@@ -1312,6 +1317,7 @@ import { slotWaitLabel } from '../lib/slot-wait';
 import { markdownPreview } from '../lib/markdown-preview';
 import KSkeleton from 'components/kit/KSkeleton.vue';
 import { useAsyncAction, useKeyedAction, errorText } from '../composables/useAsyncAction';
+import { useVoicePanel } from '../composables/useVoicePanel';
 import { useOptimisticValue } from '../composables/useOptimisticValue';
 import { useLoadPhase } from '../composables/useLoadPhase';
 import { usePending } from 'stores/pending';
@@ -1709,6 +1715,8 @@ function isBoundFor(projectId: string): boolean {
 const selectedSession = computed(() =>
   store.sessions.find((s) => s.id === store.selectedSessionId),
 );
+// The voice conversation (docs/specs/2026-11-02-voice-conversation.md) from the detail panel.
+const voicePanel = useVoicePanel(() => selectedSession.value);
 const selectedDecision = computed(() => (selectedSession.value ? sessionDecisionReason(t, selectedSession.value) : undefined));
 
 // Inline rename of the open agent: double-click its name in the header. Enter and blur

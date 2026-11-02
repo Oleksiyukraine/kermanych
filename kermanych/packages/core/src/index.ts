@@ -81,8 +81,10 @@ export {
   AGENT_LANGUAGE_LABELS,
   isAgentLanguage,
   agentLanguageDirective,
+  agentLanguageEnglishName,
   type AgentLanguage,
 } from "./language";
+export { DEFAULT_VOICE, VOICE_IDS, VOICE_MODEL, isVoiceId, voiceLanguage, voiceLivePrompt, type VoiceId } from "./voice";
 export { STE_LEVELS, STE_RULES, type SteCell, type SteLevel, type SteRule, type SteRuleId } from "./ste";
 export {
   ASSIGNED_BLOCK_HEADER,

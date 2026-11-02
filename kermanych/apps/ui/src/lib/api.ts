@@ -851,4 +851,16 @@ export const api = {
 
   setAccountLanguage: (language: AgentLanguage): Promise<void> =>
     post<void>('/account/language', { language }),
+
+  // ── Voice conversation (docs/specs/2026-11-02-voice-conversation.md) ──────────────────
+  // The OpenAI key stays in the api: the window only learns where it comes from and its last
+  // four characters, and hands its WebRTC offer to the api for GPT-Live's answer.
+  voiceKey: (): Promise<VoiceKeyStatus> => get<VoiceKeyStatus>('/voice/key'),
+  // An empty key deletes the stored one.
+  setVoiceKey: (key: string): Promise<VoiceKeyStatus> => put<VoiceKeyStatus>('/voice/key', { key }),
+  checkVoiceKey: (): Promise<{ ok: true }> => post<{ ok: true }>('/voice/check', {}),
+  voiceSession: (body: { sdp: string; voice: string; language: string }): Promise<{ id: string; sdp: string }> =>
+    post<{ id: string; sdp: string }>('/voice/session', body),
 };
+
+export type VoiceKeyStatus = { source: 'env' | 'stored' | null; hint?: string };
