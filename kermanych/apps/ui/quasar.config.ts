@@ -83,7 +83,16 @@ export default defineConfig((ctx) => {
       builder: {
         appId: 'com.kermanych.app',
         productName: 'Kermanych',
-        mac: { target: 'dmg', identity: null }, // identity:null → unsigned
+        mac: {
+          target: 'dmg',
+          identity: null, // identity:null → unsigned
+          // The text of macOS's microphone prompt for the voice conversation
+          // (docs/specs/2026-11-02-voice-conversation.md). Without it macOS refuses the
+          // microphone outright. No entitlement: the build has no hardened runtime.
+          extendInfo: {
+            NSMicrophoneUsageDescription: 'Kermanych uses the microphone for voice conversations with your agents.',
+          },
+        },
         // better-sqlite3's and node-pty's native .node files must live OUTSIDE the asar —
         // Electron cannot dlopen from an archive, and node-pty also execs its spawn-helper
         // from disk (it rewrites the path to app.asar.unpacked itself). Both ship N-API

@@ -85,6 +85,24 @@ export {
   type AgentLanguage,
 } from "./language";
 export { DEFAULT_VOICE, VOICE_IDS, VOICE_MODEL, isVoiceId, voiceLanguage, voiceLivePrompt, type VoiceId } from "./voice";
+export {
+  COMMENTARY_CHUNK_CHARS,
+  PROGRESS_EVERY_MS,
+  VOICE_NOTE,
+  VOICE_SILENCE_HANGUP_MS,
+  delegationAction,
+  describeUiRequest,
+  finalReply,
+  parseUiAnswer,
+  progressNote,
+  shouldHangUp,
+  takeUtterance,
+  toCommentaryChunks,
+  unwrapVoiceMessage,
+  voiceMessagePrompt,
+  type HeardFragment,
+  type VoiceAction,
+} from "./voice-bridge";
 export { STE_LEVELS, STE_RULES, type SteCell, type SteLevel, type SteRule, type SteRuleId } from "./ste";
 export {
   ASSIGNED_BLOCK_HEADER,

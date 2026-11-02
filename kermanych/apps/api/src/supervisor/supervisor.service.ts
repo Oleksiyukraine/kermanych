@@ -102,6 +102,7 @@ import {
   DESIGN_SPEC_SKILL,
   designDirFor,
   designCommitMessage,
+  voiceMessagePrompt,
 } from "@kermanych/core";
 import { claimTaskForLaunch, createTask, getTask, listProjects, patchTask, releaseLaunchClaim, type CloudProject, type AiTrigger, type Task, type TaskPatch } from "@kermanych/cloud";
 import { AuthService } from "../auth/auth.service";
@@ -1845,9 +1846,13 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
 
   // Echo the user's own message (initial task or follow-up) into the transcript so
   // the log reads as a full conversation. Images ride along as data URLs for render.
-  private userEntry(text: string, images?: ImageInput[]): TranscriptEntry {
+  private userEntry(text: string, images?: ImageInput[], voice?: boolean): TranscriptEntry {
     const at = this.stamp();
-    return { kind: "user_text", id: `u${at}`, at, text, ...(images?.length ? { images: images.map((i) => `data:${i.mimeType};base64,${i.data}`) } : {}) };
+    return {
+      kind: "user_text", id: `u${at}`, at, text,
+      ...(images?.length ? { images: images.map((i) => `data:${i.mimeType};base64,${i.data}`) } : {}),
+      ...(voice ? { via: "voice" as const } : {}),
+    };
   }
 
   // A Kermanych-authored row in the conversation. A fired trigger changed what the child was
@@ -2171,10 +2176,11 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
 
   // The OPERATOR's own message. Everything Kermanych sends itself goes through
   // `sendAsKermanych`, which is the same delivery with the operator's own affordances off.
-  async sendMessage(id: string, text: string, mode: "prompt" | "follow_up" | "steer", images?: ImageInput[]) {
+  // `voice`: said in a voice conversation (docs/specs/2026-11-02-voice-conversation.md, decision 6).
+  async sendMessage(id: string, text: string, mode: "prompt" | "follow_up" | "steer", images?: ImageInput[], opts: { voice?: boolean } = {}) {
     // The operator took over a «Посіпака» run: it works again, with no clock from here on.
     this.attendMinionRun(id);
-    await this.deliver(id, text, mode, images, true);
+    await this.deliver(id, text, mode, images, true, undefined, opts);
   }
 
   // Kermanych's own prompt into a session: a fired trigger's agent, a PR request, a merged
@@ -2202,14 +2208,15 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     images: ImageInput[] | undefined,
     fromOperator: boolean,
     replay?: () => Promise<unknown>,
+    opts: { voice?: boolean } = {},
   ): Promise<boolean> {
     const row = this.registry.listSessions().find((x) => x.id === id);
     if (!row) throw new Error("session not found");
     // Refused now, not after a wait: a parked message the harness cannot take would vanish on
     // replay with nobody left to tell (deliverNative's own check).
     if (row.native && (images?.length || (fromOperator && parseCommand(text)))) throw nativeUnsupported();
-    const parked = replay ?? (() => this.deliver(id, text, mode === "prompt" && this.turnRunning(row) ? "follow_up" : mode, images, fromOperator));
-    return this.withSlot(row, () => this.deliverNow(row, text, mode, images, fromOperator), parked, { text, images });
+    const parked = replay ?? (() => this.deliver(id, text, mode === "prompt" && this.turnRunning(row) ? "follow_up" : mode, images, fromOperator, undefined, opts));
+    return this.withSlot(row, () => this.deliverNow(row, text, mode, images, fromOperator, opts), parked, { text, images });
   }
 
   private async deliverNow(
@@ -2218,6 +2225,7 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     mode: "prompt" | "follow_up" | "steer",
     images: ImageInput[] | undefined,
     fromOperator: boolean,
+    opts: { voice?: boolean } = {},
   ): Promise<void> {
     const id = row.id;
     if (row.native) return this.deliverNative(id, text, images, fromOperator);
@@ -2232,7 +2240,8 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     // intercepted BEFORE the task-name capture and the trigger/helper passes: `/compact` is not
     // the ask, so it must neither name a fresh chat nor match an operator trigger. The typed
     // command line stays in the transcript, the way a helper's slash does.
-    if (fromOperator) {
+    // A voice transcript is never a command: speech that happens to start with a slash is speech.
+    if (fromOperator && !opts.voice) {
       const cmd = parseCommand(text);
       if (cmd) {
         this.appendEntry(id, this.userEntry(text));
@@ -2243,7 +2252,7 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     // A chat's opening message IS the ask. Record it once, so promoting the chat can name the
     // agent and its branch after the thing being built, and so review/PR prompts have a task.
     if (text.trim() && s?.kind === "chat" && !s.task.trim()) this.registry.updateSession(id, { task: text.trim() });
-    if (text.trim() || images?.length) this.appendEntry(id, this.userEntry(text, images));
+    if (text.trim() || images?.length) this.appendEntry(id, this.userEntry(text, images, opts.voice));
 
     // Operator-sourced triggers run BEFORE the message reaches the child: Kermanych is the
     // only party that sees the operator's text, and an `agent` action has to be Kermanych's
@@ -2259,7 +2268,11 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     // the operator wrote, so the guidance is read before the request it applies to. The
     // transcript keeps the operator's own text as the visible row and the notices above say
     // what was prepended to it.
-    const body = fired?.body ? `${fired.body}\n\n${helped.text}` : helped.text;
+    const prompted = fired?.body ? `${fired.body}\n\n${helped.text}` : helped.text;
+    // The voice note goes in front of everything, so the history re-read after a restart can
+    // recognise the message by its first line and show the operator's words again
+    // (messages-to-transcript.ts).
+    const body = opts.voice ? voiceMessagePrompt(prompted) : prompted;
     // An idle child starts a turn from this write; it holds its agent slot from now (Live.turnPending).
     if (!ACTIVE_STATUSES.includes(l.live.status ?? "done")) l.turnPending = true;
     if (mode === "steer") l.rpc.steer(body, images);

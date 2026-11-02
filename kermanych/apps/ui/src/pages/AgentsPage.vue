@@ -1318,6 +1318,7 @@ import { markdownPreview } from '../lib/markdown-preview';
 import KSkeleton from 'components/kit/KSkeleton.vue';
 import { useAsyncAction, useKeyedAction, errorText } from '../composables/useAsyncAction';
 import { useVoicePanel } from '../composables/useVoicePanel';
+import { nextMode as modeFor } from '../lib/message-mode';
 import { useOptimisticValue } from '../composables/useOptimisticValue';
 import { useLoadPhase } from '../composables/useLoadPhase';
 import { usePending } from 'stores/pending';
@@ -3207,13 +3208,9 @@ function onRowClick(s: Session): void {
 }
 
 // ── Detail panel emits → store actions ───────────────────────────────────
-// Which omp message mode the session's next message takes. An empty session (a fresh quick
-// chat) starts its first turn with a prompt. Otherwise: a settled session gets a fresh
-// follow-up; a live one is steered mid-turn.
+// Which omp message mode the session's next message takes (lib/message-mode.ts).
 function nextMode(s: Session): MessageMode {
-  const history = store.transcripts[s.id] ?? [];
-  const hasTurn = history.some((e) => e.kind === 'user_text' || e.kind === 'assistant_text');
-  return !hasTurn ? 'prompt' : s.status === 'done' ? 'follow_up' : 'steer';
+  return modeFor(s, store.transcripts[s.id] ?? []);
 }
 
 // The composer clears on send and the store shows the «надсилаю…» bubble at once; the panel

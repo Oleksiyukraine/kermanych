@@ -5,8 +5,9 @@
   `apps/api` (the OpenAI key, the SDP exchange, the voice flag on a message, unwrapping on
   rehydrate), `apps/ui` (the voice store, the voice bar, the top-bar pill, the «Голос» settings
   pane, the Electron microphone permission), i18n `uk` / `en`, `kermanych/README.md`.
-- **Status:** decisions agreed with the operator in the deep-analysis interview (2026-11-02);
-  awaiting approval.
+- **Status:** decisions agreed with the operator in the deep-analysis interview (2026-11-02),
+  approved the same day; the Ukrainian checkpoint passed; implemented on this branch (see
+  «Verification»).
 
 ## Goal
 
@@ -135,8 +136,8 @@ the agent's voice: it never answers about the task itself.
     спілкування агента» (`en-ste*` → English), falling back to the UI locale (`uk` by default),
     so the retelling never translates. Rejected: a separate language picker (an agent writing in
     English would be translated on the fly).
-12. **Verification includes a live checkpoint with the operator's key** (in `kermanych/.env` of
-    this worktree, git-ignored): see «Steps» 1.
+12. **Verification includes a live checkpoint with the operator's key**, entered in the
+    preview's «Голос» pane (its temp DB), so the key never passes through the agent: see «Steps» 1.
 
 ## Design
 
@@ -159,8 +160,8 @@ the agent's voice: it never answers about the task itself.
 - `voiceLivePrompt(language)` — GPT-Live's conversation prompt (decision 5, «speak <language>
   unless the operator switches»).
 - `UserEntry.via?: 'voice'` on `user_text`.
-- `nextMode(session, transcript)` moves here from the three pages; the pages and the voice store
-  call it.
+- `nextMode(session, transcript)` moves from the three pages to `apps/ui/src/lib/message-mode.ts`
+  (beside `MessageMode`, which is a ui type); the pages and the voice store call it.
 
 ### API (`apps/api`)
 
@@ -169,13 +170,16 @@ the agent's voice: it never answers about the task itself.
   - `GET /api/voice/key` → `{ source: 'env' | 'stored' | null, hint?: '…abcd' }`.
   - `PUT /api/voice/key {key}` (an empty key deletes).
   - `POST /api/voice/check` → `GET https://api.openai.com/v1/models/gpt-live-1` with the key →
-    `{ok: true}` or `{ok: false, code: 'no_key' | 'invalid_key' | 'no_access' | 'network'}`.
+    `{ok: true}`, or a 400 with a coded error: `voice_key_missing`, `voice_key_invalid` (401),
+    `voice_no_access` (403/404), `voice_quota` (429), `voice_network`, `voice_upstream`.
   - `POST /api/voice/session {sdp, voice, language}` → `POST /v1/live/sessions` with
-    `{session: {model: 'gpt-live-1', delegation: {type: 'client'}, audio.output.voice, prompt},
-    transport: {type: 'webrtc', sdp}}` → `{id, sdp}`; OpenAI errors map to the same codes plus
-    `quota`. Plain `fetch`, no `openai` package. `voice` is checked against the voice list,
-    `language` against `AGENT_LANGUAGES` / UI locales. Exact Live field names are confirmed
-    against the API reference at step 1.
+    `{session: {...}, transport: {type: 'webrtc', sdp}}` → `{id, sdp}`; OpenAI errors map to the
+    same codes, a bad offer or voice to `voice_offer_invalid` / `voice_voice_invalid`. OpenAI's own
+    error text is never relayed (it can echo part of the key). Plain `fetch`, no `openai` package.
+    `voice` is checked against the voice list
+    (the 31 of the API reference). The session config is `model`, `instructions`,
+    `audio.output.voice` and `delegation: {type: 'client'}`; the answer is
+    `{session: {id}, transport: {sdp}}`.
 - `POST /sessions/:id/message` accepts `voice?: boolean`: `deliver` prepends `VOICE_NOTE` to the
   body the child gets, stamps the row `via: 'voice'`, and skips harness-command parsing for it.
   Operator triggers still match the raw text.
@@ -215,10 +219,10 @@ the agent's voice: it never answers about the task itself.
 ## Steps
 
 1. **Ukrainian checkpoint.** Key storage + `POST /api/voice/session` + the store connecting
-   WebRTC with no bridge yet. The operator talks to bare GPT-Live for 5 minutes in Ukrainian,
-   with terms like `worktree`, «сесія», file names; voices are compared and the default chosen.
-   **Stop and ask the operator before step 2 if Ukrainian is not good enough** (fallback:
-   Gemini Live, decision 2).
+   WebRTC with no bridge yet; a delegation was answered by echoing what GPT-Live heard, so
+   recognition and speech could be judged end to end (removed in step 4). **Passed
+   2026-11-02:** the operator found conversation, voice and sound «дуже непогано» in Ukrainian;
+   the default voice stays `marin`.
 2. Core: `voice-bridge.ts`, the voice note, `voiceLivePrompt`, `via`, `nextMode`, with tests.
 3. API: the `voice` message flag, the unwrap on rehydrate, `check`, with tests.
 4. UI: the bridge wiring, `KVoiceBar`, the pill, the settings pane, the 🎤 mark, i18n.
@@ -241,6 +245,22 @@ the agent's voice: it never answers about the task itself.
   chat on «Чат» in the preview: speak, steer a running turn, answer a `select` by number, mute,
   end, silence timeout. In the packaged app: the microphone prompt appears and the conversation
   starts.
+
+### Results
+
+- `@kermanych/core`: 24 files, 261 passed (incl. `voice-bridge.spec.ts`, 28).
+- `@kermanych/api`: 121 files, 1179 passed, 4 skipped (incl. `voice.service.spec.ts`, 12, and
+  `voice.deliver.spec.ts`, 4). `tsc --noEmit` clean.
+- `@kermanych/ui`: 74 files passed (incl. `voice-store.spec.ts`, 5); `vue-tsc --noEmit` reports only
+  the missing `@kermanych/api` build output the base commit reports too.
+- Against the real OpenAI API from the preview api: no key → `voice_key_missing`; a fake key →
+  `voice_key_invalid` for both «Перевірити» and a session start.
+- A real omp chat in the preview: a `voice: true` message reached the child under the voice note,
+  the row showed the raw words with `via: 'voice'`, the agent answered in two short paragraphs,
+  and after a restart the rehydrated row (`h1`) still read the raw words with the mark.
+- Step 1 live: the operator's Ukrainian conversation in Chrome against the preview.
+- In the embedded session browser the microphone is refused and the composer shows «Немає
+  доступу до мікрофона…» instead of hanging.
 
 ## Risks
 

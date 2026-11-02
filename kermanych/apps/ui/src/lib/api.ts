@@ -604,8 +604,9 @@ export const api = {
   promoteChat: (id: string, taskId: string): Promise<Session> =>
     post<Session>(`/sessions/${id}/promote`, { taskId }),
 
-  sendMessage: (id: string, text: string, mode: MessageMode, images?: ImageInput[]): Promise<unknown> =>
-    post(`/sessions/${id}/message`, { text, mode, images }),
+  // `voice`: the text is a transcript from a voice conversation (docs/specs/2026-11-02-voice-conversation.md).
+  sendMessage: (id: string, text: string, mode: MessageMode, images?: ImageInput[], voice?: boolean): Promise<unknown> =>
+    post(`/sessions/${id}/message`, { text, mode, images, ...(voice ? { voice: true } : {}) }),
 
   setEffort: (id: string, level: ThinkingLevel): Promise<Session> =>
     post<Session>(`/sessions/${id}/effort`, { level }),

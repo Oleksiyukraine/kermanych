@@ -403,7 +403,7 @@ export const useOrchestrator = defineStore('orchestrator', () => {
   // A failed send removes the bubble and rethrows, so the caller can hand the text back to the
   // composer. A bubble the transcript never confirms (a native session pastes into its TUI and
   // records nothing) is dropped after PENDING_TIMEOUT_MS.
-  async function sendMessage(id: string, text: string, mode: MessageMode, images?: ImageInput[]) {
+  async function sendMessage(id: string, text: string, mode: MessageMode, images?: ImageInput[], opts: { voice?: boolean } = {}) {
     const msg: OutgoingMessage = {
       id: `${Date.now()}-${Math.random().toString(36).slice(2)}`,
       text,
@@ -413,7 +413,7 @@ export const useOrchestrator = defineStore('orchestrator', () => {
     setOutgoing(id, [...(outgoing.value[id] ?? []), msg]);
     const drop = () => setOutgoing(id, (outgoing.value[id] ?? []).filter((m) => m.id !== msg.id));
     try {
-      const res = await api.sendMessage(id, text, mode, images);
+      const res = await api.sendMessage(id, text, mode, images, opts.voice);
       settleOutgoing(id);
       if (outgoing.value[id]?.some((m) => m.id === msg.id)) setTimeout(drop, PENDING_TIMEOUT_MS);
       return res;

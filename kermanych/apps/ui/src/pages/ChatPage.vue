@@ -265,6 +265,7 @@ import { useNow } from '../composables/useNow';
 import { useResizablePanel } from '../composables/useResizablePanel';
 import { useAsyncAction, useKeyedAction } from '../composables/useAsyncAction';
 import { useVoicePanel } from '../composables/useVoicePanel';
+import { nextMode as modeFor } from '../lib/message-mode';
 import { useOptimisticValue } from '../composables/useOptimisticValue';
 import { useLoadPhase } from '../composables/useLoadPhase';
 import { LAUNCH_MODES, nativeHarnessName, nativeRuntimeFor, sessionLaunchMode, type LaunchMode } from '../lib/native-session';
@@ -506,13 +507,9 @@ const {
   max: () => (contentEl.value ? contentEl.value.clientWidth - MIN_DETAIL : Number.POSITIVE_INFINITY),
 });
 
-// Which omp message mode the next message takes. A fresh chat starts its first turn with a
-// prompt; a settled chat gets a follow-up; a live one is steered mid-turn. Same rule as the
-// Агенти panel, so a chat and an agent read identically.
+// Which omp message mode the next message takes (lib/message-mode.ts) — the Агенти rule.
 function nextMode(s: Session): MessageMode {
-  const history = store.transcripts[s.id] ?? [];
-  const hasTurn = history.some((e) => e.kind === 'user_text' || e.kind === 'assistant_text');
-  return !hasTurn ? 'prompt' : s.status === 'done' ? 'follow_up' : 'steer';
+  return modeFor(s, store.transcripts[s.id] ?? []);
 }
 
 // The bubble («надсилаю…») is the store's (`store.outgoing`); a failed send puts the text back

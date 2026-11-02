@@ -280,6 +280,7 @@ import { useMarkSeen } from '../composables/useMarkSeen';
 import { useResizablePanel } from '../composables/useResizablePanel';
 import { errorText, useAsyncAction, useKeyedAction } from '../composables/useAsyncAction';
 import { useVoicePanel } from '../composables/useVoicePanel';
+import { nextMode as modeFor } from '../lib/message-mode';
 import { useOptimisticValue } from '../composables/useOptimisticValue';
 import { useLoadPhase } from '../composables/useLoadPhase';
 import { useSendPicks } from '../composables/useSendPicks';
@@ -444,12 +445,9 @@ const logTabs = computed(() => [{ value: 'log', label: t('agents.tabs.log') }]);
 
 const panelEl = ref<(ComponentPublicInstance & { restoreDraft: (text: string, images: readonly ImageInput[]) => void }) | null>(null);
 
-// Which omp message mode the next message takes: a fresh session starts with a prompt, a
-// settled one gets a follow-up, a live one is steered mid-turn — the Агенти and Чат rule.
+// Which omp message mode the next message takes (lib/message-mode.ts) — the Агенти rule.
 function nextMode(s: Session): MessageMode {
-  const history = store.transcripts[s.id] ?? [];
-  const hasTurn = history.some((e) => e.kind === 'user_text' || e.kind === 'assistant_text');
-  return !hasTurn ? 'prompt' : s.status === 'done' ? 'follow_up' : 'steer';
+  return modeFor(s, store.transcripts[s.id] ?? []);
 }
 
 // The bubble («надсилаю…») is the store's; a failed send puts the text back in the composer.

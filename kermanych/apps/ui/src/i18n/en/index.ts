@@ -2538,6 +2538,7 @@ export const en: MessageSchema = {
     },
     requestBlock: {
       attachment: '(attachment)',
+      voice: 'Said in a voice conversation — a speech transcript',
       attachmentAlt: 'attachment',
       statusPending: 'running',
       statusOk: 'done',
@@ -3112,6 +3113,11 @@ export const en: MessageSchema = {
     dropped: 'The voice conversation was cut off: the connection was lost.',
     micDenied: 'No access to the microphone — allow Kermanych in System Settings → Privacy → Microphone.',
     micMissing: 'No microphone found.',
+    liveError: 'GPT-Live: {error}',
+    sessionGone: 'The voice conversation ended: its session is gone.',
+    idleEnded: 'The voice conversation ended after 3 minutes of silence.',
+    pill: 'Voice conversation with “{name}”',
+    pillOpen: 'Open the conversation’s session',
     switch: {
       title: 'Move the voice conversation?',
       message: 'The voice conversation is with “{name}” now. It will end, and a new one starts with this session.',

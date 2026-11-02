@@ -78,6 +78,10 @@ export const connectVoice: ConnectVoice = async (exchange, handlers) => {
   });
 
   try {
+    // The desktop app asks macOS first: Chromium alone gets a silent refusal once the operator
+    // said no in System Settings, and the store words this refusal for them.
+    if (window.kermanych?.voice && !(await window.kermanych.voice.requestMic()))
+      throw new DOMException('microphone refused in System Settings', 'NotAllowedError');
     mic = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true } });
     for (const track of mic.getAudioTracks()) pc.addTrack(track, mic);
 

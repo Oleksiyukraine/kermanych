@@ -168,6 +168,28 @@
         @update:model-value="goView"
       />
       <div class="shell__actions">
+        <!-- The voice conversation, wherever the operator is (docs/specs/2026-11-02-voice-conversation.md,
+             decision 8): its session and time, the session one click away, 🔇 and «Завершити». -->
+        <div v-if="voice.bar" class="shell__voice mono" role="status">
+          <button
+            type="button"
+            class="shell__voice-open"
+            v-tip="t('voice.pillOpen')"
+            :aria-label="t('voice.pill', { name: voiceSessionName })"
+            @click="openVoiceSession"
+          >
+            <KIcon class="shell__voice-icon" :name="voice.bar.muted ? 'micOff' : 'mic'" />
+            <span class="shell__voice-name">{{ voiceSessionName }}</span>
+            <span class="shell__voice-time">{{ voiceClock }}</span>
+          </button>
+          <KIconButton
+            :active="voice.bar.muted"
+            :disabled="voice.bar.phase !== 'live'"
+            :title="voice.bar.muted ? t('kit.voiceBar.unmute') : t('kit.voiceBar.mute')"
+            @click="voice.toggleMute()"
+          ><KIcon class="shell__voice-icon" name="micOff" /></KIconButton>
+          <KIconButton :loading="voice.bar.phase === 'ending'" :title="t('kit.voiceBar.end')" @click="void voice.end()">✕</KIconButton>
+        </div>
         <!-- AI LOGIN REQUIRED — the provider CLI behind the operator's runtime is signed out on
              this machine (composables/useProviderSignIn.ts). Present only then; its tooltip
              names the command, a click asks again after the operator has logged in. -->
@@ -591,6 +613,7 @@ import KSpinner from 'components/kit/KSpinner.vue';
 import { useAsyncAction, useKeyedAction, errorText } from '../composables/useAsyncAction';
 import { useLoadPhase } from '../composables/useLoadPhase';
 import { useTerminal } from 'stores/terminal';
+import { useVoice } from 'stores/voice';
 import JiraMergePrompt from 'components/jira/JiraMergePrompt.vue';
 import LinearMergePrompt from 'components/linear/LinearMergePrompt.vue';
 import KDirPicker from 'components/kit/KDirPicker.vue';
@@ -604,6 +627,20 @@ import { useOnboarding } from 'stores/onboarding';
 const store = useOrchestrator();
 const terminal = useTerminal();
 const projects = useProjects();
+// ── VOICE CONVERSATION PILL ─────────────────────────────────────────────────
+const voice = useVoice();
+const voiceSessionName = computed(() => store.sessions.find((s) => s.id === voice.sessionId)?.name ?? '');
+const voiceClock = computed(() => {
+  const s = Math.floor((voice.bar?.elapsedMs ?? 0) / 1000);
+  return `${String(Math.floor(s / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`;
+});
+function openVoiceSession(): void {
+  const s = store.sessions.find((x) => x.id === voice.sessionId);
+  if (!s) return;
+  store.selectProject(s.projectId);
+  store.selectSession(s.id);
+  void router.push({ name: s.kind === 'chat' ? 'chat' : 'agents' });
+}
 const auth = useAuth();
 // Foreground work started through useAsyncAction / trackLoad — drives the top progress bar.
 const activity = useActivity();
@@ -2160,6 +2197,44 @@ const pullHint = computed(() => {
   align-items: center;
   gap: var(--k-sp-2);
 }
+
+// The voice pill: accent-framed — something live, not a blocker like the sign-out pill beside it.
+.shell__voice {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 28px;
+  padding: 0 2px 0 8px;
+  border: 1px solid var(--k-accent);
+  border-radius: var(--k-r);
+  color: var(--k-accent);
+  font-size: 12px;
+}
+.shell__voice-open {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 220px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+
+  &:focus-visible {
+    outline: 1px solid var(--k-accent);
+    outline-offset: 2px;
+  }
+}
+.shell__voice-name {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  color: var(--k-text);
+}
+.shell__voice-time { color: var(--k-muted); }
+.shell__voice-icon { --k-icon-size: var(--k-icon-sm); }
 
 // The sign-out pill: danger-framed so it reads as a blocker next to the quiet icon cluster,
 // at the icon buttons' 28px height so the row stays one line.

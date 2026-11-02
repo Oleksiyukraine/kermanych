@@ -227,7 +227,9 @@ export type SubscriptionUsage = { fetchedAt: string; providers: ProviderUsage[] 
 export type ToolStat = string | { key: string; params?: Record<string, string | number | boolean> };
 
 export type TranscriptEntry =
-  | { kind: "user_text"; id: string; at: number; text: string; images?: string[] }
+  // `via: "voice"`: said in a voice conversation (docs/specs/2026-11-02-voice-conversation.md) —
+  // `text` is the operator's own words; the child received them under the voice note (voice-bridge.ts).
+  | { kind: "user_text"; id: string; at: number; text: string; images?: string[]; via?: "voice" }
   | { kind: "assistant_text"; id: string; at: number; text: string }
   | { kind: "assistant_thinking"; id: string; at: number; text: string; ms?: number; tokens?: number }
   | {

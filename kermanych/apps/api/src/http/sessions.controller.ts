@@ -65,10 +65,11 @@ export class SessionsController {
     }
   }
 
+  // `voice`: the text is a transcript from a voice conversation (docs/specs/2026-11-02-voice-conversation.md).
   @Post(":id/message")
-  async message(@Param("id") id: string, @Body() b: { text: string; mode: "prompt" | "follow_up" | "steer"; images?: ImageInput[] }) {
+  async message(@Param("id") id: string, @Body() b: { text: string; mode: "prompt" | "follow_up" | "steer"; images?: ImageInput[]; voice?: boolean }) {
     try {
-      return await this.sup.sendMessage(id, b.text, b.mode, b.images);
+      return await this.sup.sendMessage(id, b.text, b.mode, b.images, { voice: b.voice === true });
     } catch (err) {
       throw sessionFailure(err);
     }

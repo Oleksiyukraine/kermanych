@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, dialog, nativeImage, powerSaveBlocker, shell } from 'electron';
+import { app, BrowserWindow, ipcMain, dialog, nativeImage, powerSaveBlocker, shell, systemPreferences } from 'electron';
 import { execFile } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import { readFileSync } from 'node:fs';
@@ -158,6 +158,16 @@ async function createWindow(apiBase: string) {
   mainWindow.webContents.on('dom-ready', () => mainWindow?.webContents.send('kermanych:boot-status', bootStatus));
   routeLinksToDefaultBrowser(mainWindow, (url) => shell.openExternal(url));
   browsers.attach(mainWindow);
+  // The voice conversation's microphone (docs/specs/2026-11-02-voice-conversation.md): audio only,
+  // and only for this window — not a hidden helper window of the same session. Every other
+  // permission keeps Electron's default grant, which is what the window had before this handler.
+  // The session browser's pages live in their own partitions with their own handler.
+  const ownContents = mainWindow.webContents;
+  ownContents.session.setPermissionRequestHandler((contents, permission, callback, details) => {
+    if (permission !== 'media') return callback(true);
+    const types = 'mediaTypes' in details ? (details.mediaTypes ?? []) : [];
+    callback(contents === ownContents && types.length > 0 && types.every((t) => t === 'audio'));
+  });
 
   if (process.env.DEV) {
     // Vite serves optimized deps as `immutable` under a `?v=<browserHash>` query that does NOT
@@ -185,6 +195,17 @@ async function createWindow(apiBase: string) {
     mainWindow = undefined;
   });
 }
+
+// macOS's own microphone permission for the voice conversation. Asked on first use (the system
+// prompt reads NSMicrophoneUsageDescription, quasar.config.ts); once refused, only System Settings
+// can give it back, and the renderer says so. Elsewhere the browser's own prompt is the only one.
+ipcMain.handle('kermanych:mic-access', async () => {
+  if (process.platform !== 'darwin') return true;
+  const status = systemPreferences.getMediaAccessStatus('microphone');
+  if (status === 'granted') return true;
+  if (status === 'not-determined') return systemPreferences.askForMediaAccess('microphone');
+  return false;
+});
 
 // Back on screen from wherever the window was left: a click on the Dock icon (`activate`) and a
 // click on a pop-up notification (`kermanych:focus`). A minimised window is restored first:
