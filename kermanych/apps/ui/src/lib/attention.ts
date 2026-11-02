@@ -1,8 +1,13 @@
 // apps/ui/src/lib/attention.ts
 // What a sidebar row tells the operator about a project: does it need them, and how badly.
 // One rule for the project rows and the workspace rows above them, so a folded workspace
-// and the projects it hides can never disagree.
+// and the projects it hides can never disagree. The Dock icon's number and bounce
+// (docs/specs/2026-11-01-dock-attention.md) read the same rule.
 import type { Session, SessionStatus } from '@kermanych/core';
+// Import from core's status module directly (not the barrel): @kermanych/core is a CJS
+// workspace dep whose named exports vite/rollup only sees once its dist is commonjs-
+// transformed (see quasar.config commonjsOptions.include); status.js has a direct export.
+import { shouldNotify } from '@kermanych/core/status';
 import { bucketOf } from './buckets';
 
 // How many of the project's sessions sit in each state that deserves a mark.
@@ -62,10 +67,17 @@ export function isUnseen(lastActivityAt: string, seenAt: string | undefined, bas
   return moved > seen;
 }
 
-// Per project, in one pass. Chats are the operator's own conversations, not work to track,
-// and anything `bucketOf` files as completed or as a backlog card is out: archived and
-// merged work (with the forks that hang off it) needs nothing. `stopped` gets no mark —
-// the operator stopped it, so there is nothing new to read.
+// Whether a session is work the operator tracks. Chats are the operator's own conversations,
+// not work to track, and anything `bucketOf` files as completed or as a backlog card is out:
+// archived and merged work (with the forks that hang off it) needs nothing.
+export function isTracked(s: Session, parent: (id: string) => Session | undefined): boolean {
+  if (s.kind === 'chat') return false;
+  const bucket = bucketOf(s, parent);
+  return bucket !== 'completed' && bucket !== 'tasks';
+}
+
+// Per project, in one pass, over the tracked sessions. `stopped` gets no mark — the operator
+// stopped it, so there is nothing new to read.
 export function attentionByProject(
   sessions: readonly Session[],
   unseen: (s: Session) => boolean,
@@ -74,9 +86,7 @@ export function attentionByProject(
   const parent = (id: string): Session | undefined => byId.get(id);
   const out = new Map<string, Attention>();
   for (const s of sessions) {
-    if (s.kind === 'chat') continue;
-    const bucket = bucketOf(s, parent);
-    if (bucket === 'completed' || bucket === 'tasks') continue;
+    if (!isTracked(s, parent)) continue;
     const key = stateOf(s, unseen);
     if (!key) continue;
     let a = out.get(s.projectId);
@@ -84,6 +94,24 @@ export function attentionByProject(
     a[key]++;
   }
   return out;
+}
+
+// «Ваш хід»: how many sessions wait for the operator — a question, a failure, a result nobody
+// has read. The Dock icon's number: the sidebar's marks without «працює».
+export function yourTurnCount(a: Attention): number {
+  return a.input + a.error + a.result;
+}
+
+// The moment a tracked session's turn passes to the operator: it moves INTO `waiting_input`,
+// `error`, `conflict`, `done` or `in_review` from another status. The Dock bounces on it, and the
+// pop-up fires on it. Not tied to «unread»: a result that lands in the agent open on screen is
+// read at once, yet the operator may be in another app — and macOS bounces only then anyway.
+export function isYourTurnEvent(
+  prev: SessionStatus | undefined,
+  s: Session,
+  parent: (id: string) => Session | undefined,
+): boolean {
+  return shouldNotify(prev, s.status) && isTracked(s, parent);
 }
 
 // The header switcher's mark: everything that needs the operator in the projects they are

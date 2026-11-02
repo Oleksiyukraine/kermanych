@@ -133,6 +133,12 @@ declare global {
       // window and resolves with its PDF bytes. Optional for the same stale-preload
       // reason; lib/export-file.ts falls back to the print dialog without it.
       printToPdf?: (html: string) => Promise<Uint8Array>;
+      // Electron only, optional for the same stale-preload reason. The Dock icon's number (0 hides
+      // it) and one bounce (docs/specs/2026-11-01-dock-attention.md); macOS draws both.
+      dock?: { setBadge: (count: number) => void; bounce: () => void };
+      // Electron only. Resolves true while macOS refuses this app's pop-up notifications: the app
+      // has no Apple team signature. Read once per launch.
+      notificationsBlocked?: () => Promise<boolean>;
       // Electron only. Optional for the same stale-preload reason; the Браузер tab is hidden
       // without it.
       browser?: KermanychBrowserBridge;

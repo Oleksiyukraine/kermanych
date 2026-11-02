@@ -292,8 +292,10 @@ the red dot sits on the pill's corner instead.
 A workspace row wears the same mark summed over its projects, so a folded workspace still
 shows that something inside it is waiting. Chats, archived and merged agents, and agents
 you stopped yourself never mark a row. A result counts as read once you open the agent in
-«Агенти» while the window is visible. Read state is kept per machine, in the browser's
-local storage; finished agents from before this feature shipped count as read.
+«Агенти» (a design: in «Дизайн») while the window is visible. Read state is kept per machine, in
+the browser's local storage; finished agents from before this feature shipped count as read.
+The desktop app's Dock icon counts the same agents, except the running ones (see
+[Desktop app](#desktop-app-macos)).
 
 **The collapsed sidebar shows workspaces only.** Collapse it with « at the bottom and
 the tree shrinks to one mark per workspace; its projects stay hidden until you click that
@@ -737,6 +739,21 @@ splash shows the app mark and what is happening («Запускаю локаль
 last theme you used (`window-theme.json` in Electron's `userData`), so a light-theme user
 does not get a dark frame first. The `backend` boot file holds every request until the API
 is listening; the web build shows the same splash with «Входжу…» only.
+
+**The Dock icon calls you when an agent needs you** (spec:
+`docs/specs/2026-11-01-dock-attention.md`). Its number counts the agents whose turn it is, over
+every project: waiting for an answer, failed or stopped on a merge conflict, or finished with a
+result you have not opened yet — the sidebar marks without «працює». A result leaves the number
+once you open the agent (a design: in «Дизайн»); a failure stays until the agent is restarted,
+archived or deleted. When another agent's turn comes while you are in another app, the icon
+bounces once, and it bounces for a memory warning and a «Посіпака» pause too. A click on the icon
+brings the window back, also when it was minimised. **Налаштування → Застосунок → Сповіщення**
+switches the number and the bounce («Число на іконці», «Підстрибувати»), per machine.
+
+Pop-up notifications (an agent's turn, a memory warning, a «Посіпака» pause, while the window is
+not focused) need an app signed by an Apple team: since Electron 42 macOS refuses them otherwise.
+Neither `pnpm dev:app` (the stock `Electron.app` from `node_modules`) nor the unsigned dmg shows
+them; the «Сповіщення» settings page says whether the running build can.
 
 Links never open inside the desktop window: every `http(s)`/`mailto` link — Jira
 and Linear tickets, attachments, storage downloads and markdown links — opens in your

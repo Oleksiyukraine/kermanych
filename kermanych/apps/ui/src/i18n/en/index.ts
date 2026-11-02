@@ -1066,6 +1066,16 @@ export const en: MessageSchema = {
       language: 'Language',
       version: 'Version',
     },
+    notifications: {
+      badge: 'Number on the icon',
+      badgeNote: 'How many agents wait for your move: a question, a failure, or a result you have not opened yet. The same agents as the sidebar marks, minus the ones at work.',
+      bounce: 'Bounce',
+      bounceNote: 'The icon bounces once when the turn passes to you while you are in another app.',
+      popups: 'Pop-up notifications',
+      popupsBlocked: 'macOS blocks them: the app is not signed with an Apple certificate. They start working once it is signed.',
+      popupsAllowed: 'macOS shows them as its own settings say: System Settings → Notifications.',
+      desktopOnly: 'The Dock icon and notifications exist only in the Mac app. In a browser, the sidebar marks show which agents wait for you.',
+    },
     scope: {
       project: 'Project',
       workspace: 'Workspace',
@@ -1140,6 +1150,11 @@ export const en: MessageSchema = {
         label: 'General',
         sub: 'theme',
         blurb: 'The app’s appearance on this machine. Stored here, not in your account.',
+      },
+      'app-notifications': {
+        label: 'Notifications',
+        sub: 'Dock icon',
+        blurb: 'How Kermanych calls you when an agent waits for you. Applies to this machine only.',
       },
       'app-keymap': {
         label: 'Keyboard shortcuts',

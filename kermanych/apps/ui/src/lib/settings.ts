@@ -53,6 +53,7 @@ export const SETTINGS_CATEGORIES: readonly SettingsCategory[] = [
   { key: 'workspace-members', scope: 'workspace' },
   { key: 'workspace-danger', scope: 'workspace', danger: true },
   { key: 'app-general', scope: 'app' },
+  { key: 'app-notifications', scope: 'app' },
   { key: 'app-keymap', scope: 'app' },
   { key: 'app-runtime', scope: 'app' },
   { key: 'app-resources', scope: 'app' },

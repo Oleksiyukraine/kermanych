@@ -555,7 +555,8 @@ import { IS_PREVIEW } from '../lib/preview';
 import { api } from '../lib/api';
 import { MANAGEMENT_DEFAULT_SECTION } from '@kermanych/core';
 import { canDropProject, sessionScopedProjectIds } from '../lib/scope';
-import { attentionByProject, attentionOutside, describeAttention, levelOf, sumAttention, NO_ATTENTION, type Attention } from '../lib/attention';
+import { attentionByProject, attentionOutside, describeAttention, levelOf, sumAttention, yourTurnCount, NO_ATTENTION, type Attention } from '../lib/attention';
+import { dockBadgeOn } from '../lib/dock';
 import { theme, toggleTheme } from '../lib/theme';
 import type { KTheme } from '@kermanych/tokens';
 import { locale, toggleLocale } from '../lib/locale';
@@ -979,6 +980,14 @@ const attentionById = computed(() => attentionByProject(store.sessions, seen.isU
 function attentionOf(projectId: string): Attention {
   return attentionById.value.get(projectId) ?? NO_ATTENTION;
 }
+
+// The Dock icon's number (docs/specs/2026-11-01-dock-attention.md): «ваш хід» summed over every
+// project — questions, failures and unread results, the sidebar's marks without «працює». Sent on
+// every change and when «Число на іконці» flips; 0 once this shell unmounts (sign-out). The web
+// build has no Dock, and no bridge to send it through.
+const dockCount = computed(() => (dockBadgeOn.value ? yourTurnCount(sumAttention(attentionById.value.values())) : 0));
+watch(dockCount, (n) => window.kermanych?.dock?.setBadge(n), { immediate: true });
+onBeforeUnmount(() => window.kermanych?.dock?.setBadge(0));
 
 // Segmented view nav. One table drives the labels, the active segment and the
 // push target, so a new view is one row here plus its route record. `section` is
