@@ -193,9 +193,17 @@
         />
         <KField v-model="draftTitle" :label="t('board.editor.title')" :placeholder="t('board.editor.titlePlaceholder')" />
         <!-- Хелпери, the same panel as the chat composer's: `/` on an empty description or the
-             «/ Хелпери» button below prepends a helper, and the launch expands it. -->
+             «/ Хелпери» button below prepends a helper, and the launch expands it. Файли (`@` at
+             a word start or «@ Файл») name a file of the project's local checkout as `@path`. -->
         <div class="board__desc">
           <KHelperPicker :open="helperOpen" placement="below" @select="onDraftHelper" @close="closeDraftHelper" />
+          <KFilePicker
+            :open="draftMention.open.value"
+            :source="draftFiles"
+            placement="below"
+            @select="draftMention.select"
+            @close="draftMention.close"
+          />
           <KField
             ref="descriptionField"
             v-model="draftDescription"
@@ -216,6 +224,13 @@
             v-tip="t('board.editor.helpersTip')"
             @click="helperOpen = !helperOpen"
           >{{ t('board.editor.helpers') }}</button>
+          <button
+            type="button"
+            class="board__attach-btn mono"
+            v-tip="draftFiles ? t('board.editor.filesTip') : t('board.editor.filesUnbound')"
+            :disabled="!draftFiles"
+            @click="draftMention.toggle"
+          >{{ t('board.editor.files') }}</button>
           <template v-if="!editingId">
             <button type="button" class="board__attach-btn mono" @click="draftFileInput?.click()">
               {{ t('board.editor.image') }}
@@ -412,10 +427,12 @@ import KKanbanColumn from 'components/kit/KKanbanColumn.vue';
 import KAvatar from 'components/kit/KAvatar.vue';
 import KAttachStrip from 'components/kit/KAttachStrip.vue';
 import KHelperPicker from 'components/kit/KHelperPicker.vue';
+import KFilePicker from 'components/kit/KFilePicker.vue';
 import KDirPicker from 'components/kit/KDirPicker.vue';
 import { useNow } from '../composables/useNow';
 import { useDelayedTrue } from '../composables/useDelayedTrue';
 import { useImageAttach } from '../composables/useImageAttach';
+import { useFileMention } from '../composables/useFileMention';
 import { imageToFile } from '../lib/images';
 import { relativeTime, renderTime } from '../lib/time';
 import { EFFORT_OPTIONS } from '../lib/effort';
@@ -1266,7 +1283,10 @@ const descriptionField = ref<InstanceType<typeof KField> | null>(null);
 const helperOpen = ref(false);
 // An editor reopened on a panel left open would hide the description it opens for.
 watch(editorOpen, (open) => {
-  if (!open) helperOpen.value = false;
+  if (!open) {
+    helperOpen.value = false;
+    draftMention.open.value = false;
+  }
 });
 function closeDraftHelper(): void {
   helperOpen.value = false;
@@ -1279,8 +1299,24 @@ function onDescriptionKeydown(e: KeyboardEvent): void {
   if (e.key === '/' && draftDescription.value === '') {
     e.preventDefault();
     helperOpen.value = true;
+    return;
   }
+  draftMention.onKeydown(e);
 }
+
+// Файли: the card's project as checked out on THIS machine — the tree its session will run
+// in. A project not bound here has nothing to read, so the button stays inert.
+const draftFiles = computed(() =>
+  draftProject.value && local.projects.some((p) => p.id === draftProject.value && p.localRepoPath)
+    ? { kind: 'project' as const, id: draftProject.value }
+    : null,
+);
+const draftMention = useFileMention({
+  el: () => descriptionField.value?.el(),
+  value: () => draftDescription.value,
+  set: (v) => (draftDescription.value = v),
+  enabled: () => !!draftFiles.value,
+});
 
 // The editor's assignee picker reads the roster of the picker's OWN project, which is not
 // necessarily the scoped one: an unscoped board shows cards from every workspace, and
@@ -1695,9 +1731,14 @@ async function onDelete(task: Task): Promise<void> {
   font-size: 12px;
   cursor: pointer;
 }
-.board__attach-btn:hover {
+.board__attach-btn:hover:not(:disabled) {
   border-color: var(--k-accent);
   color: var(--k-text);
+}
+// «@ Файл» for a project not bound on this machine: shown, so it is findable, but inert.
+.board__attach-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
 }
 .board__attach-note {
   font-size: 11.5px;

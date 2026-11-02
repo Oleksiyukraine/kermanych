@@ -201,6 +201,7 @@
         :worktree="session.worktree"
         :context="session.contextPercent"
         :usage="session.usage"
+        :files="session.worktree && !session.worktreePath ? null : { kind: 'session', id: session.id }"
         @send="(text, images) => emit('send', text, images)"
         @effort="(level) => emit('effort', level)"
         @set-model="(p) => emit('setModel', p)"

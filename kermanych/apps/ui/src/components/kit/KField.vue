@@ -46,7 +46,8 @@ function onInput(e: Event) {
   emit('update:modelValue', (e.target as HTMLInputElement | HTMLTextAreaElement).value);
 }
 
-defineExpose({ focus: () => inputEl.value?.focus() });
+// `el`: for a host that places the caret itself (a file mention lands at it).
+defineExpose({ focus: () => inputEl.value?.focus(), el: () => inputEl.value });
 </script>
 
 <style scoped lang="scss">
