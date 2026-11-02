@@ -822,7 +822,9 @@
             </div>
             <!-- Хелпери, the same panel as the chat composer's: `/` on an empty task or the
                  «/ Хелпери» button below prepends a helper, and the launch expands it. A native
-                 harness gets the text as-is, so it is not offered there. -->
+                 harness gets the text as-is, so it is not offered there. Файли (`@` at a word
+                 start or «@ Файл») name a file of the project's checkout as `@path` — plain
+                 text, so a native harness gets it too. -->
             <div class="agents-launcher__task-wrap">
               <KHelperPicker
                 v-if="!launchNative"
@@ -830,6 +832,13 @@
                 placement="below"
                 @select="onLaunchHelper"
                 @close="closeLaunchHelper"
+              />
+              <KFilePicker
+                :open="launchMention.open.value"
+                :source="launchFiles"
+                placement="below"
+                @select="launchMention.select"
+                @close="launchMention.close"
               />
               <textarea
                 ref="taskInput"
@@ -845,25 +854,35 @@
             </div>
           </div>
 
-          <div v-if="!launchNative" class="agents-launcher__attach">
+          <div class="agents-launcher__attach">
             <button
+              v-if="!launchNative"
               type="button"
               class="agents-launcher__attach-btn mono"
               v-tip="t('agents.launcher.helpersTip')"
               @click="launchHelperOpen = !launchHelperOpen"
             >{{ t('agents.launcher.helpers') }}</button>
-            <button type="button" class="agents-launcher__attach-btn mono" @click="launchFileInput?.click()">
-              {{ t('agents.launcher.image') }}
-            </button>
-            <input
-              ref="launchFileInput"
-              type="file"
-              accept="image/png,image/jpeg,image/gif,image/webp"
-              multiple
-              class="agents__file"
-              @change="onLaunchFilePick"
-            />
-            <span class="agents-launcher__attach-note mono">{{ t('agents.launcher.dragHint') }}</span>
+            <button
+              type="button"
+              class="agents-launcher__attach-btn mono"
+              v-tip="launchFiles ? t('agents.launcher.filesTip') : t('agents.launcher.filesUnbound')"
+              :disabled="!launchFiles"
+              @click="launchMention.toggle"
+            >{{ t('agents.launcher.files') }}</button>
+            <template v-if="!launchNative">
+              <button type="button" class="agents-launcher__attach-btn mono" @click="launchFileInput?.click()">
+                {{ t('agents.launcher.image') }}
+              </button>
+              <input
+                ref="launchFileInput"
+                type="file"
+                accept="image/png,image/jpeg,image/gif,image/webp"
+                multiple
+                class="agents__file"
+                @change="onLaunchFilePick"
+              />
+              <span class="agents-launcher__attach-note mono">{{ t('agents.launcher.dragHint') }}</span>
+            </template>
           </div>
           <KAttachStrip v-if="launchImages.length && !launchNative" :images="launchImages" @remove="removeLaunchImage" />
           <p v-if="launchError" class="agents__error" role="alert">{{ launchError }}</p>
@@ -1267,11 +1286,13 @@ import KIconButton from 'components/kit/KIconButton.vue';
 import KModal from 'components/kit/KModal.vue';
 import KAttachStrip from 'components/kit/KAttachStrip.vue';
 import KHelperPicker from 'components/kit/KHelperPicker.vue';
+import KFilePicker from 'components/kit/KFilePicker.vue';
 import KCheckbox from 'components/kit/KCheckbox.vue';
 import KField from 'components/kit/KField.vue';
 import KSelect from 'components/kit/KSelect.vue';
 import { BRANCH_PREFIXES, PLATFORMS, prependHelper, type BranchPrefix, type Platform } from '@kermanych/core';
 import { useImageAttach } from '../composables/useImageAttach';
+import { useFileMention } from '../composables/useFileMention';
 import { useNow } from '../composables/useNow';
 import { useMarkSeen } from '../composables/useMarkSeen';
 import { relativeTime, renderTime } from '../lib/time';
@@ -2832,8 +2853,25 @@ function onTaskKeydown(e: KeyboardEvent): void {
   if (e.key === '/' && draftTask.value === '' && !launchNative.value) {
     e.preventDefault();
     launchHelperOpen.value = true;
+    return;
   }
+  launchMention.onKeydown(e);
 }
+
+// Файли: the launch project's checkout — the tree a worktree is cut from, so a repo-relative
+// path names the same file in the session. An unbound project has no checkout to read here.
+const launchFiles = computed(() =>
+  isBound.value && launchProjectId.value ? { kind: 'project' as const, id: launchProjectId.value } : null,
+);
+const launchMention = useFileMention({
+  el: () => taskInput.value,
+  value: () => draftTask.value,
+  set: (v) => (draftTask.value = v),
+  enabled: () => !!launchFiles.value,
+});
+watch(launcherOpen, (open) => {
+  if (!open) launchMention.open.value = false;
+});
 
 // Load the project's branches into the fork-base picker. `preferred` is a base already
 // chosen on the task being edited; otherwise it falls back to the project default, then
@@ -4677,9 +4715,14 @@ async function submitPreviewConfig(): Promise<void> {
   font-size: 12px;
   cursor: pointer;
 }
-.agents-launcher__attach-btn:hover {
+.agents-launcher__attach-btn:hover:not(:disabled) {
   border-color: var(--k-accent);
   color: var(--k-text);
+}
+// «@ Файл» without a local checkout to read: shown, so the feature is findable, but inert.
+.agents-launcher__attach-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
 }
 .agents-launcher__attach-note {
   font-size: 11.5px;

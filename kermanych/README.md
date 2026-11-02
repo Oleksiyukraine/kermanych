@@ -1125,6 +1125,13 @@ developer's machine. The direction is always task → session.
    button opens the picker, the pick lands at the front of the text, and the launch expands it
    into the agent's opening prompt (the «Лог» keeps the slash plus a notice naming the helper).
    A native launch sends the text as it is.
+   A project file is named the same way: <kbd>@</kbd> at the start of a word or the «@ Файл»
+   button opens the project's tree (one folder at a time, its filter narrows the open folder),
+   and the pick lands at the caret as `@path/from/repo/root` — plain text the agent reads as
+   «this file», native launches included. It reads this machine's checkout of the project, so
+   a project not bound here has the button disabled. The agent chat's composer does the same
+   with the session's own tree (the worktree, or the checkout an in-place session runs in):
+   <kbd>@</kbd> at a word start or the **@** button.
 2. **Assign** — the assignee may hand a card over or release it, and the workspace owner
    may take one back from someone who is gone. Anyone may claim an UNASSIGNED card, and
    pressing «Запустити» on one self-assigns it atomically — in the same write that moves it
