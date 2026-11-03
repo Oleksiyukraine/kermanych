@@ -88,21 +88,26 @@
              panels watch the owner and reload in place, dropping any unsaved draft with it. -->
         <!-- Агенти кастомізуються лише на рівні воркспейсу (override інструкції + призначені
              навички діють на всю команду). На рівні проєкту — картка «Посіпаки»: його вмикають
-             для проєкту на цій машині, а інструкцію й навички воркспейсу показано лише для
-             читання. Користувач поки не має власного шару агентів — заглушка, а не порожній
-             редактор, який нічого не збереже. -->
+             для проєкту на цій машині, а інструкцію й навички, з якими він стартує, показано лише
+             для читання. Користувач поки не має власного шару агентів — заглушка, а не порожній
+             редактор, який нічого не збереже. Над ними — старі рядки проєкту й користувача, які
+             на запуску все ще перемагають воркспейс: видно звідки, і їх можна скинути. -->
         <div v-else-if="section.key === 'agents'" class="ait__form ait__form--wide">
           <AiAgentsPanel v-if="owner.scope === 'workspace'" :owner="owner" :owner-name="ownerName" />
-          <MinionPanel
-            v-else-if="owner.scope === 'project'"
-            :project-id="owner.id"
-            :workspace-id="cloudRow?.workspaceId"
-            @open-workspace="setScope('workspace')"
-          />
-          <div v-else class="ait__blank">
-            <span class="ait__blank-eyebrow mono">{{ t('aiTeam.blank.eyebrow') }}</span>
-            <p>{{ t('aiTeam.agentsUnavailable') }}</p>
-          </div>
+          <template v-else>
+            <AiAgentOverrides :owners="overrideOwners" @reset="agentsRevision++" />
+            <MinionPanel
+              v-if="owner.scope === 'project'"
+              :project-id="owner.id"
+              :workspace-id="cloudRow?.workspaceId"
+              :revision="agentsRevision"
+              @open-workspace="setScope('workspace')"
+            />
+            <div v-else class="ait__blank">
+              <span class="ait__blank-eyebrow mono">{{ t('aiTeam.blank.eyebrow') }}</span>
+              <p>{{ t('aiTeam.agentsUnavailable') }}</p>
+            </div>
+          </template>
         </div>
         <!-- The read-only «Успадковано» block hangs BELOW the editable list on every scope
              EXCEPT workspace (which is the base and inherits nothing). It shows what a session
@@ -152,6 +157,7 @@ import TriggersPanel from 'components/settings/TriggersPanel.vue';
 import SkillsLibraryPanel from 'components/settings/SkillsLibraryPanel.vue';
 import HelpersCatalogPanel from 'components/settings/HelpersCatalogPanel.vue';
 import AiInherited from 'components/settings/AiInherited.vue';
+import AiAgentOverrides from 'components/settings/AiAgentOverrides.vue';
 
 const store = useOrchestrator();
 const projects = useProjects();
@@ -211,6 +217,17 @@ const inheritedWorkspace = computed<AiOwner | undefined>(() =>
     ? { scope: 'workspace', id: cloudRow.value.workspaceId }
     : undefined,
 );
+
+// The owners below the workspace whose agent rows a launch here still prefers to the workspace's:
+// on the project tab the operator's own and the project's, on the user tab the operator's own.
+const overrideOwners = computed<AiOwner[]>(() => {
+  if (!owner.value || owner.value.scope === 'workspace') return [];
+  return owner.value.scope === 'project' && userId.value
+    ? [{ scope: 'user', id: userId.value }, owner.value]
+    : [owner.value];
+});
+// Bumped when one of those rows is deleted, so the «Посіпака» card reads what now applies.
+const agentsRevision = ref(0);
 
 function goSection(key: string): void {
   if (key !== section.value.key) void router.push({ name: 'ai-team', params: { section: key } });

@@ -755,10 +755,13 @@ export const en: MessageSchema = {
       noProjects: 'None — the Minion takes nothing here.',
       pollError: 'Could not ask the cloud: {error}',
       loadFailed: 'Could not read the Minion’s state: {error}',
-      instructionTitle: 'Workspace instruction and skills',
+      instructionTitle: 'Instruction and skills',
       instructionDefault: 'Kermanych’s default instruction',
       instructionOverride: 'Instruction rewritten in the workspace',
       skills: 'Skills, in order',
+      instructionFrom: 'Instruction from the «{scope}» level — it overrides the workspace',
+      instructionBrokenFrom: 'Kermanych’s default instruction: the «{scope}» row does not match the agent’s template, yet it still overrides the workspace',
+      skillsFrom: 'Skills, in order, from the «{scope}» level — they override the workspace',
       noSkills: 'No skills assigned.',
       findingsSkill: 'Cards from «Findings» also get the {name} skill — rules for bug, security, tech-debt and docs; «Library» can override or switch it off.',
       noWorkspace: 'The project belongs to no cloud workspace — there is no workspace instruction or skills.',
@@ -1763,6 +1766,16 @@ export const en: MessageSchema = {
       unknown: '—',
     },
     agentsUnavailable: 'Agents are configured at the workspace level. This is not available here yet.',
+    overrides: {
+      title: 'Overrides that beat the workspace',
+      lead: 'A launch takes an agent’s instruction and, separately, its skills from the most specific level: user, then project, then workspace. Agents are edited only in the workspace, so while such a row exists, workspace changes to that agent do not apply here. «Reset» deletes the row, and the workspace applies from then on.',
+      source: 'level: {scope}',
+      reset: 'Reset',
+      instruction: 'Instruction',
+      skills: 'Skills, in order',
+      broken: 'The text does not match the agent’s template, so the agent gets the default instruction — not the workspace’s.',
+      readOnly: 'Only the workspace owner can reset a project override.',
+    },
     inherited: {
       title: 'Inherited',
       system: 'system',
@@ -3757,6 +3770,10 @@ export const en: MessageSchema = {
     resetAgent: {
       title: 'Reset instruction?',
       message: 'The edited instruction of “{name}” is deleted, and the agent goes back to the default text.',
+    },
+    resetAgentOverride: {
+      title: 'Reset override?',
+      message: 'The «{scope}» instruction and skills of “{name}” are deleted, and the agent gets what the workspace sets.',
     },
     deleteTrigger: {
       title: 'Delete trigger?',

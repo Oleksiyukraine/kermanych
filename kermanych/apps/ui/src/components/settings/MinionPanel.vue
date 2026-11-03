@@ -60,8 +60,9 @@
       </template>
     </div>
 
-    <!-- What the minion is told, read-only: the instruction and the skill sequence are the
-         WORKSPACE's rows (decision 11), edited only at the workspace scope. -->
+    <!-- What the minion is told, read-only: resolved from the user, project and workspace rows the
+         way the launch resolves them (SkillsService.instructionFor / assignedFor), with the source
+         named when a row below the workspace wins. Edited only at the workspace scope. -->
     <div class="mn__row">
       <p class="mn__title">{{ t('minion.panel.instructionTitle') }}</p>
       <p v-if="!workspaceId" class="mn__hint">{{ t('minion.panel.noWorkspace') }}</p>
@@ -69,9 +70,9 @@
         <p v-if="teamError" class="mn__error mono">{{ teamError }}</p>
         <KSkeleton v-else-if="teamPhase === 'skeleton'" variant="lines" :rows="4" />
         <template v-else-if="teamPhase === 'ready' && team">
-          <p class="mn__caption">{{ team.overridden ? t('minion.panel.instructionOverride') : t('minion.panel.instructionDefault') }}</p>
+          <p class="mn__caption">{{ instructionCaption }}</p>
           <pre class="mn__text mono">{{ team.instruction }}</pre>
-          <p class="mn__caption">{{ t('minion.panel.skills') }}</p>
+          <p class="mn__caption">{{ skillsCaption }}</p>
           <ol v-if="team.skills.length" class="mn__skills mono">
             <li v-for="name in team.skills" :key="name">{{ name }}</li>
           </ol>
@@ -90,17 +91,19 @@
 // «ШІ-команда» → project → «Агенти»: the «Посіпака» card (docs/specs/2026-10-23-minion-auto-run.md,
 // decisions 6, 8 and 11). Three blocks: switching it on for THIS project on THIS machine; the
 // machine's own cap, state and active projects (stores/minion, fed by the api's socket); and,
-// read-only, what the workspace tells it — the instruction and the skill sequence are edited only
-// at the workspace scope, where AiAgentsPanel lists the minion like every other agent.
+// read-only, what it runs with — the instruction and the skill sequence are edited only at the
+// workspace scope, where AiAgentsPanel lists the minion like every other agent, but an older
+// project or user row still beats the workspace at launch, so they are resolved here the same way.
 import { computed, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
-import { MINION_AGENT_ID, MINION_CAP_MAX, MINION_FINDINGS_SKILL, agentById, effectiveInstruction } from '@kermanych/core';
-import { listAiAgentSkills, listAiAgents } from '@kermanych/cloud';
+import { MINION_AGENT_ID, MINION_CAP_MAX, MINION_FINDINGS_SKILL, agentById } from '@kermanych/core';
+import { listAiAgentSkills, listAiAgents, type AiOwner, type AiScope } from '@kermanych/cloud';
 import { useAuth } from 'stores/auth';
 import { useMinion } from 'stores/minion';
 import { useOrchestrator } from 'stores/orchestrator';
 import { useProjects } from 'stores/projects';
 import { minionPauseText, minionProjectNames } from '../../lib/minion';
+import { resolveAgent, type ResolvedAgent } from '../../lib/ai-team';
 import { useAsyncAction } from '../../composables/useAsyncAction';
 import { useOptimisticValue } from '../../composables/useOptimisticValue';
 import { useLoadPhase } from '../../composables/useLoadPhase';
@@ -108,7 +111,8 @@ import KBtn from 'components/kit/KBtn.vue';
 import KSelect from 'components/kit/KSelect.vue';
 import KSkeleton from 'components/kit/KSkeleton.vue';
 
-const props = defineProps<{ projectId: string; workspaceId: string | undefined }>();
+// `revision` changes when a row below the workspace was deleted elsewhere on the screen.
+const props = defineProps<{ projectId: string; workspaceId: string | undefined; revision?: number }>();
 const emit = defineEmits<{ 'open-workspace': [] }>();
 
 const { t } = useI18n();
@@ -138,38 +142,61 @@ const activeNames = computed(() =>
     : [],
 );
 
-// ── The workspace's instruction and skills ───────────────────────────────
-// `undefined` until the read for the current workspace answers.
-const team = ref<{ instruction: string; overridden: boolean; skills: string[] } | undefined>(undefined);
+// ── The instruction and skills it runs with ──────────────────────────────
+// `undefined` until the read for the current owners answers.
+const team = ref<ResolvedAgent | undefined>(undefined);
 const teamError = ref('');
 const teamPhase = useLoadPhase(() => !!props.workspaceId && !team.value && !teamError.value);
 const minionDef = agentById(MINION_AGENT_ID)!;
 
+function scopeName(scope: AiScope): string {
+  return t('aiTeam.scope.' + scope);
+}
+const instructionCaption = computed(() => {
+  const from = team.value?.instructionFrom;
+  const own = team.value?.instruction !== minionDef.instruction;
+  if (from === 'user' || from === 'project') {
+    return own
+      ? t('minion.panel.instructionFrom', { scope: scopeName(from) })
+      : t('minion.panel.instructionBrokenFrom', { scope: scopeName(from) });
+  }
+  return own ? t('minion.panel.instructionOverride') : t('minion.panel.instructionDefault');
+});
+const skillsCaption = computed(() => {
+  const from = team.value?.skillsFrom;
+  return from === 'user' || from === 'project'
+    ? t('minion.panel.skillsFrom', { scope: scopeName(from) })
+    : t('minion.panel.skills');
+});
+
+// Every owner a launch of this project reads, most specific first: the signed-in operator, the
+// project, its workspace (SupervisorService.aiScope).
+const owners = computed<AiOwner[]>(() => [
+  ...(auth.user?.id ? [{ scope: 'user' as const, id: auth.user.id }] : []),
+  { scope: 'project' as const, id: props.projectId },
+  ...(props.workspaceId ? [{ scope: 'workspace' as const, id: props.workspaceId }] : []),
+]);
+const ownersKey = computed(() => `${owners.value.map((o) => `${o.scope}:${o.id}`).join(',')}#${props.revision ?? 0}`);
+
 watch(
-  () => props.workspaceId,
-  async (workspaceId) => {
+  ownersKey,
+  async (key) => {
     team.value = undefined;
     teamError.value = '';
-    if (!workspaceId) return;
-    const owner = { scope: 'workspace' as const, id: workspaceId };
+    if (!props.workspaceId) return;
+    const read = owners.value;
     try {
-      const [rows, assignments] = await Promise.all([listAiAgents(auth.client, owner), listAiAgentSkills(auth.client, owner)]);
-      // A late reply for a workspace the operator has since left must not paint here.
-      if (workspaceId !== props.workspaceId) return;
-      const stored = rows.find((r) => r.agentId === MINION_AGENT_ID)?.instruction;
-      // The same resolution the launch uses: a broken or empty row falls back to the default.
-      const instruction = effectiveInstruction(minionDef, stored) ?? '';
-      team.value = {
-        instruction,
-        overridden: instruction !== minionDef.instruction,
-        // The comparator SkillsService.assignedFor sorts by, as AiAgentsPanel shows it.
-        skills: assignments
-          .filter((a) => a.agentId === MINION_AGENT_ID)
-          .sort((a, b) => a.position - b.position || a.skillName.localeCompare(b.skillName))
-          .map((a) => a.skillName),
-      };
+      const [rows, assignments] = await Promise.all([
+        Promise.all(read.map((o) => listAiAgents(auth.client, o))),
+        Promise.all(read.map((o) => listAiAgentSkills(auth.client, o))),
+      ]);
+      // A late reply for owners the operator has since left must not paint here.
+      if (key !== ownersKey.value) return;
+      // The same resolution the launch uses: the most specific row wins, and a broken or empty
+      // winner falls back to the default — not to the workspace.
+      team.value = resolveAgent(minionDef, rows.flat(), assignments.flat());
     } catch (e) {
-      if (workspaceId === props.workspaceId) teamError.value = e instanceof Error ? e.message : String(e);
+      if (key === ownersKey.value) teamError.value = e instanceof Error ? e.message : String(e);
     }
   },
   { immediate: true },

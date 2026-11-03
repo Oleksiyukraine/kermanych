@@ -1,9 +1,13 @@
 import { describe, expect, it } from 'vitest';
+import { MINION_AGENT_ID, agentById } from '@kermanych/core';
+import type { AiAgent, AiAgentSkill, AiOwner } from '@kermanych/cloud';
 import {
   AI_TEAM_DEFAULT_SECTION,
   AI_TEAM_SECTIONS,
+  agentOverrides,
   aiTeamSection,
   importNameProblem,
+  resolveAgent,
 } from '../src/lib/ai-team';
 
 // The pure half of the «ШІ-команда» screen: the rail registry. The page cannot restate any of
@@ -86,5 +90,68 @@ describe('importNameProblem', () => {
   // `constructor` is a legal skill name and an Object.prototype member: a bare `in` would find it.
   it('does not mistake an inherited property for a repository skill', () => {
     expect(importNameProblem('constructor', base)).toEqual({});
+  });
+});
+
+// What an agent runs with, as SkillsService.instructionFor / assignedFor resolve it: the most
+// specific owner with a row wins the instruction, and — separately — the whole skill sequence.
+// The project tab shows this, so a pre-rescope project row cannot hide behind the workspace's text.
+describe('resolveAgent / agentOverrides', () => {
+  const def = agentById(MINION_AGENT_ID)!;
+  const WS: AiOwner = { scope: 'workspace', id: 'w1' };
+  const PR: AiOwner = { scope: 'project', id: 'p1' };
+  const ME: AiOwner = { scope: 'user', id: 'u1' };
+  const row = (owner: AiOwner, instruction: string, agentId = MINION_AGENT_ID): AiAgent => ({
+    id: `${owner.scope}-${agentId}`,
+    owner,
+    agentId,
+    instruction,
+    createdAt: '2026-09-01T00:00:00Z',
+    updatedAt: '2026-09-01T00:00:00Z',
+  });
+  const skill = (owner: AiOwner, skillName: string, position: number, agentId = MINION_AGENT_ID): AiAgentSkill => ({
+    owner,
+    agentId,
+    skillName,
+    position,
+  });
+
+  it('runs a project row over the workspace one', () => {
+    const r = resolveAgent(def, [row(WS, 'Workspace {{task}}'), row(PR, 'Project {{task}}')], []);
+    expect(r).toMatchObject({ instruction: 'Project {{task}}', instructionFrom: 'project' });
+  });
+
+  it('runs the user row over project and workspace, whatever the read order', () => {
+    const r = resolveAgent(def, [row(ME, 'Mine {{task}}'), row(WS, 'Workspace {{task}}'), row(PR, 'Project {{task}}')], []);
+    expect(r).toMatchObject({ instruction: 'Mine {{task}}', instructionFrom: 'user' });
+  });
+
+  // instructionFor drops a winning row that lost its hole for the DEFAULT, not for the workspace.
+  it('falls back to the default, not to the workspace, when the winning row is broken', () => {
+    const r = resolveAgent(def, [row(WS, 'Workspace {{task}}'), row(PR, 'Project without the hole')], []);
+    expect(r).toMatchObject({ instruction: def.instruction, instructionFrom: 'project' });
+  });
+
+  it('takes the whole sequence from the most specific owner that has one', () => {
+    const r = resolveAgent(def, [], [skill(WS, 'ws-a', 0), skill(PR, 'pr-b', 1), skill(PR, 'pr-a', 0), skill(WS, 'ws-b', 1)]);
+    expect(r).toMatchObject({ skills: ['pr-a', 'pr-b'], skillsFrom: 'project' });
+  });
+
+  it('runs the default with no sequence when no owner has a row', () => {
+    const r = resolveAgent(def, [row(PR, 'Other {{diff}}', 'review')], [skill(PR, 'x', 0, 'review')]);
+    expect(r).toEqual({ instruction: def.instruction, skills: [] });
+  });
+
+  it('agentOverrides lists the user and project rows that beat the workspace, one entry per owner and agent', () => {
+    expect(
+      agentOverrides(
+        [row(WS, 'Workspace {{task}}'), row(PR, 'Project {{task}}'), row(ME, 'Mine {{diff}}', 'review')],
+        [skill(PR, 'b', 1), skill(PR, 'a', 0), skill(PR, 'c', 0, 'plan'), skill(WS, 'ws', 0)],
+      ),
+    ).toEqual([
+      { owner: ME, agentId: 'review', instruction: 'Mine {{diff}}', skills: [] },
+      { owner: PR, agentId: MINION_AGENT_ID, instruction: 'Project {{task}}', skills: ['a', 'b'] },
+      { owner: PR, agentId: 'plan', skills: ['c'] },
+    ]);
   });
 });

@@ -1412,7 +1412,15 @@ request with nobody watching.
 - **A run.** An ordinary agent session of the card's project in a fresh worktree, on your
   runtime, with the card's model and effort and every rule of the repository and the project
   (CLAUDE.md / AGENTS.md, skills, docs policy, `.env`). Its instruction and assigned skills are
-  the «Посіпака» agent's in «ШІ-команда» → workspace → «Агенти». It cannot ask questions — the
+  the «Посіпака» agent's in «ШІ-команда» → workspace → «Агенти» — unless a project or user row
+  overrides them. Agents are edited only in the workspace, but a launch still takes an agent's
+  instruction, and separately its skill sequence, from the most specific level that has one
+  (user > project > workspace); such rows are left from before (the 20260908 rescope moved every
+  `project_agents` row in as a project row). «ШІ-команда» → project (or user) → «Агенти» lists
+  them under «Перевизначення, що перекривають воркспейс» with their level, and «Скинути» deletes
+  one (a project row: the workspace owner only), after which the workspace's applies. The
+  «Посіпака» card there shows the instruction and skills as a launch resolves them, with the
+  level they come from. It cannot ask questions — the
   ask tool is off — so it decides within the card, checks its work against the card's
   acceptance criteria and the project's checks, and ends with a verdict through the
   `report_outcome` tool of its `kermanych` MCP server:
