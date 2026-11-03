@@ -2606,6 +2606,16 @@ export const uk = {
       tooLarge: 'Файл завеликий для перегляду.',
       maximize: 'На весь екран',
       minimize: 'Згорнути в панель',
+      find: {
+        open: 'Знайти у файлі (⌘F)',
+        placeholder: 'Знайти у файлі',
+        matchCase: 'Враховувати регістр',
+        wholeWord: 'Лише цілі слова',
+        prev: 'Попередній збіг (Shift+Enter)',
+        next: 'Наступний збіг (Enter)',
+        close: 'Закрити пошук (Esc)',
+        none: 'Немає збігів',
+      },
     },
     code: {
       fold: 'Згорнути',

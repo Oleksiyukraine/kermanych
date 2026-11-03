@@ -1,7 +1,7 @@
 <template>
   <!-- Over the folding cap: the one-block render the viewers always had, no per-line rows. -->
-  <pre v-if="tooLong" class="k-code k-code--plain mono"><code v-if="html" class="hljs" v-html="html"></code><code v-else class="hljs">{{ text }}</code></pre>
-  <div v-else class="k-code hljs mono" :class="{ 'k-code--foldable': regions.size > 0 }">
+  <pre v-if="tooLong" ref="rootEl" class="k-code k-code--plain mono"><code v-if="html" class="hljs" v-html="plainHtml"></code><code v-else class="hljs">{{ text }}</code></pre>
+  <div v-else ref="rootEl" class="k-code hljs mono" :class="{ 'k-code--foldable': regions.size > 0 }">
     <div v-for="row in rows" :key="row" class="k-code__row">
       <span class="k-code__gutter">
         <span class="k-code__no">{{ row + 1 }}</span>
@@ -23,7 +23,7 @@
         @click="toggle(row)"
       >{{ foldLabel(row) }}</button><span v-html="foldTail(row)"></span></span>
       <!-- hljs escapes the file's text, so each line's HTML is its own span markup only. -->
-      <span v-else class="k-code__text" v-html="lineHtml[row]"></span>
+      <span v-else class="k-code__text" v-html="markedLine(row)"></span>
     </div>
   </div>
 </template>
@@ -39,7 +39,10 @@
 //
 // Folds are kept by start line while the same file re-renders (an agent still editing it),
 // and dropped when the path changes.
-import { computed, ref, watch } from 'vue';
+//
+// `hits` (lib/find-in-text.ts, from the viewer's find bar) are marked in place; `currentHit`
+// is the one stepped to — it unfolds any block hiding it and scrolls to the middle of the view.
+import { computed, nextTick, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import hljs from 'highlight.js/lib/common';
 import 'highlight.js/styles/github-dark.css';
@@ -51,6 +54,7 @@ import {
   visibleLines,
   type FoldRegion,
 } from '../../lib/code-folding';
+import { markHtml, type FindHit, type MarkRange } from '../../lib/find-in-text';
 import KIcon from './KIcon.vue';
 
 // Each row is ~5 elements and a v-html parse, built on every open and refresh: 5k lines is
@@ -58,7 +62,7 @@ import KIcon from './KIcon.vue';
 // render as one block — no line numbers or folds, but no stall either.
 const FOLD_MAX_LINES = 5_000;
 
-const props = defineProps<{ path: string; text: string }>();
+const props = defineProps<{ path: string; text: string; hits?: readonly FindHit[]; currentHit?: number | undefined }>();
 
 const { t } = useI18n();
 
@@ -109,6 +113,68 @@ function toggle(row: number): void {
   else next.add(row);
   folded.value = next;
 }
+
+// ── Find ────────────────────────────────────────────────────────────────
+const HIT = 'k-code__hit';
+const HIT_CURRENT = 'k-code__hit k-code__hit--current';
+
+// Each line's marks, only for lines that have any.
+const hitRanges = computed(() => {
+  const out = new Map<number, MarkRange[]>();
+  (props.hits ?? []).forEach((h, i) => {
+    const list = out.get(h.line) ?? [];
+    list.push({ start: h.start, end: h.end, cls: i === props.currentHit ? HIT_CURRENT : HIT });
+    out.set(h.line, list);
+  });
+  return out;
+});
+
+function markedLine(row: number): string {
+  const html = lineHtml.value[row] ?? '';
+  const ranges = hitRanges.value.get(row);
+  return ranges ? markHtml(html, ranges) : html;
+}
+
+// The one-block render counts from the top of the file: each line's start, then its columns.
+const plainHtml = computed(() => {
+  if (!tooLong.value || !props.hits?.length) return html.value;
+  const starts: number[] = [];
+  let at = 0;
+  for (const l of lines.value) { starts.push(at); at += l.length + 1; }
+  const ranges = props.hits.map((h, i) => ({
+    start: starts[h.line]! + h.start,
+    end: starts[h.line]! + h.end,
+    cls: i === props.currentHit ? HIT_CURRENT : HIT,
+  }));
+  return markHtml(html.value, ranges);
+});
+
+const rootEl = ref<HTMLElement | null>(null);
+// Keyed by position, so a re-read of the file that leaves the match where it was (an agent
+// editing elsewhere) does not scroll the view back to it.
+const currentAt = computed(() => {
+  const h = props.currentHit === undefined ? undefined : props.hits?.[props.currentHit];
+  return h ? `${h.line}:${h.start}` : '';
+});
+watch(
+  currentAt,
+  () => {
+    const hit = props.currentHit === undefined ? undefined : props.hits?.[props.currentHit];
+    if (!hit) return;
+    const hiding = [...folded.value].filter((s) => {
+      const r = regions.value.get(s);
+      return r && s <= hit.line && hit.line <= r.end;
+    });
+    if (hiding.length) {
+      const next = new Set(folded.value);
+      hiding.forEach((s) => next.delete(s));
+      folded.value = next;
+    }
+    void nextTick(() => {
+      rootEl.value?.querySelector('.k-code__hit--current')?.scrollIntoView({ block: 'center', inline: 'nearest' });
+    });
+  },
+);
 
 // The folded line: what stands before the opener, re-highlighted on its own (one line is
 // cheap, and only folded lines pay it) …
@@ -225,6 +291,16 @@ function foldTail(row: number): string {
   padding: 0 var(--k-sp-2);
   white-space: pre;
   color: var(--k-text);
+}
+// Matches from the find bar; the one stepped to stands out. The marks live in v-html, hence :deep.
+.k-code :deep(.k-code__hit) {
+  color: inherit;
+  background: color-mix(in srgb, var(--k-warning) 28%, transparent);
+  border-radius: 2px;
+}
+.k-code :deep(.k-code__hit--current) {
+  background: color-mix(in srgb, var(--k-warning) 65%, transparent);
+  outline: 1px solid var(--k-warning);
 }
 .k-code__chip {
   margin: 0 1px;

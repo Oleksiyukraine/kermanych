@@ -7,13 +7,19 @@
 // With `load` (raw bytes of a repo path), a Markdown/HTML/PDF/image file also gets source /
 // split / preview in the header — the same toggle KDiffView carries. A click on an in-repo
 // link of a rendered doc comes out as `open`, for the caller to open that file.
+//
+// ⌘F / Ctrl+F (or the magnifier) opens a find bar over the source view: matches are marked in
+// place, Enter / Shift+Enter step through them, Esc closes the bar and gives focus back to the
+// code. A Markdown preview is searched too; a diff, an HTML page and a PDF are not.
 import { computed, nextTick, onMounted, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import type { FileContent } from '@kermanych/core';
 import type { FileDiff } from '../../lib/api';
+import { useFindInText } from '../../composables/useFindInText';
 import { docPreviewKind, initialViewMode, rememberedViewMode, type ViewMode } from '../../lib/doc-preview';
 import KCodeView from './KCodeView.vue';
 import KDiffRows from './KDiffRows.vue';
+import KFindBar from './KFindBar.vue';
 import KIcon from './KIcon.vue';
 import KDocPreview from './KDocPreview.vue';
 import KFullscreenButton from './KFullscreenButton.vue';
@@ -100,6 +106,15 @@ watch(
 );
 watch([shownMode, shownDiff, () => props.maximized], focusBody);
 
+// ── Find in file ─────────────────────────────────────────────────────────
+const find = useFindInText(
+  () => (props.file && !props.file.binary && !props.file.truncated && !shownDiff.value && shownMode.value !== 'preview'
+    ? props.file.content
+    : null),
+  viewEl,
+  () => previewable.value && shownMode.value !== 'source' && previewKind.value === 'markdown',
+);
+
 // The body already fetched for the source view; the preview reads it instead of the bytes.
 const previewText = computed(() =>
   props.file && !props.file.binary && !props.file.truncated ? props.file.content : null,
@@ -107,10 +122,17 @@ const previewText = computed(() =>
 </script>
 
 <template>
-  <section ref="viewEl" class="k-file-view" :aria-label="t('kit.fileView.fileLabel', { path })">
+  <section ref="viewEl" class="k-file-view" :aria-label="t('kit.fileView.fileLabel', { path })" @keydown="find.onKeydown">
     <header class="k-file-view__head">
       <span class="k-file-view__path mono">{{ path }}</span>
       <span class="k-file-view__spacer"></span>
+      <KIconButton
+        v-if="find.available.value"
+        :title="t('kit.fileView.find.open')"
+        :active="find.shown.value"
+        :aria-pressed="find.shown.value"
+        @click="find.toggle"
+      ><KIcon class="k-file-view__icon" name="search" /></KIconButton>
       <KIconButton
         v-if="diffApplies"
         :title="diffTip"
@@ -124,6 +146,17 @@ const previewText = computed(() =>
       <KFullscreenButton :on="!!maximized" @click="emit('toggleMaximize')" />
       <KIconButton :title="t('kit.fileView.close')" @click="emit('close')">✕</KIconButton>
     </header>
+
+    <KFindBar
+      v-if="find.shown.value"
+      v-model:query="find.query.value"
+      v-model:match-case="find.matchCase.value"
+      v-model:whole-word="find.wholeWord.value"
+      :count="find.count.value"
+      :has-hits="find.total.value > 0"
+      @step="find.step"
+      @close="find.close"
+    />
 
     <KSplitPanes
       class="k-file-view__panes"
@@ -140,12 +173,20 @@ const previewText = computed(() =>
             <KDiffRows :diff="shownDiff" />
           </div>
           <div v-else-if="file" class="k-file-view__body k-scroller" tabindex="0">
-            <KCodeView :path="path" :text="file.content" />
+            <KCodeView :path="path" :text="file.content" :hits="find.hits.value" :current-hit="find.currentHit.value" />
           </div>
         </div>
       </template>
       <template #end>
-        <KDocPreview v-if="load" :path="path" :load="load" :text="previewText" @open="emit('open', $event)" />
+        <KDocPreview
+          v-if="load"
+          :path="path"
+          :load="load"
+          :text="previewText"
+          :find="find.previewFind.value"
+          @open="emit('open', $event)"
+          @found="find.setRenderedTotal"
+        />
       </template>
     </KSplitPanes>
   </section>

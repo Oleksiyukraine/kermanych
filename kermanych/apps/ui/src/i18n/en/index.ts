@@ -2597,6 +2597,16 @@ export const en: MessageSchema = {
       tooLarge: 'File too large to view.',
       maximize: 'Full screen',
       minimize: 'Collapse to panel',
+      find: {
+        open: 'Find in file (⌘F)',
+        placeholder: 'Find in file',
+        matchCase: 'Match case',
+        wholeWord: 'Match whole word',
+        prev: 'Previous match (Shift+Enter)',
+        next: 'Next match (Enter)',
+        close: 'Close find (Esc)',
+        none: 'No results',
+      },
     },
     code: {
       fold: 'Fold',
