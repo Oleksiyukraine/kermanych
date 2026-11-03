@@ -5,7 +5,27 @@
       <!-- Until the ticket's markdown arrives the body is a placeholder, not an empty field:
            text typed into it would be overwritten by the load, or saved over Jira's body. -->
       <KSkeleton v-if="phase === 'skeleton'" variant="block" height="118px" />
-      <KField v-else v-model="description" :label="t('jira.issueEditor.descLabel')" multiline :rows="5" :placeholder="t('jira.issueEditor.descPlaceholder')" :disabled="!loaded" />
+      <div v-else>
+        <KField
+          ref="descriptionField"
+          v-model="description"
+          :label="t('jira.issueEditor.descLabel')"
+          multiline
+          :rows="5"
+          :placeholder="t('jira.issueEditor.descPlaceholder')"
+          :disabled="!loaded"
+          @keydown="dictation.onKeydown"
+        />
+        <!-- Диктування (docs/specs/2026-11-03-voice-dictation.md). -->
+        <KDictation
+          class="jie__dictate"
+          :state="dictation.state.value"
+          :caption="dictation.caption.value"
+          :level="dictation.level.value"
+          :disabled="!loaded"
+          @toggle="dictation.toggle"
+        />
+      </div>
       <div class="jie__row">
         <KSelect v-model="typePick" :label="t('jira.issueEditor.typeLabel')" :options="typeOptions" placeholder="—" :disabled="!!editKey" :loading="loading" />
         <KSelect v-model="priorityPick" :label="t('jira.issueEditor.priorityLabel')" :options="priorityOptions" placeholder="—" :loading="loading" />
@@ -49,12 +69,14 @@ import { computed, ref, watch } from 'vue';
 import type { JiraIssue } from '@kermanych/cloud';
 import KBtn from 'components/kit/KBtn.vue';
 import KField from 'components/kit/KField.vue';
+import KDictation from 'components/kit/KDictation.vue';
 import KModal from 'components/kit/KModal.vue';
 import KSkeleton from 'components/kit/KSkeleton.vue';
 import KSelect, { type KSelectOption } from 'components/kit/KSelect.vue';
 import { api, type JiraAssignableUser, type JiraEditorOptions, type JiraIssueDraftWire } from '../../lib/api';
 import { errorText, useAsyncAction } from '../../composables/useAsyncAction';
 import { useLoadPhase } from '../../composables/useLoadPhase';
+import { useDictationField } from '../../composables/useDictationField';
 import { useI18n } from 'vue-i18n';
 
 const props = defineProps<{
@@ -70,6 +92,9 @@ const emit = defineEmits<{ 'update:modelValue': [value: boolean]; saved: [issue:
 
 const summary = ref('');
 const description = ref('');
+const descriptionField = ref<InstanceType<typeof KField> | null>(null);
+// Диктування: the description is said rather than typed; closing the editor drops the phrase.
+const dictation = useDictationField({ el: () => descriptionField.value?.el(), value: description });
 // The description as it was loaded, so a save that did not touch it leaves Jira's body
 // alone: markdown cannot carry everything ADF can (images, mentions, panels), and an edit
 // of the priority must not rewrite the text through it.
@@ -131,7 +156,7 @@ const assigneeOptions = computed<KSelectOption[]>(() =>
 watch(
   () => props.modelValue,
   async (open) => {
-    if (!open) return;
+    if (!open) return dictation.cancel();
     const mine = ++openRun;
     error.value = '';
     loaded.value = false;
@@ -179,6 +204,8 @@ watch(
 // is shown inside it.
 const { run: save, busy } = useAsyncAction(
   async () => {
+    // The phrase being spoken belongs to the description: it lands before the ticket is read.
+    await dictation.beforeSubmit();
     if (!loaded.value || !summary.value.trim()) return;
     error.value = '';
     const labels = labelsInput.value
@@ -222,6 +249,9 @@ function onToggle(open: boolean): void {
   display: flex;
   flex-direction: column;
   gap: var(--k-sp-3);
+}
+.jie__dictate {
+  margin-top: 6px;
 }
 
 .jie__row {

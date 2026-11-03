@@ -217,6 +217,13 @@
             @dragover.prevent
           />
         </div>
+        <!-- Диктування (docs/specs/2026-11-03-voice-dictation.md): ⌥D in the description does the same. -->
+        <KDictation
+          :state="draftDictation.state.value"
+          :caption="draftDictation.caption.value"
+          :level="draftDictation.level.value"
+          @toggle="draftDictation.toggle"
+        />
         <div class="board__attach">
           <button
             type="button"
@@ -423,11 +430,13 @@ import KAvatar from 'components/kit/KAvatar.vue';
 import KAttachStrip from 'components/kit/KAttachStrip.vue';
 import KHelperPicker from 'components/kit/KHelperPicker.vue';
 import KFilePicker from 'components/kit/KFilePicker.vue';
+import KDictation from 'components/kit/KDictation.vue';
 import KDirPicker from 'components/kit/KDirPicker.vue';
 import { useNow } from '../composables/useNow';
 import { useDelayedTrue } from '../composables/useDelayedTrue';
 import { useImageAttach } from '../composables/useImageAttach';
 import { useFileMention } from '../composables/useFileMention';
+import { useDictationField } from '../composables/useDictationField';
 import { useTaskDetails } from '../composables/useTaskDetails';
 import { imageToFile } from '../lib/images';
 import { relativeTime, renderTime } from '../lib/time';
@@ -1282,6 +1291,7 @@ watch(editorOpen, (open) => {
   if (!open) {
     helperOpen.value = false;
     draftMention.open.value = false;
+    draftDictation.cancel();
   }
 });
 function closeDraftHelper(): void {
@@ -1292,6 +1302,8 @@ function onDraftHelper(name: string): void {
   draftDescription.value = prependHelper(draftDescription.value, name);
 }
 function onDescriptionKeydown(e: KeyboardEvent): void {
+  draftDictation.onKeydown(e);
+  if (e.defaultPrevented) return;
   if (e.key === '/' && draftDescription.value === '') {
     e.preventDefault();
     helperOpen.value = true;
@@ -1313,6 +1325,8 @@ const draftMention = useFileMention({
   set: (v) => (draftDescription.value = v),
   enabled: () => !!draftFiles.value,
 });
+// Диктування: the description is said rather than typed; phrases land at the caret.
+const draftDictation = useDictationField({ el: () => descriptionField.value?.el(), value: draftDescription });
 
 // The editor's assignee picker reads the roster of the picker's OWN project, which is not
 // necessarily the scoped one: an unscoped board shows cards from every workspace, and
@@ -1374,6 +1388,15 @@ function openEdit(task: Task): void {
 
 async function submitEditor(): Promise<void> {
   if (submitting.value) return;
+  // The phrase being spoken belongs to the description: it lands before the form is read.
+  if (draftDictation.state.value !== 'idle') {
+    submitting.value = true;
+    try {
+      await draftDictation.beforeSubmit();
+    } finally {
+      submitting.value = false;
+    }
+  }
   editorError.value = null;
   // Blank strings are meaningful: toTaskRow() turns them into NULL, which is how a user
   // clears a launch param they set earlier. The project is immutable after creation —

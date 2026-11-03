@@ -2,10 +2,11 @@
 
 - **Branch:** `feature/add-voice-task-description-input`
 - **Scope:** `packages/core` (pure dictation logic), `apps/api` (the transcription SDP exchange),
-  `apps/ui` (the dictation store and composable, two kit components, the seven popups, the voice
+  `apps/ui` (the dictation store and composable, the `KDictation` kit component, the seven popups, the voice
   conversation's mic hold), i18n `uk` / `en`, `kermanych/README.md`.
-- **Status:** decisions agreed with the operator in the deep-analysis interview (2026-11-03);
-  waiting for approval. No code changed yet.
+- **Status:** decisions agreed with the operator in the deep-analysis interview (2026-11-03),
+  approved the same day; the Ukrainian checkpoint passed; implemented on this branch (see
+  «Verification»).
 
 ## Goal
 
@@ -72,7 +73,9 @@ creates a task: speak, see the words appear, edit, submit.
    phrase is final (`…completed`), its text is inserted where the caret is, joined to the
    neighbouring text with a space (or nothing after a newline / at the start); the caret moves
    after it. The field stays editable throughout. **⌥D** toggles dictation while the focus is in
-   the description field; the button's tip names it. Rejected: drafts written into the field
+   the description field; the button's tip names it. The button sits **under** the field, on the
+   draft line (not on the label row: `KField` is a `<label>`, and a button inside it would be
+   toggled by a click on the label text). Rejected: drafts written into the field
    (the field locks, corrected text jumps); append to the end on stop (ignores the caret, loses
    everything on close).
 5. **Dictation mutes a running voice conversation.** While dictation runs, the conversation's
@@ -141,14 +144,15 @@ creates a task: speak, see the words appear, edit, submit.
   Starting while another owner holds it → `stop()` that one first.
 - `stores/voice.ts`: `holdMic()` / `releaseMic()` for decision 5 (remembers whether the operator
   had muted).
-- `composables/useDictation.ts(el, model)`: what a popup wires — `state`, `caption`, `level`,
-  `toggle()`, `beforeSubmit()` (awaits `stop()`), `cancel()` on close/unmount, `onKeydown` (⌥D),
-  insertion at the caret via `insertDictated`.
-- Kit: `KDictateButton` (🎤 / ■ with the mic level, `connecting` spinner, the ⌥D tip; emits
-  `toggle`) and `KDictationCaption` (the draft line). `KField` gets a `label-aside` slot so the
-  button sits on the label row. Gallery samples for both.
-- The seven popups: button, caption, ⌥D, `beforeSubmit()` in each submit path, `cancel()` on
-  close.
+- `composables/useDictationField.ts({ el, value })`: what a popup wires — `state`, `caption`,
+  `level`, `toggle()`, `beforeSubmit()` (awaits `stop()`), `cancel()` on close/unmount,
+  `onKeydown` (⌥D by `KeyboardEvent.code`: ⌥D types «∂» on macOS), insertion at the caret via
+  `insertDictated`; a missing key's notice carries «Відкрити «Голос»».
+- Kit: `KDictation` — the toggle (mic / spinner while connecting or flushing, the ⌥D tip;
+  emits `toggle`) and, while running, the state, the mic level and the draft caption on one line
+  under the field. Gallery sample beside the composer.
+- The seven popups: `KDictation` under the description, ⌥D, `beforeSubmit()` in each submit path
+  under the submit button's busy state, `cancel()` on close.
 - i18n `uk` / `en`: button tips, states, notices (silence stop, drop, no key, mic denied — the
   existing `voice.micDenied` / `voice.micMissing` words are reused).
 
@@ -158,14 +162,13 @@ Nothing new: the microphone permission of the voice conversation covers dictatio
 
 ## Steps
 
-1. **Ukrainian checkpoint.** `POST /api/voice/dictation` + the store connecting WebRTC, the
-   caption only (no insertion yet), with the operator's key in the preview's «Голос» pane. Settles
-   the undocumented parts: a transcription session over `/v1/realtime/calls`, `commit` over the
-   data channel, deltas before commit. Failure → fallback of decision 1, this document updated.
+1. **Ukrainian checkpoint.** `POST /api/voice/dictation` + the store connecting WebRTC, with the
+   operator's key in the preview's «Голос» pane. **Passed 2026-11-03:** the operator confirmed
+   dictation works end to end in Chrome against the preview.
 2. Core `dictation.ts` with tests.
 3. API endpoint with tests.
-4. UI: store, composable, kit components, `holdMic`, the seven popups, i18n.
-5. README; live end-to-end run with the operator.
+4. UI: store, composable, `KDictation`, `holdMic`, the seven popups, i18n.
+5. README.
 
 ## Verification
 
@@ -182,6 +185,17 @@ Nothing new: the microphone permission of the voice conversation covers dictatio
 - Live with the operator's key in the preview: step 1; then each of the seven popups — dictate,
   edit mid-dictation, ⌥D, submit while speaking (the last phrase lands), close while speaking,
   silence stop, dictation during a voice conversation (the agent gets nothing).
+
+### Results
+
+- `@kermanych/core`: 25 files, 276 passed (incl. `dictation.spec.ts`, 15).
+- `@kermanych/api`: 120 files passed, 1204 passed, 4 skipped (incl. `voice.service.spec.ts`, 16,
+  4 of them `createDictation`). `tsc --noEmit` clean.
+- `@kermanych/ui`: 79 files, 837 passed (incl. `dictation-store.spec.ts`, 8); `vue-tsc --noEmit`
+  clean.
+- Preview: «Диктувати» renders under the description in the launcher and «Новий дизайн»; in the
+  embedded session browser a click shows «Немає доступу до мікрофона…» (no microphone there).
+- Live: the operator's run in Chrome against the preview (step 1).
 
 ## Risks
 

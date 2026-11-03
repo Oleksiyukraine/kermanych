@@ -103,6 +103,25 @@ export {
 } from "./language";
 export { DEFAULT_VOICE, VOICE_IDS, VOICE_MODEL, isVoiceId, voiceLanguage, voiceLivePrompt, type VoiceId } from "./voice";
 export {
+  DICTATION_IDLE_MS,
+  DICTATION_MODEL,
+  DICTATION_PAUSE_MS,
+  DICTATION_PROMPT,
+  DICTATION_SPEECH_LEVEL,
+  dictationLanguages,
+  dictationSession,
+  emptySegments,
+  insertDictated,
+  isDictationLanguages,
+  segmentCommitted,
+  segmentSettled,
+  segmentsDone,
+  vadStart,
+  vadStep,
+  type DictationSegments,
+  type VadState,
+} from "./dictation";
+export {
   COMMENTARY_CHUNK_CHARS,
   PROGRESS_EVERY_MS,
   VOICE_NOTE,

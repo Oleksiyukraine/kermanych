@@ -930,6 +930,30 @@ voice: it never answers about the code itself, and asks back only when it did no
   installing a new build. Refused once: System Settings → Privacy & Security → Microphone. The
   embedded session browser never gets the microphone.
 
+### Voice dictation («Диктування»)
+
+Speak a task description instead of typing it (spec: `docs/specs/2026-11-03-voice-dictation.md`).
+OpenAI's streaming transcription (`gpt-live-transcribe`) turns speech into text as you talk.
+
+- **Where.** «Диктувати» under the description of every popup that creates or edits a task:
+  «Нова задача» on «Агенти» (incl. «Глибокий аналіз»), the card editor on «Дошка», «Новий
+  дизайн», a task from a document, a finding → task, and the Jira / Linear issue editors. **⌥D**
+  in the description toggles it.
+- **How text lands.** The phrase being spoken shows as a grey draft under the field; when you
+  pause (~0.8 s) its final text is inserted at the caret. The field stays editable meanwhile.
+  Hints: the agent's language («Мова спілкування агента», else the UI language) plus English for
+  technical terms. No clean-up — the text is what the model heard.
+- **Stopping.** «Зупинити» or ⌥D waits up to 5 s for the last phrase. Submitting the popup while
+  dictating lets the last phrase land first. Closing the popup drops an unfinished phrase. A
+  minute of silence stops it. A dropped connection stops it; what was inserted stays. One
+  dictation per app: starting another field stops the current one.
+- **Key, cost.** The same OpenAI key as the voice conversation (`POST /api/voice/dictation`
+  exchanges the offer with `/v1/realtime/calls`); $0.017 per minute. With no key the notice links
+  to Settings → «Голос».
+- **With a voice conversation.** Dictation mutes the conversation's microphone while it runs and
+  unmutes it afterwards (a conversation you muted stays muted), so the agent never gets the
+  description as a message.
+
 ## Agent map («Карта агентів»)
 
 Every agent on this machine as one tree (spec: `docs/specs/2026-10-22-agent-map.md`):

@@ -2457,6 +2457,17 @@ export const uk = {
       unmute: 'Увімкнути мікрофон',
       end: 'Завершити',
     },
+    dictate: {
+      start: 'Диктувати',
+      stop: 'Зупинити',
+      startTip: 'Надиктувати опис голосом (⌥D)',
+      stopTip: 'Зупинити диктування (⌥D)',
+      state: {
+        connecting: 'з’єднуюсь…',
+        live: 'слухаю',
+        stopping: 'дописую…',
+      },
+    },
     skeleton: {
       loading: 'Завантаження…',
     },
@@ -3132,12 +3143,13 @@ export const uk = {
       'Репозиторій проєкту у стані detached HEAD — перейдіть на гілку або увімкніть «Ізолювати у worktree».',
     voice_key_missing: 'Ключ OpenAI не задано: Налаштування → Застосунок → «Голос».',
     voice_key_invalid: 'OpenAI не прийняв ключ — перевірте його в Налаштування → «Голос».',
-    voice_no_access: 'Цей ключ OpenAI не має доступу до GPT-Live.',
+    voice_no_access: 'Цей ключ OpenAI не має доступу до {model}.',
     voice_quota: 'OpenAI: перевищено ліміт запитів або квоту ключа.',
     voice_network: 'OpenAI недоступний — перевірте з’єднання.',
     voice_upstream: 'OpenAI відмовив (HTTP {status}).',
     voice_offer_invalid: 'Не вдалося підготувати голосове з’єднання.',
     voice_voice_invalid: 'Невідомий голос — оберіть інший у Налаштування → «Голос».',
+    voice_language_invalid: 'Невідома мова диктування.',
     image: {
       unsupported: 'непідтримуваний тип: {mime} (треба PNG/JPEG/GIF/WebP)',
       unknownMime: 'невідомо',
@@ -3163,6 +3175,13 @@ export const uk = {
       message: 'Зараз голосова розмова йде з «{name}». Вона завершиться, і почнеться нова — з цією сесією.',
       confirm: 'Перенести',
     },
+  },
+  dictation: {
+    dropped: 'Диктування перервано: з’єднання втрачено. Надиктоване лишилось у полі.',
+    idleStopped: 'Диктування зупинено: хвилину тиші.',
+    phraseFailed: 'Фразу не вдалося розпізнати — повторіть її.',
+    error: 'Диктування: {error}',
+    openSettings: 'Відкрити «Голос»',
   },
   notices: {
     slot_wait: 'надіслано, чекає на слот · {running} з {limit} працюють',
