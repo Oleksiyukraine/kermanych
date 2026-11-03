@@ -56,7 +56,22 @@
          Налаштування, nothing on this screen queues into one shared draft. -->
     <section class="ait__pane">
       <header class="ait__head">
-        <div class="ait__head-text">
+        <!-- An agent's page (`/ai-team/agents/<id>`): the way back to the list, then the agent's
+             mark, name and what it does in one sentence, in the place the section's own heading
+             takes on the list. -->
+        <div v-if="agent" class="ait__head-text">
+          <RouterLink class="ait__crumb" :to="{ name: 'ai-team', params: { section: 'agents' } }">
+            ← {{ t('aiTeam.agents.back') }}
+          </RouterLink>
+          <div class="ait__agent">
+            <span class="ait__disc" aria-hidden="true"><KIcon :name="AGENT_ICONS[agent.id] ?? 'minion'" /></span>
+            <div class="ait__head-text">
+              <h1 class="ait__title">{{ t(agent.labelKey) }}</h1>
+              <p class="ait__blurb">{{ t('aiTeam.agents.about.' + agent.id + '.tagline') }}</p>
+            </div>
+          </div>
+        </div>
+        <div v-else class="ait__head-text">
           <h1 class="ait__title">{{ t('aiTeam.sections.' + section.key + '.label') }}</h1>
           <p class="ait__blurb">{{ t('aiTeam.sections.' + section.key + '.blurb') }}</p>
         </div>
@@ -84,25 +99,28 @@
         </div>
 
         <!-- The `v-if` on owner is the type guard: the panels take a concrete owner, and only
-             the narrowing here turns the possibly-undefined subject into one. Not keyed — the
-             panels watch the owner and reload in place, dropping any unsaved draft with it. -->
-        <!-- Агенти кастомізуються лише на рівні воркспейсу (override інструкції + призначені
-             навички діють на всю команду). На рівні проєкту — картка «Посіпаки»: його вмикають
-             для проєкту на цій машині, а інструкцію й навички воркспейсу показано лише для
-             читання. Користувач поки не має власного шару агентів — заглушка, а не порожній
-             редактор, який нічого не збереже. -->
+             the narrowing here turns the possibly-undefined subject into one. -->
+        <!-- «Агенти» (docs/specs/2026-11-03-ai-team-agent-pages.md): the short list, or one
+             agent's page at /ai-team/agents/<id>. The same list in the project and the workspace
+             scope; an agent's instruction and skills are edited at the workspace and shown
+             read-only, as the project's launch resolves them, at the project. The user scope has
+             no agent layer — a stub, not an editor that would save nothing. The page is keyed on
+             the agent, so another agent is a fresh page with no draft carried over. -->
         <div v-else-if="section.key === 'agents'" class="ait__form ait__form--wide">
-          <AiAgentsPanel v-if="owner.scope === 'workspace'" :owner="owner" :owner-name="ownerName" />
-          <MinionPanel
-            v-else-if="owner.scope === 'project'"
-            :project-id="owner.id"
-            :workspace-id="cloudRow?.workspaceId"
-            @open-workspace="setScope('workspace')"
-          />
-          <div v-else class="ait__blank">
+          <div v-if="owner.scope === 'user'" class="ait__blank">
             <span class="ait__blank-eyebrow mono">{{ t('aiTeam.blank.eyebrow') }}</span>
             <p>{{ t('aiTeam.agentsUnavailable') }}</p>
           </div>
+          <AiAgentPage
+            v-else-if="agent"
+            :key="agent.id"
+            :def="agent"
+            :owner="owner"
+            :workspace-id="agentWorkspaceId"
+            :workspace-name="agentWorkspaceName"
+            @open-workspace="setScope('workspace')"
+          />
+          <AiAgentsList v-else :owner="owner" :workspace-id="agentWorkspaceId" />
         </div>
         <!-- The read-only «Успадковано» block hangs BELOW the editable list on every scope
              EXCEPT workspace (which is the base and inherits nothing). It shows what a session
@@ -137,17 +155,18 @@
 // who works at the workspace level can arm the team once for every project) or `user` (the
 // signed-in operator's private overlay). The owner is what the panels read and write; the
 // launch resolver merges the three by precedence (user > project > workspace).
-import { computed, ref } from 'vue';
+import { computed, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { useI18n } from 'vue-i18n';
 import type { AiOwner, AiScope } from '@kermanych/cloud';
 import { useOrchestrator } from 'stores/orchestrator';
 import { useProjects } from 'stores/projects';
 import { useAuth } from 'stores/auth';
-import { AI_TEAM_SCOPES, AI_TEAM_SECTIONS, aiTeamSection } from '../lib/ai-team';
+import { AGENT_ICONS, AI_TEAM_SCOPES, AI_TEAM_SECTIONS, aiTeamAgent, aiTeamSection } from '../lib/ai-team';
+import KIcon from 'components/kit/KIcon.vue';
 import KTopNav from 'components/kit/KTopNav.vue';
-import AiAgentsPanel from 'components/settings/AiAgentsPanel.vue';
-import MinionPanel from 'components/settings/MinionPanel.vue';
+import AiAgentsList from 'components/settings/AiAgentsList.vue';
+import AiAgentPage from 'components/settings/AiAgentPage.vue';
 import TriggersPanel from 'components/settings/TriggersPanel.vue';
 import SkillsLibraryPanel from 'components/settings/SkillsLibraryPanel.vue';
 import HelpersCatalogPanel from 'components/settings/HelpersCatalogPanel.vue';
@@ -161,6 +180,17 @@ const route = useRoute();
 const router = useRouter();
 
 const section = computed(() => aiTeamSection(route.params.section));
+// An agent's page, `/ai-team/agents/<id>` (docs/specs/2026-11-03-ai-team-agent-pages.md,
+// decision 2). The second segment means something only under «Агенти»; anywhere else, or naming
+// no agent, it is replaced away so the URL says what is on screen — the list, or the section.
+const agent = computed(() => (section.value.key === 'agents' ? aiTeamAgent(route.params.item) : undefined));
+watch(
+  () => [route.params.item, section.value.key, agent.value] as const,
+  ([item, key, def]) => {
+    if (item && !def) void router.replace({ name: 'ai-team', params: { section: key } });
+  },
+  { immediate: true },
+);
 
 // The owner axis. Local state, not a URL segment: the section is the deep-linkable thing, and
 // the scope follows whatever the operator is looking at in the sidebar (a project, its group).
@@ -212,8 +242,19 @@ const inheritedWorkspace = computed<AiOwner | undefined>(() =>
     : undefined,
 );
 
+// The workspace behind the agents a project gets (its rows sit under the project's), and its name
+// for the read-only page's source caption. At the workspace scope it is the owner itself.
+const agentWorkspaceId = computed(() =>
+  scope.value === 'project' ? cloudRow.value?.workspaceId : scope.value === 'workspace' ? workspace.value?.id : undefined,
+);
+const agentWorkspaceName = computed(() =>
+  agentWorkspaceId.value ? projects.workspaceById.get(agentWorkspaceId.value)?.name : undefined,
+);
+
+// A rail row always lands on its section's front: the «Агенти» row from an agent's page goes back
+// to the list.
 function goSection(key: string): void {
-  if (key !== section.value.key) void router.push({ name: 'ai-team', params: { section: key } });
+  if (key !== section.value.key || route.params.item) void router.push({ name: 'ai-team', params: { section: key } });
 }
 </script>
 
@@ -419,6 +460,8 @@ function goSection(key: string): void {
   font-size: var(--k-fs-lg);
   font-weight: var(--k-fw-semibold);
   letter-spacing: -0.01em;
+  // Quasar's global h1 line-height (6rem) is sized for a display heading, not this one.
+  line-height: 1.3;
   color: var(--k-text);
 }
 
@@ -427,6 +470,44 @@ function goSection(key: string): void {
   font-size: var(--k-fs-base);
   line-height: 1.5;
   color: var(--k-faint);
+}
+
+// An agent page's header: «← Агенти» above, then the agent's mark in a disc beside its name.
+.ait__crumb {
+  display: inline-block;
+  margin-bottom: var(--k-sp-2);
+  font-size: var(--k-fs-sm);
+  color: var(--k-muted);
+  text-decoration: none;
+
+  &:hover {
+    color: var(--k-text);
+  }
+
+  &:focus-visible {
+    outline: 1px solid var(--k-accent);
+    outline-offset: 2px;
+  }
+}
+
+.ait__agent {
+  display: flex;
+  align-items: center;
+  gap: var(--k-sp-3);
+}
+
+// The list row's disc, one step larger: the same mark, now the page's subject.
+.ait__disc {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--k-accent) 16%, transparent);
+  color: var(--k-accent);
+  --k-icon-size: var(--k-icon-xl);
 }
 
 .ait__body {

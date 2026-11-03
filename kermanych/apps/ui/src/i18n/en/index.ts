@@ -1,4 +1,5 @@
 import type { MessageSchema } from '../schema';
+import { agentAbout } from './agent-about';
 export const en: MessageSchema = {
   common: {
     login: {
@@ -755,14 +756,7 @@ export const en: MessageSchema = {
       noProjects: 'None — the Minion takes nothing here.',
       pollError: 'Could not ask the cloud: {error}',
       loadFailed: 'Could not read the Minion’s state: {error}',
-      instructionTitle: 'Workspace instruction and skills',
-      instructionDefault: 'Kermanych’s default instruction',
-      instructionOverride: 'Instruction rewritten in the workspace',
-      skills: 'Skills, in order',
-      noSkills: 'No skills assigned.',
       findingsSkill: 'Cards from «Findings» also get the {name} skill — rules for bug, security, tech-debt and docs; «Library» can override or switch it off.',
-      noWorkspace: 'The project belongs to no cloud workspace — there is no workspace instruction or skills.',
-      editInWorkspace: 'Change at the workspace level →',
     },
   },
   onboarding: {
@@ -1206,7 +1200,7 @@ export const en: MessageSchema = {
     agentKind: {
       session: 'own session',
       procedure: 'procedure',
-      automation: 'no AI',
+      automation: 'automation',
     },
     rail: {
       categoriesAria: 'Settings sections: {scope}',
@@ -1674,11 +1668,9 @@ export const en: MessageSchema = {
       repoOverridesDefault: 'overrides a default',
     },
     aiAgents: {
-      lead: 'The team roster is baked into the app, but what each role reads at launch belongs to {project}: the instruction can be rewritten in your own words, the skills ordered as you like. Both live in the cloud and apply here only; the workspace owner is the one who changes them.',
       instructionCaption: 'The launch instruction — this is the exact text that goes to the model:',
       holesHint: 'Kermanych fills the braces {braces} at launch — leave them in the text wherever the data belongs.',
       holesRequired: 'Required placeholders: {holes}. Each must appear in the text at least once.',
-      overridden: 'rewritten for this project',
       resetDefault: 'Restore the default',
       save: 'Save',
       cancel: 'Cancel',
@@ -1687,7 +1679,7 @@ export const en: MessageSchema = {
       errMissing: 'Missing placeholders: {holes}. Without them Kermanych has nowhere to put the task, and the role gets an instruction without it.',
       errUnknown: 'Unknown placeholders: {holes}. Kermanych does not fill these — they go to the model verbatim, as text.',
       skillsCaption: 'The skills this role always receives — in this order:',
-      automationNote: 'No model is involved here — Kermanych performs this action itself, so there is neither an instruction nor any skills.',
+      automationNote: 'There is no instruction or skills of its own here — Kermanych performs this action itself, so there is nothing to rewrite.',
       readOnly: 'Only the workspace owner can change instructions and skills — for you they are read-only.',
       headerCaption: 'The role receives its skills under this header, verbatim:',
       baseSyncCaption: 'Kermanych appends this after the instruction — it cannot be changed or switched off:',
@@ -1732,9 +1724,9 @@ export const en: MessageSchema = {
     sections: {
       agents: {
         label: 'Agents',
-        sub: 'instructions and skills',
+        sub: 'who does what',
         blurb:
-          'What each role reads at launch: the instruction is shown in full and can be rewritten for this project, and its skills can be ordered exactly as they will be glued onto it. Only the workspace owner can change this.',
+          'Kermanych’s agents by stage of work. Open an agent to see when it runs, what it does and what it gets as input; the workspace owner changes its instruction and skills.',
       },
       triggers: {
         label: 'Triggers',
@@ -1767,6 +1759,50 @@ export const en: MessageSchema = {
       unknown: '—',
     },
     agentsUnavailable: 'Agents are configured at the workspace level. This is not available here yet.',
+    // «Агенти»: the short list and a page per agent (docs/specs/2026-11-03-ai-team-agent-pages.md).
+    agents: {
+      groups: {
+        work: 'Doing the work',
+        design: 'Design',
+        ship: 'Review and delivery',
+        auto: 'No instruction of their own',
+      },
+      back: 'Agents',
+      overridden: 'rewritten',
+      skillCount: '{n} skill | {n} skills',
+      loadFailed: 'Could not read the agent settings: {error}',
+      kindTip: {
+        session: 'Starts a session of its own, with a model.',
+        procedure: 'Sends a message into a session that is already running.',
+        automation: 'Kermanych does it itself — there is no instruction or skills of its own.',
+      },
+      how: {
+        title: 'How it works',
+        when: 'When it runs',
+        steps: 'What it does',
+        inputs: 'What it gets',
+        adds: 'What Kermanych adds itself',
+        ends: 'How it ends',
+      },
+      instructionTitle: 'Instruction',
+      skillsTitle: 'Skills',
+      source: {
+        default: 'Kermanych’s default instruction — exactly this text goes to the model:',
+        workspace: 'Instruction rewritten in the workspace «{name}» — exactly this text goes to the model:',
+        project: 'Instruction rewritten for this project earlier — it overrides the workspace:',
+        user: 'Your personal instruction:',
+      },
+      skillsSource: {
+        default: 'No skills assigned.',
+        workspace: 'Skills from the workspace «{name}», in this order:',
+        project: 'Skills assigned to this project earlier — they override the workspace:',
+        user: 'Your personal skills:',
+      },
+      noSkills: 'No skills assigned — only the instruction goes.',
+      noWorkspace: 'The project belongs to no cloud workspace — Kermanych’s default texts apply.',
+      editInWorkspace: 'Change at the workspace level →',
+      about: agentAbout,
+    },
     inherited: {
       title: 'Inherited',
       system: 'system',
@@ -3734,6 +3770,7 @@ export const en: MessageSchema = {
       discard: 'Discard',
       disconnect: 'Disconnect',
       reset: 'Reset',
+      leave: 'Leave',
       revoke: 'Revoke',
       clear: 'Clear',
       kill: 'Stop it',
@@ -3765,6 +3802,10 @@ export const en: MessageSchema = {
     resetAgent: {
       title: 'Reset instruction?',
       message: 'The edited instruction of “{name}” is deleted, and the agent goes back to the default text.',
+    },
+    leaveAgent: {
+      title: 'Leave without saving?',
+      message: 'The instruction of “{name}” is changed and not saved. The changes will be lost.',
     },
     deleteTrigger: {
       title: 'Delete trigger?',
