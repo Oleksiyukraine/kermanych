@@ -61,6 +61,7 @@ function make() {
     createBranchHere: vi.fn().mockResolvedValue(undefined),
     checkout: vi.fn().mockResolvedValue(undefined),
     currentBranch: vi.fn().mockResolvedValue("main"),
+    workingBranch: vi.fn().mockResolvedValue(""),
     forkStart: vi.fn(async (_repo: string, base: string) => ({ ref: base, stale: false })),
     hasUncommitted: vi.fn().mockResolvedValue(false),
     unmergedFiles: vi.fn().mockResolvedValue([] as string[]),
@@ -191,6 +192,28 @@ describe("a native launch", () => {
     await vi.waitFor(() => expect(worktree.unmergedFiles).toHaveBeenCalledTimes(3));
     await nextMacrotask();
     expect(status()).toBe("done");
+  });
+
+  it("takes up a branch the agent renamed in its worktree while the turn still runs", async () => {
+    const { sup, worktree, native } = make();
+    card();
+    const s = await sup.createSessionFromTask("task-1", USER, undefined, "omp");
+    const branch = () => sup.snapshot().sessions.find((x) => x.id === s.id)!.branch;
+    native.ompEvent(s.id, { event: "working" });
+
+    // `git branch -m` inside the worktree, picked up on the harness's next change — no idle.
+    worktree.workingBranch.mockImplementation(async (dir: string) => (dir === s.worktreePath ? "feature/PLAT-398-renamed" : ""));
+    native.ompEvent(s.id, { event: "tool", toolName: "Bash" });
+    native.ompEvent(s.id, { event: "tool_end" });
+    await vi.waitFor(() => expect(branch()).toBe("feature/PLAT-398-renamed"));
+    expect(sup.snapshot().sessions.find((x) => x.id === s.id)!.status).not.toBe("done");
+
+    // A worktree that names no branch (a bare detach) leaves the one on record.
+    worktree.workingBranch.mockResolvedValue("");
+    native.ompEvent(s.id, { event: "idle" });
+    await vi.waitFor(() => expect(worktree.unmergedFiles).toHaveBeenCalled());
+    await nextMacrotask();
+    expect(branch()).toBe("feature/PLAT-398-renamed");
   });
 
   it("refuses images before touching the card", async () => {
