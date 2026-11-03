@@ -32,8 +32,8 @@ export class SupabaseAuthGuard implements CanActivate {
 
     const req = context.switchToHttp().getRequest<GuardedRequest>();
 
-    // A PREVIEW api — the throwaway second api PreviewService starts for one session
-    // (preview.service.ts sets KERMANYCH_PREVIEW) — admits everything as a demo user.
+    // A PREVIEW api — the throwaway second api a session's live preview starts (the Kermanych
+    // repository's .kermanych/preview.json sets KERMANYCH_PREVIEW) — admits everything as a demo user.
     // It listens on 127.0.0.1 only, on a temp DB seeded with inert rows, bound to no cloud
     // project, and no OAuth round trip can reach its random port: a login screen there is
     // one nobody can get past, guarding nothing. `AuthService.current()` stays undefined,

@@ -372,6 +372,14 @@
           :label="t('common.nav.gitRemoteLabel')"
           placeholder="git@github.com:org/repo.git"
         />
+        <!-- What the project ships (docs/specs/2026-11-03-session-browser-preview.md, decision
+             9): back-end and mobile get no session browser and no preview. Defaults to
+             «Не визначено»; Settings → Проєкт → «Основне» changes it later. -->
+        <KSelect
+          v-model="createPlatform"
+          :label="t('settings.project.platform')"
+          :options="platformPickOptions"
+        />
         <p class="shell__hint">
           {{ t('common.nav.projectFormHint') }}
         </p>
@@ -504,9 +512,10 @@ import { useSeen } from 'stores/seen';
 import { useMinion } from 'stores/minion';
 import { IS_PREVIEW } from '../lib/preview';
 import { api } from '../lib/api';
-import { MANAGEMENT_DEFAULT_SECTION } from '@kermanych/core';
+import { isPlatform, MANAGEMENT_DEFAULT_SECTION } from '@kermanych/core';
 import { canDropProject, sessionScopedProjectIds } from '../lib/scope';
 import { myBacklogTasks } from '../lib/tasks-view';
+import { PLATFORM_CHOICES } from '../lib/settings';
 import { bucketOf, type Bucket } from '../lib/buckets';
 import { attentionByProject, sumAttention, NO_ATTENTION, type Attention } from '../lib/attention';
 import { theme, toggleTheme } from '../lib/theme';
@@ -526,6 +535,7 @@ import KTopNav from 'components/kit/KTopNav.vue';
 import KNavItem from 'components/kit/KNavItem.vue';
 import KModal from 'components/kit/KModal.vue';
 import KField from 'components/kit/KField.vue';
+import KSelect from 'components/kit/KSelect.vue';
 import KBtn from 'components/kit/KBtn.vue';
 import KToast from 'components/kit/KToast.vue';
 import KProgressBar from 'components/kit/KProgressBar.vue';
@@ -1229,6 +1239,9 @@ const createWorkspaceName = ref('');
 const createProjectFor = ref<string | undefined>(undefined);
 const createName = ref('');
 const createRemote = ref('');
+// '' is «Не визначено». KSelect speaks plain strings, so the value is narrowed at submit.
+const createPlatform = ref('');
+const platformPickOptions = computed(() => PLATFORM_CHOICES.map((p) => ({ value: p.value, label: t(p.labelKey) })));
 const createError = ref<string | null>(null);
 
 const canCreateWorkspace = computed(() => createWorkspaceName.value.trim() !== '');
@@ -1243,6 +1256,7 @@ function openCreateWorkspace(): void {
 function openCreateProject(workspaceId: string): void {
   createName.value = '';
   createRemote.value = '';
+  createPlatform.value = '';
   createError.value = null;
   createProjectFor.value = workspaceId;
 }
@@ -1461,7 +1475,10 @@ const { run: submitCreate, busy: createProjectBusy } = useAsyncAction(
     // create() inserts under the user's JWT (projects_insert_member checks membership of
     // the destination workspace) and mirrors the one new project into the local registry,
     // so its tile appears under this group without a second full sync.
-    const created = await projects.create(workspaceId, createName.value.trim(), remote || undefined);
+    const created = await projects.create(workspaceId, createName.value.trim(), {
+      gitRemoteUrl: remote || undefined,
+      platform: isPlatform(createPlatform.value) ? createPlatform.value : undefined,
+    });
     createProjectFor.value = undefined;
     store.selectProject(created.id);
     store.notify(t('common.nav.notifyProjectCreated', { name: created.name }));

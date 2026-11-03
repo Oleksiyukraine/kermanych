@@ -20,6 +20,8 @@
           {{ tab.label }}
           <span v-if="tab.count != null && tab.count > 0" class="k-tabs__count mono">{{ tab.count }}</span>
           <span v-if="tab.live" class="k-tabs__live" aria-hidden="true"></span>
+          <KSpinner v-if="tab.status === 'busy'" class="k-tabs__spin" :size="9" />
+          <span v-else-if="tab.status" class="k-tabs__status" :class="`k-tabs__status--${tab.status}`" aria-hidden="true"></span>
         </button>
         <button
           v-if="tab.closeLabel"
@@ -43,13 +45,16 @@
 // Underline tabs. Active tab carries the vermilion 2px underline and full-text
 // color; inactive tabs are muted and brighten on hover. A tab MAY carry a `count`
 // badge (the changed-file / worktree-file tallies), a pulsing `live` dot (something is acting
-// in that tab right now — the agent driving the session browser), and a ✕ when it has a
-// `closeLabel` (its tooltip and accessible name; pressing it emits `close` with the tab's
-// value and leaves the selection alone). The row MAY host trailing controls through the
-// `end` slot.
+// in that tab right now — the agent driving the session browser), a `status` mark of something
+// that runs behind the tab (the live preview of the Браузер tab: a spinner while busy, a green
+// dot while ok, a red one on error), and a ✕ when it has a `closeLabel` (its tooltip and
+// accessible name; pressing it emits `close` with the tab's value and leaves the selection
+// alone). The row MAY host trailing controls through the `end` slot.
+import KSpinner from './KSpinner.vue';
+
 defineProps<{
   modelValue: string;
-  tabs: { value: string; label: string; count?: number; live?: boolean; closeLabel?: string }[];
+  tabs: { value: string; label: string; count?: number; live?: boolean; status?: 'busy' | 'ok' | 'error'; closeLabel?: string }[];
 }>();
 
 const emit = defineEmits<{
@@ -164,6 +169,18 @@ const emit = defineEmits<{
 @keyframes k-tabs-live {
   50% { opacity: 0.3; }
 }
+
+.k-tabs__spin {
+  align-self: center;
+}
+.k-tabs__status {
+  align-self: center;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+}
+.k-tabs__status--ok { background: var(--k-success); }
+.k-tabs__status--error { background: var(--k-danger); }
 
 .k-tabs__end {
   display: flex;

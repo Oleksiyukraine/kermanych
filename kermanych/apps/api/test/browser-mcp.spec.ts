@@ -1,12 +1,14 @@
 // apps/api/test/browser-mcp.spec.ts
 // The session browser's MCP server (docs/specs/2026-10-05-embedded-browser.md): the per-session
 // bearer, the binding a launch is handed, and tools/call routed to the desktop app's host for
-// the right session and project. The host is a fake BrowserHost.
+// the right session and project. The host is a fake BrowserHost. Also the live-preview tools and
+// the platform and kind gates (docs/specs/2026-11-03-session-browser-preview.md).
 import { HttpException } from "@nestjs/common";
 import type { HttpAdapterHost } from "@nestjs/core";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { RegistryService } from "../src/registry/registry.service";
 import type { PreviewService } from "../src/preview/preview.service";
+import type { Platform, PreviewState, Session } from "@kermanych/core";
 import { setBrowserHost, type BrowserActionResult, type BrowserHost, type BrowserNetworkEntry } from "../src/browser/browser-host";
 import { BrowserMcpService, NETWORK_OUTPUT_LIMIT } from "../src/browser/browser-mcp.service";
 import { BrowserMcpController } from "../src/http/browser-mcp.controller";
@@ -36,17 +38,27 @@ function fakeHost() {
       { level: "network" as const, text: "GET 404", at: 2 },
     ]),
     evaluate: vi.fn(async () => '"App"'),
+    openPreview: vi.fn(async () => {}),
+    isPaused: vi.fn(() => false),
     has: vi.fn(() => true),
     close: vi.fn(),
   } satisfies BrowserHost;
 }
 
-function make(previewUrl?: string) {
+function make(previewUrl?: string, opts: { platform?: Platform; kind?: Session["kind"] } = {}) {
   const registry = new RegistryService(":memory:");
-  registry.upsertProject({ id: "p1", name: "p", localRepoPath: "/tmp/p1" });
-  const s = registry.createSession({ projectId: "p1", name: "n", task: "t", worktreePath: "", branch: "b" });
-  const preview = { urlOf: vi.fn(() => previewUrl) } as unknown as PreviewService;
-  const mcp = new BrowserMcpService(registry, preview, http);
+  registry.upsertProject({ id: "p1", name: "p", localRepoPath: "/tmp/p1", ...(opts.platform ? { platform: opts.platform } : {}) });
+  const s = registry.createSession({ projectId: "p1", name: "n", task: "t", worktreePath: "", branch: "b", ...(opts.kind ? { kind: opts.kind } : {}) });
+  const running: PreviewState = { phase: "running", url: "http://localhost:5199", services: [{ name: "web", port: 5199 }] };
+  const preview = {
+    urlOf: vi.fn(() => previewUrl),
+    start: vi.fn((): PreviewState => ({ phase: "starting", step: "web", services: [] })),
+    settled: vi.fn(async (): Promise<PreviewState | null> => running),
+    stop: vi.fn(async () => {}),
+    steps: vi.fn(() => ["setup", "web"]),
+    tail: vi.fn((_id: string, _step: string, n: number) => ["one", "two", "three"].slice(-n)),
+  };
+  const mcp = new BrowserMcpService(registry, preview as unknown as PreviewService, http);
   const host = fakeHost();
   setBrowserHost(host);
   const call = async (name: string, args: Record<string, unknown> = {}) => {
@@ -54,8 +66,11 @@ function make(previewUrl?: string) {
     const reply = (await mcp.handle(s.id, { jsonrpc: "2.0", id: 1, method: "tools/call", params: { name, arguments: args } })) as { result: CallResult };
     return reply.result;
   };
-  return { mcp, host, s, call };
+  const list = async () => ((await mcp.handle(s.id, { jsonrpc: "2.0", id: 1, method: "tools/list" })) as { result: { tools: { name: string }[] } }).result.tools.map((t) => t.name);
+  return { mcp, host, s, call, list, preview };
 }
+
+const PREVIEW_TOOL_NAMES = ["preview_start", "preview_status", "preview_stop", "preview_logs"];
 
 afterEach(() => setBrowserHost(undefined));
 
@@ -81,15 +96,14 @@ describe("bearer and binding", () => {
     expect(mcp.bindingFor(s.id)!.token).not.toBe(binding.token);
   });
 
-  it("without a browser host the binding still exists and lists only the findings tools", async () => {
-    const { mcp, s } = make();
+  it("without a browser host the binding still exists and lists the preview and findings tools", async () => {
+    const { mcp, s, list } = make();
     setBrowserHost(undefined);
     expect(mcp.bindingFor(s.id)).toEqual({ name: "kermanych", url: "http://127.0.0.1:4317/api/browser/mcp", token: expect.any(String) });
-    const reply = (await mcp.handle(s.id, { jsonrpc: "2.0", id: 1, method: "tools/list" })) as { result: { tools: { name: string }[] } };
-    expect(reply.result.tools.map((t) => t.name)).toEqual(["report_finding", "list_findings"]);
+    expect(await list()).toEqual([...PREVIEW_TOOL_NAMES, "report_finding", "list_findings"]);
   });
 
-  it("lists every browser tool, then the findings tools, each with a closed object schema", async () => {
+  it("lists every browser tool, then the preview tools, then the findings tools, each with a closed object schema", async () => {
     const { mcp, s } = make();
     const reply = (await mcp.handle(s.id, { jsonrpc: "2.0", id: 1, method: "tools/list" })) as {
       result: { tools: { name: string; description: string; inputSchema: { type: string; properties: Record<string, unknown>; required?: string[]; additionalProperties: boolean } }[] };
@@ -112,15 +126,27 @@ describe("bearer and binding", () => {
       "browser_console",
       "browser_network",
       "browser_evaluate",
+      ...PREVIEW_TOOL_NAMES,
       "report_finding",
       "list_findings",
     ]);
     for (const t of tools) {
       if (t.name.startsWith("browser_")) expect(t.description).toMatch(/THIS session only/);
+      if (t.name.startsWith("preview_")) expect(t.description).toMatch(/\.kermanych\/preview\.json/);
       expect(t.inputSchema.type).toBe("object");
       expect(t.inputSchema.additionalProperties).toBe(false);
       for (const r of t.inputSchema.required ?? []) expect(Object.keys(t.inputSchema.properties)).toContain(r);
     }
+  });
+
+  // Decision 9: back-end and mobile projects have no browser and no preview; decision 8: only an
+  // agent session has the preview. The findings tools stay in every case.
+  it("gates the browser and preview tools by the project's platform and the session's kind", async () => {
+    for (const platform of ["backend", "mobile"] as const) expect(await make(undefined, { platform }).list()).toEqual(["report_finding", "list_findings"]);
+    expect(await make(undefined, { platform: "web" }).list()).toContain("preview_start");
+    const chat = await make(undefined, { kind: "chat" }).list();
+    expect(chat).toContain("browser_navigate");
+    expect(chat.some((n) => n.startsWith("preview_"))).toBe(false);
   });
 });
 
@@ -152,7 +178,7 @@ describe("tools/call", () => {
     const idle = make();
     const out = await idle.call("browser_navigate");
     expect(out.isError).toBe(true);
-    expect(out.content[0].text).toMatch(/preview/);
+    expect(out.content[0].text).toMatch(/preview_start/);
     expect(idle.host.navigate).not.toHaveBeenCalled();
   });
 
@@ -306,5 +332,85 @@ describe("tools/call", () => {
     expect((await call("browser_network")).content[0].text).toBe("(no requests)");
     expect((await call("browser_dialog", { accept: true })).isError).toBeUndefined();
     expect((await clicking).isError).toBeUndefined();
+  });
+});
+
+describe("preview tools", () => {
+  it("preview_start starts, waits up to 60 s and answers with the running URL", async () => {
+    const { preview, s, call } = make();
+    const out = await call("preview_start", { restart: true });
+    expect(out.isError).toBeUndefined();
+    expect(out.content[0].text).toMatch(/^Running at http:\/\/localhost:5199 \(web :5199\)/);
+    expect(preview.start).toHaveBeenCalledWith(s.id, { restart: true });
+    expect(preview.settled).toHaveBeenCalledWith(s.id, 60_000);
+  });
+
+  it("a failed start answers with the failed step and the last lines of its log", async () => {
+    const { preview, call } = make();
+    preview.settled.mockResolvedValueOnce({ phase: "failed", step: "web", error: "exited with code 1 before the preview was running\nthree" });
+    const out = await call("preview_start");
+    expect(out.isError).toBe(true);
+    expect(out.content[0].text).toBe("Failed at web: exited with code 1 before the preview was running\n\nLast 3 lines of web:\none\ntwo\nthree");
+    expect(preview.tail).toHaveBeenCalledWith(expect.any(String), "web", 50);
+  });
+
+  it("a still-starting preview hands over to preview_status; a missing file names the skill", async () => {
+    const { preview, call } = make();
+    preview.settled.mockResolvedValueOnce({ phase: "starting", step: "api", services: [{ name: "api", port: 4100 }] });
+    expect((await call("preview_start")).content[0].text).toMatch(/waiting for api.*preview_status/);
+    preview.start.mockImplementationOnce(() => {
+      throw new Error(".kermanych/preview.json is missing in the session directory");
+    });
+    const missing = await call("preview_start");
+    expect(missing.isError).toBe(true);
+    expect(missing.content[0].text).toMatch(/preview-config skill/);
+  });
+
+  it("the operator's pause refuses start and stop, not reading", async () => {
+    const { host, preview, call } = make();
+    host.isPaused.mockReturnValue(true);
+    expect((await call("preview_start")).isError).toBe(true);
+    expect((await call("preview_stop")).isError).toBe(true);
+    expect(preview.start).not.toHaveBeenCalled();
+    expect(preview.stop).not.toHaveBeenCalled();
+    expect((await call("preview_status")).isError).toBeUndefined();
+  });
+
+  it("preview_status waits only within bounds; preview_logs reads one step of the latest start", async () => {
+    const { preview, s, call } = make();
+    await call("preview_status", { wait: 5 });
+    expect(preview.settled).toHaveBeenCalledWith(s.id, 5000);
+    expect((await call("preview_status", { wait: 61 })).isError).toBe(true);
+    expect((await call("preview_logs", { step: "web", lines: 2 })).content[0].text).toBe("two\nthree");
+    expect(preview.tail).toHaveBeenLastCalledWith(s.id, "web", 2);
+    const unknown = await call("preview_logs", { step: "api" });
+    expect(unknown.isError).toBe(true);
+    expect(unknown.content[0].text).toMatch(/setup, web/);
+    expect((await call("preview_logs", { step: "web", lines: 1001 })).isError).toBe(true);
+    expect((await call("preview_stop")).isError).toBeUndefined();
+    expect(preview.stop).toHaveBeenCalledWith(s.id);
+  });
+
+  it("a preview start does not wait for the page queue", async () => {
+    const { host, preview, call } = make();
+    host.click.mockImplementationOnce(() => new Promise(() => {}));
+    void call("browser_click", { ref: "e1" });
+    await vi.waitFor(() => expect(host.click).toHaveBeenCalled());
+    expect((await call("preview_start")).isError).toBeUndefined();
+    expect(preview.start).toHaveBeenCalled();
+  });
+
+  // Decision 9: an agent listed the tools before the project became back-end or mobile.
+  it("calls are refused for a back-end project and for a non-agent session", async () => {
+    const backend = make(undefined, { platform: "backend" });
+    const click = await backend.call("browser_click", { ref: "e1" });
+    expect(click).toEqual({ content: [{ type: "text", text: "The session browser is off: this is a backend project." }], isError: true });
+    expect(backend.host.click).not.toHaveBeenCalled();
+    expect((await backend.call("preview_start")).content[0].text).toBe("The live preview is off: this is a backend project.");
+    expect(backend.preview.start).not.toHaveBeenCalled();
+
+    const chat = make(undefined, { kind: "chat" });
+    expect((await chat.call("preview_status")).isError).toBe(true);
+    expect(chat.preview.settled).not.toHaveBeenCalled();
   });
 });

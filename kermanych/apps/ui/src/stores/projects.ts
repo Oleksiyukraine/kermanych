@@ -1,7 +1,7 @@
 // apps/ui/src/stores/projects.ts
 import { defineStore } from 'pinia';
 import { computed, ref } from 'vue';
-import type { Project } from '@kermanych/core';
+import type { Platform, Project } from '@kermanych/core';
 import type {
   AssignableRole,
   CloudProject,
@@ -301,16 +301,18 @@ export const useProjects = defineStore('projects', () => {
     );
   }
 
+  // `platform` absent is «Не визначено» (NULL), the «Новий проєкт» modal's default.
   async function create(
     workspaceId: string,
     name: string,
-    gitRemoteUrl?: string,
+    opts: { gitRemoteUrl?: string | undefined; platform?: Platform | undefined } = {},
   ): Promise<CloudProject> {
-    // exactOptionalPropertyTypes: an absent remote is an absent KEY, not `undefined`.
+    // exactOptionalPropertyTypes: an absent field is an absent KEY, not `undefined`.
     const created = await cloudCreateProject(auth.client, {
       name,
       workspaceId,
-      ...(gitRemoteUrl ? { gitRemoteUrl } : {}),
+      ...(opts.gitRemoteUrl ? { gitRemoteUrl: opts.gitRemoteUrl } : {}),
+      ...(opts.platform ? { platform: opts.platform } : {}),
     });
     projects.value = [...projects.value, created];
     pushProjectWorkspace(created);
@@ -339,7 +341,7 @@ export const useProjects = defineStore('projects', () => {
   // belong to a project the whole team can see, with nothing re-created and nothing moved.
   //
   // The config travels with it because the mirror runs the other way afterwards:
-  // syncProjects() overwrites name, colour, commands, carry files, branch and conventions
+  // syncProjects() overwrites name, colour, platform, carry files, branch and conventions
   // from the cloud row, so publishing a bare name would silently blank the local setup.
   async function publish(localRow: Project, workspaceId: string): Promise<CloudProject> {
     // exactOptionalPropertyTypes: an unset field is an absent KEY, and an absent key is
@@ -350,8 +352,7 @@ export const useProjects = defineStore('projects', () => {
       workspaceId,
       carryFiles: localRow.carryFiles ?? ['.env'],
       ...(localRow.color ? { color: localRow.color } : {}),
-      ...(localRow.previewCommand ? { previewCommand: localRow.previewCommand } : {}),
-      ...(localRow.apiCommand ? { apiCommand: localRow.apiCommand } : {}),
+      ...(localRow.platform ? { platform: localRow.platform } : {}),
       ...(localRow.defaultBranch ? { defaultBranch: localRow.defaultBranch } : {}),
       ...(localRow.conventions ? { conventions: localRow.conventions } : {}),
       ...(localRow.docsRequired ? { docsRequired: true } : {}),

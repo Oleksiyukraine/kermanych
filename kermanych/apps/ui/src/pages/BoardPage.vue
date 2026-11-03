@@ -229,12 +229,6 @@
           />
           <KSelect v-model="draftEffort" :label="t('board.editor.effort')" :options="effortPickOptions" :placeholder="t('board.editor.default')" />
           <KSelect v-model="draftPrefix" :label="t('board.editor.prefix')" :options="PREFIX_OPTIONS" placeholder="feature" />
-          <KSelect
-            v-model="draftPlatform"
-            :label="t('board.editor.platform')"
-            :options="PLATFORM_OPTIONS"
-            :placeholder="t('board.editor.platformPlaceholder')"
-          />
         </div>
         <KField v-model="draftBranch" :label="t('board.editor.branch')" :placeholder="t('board.editor.branchPlaceholder')" />
         <!-- «Дозволити автовиконання». Only the author switches it on (tasks_guard() refuses
@@ -1175,7 +1169,6 @@ const effortPickOptions = computed(() => {
   return EFFORT_OPTIONS.filter((o) => allowed.includes(o.value)).map((o) => ({ value: o.value, label: t(o.labelKey) }));
 });
 const PREFIX_OPTIONS = ['feature', 'fix', 'refactoring', 'chore'];
-const PLATFORM_OPTIONS = ['backend', 'web', 'mobile'];
 
 const editorOpen = ref(false);
 const editingId = ref<string | null>(null);
@@ -1203,7 +1196,6 @@ const draftDescription = ref('');
 const draftModel = ref('');
 const draftEffort = ref<ThinkingLevel | ''>('');
 const draftPrefix = ref('');
-const draftPlatform = ref('');
 const draftBranch = ref('');
 // Creation only: while editing, the select writes through onAssign and the card itself is
 // the value. '' is «не призначено».
@@ -1271,7 +1263,6 @@ function openCreate(): void {
   draftModel.value = createDefault?.defaultModel ?? '';
   draftEffort.value = createDefault?.defaultEffort ?? '';
   draftPrefix.value = '';
-  draftPlatform.value = '';
   draftBranch.value = '';
   draftAssignee.value = '';
   draftAutoRun.value = false;
@@ -1288,7 +1279,6 @@ function openEdit(task: Task): void {
   draftModel.value = task.model ?? '';
   draftEffort.value = task.effort ?? '';
   draftPrefix.value = task.prefix ?? '';
-  draftPlatform.value = task.platform ?? '';
   draftBranch.value = task.branch ?? '';
   // Reset with the rest of the draft set rather than left over from a previous dialog: only
   // the create branch reads it, and a half-reset draft set is a trap for the next edit here.
@@ -1311,7 +1301,6 @@ async function submitEditor(): Promise<void> {
     model: draftModel.value,
     effort: draftEffort.value,
     prefix: draftPrefix.value,
-    platform: draftPlatform.value,
     branch: draftBranch.value,
     // Sent only when this form changed it (lib/tasks-view taskPatchFromDraft says why); a new
     // card always carries it.

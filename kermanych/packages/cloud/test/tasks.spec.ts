@@ -56,7 +56,6 @@ const taskRow = {
   created_by: "u1",
   model: "opus-5",
   prefix: "feature",
-  platform: null,
   kind: null,
   branch: "main",
   worktree: true,
@@ -334,9 +333,9 @@ describe("patchTask", () => {
   it("sends only the provided columns, snake-cased", async () => {
     const { client, queries } = fakeClient({ data: taskRow, error: null });
 
-    await patchTask(client, "t1", { title: " New ", description: "  ", platform: "web" });
+    await patchTask(client, "t1", { title: " New ", description: "  ", prefix: "fix" });
 
-    expect(queries[0]!.ops[0]).toEqual(["update", { title: "New", description: null, platform: "web" }]);
+    expect(queries[0]!.ops[0]).toEqual(["update", { title: "New", description: null, prefix: "fix" }]);
     expect(queries[0]!.ops[1]).toEqual(["eq", "id", "t1"]);
   });
 

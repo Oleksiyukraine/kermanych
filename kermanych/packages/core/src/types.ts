@@ -1,6 +1,7 @@
 import type { DocsPolicy } from "./doc-policy";
 import type { BranchPrefix } from "./worktree-names";
 import type { Platform } from "./platform";
+import type { PreviewState } from "./preview";
 import type { ThinkingLevel } from "./thinking";
 import type { NoticeCode, NoticeParams } from "./i18n-codes";
 import type { NativeHarness } from "./runtime";
@@ -22,7 +23,8 @@ export type TodoPhase = { id: string; name: string; tasks: TodoTask[] };
 // unbound), and the rest is an offline cache of the cloud config so launching never
 // needs the network (design D1 / Requirement 7).
 // `docsRequired` is the documentation switch, `docsPolicy` its per-kind rules (doc-policy.ts).
-export type Project = { id: string; name: string; localRepoPath: string; workspaceId?: string; color?: string; previewCommand?: string; apiCommand?: string; carryFiles?: string[]; docFolders?: string[]; docsRequired?: boolean; docsPolicy?: DocsPolicy; defaultBranch?: string; defaultModel?: string; defaultEffort?: ThinkingLevel; conventions?: string; createdAt: string };
+// `platform` gates the session browser and the live preview (platform.ts); absent = «Не визначено».
+export type Project = { id: string; name: string; localRepoPath: string; workspaceId?: string; color?: string; platform?: Platform; carryFiles?: string[]; docFolders?: string[]; docsRequired?: boolean; docsPolicy?: DocsPolicy; defaultBranch?: string; defaultModel?: string; defaultEffort?: ThinkingLevel; conventions?: string; createdAt: string };
 
 export type EnvEntry = { key: string; value: string };
 export type EnvFileView = { entries: EnvEntry[]; ignored: boolean };
@@ -57,7 +59,7 @@ export type Session = {
   taskId?: string;
   worktreePath: string; branch: string;
   worktree: boolean; baseBranch?: string;
-  model?: string; prefix?: BranchPrefix; platform?: Platform; runtime?: NativeHarness;
+  model?: string; prefix?: BranchPrefix; runtime?: NativeHarness;
   // A native session (docs/specs/2026-10-05-native-sessions.md): the harness `runtime` names
   // runs as its own interactive TUI in a pty, with nothing of Kermanych's in its context.
   // Kermanych only watches it — status from per-launch hooks, usage and history from the
@@ -134,30 +136,6 @@ export type Session = {
 // local branch the merged PR does not carry (uncommitted changes, commits after its head).
 export type PrCheckState = "open" | "merged" | "closed" | "not_found" | "unsupported" | "no_access" | "rate_limited" | "offline" | "error";
 export type PrCheck = { state: PrCheckState; url?: string; number?: number; leftover?: { dirty: boolean; unpushed: boolean } };
-
-// DTO for creating a new session. All fields are optional as they patch a backlog row.
-export type CreateSessionDto = {
-  name?: string;
-  task?: string;
-  projectId?: string;
-  worktreePath?: string;
-  branch?: string;
-  worktree?: boolean;
-  baseBranch?: string;
-  model?: string;
-  prefix?: BranchPrefix;
-  platform?: Platform;
-  runtime?: NativeHarness;
-  effort?: ThinkingLevel;
-  kind?: "agent" | "discussion" | "task" | "review" | "chat";
-  parentSessionId?: string;
-};
-
-// The editable launch config the New-task launcher collects; startTask/updateTask patch
-// these onto a backlog row. All fields optional — it is a partial patch.
-export type TaskDraft = {
-  name?: string | undefined; task?: string | undefined; model?: string | undefined; prefix?: BranchPrefix | undefined; platform?: Platform | undefined; worktree?: boolean | undefined; baseBranch?: string | undefined; effort?: ThinkingLevel | undefined;
-};
 
 // One selectable model, as the local omp catalog reports it (`omp models --json`): only
 // providers this machine has credentials for appear, so the list is what can actually run
@@ -285,7 +263,9 @@ export type RpcEvent =
 export type ServerEvent =
   // `subagents`: every live session's subagent tree (non-empty only), so a reloaded UI has the
   // agent map without waiting for the next `subagents_update`.
-  | { type: "snapshot"; projects: Project[]; sessions: Session[]; subagents: Record<string, SubagentNode[]> }
+  // `previews`: every session's live-preview state the api holds (preview.ts), so a reloaded UI
+  // knows what runs without asking per session.
+  | { type: "snapshot"; projects: Project[]; sessions: Session[]; subagents: Record<string, SubagentNode[]>; previews: Record<string, PreviewState> }
   | { type: "session_update"; session: Session }
   | { type: "transcript_append"; sessionId: string; entry: TranscriptEntry }
   | { type: "transcript_reset"; sessionId: string; entries: TranscriptEntry[] }
@@ -305,7 +285,9 @@ export type ServerEvent =
   // The memory-pressure watchdog found something (docs/specs/2026-10-21-machine-resource-profile.md).
   | { type: "machine_alert"; alert: MachineAlert }
   // «Посіпака» on this machine changed: its cap, pause, running and waiting counts, projects.
-  | { type: "minion_update"; state: MinionState };
+  | { type: "minion_update"; state: MinionState }
+  // A session's live preview changed state; `state: null` = it has none any more (session gone).
+  | { type: "preview_update"; sessionId: string; state: PreviewState | null };
 
 // How much of omp's subagent activity a session subscribes to. "progress" streams lifecycle
 // + coalesced progress (enough for the agent map); "events" adds every subagent tool/message

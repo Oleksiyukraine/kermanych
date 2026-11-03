@@ -39,7 +39,6 @@ const draft: LauncherDraft = {
   model: 'opus-5',
   effort: 'high',
   prefix: 'feature',
-  platform: 'backend',
   worktree: true,
   hidden: false,
   deepAnalysis: false,
@@ -59,7 +58,6 @@ describe('taskInsertFromDraft', () => {
       model: 'opus-5',
       effort: 'high',
       prefix: 'feature',
-      platform: 'backend',
       worktree: true,
       hidden: false,
       deepAnalysis: false,
@@ -91,13 +89,12 @@ describe('taskInsertFromDraft', () => {
 
 describe('taskPatchFromDraft', () => {
   it('sends every editable field, so clearing one clears the column', () => {
-    expect(taskPatchFromDraft({ ...draft, platform: undefined }, false)).toEqual({
+    expect(taskPatchFromDraft({ ...draft, model: undefined }, false)).toEqual({
       title: 'Add login',
       description: 'wire GitHub OAuth',
-      model: 'opus-5',
+      model: '',
       effort: 'high',
       prefix: 'feature',
-      platform: '',
       worktree: true,
       hidden: false,
       deepAnalysis: false,

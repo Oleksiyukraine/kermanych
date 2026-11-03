@@ -91,6 +91,25 @@
             placeholder="git@github.com:org/repo.git"
             :disabled="cloudLocked"
           />
+          <!-- What the project ships (docs/specs/2026-11-03-session-browser-preview.md, decision 9).
+               A cloud field like the rest of this form, so a local-only project shows it locked;
+               publish() carries the local value across. '' is «Не визначено» (NULL). -->
+          <div class="set__group">
+            <span class="set__label">{{ t('settings.project.platform') }}</span>
+            <div class="set__seg">
+              <button
+                v-for="p in PLATFORM_CHOICES"
+                :key="p.value || 'none'"
+                type="button"
+                class="set__seg-btn"
+                :class="{ 'set__seg-btn--on': draft.platform === p.value }"
+                :aria-pressed="draft.platform === p.value"
+                :disabled="cloudLocked"
+                @click="draft.platform = p.value"
+              >{{ t(p.labelKey) }}</button>
+            </div>
+            <p class="set__note">{{ t('settings.project.platformNote') }}</p>
+          </div>
 
           <!-- DOCUMENTATION POLICY. A framed subsection of its own: the master switch
                (`docsRequired`, off by default — the operator's choice, never a migration's)
@@ -252,23 +271,10 @@
           <p v-if="cloudLocked" class="set__note">{{ noCloudRowHint }}</p>
         </div>
 
-        <!-- ── PROJECT · КОМАНДИ ────────────────────────────────────────────── -->
-        <div v-else-if="section.key === 'project-commands' && draft" class="set__form">
-          <KField
-            v-model="draft.previewCommand"
-            :label="t('settings.commands.preview')"
-            placeholder="pnpm dev --port $PORT"
-            :disabled="cloudLocked"
-          />
-          <KField
-            v-model="draft.apiCommand"
-            :label="t('settings.commands.api')"
-            placeholder="pnpm dev:api"
-            :disabled="cloudLocked"
-          />
-
-          <div class="set__rule"></div>
-
+        <!-- ── PROJECT · ФАЙЛИ СЕСІЇ ────────────────────────────────────────── -->
+        <!-- The preview commands left the cloud: the preview config is the repo's own
+             `.kermanych/preview.json` (decision 2), so only the carry list stays here. -->
+        <div v-else-if="section.key === 'project-files' && draft" class="set__form">
           <div class="set__group">
             <span class="set__label">{{ t('settings.commands.carryFiles') }}</span>
             <!-- Chips, not a comma-joined line: these are PATHS, and a list of
@@ -814,7 +820,7 @@
 import { computed, effectScope, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue';
 import { onBeforeRouteLeave, useRoute, useRouter } from 'vue-router';
 import { useI18n } from 'vue-i18n';
-import type { EnvFileView, ThinkingLevel, AgentLanguage, DocsPolicyKey, DocsRule, MachineResources } from '@kermanych/core';
+import type { EnvFileView, ThinkingLevel, AgentLanguage, DocsPolicyKey, DocsRule, MachineResources, Platform } from '@kermanych/core';
 import { AGENT_LANGUAGES, AGENT_LANGUAGE_LABELS, DEFAULT_DOCS_POLICY, DOCS_LAYOUT, DOCS_RULES } from '@kermanych/core';
 import type { AssignableRole, WorkspaceMember, WorkspaceRole } from '@kermanych/cloud';
 import type { KTheme } from '@kermanych/tokens';
@@ -841,6 +847,7 @@ import {
   envKeysChange,
   envRequiredKeys,
   parseLimitCount,
+  PLATFORM_CHOICES,
   resourcesDraft,
   resourcesUpdate,
   setEnvValue,
@@ -989,8 +996,8 @@ interface ProjectDraft {
   defaultModel: string;
   defaultEffort: ThinkingLevel | '';
   conventions: string;
-  previewCommand: string;
-  apiCommand: string;
+  // What the project ships; '' is «Не визначено».
+  platform: Platform | '';
   carryFiles: string[];
   docFolders: string[];
   docsRequired: boolean;
@@ -1049,8 +1056,7 @@ function seedProject(): void {
     defaultModel: c?.defaultModel ?? row?.defaultModel ?? '',
     defaultEffort: c?.defaultEffort ?? row?.defaultEffort ?? '',
     conventions: c?.conventions ?? row?.conventions ?? '',
-    previewCommand: c?.previewCommand ?? row?.previewCommand ?? '',
-    apiCommand: c?.apiCommand ?? row?.apiCommand ?? '',
+    platform: c?.platform ?? row?.platform ?? '',
     carryFiles: [...(c?.carryFiles ?? row?.carryFiles ?? ['.env'])],
     docFolders: [...(c?.docFolders ?? row?.docFolders ?? [])],
     docsRequired: c?.docsRequired ?? row?.docsRequired ?? false,
@@ -1413,8 +1419,7 @@ async function saveProject(): Promise<void> {
       defaultModel: d.defaultModel,
       defaultEffort: d.defaultEffort,
       conventions: d.conventions,
-      previewCommand: d.previewCommand,
-      apiCommand: d.apiCommand,
+      platform: d.platform,
       // Never store an empty carry list: the launch path would copy nothing into
       // the worktree.
       carryFiles: d.carryFiles.length ? d.carryFiles : ['.env'],

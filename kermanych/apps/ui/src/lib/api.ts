@@ -33,7 +33,9 @@ import type {
   DocsWriteKind,
   DocsGate,
   DocsGateFailure,
-  DocsPolicy,
+  PreviewInfo,
+  PreviewLogs,
+  PreviewState,
   AgentFinding,
   FindingTarget,
   MachineResources,
@@ -200,10 +202,6 @@ async function delJson<T>(path: string): Promise<T> {
   return (await (await send('DELETE', path)).json()) as T;
 }
 
-async function patchJson<T>(path: string, body: unknown): Promise<T> {
-  return (await (await send('PATCH', path, { json: body })).json()) as T;
-}
-
 // One changed file, already paired into side-by-side rows by the api (see
 // apps/api/src/worktree/split-diff.ts). A row fills the original column, the changed
 // column, or both — that is what keeps the two columns aligned line for line.
@@ -321,11 +319,6 @@ export const api = {
   // LOCAL project rows. Creation and deletion live in the cloud (see stores/projects.ts);
   // these routes cache cloud config and own this machine's binding.
   listProjects: (): Promise<Project[]> => get<Project[]>('/projects'),
-
-  patchProject: (
-    id: string,
-    body: { name?: string; color?: string; previewCommand?: string; apiCommand?: string; carryFiles?: string[]; docFolders?: string[]; docsRequired?: boolean; docsPolicy?: DocsPolicy; defaultBranch?: string; conventions?: string },
-  ): Promise<Project> => patchJson<Project>(`/projects/${id}`, body),
 
   // The resolved library (defaults + project rows, with the repo-shadowed ones marked), AND
   // the names the bound checkout's own skill directories define. The second list is the only
@@ -682,10 +675,23 @@ export const api = {
     edits: { file?: string; set?: Record<string, string>; remove?: string[] },
   ): Promise<EnvFileView> => put<EnvFileView>(`/projects/${id}/env`, edits),
 
-  startPreview: (id: string): Promise<{ url?: string; needsCommand?: boolean }> =>
-    post(`/sessions/${id}/preview`, {}),
+  // The live preview (docs/specs/2026-11-03-session-browser-preview.md). The config is read
+  // from the session directory on every `previewInfo`; a start answers at once (normally
+  // `starting`) and reports its progress through `preview_update`.
+  previewInfo: (id: string): Promise<PreviewInfo> => get<PreviewInfo>(`/sessions/${id}/preview`),
+
+  startPreview: (id: string, opts: { restart?: boolean } = {}): Promise<PreviewState> =>
+    post<PreviewState>(`/sessions/${id}/preview`, opts),
 
   stopPreview: (id: string): Promise<void> => del(`/sessions/${id}/preview`),
+
+  // Lines of `step` with `seq > since` (the cursor of the previous answer's `next`).
+  previewLogs: (id: string, step: string, since: number): Promise<PreviewLogs> =>
+    get<PreviewLogs>(`/sessions/${id}/preview/logs?step=${encodeURIComponent(step)}&since=${since}`),
+
+  // «Доручити агенту»: Kermanych asks the session's agent to write `.kermanych/preview.json`.
+  configurePreview: (id: string): Promise<{ sent: true }> =>
+    post<{ sent: true }>(`/sessions/${id}/preview/configure`, {}),
 
   finishInfo: (
     id: string,

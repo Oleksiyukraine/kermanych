@@ -23,7 +23,7 @@
 // they get no panel. The parallel agent limit does: it is part of «Ресурси машини», stored
 // per machine by the api (`/machine/resources`).
 
-import { MINION_AGENT_ID, type AgentDef, type EnvEntry, type MachineResources, type RepoSkill, type ResourceLimits, type ResourcesUpdate, type SkillView } from '@kermanych/core';
+import { MINION_AGENT_ID, PLATFORMS, type AgentDef, type EnvEntry, type MachineResources, type Platform, type RepoSkill, type ResourceLimits, type ResourcesUpdate, type SkillView } from '@kermanych/core';
 import type { AiAgentSkill, TriggerSource } from '@kermanych/cloud';
 
 export type SettingsScope = 'project' | 'workspace' | 'app';
@@ -45,7 +45,7 @@ export const SETTINGS_SCOPES: readonly SettingsScope[] = ['project', 'workspace'
 export const SETTINGS_CATEGORIES: readonly SettingsCategory[] = [
   { key: 'project-basics', scope: 'project' },
   { key: 'project-git', scope: 'project' },
-  { key: 'project-commands', scope: 'project' },
+  { key: 'project-files', scope: 'project' },
   { key: 'project-defaults', scope: 'project' },
   { key: 'project-env', scope: 'project' },
   { key: 'project-danger', scope: 'project', danger: true },
@@ -77,6 +77,16 @@ export function settingsSection(key: unknown): SettingsCategory {
 export function settingsScopeEntry(scope: SettingsScope): SettingsCategory {
   return SETTINGS_CATEGORIES.find((c) => c.scope === scope) ?? settingsSection(undefined);
 }
+
+/**
+ * The project platform picker's choices, shared by the «Новий проєкт» modal and Settings →
+ * Проєкт → «Основне» (docs/specs/2026-11-03-session-browser-preview.md, decision 9). `''` is
+ * «Не визначено» (NULL in the cloud), listed last and the default for a new project.
+ */
+export const PLATFORM_CHOICES: readonly { value: Platform | ''; labelKey: string }[] = [
+  ...PLATFORMS.map((p) => ({ value: p, labelKey: `settings.project.platformChoice.${p}` })),
+  { value: '', labelKey: 'settings.project.platformChoice.none' },
+];
 
 /**
  * One row of the assignment board: an agent, what this project gave it, and what that

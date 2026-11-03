@@ -7,7 +7,7 @@ import type { Task, TaskInsert, TaskPatch, TaskStatus } from "./types";
 import { isFindingKind, readDocsReport, readSessionReport, type QaChecklist } from "@kermanych/core";
 
 const TASK_COLUMNS =
-  "id, project_id, title, description, status, assignee_id, created_by, model, effort, prefix, platform, kind, branch, worktree, hidden, deep_analysis, auto_run, finding_kind, image_paths, jira_key, linear_key, qa_checklist, docs_report, session_report, created_at, updated_at";
+  "id, project_id, title, description, status, assignee_id, created_by, model, effort, prefix, kind, branch, worktree, hidden, deep_analysis, auto_run, finding_kind, image_paths, jira_key, linear_key, qa_checklist, docs_report, session_report, created_at, updated_at";
 
 type TaskRow = {
   id: string;
@@ -21,7 +21,6 @@ type TaskRow = {
   model: string | null;
   effort: string | null;
   prefix: string | null;
-  platform: string | null;
   worktree: boolean;
   hidden: boolean;
   deep_analysis: boolean;
@@ -61,7 +60,6 @@ export function toTask(row: TaskRow): Task {
   if (row.model !== null) t.model = row.model;
   if (row.effort !== null) t.effort = row.effort as Task["effort"];
   if (row.prefix !== null) t.prefix = row.prefix;
-  if (row.platform !== null) t.platform = row.platform;
   if (row.kind !== null) t.kind = row.kind;
   if (row.branch !== null) t.branch = row.branch;
   // The column's check constraint names the same four kinds; anything else reads as «not from a
@@ -102,7 +100,6 @@ export function toTaskRow(patch: TaskPatch): Record<string, unknown> {
   if (patch.model !== undefined) row.model = patch.model.trim() || null;
   if (patch.effort !== undefined) row.effort = patch.effort.trim() || null;
   if (patch.prefix !== undefined) row.prefix = patch.prefix.trim() || null;
-  if (patch.platform !== undefined) row.platform = patch.platform.trim() || null;
   // A boolean, so no trim/blank-to-null step: `false` is a value, not an empty field.
   if (patch.worktree !== undefined) row.worktree = patch.worktree;
   if (patch.hidden !== undefined) row.hidden = patch.hidden;
@@ -167,7 +164,6 @@ export async function createTask(
       model: input.model,
       effort: input.effort,
       prefix: input.prefix,
-      platform: input.platform,
       kind: input.kind,
       branch: input.branch,
       worktree: input.worktree,

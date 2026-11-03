@@ -51,7 +51,24 @@ export {
   BRANCH_PREFIXES,
   type BranchPrefix,
 } from "./worktree-names";
-export { PLATFORMS, type Platform } from "./platform";
+export { PLATFORMS, isPlatform, platformHasBrowser, type Platform } from "./platform";
+export {
+  PREVIEW_CONFIG_PATH,
+  PREVIEW_SETUP_STEP,
+  PREVIEW_DIR_VAR,
+  previewPortVar,
+  parsePreviewConfig,
+  expandPreviewEnv,
+  type PreviewServiceDef,
+  type PreviewConfig,
+  type PreviewConfigRead,
+  type PreviewPort,
+  type PreviewState,
+  type PreviewConfigStatus,
+  type PreviewInfo,
+  type PreviewLogLine,
+  type PreviewLogs,
+} from "./preview";
 export { TERMINAL_SCROLLBACK } from "./terminal";
 export {
   isReleaseDate,

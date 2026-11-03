@@ -4,7 +4,7 @@
 // for real — their job is to grey a control out before the refusal, never to be the
 // refusal.
 import type { Task, TaskInsert, TaskPatch } from '@kermanych/cloud';
-import type { BranchPrefix, Platform, ThinkingLevel } from '@kermanych/core';
+import type { BranchPrefix, ThinkingLevel } from '@kermanych/core';
 
 // The optional fields spell out `| undefined` because the launcher CLEARS a select by
 // assigning undefined, and exactOptionalPropertyTypes refuses that against a bare `?:`.
@@ -14,7 +14,6 @@ export type LauncherDraft = {
   model?: string | undefined;
   effort?: ThinkingLevel | undefined;
   prefix: BranchPrefix;
-  platform?: Platform | undefined;
   worktree: boolean;
   hidden: boolean;
   // «Глибокий аналіз»: the card runs its agent through the interview and the task document
@@ -74,7 +73,6 @@ export function taskInsertFromDraft(
     ...(draft.model ? { model: draft.model } : {}),
     ...(draft.effort ? { effort: draft.effort } : {}),
     prefix: draft.prefix,
-    ...(draft.platform ? { platform: draft.platform } : {}),
     worktree: draft.worktree,
     hidden: draft.hidden,
     deepAnalysis: draft.deepAnalysis,
@@ -85,7 +83,7 @@ export function taskInsertFromDraft(
 }
 
 // Unlike the insert, a patch sends every editable field: an absent key means «leave the
-// column alone», so clearing the platform in the editor has to travel as an empty string,
+// column alone», so clearing the model in the editor has to travel as an empty string,
 // which toTaskRow turns into NULL. The one exception is `autoRun`, sent only when this form
 // changed it (`openedAutoRun` is the switch as the form opened): the author may flip it while a
 // colleague's form is open, and a stale copy would either undo the author's change or — sent as
@@ -98,7 +96,6 @@ export function taskPatchFromDraft(draft: LauncherDraft, openedAutoRun: boolean)
     model: draft.model ?? '',
     effort: draft.effort ?? '',
     prefix: draft.prefix,
-    platform: draft.platform ?? '',
     worktree: draft.worktree,
     hidden: draft.hidden,
     deepAnalysis: draft.deepAnalysis,

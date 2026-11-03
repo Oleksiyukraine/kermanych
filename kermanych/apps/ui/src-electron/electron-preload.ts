@@ -49,6 +49,7 @@ contextBridge.exposeInMainWorld('kermanych', {
     show: (sessionId, projectId, bounds) => ipcRenderer.send('kermanych:browser:show', sessionId, projectId, bounds),
     hide: (opts) => ipcRenderer.invoke('kermanych:browser:hide', opts ?? {}),
     navigate: (sessionId, projectId, url) => ipcRenderer.invoke('kermanych:browser:navigate', sessionId, projectId, url),
+    openPreview: (sessionId, projectId, url) => ipcRenderer.invoke('kermanych:browser:open-preview', sessionId, projectId, url),
     back: (sessionId) => ipcRenderer.send('kermanych:browser:back', sessionId),
     forward: (sessionId) => ipcRenderer.send('kermanych:browser:forward', sessionId),
     reload: (sessionId) => ipcRenderer.send('kermanych:browser:reload', sessionId),

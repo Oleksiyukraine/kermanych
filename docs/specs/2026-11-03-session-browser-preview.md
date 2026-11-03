@@ -95,17 +95,20 @@ Rejected:
 
 ```json
 {
-  "setup": "cd kermanych && pnpm install && pnpm --filter @kermanych/api build",
+  "setup": "cd kermanych && pnpm install && pnpm --filter '@kermanych/ui^...' build",
   "services": [
     { "name": "api",
       "command": "cd kermanych && pnpm --filter @kermanych/api start",
-      "env": { "KERMANYCH_DB": "${PREVIEW_DIR}/db.sqlite", "KERMANYCH_SEED": "1", "KERMANYCH_PREVIEW": "1" } },
+      "env": { "KERMANYCH_DB": "${PREVIEW_DIR}/kermanych.sqlite", "KERMANYCH_SEED": "1", "KERMANYCH_PREVIEW": "1" } },
     { "name": "web", "open": true,
-      "command": "cd kermanych && pnpm --filter @kermanych/ui dev",
+      "command": "cd kermanych && pnpm --filter @kermanych/ui exec quasar dev",
       "env": { "VITE_API_BASE": "http://localhost:${PORT_API}/api", "VITE_KERMANYCH_PREVIEW": "1" } }
   ]
 }
 ```
+
+This is Kermanych's own `.kermanych/preview.json`: `setup` builds every workspace package the
+two services need once, so neither service rebuilds them.
 
 - **`setup`** (optional): a shell command that runs before the services on every start, from the
   session directory. Timeout 20 min.
@@ -120,7 +123,10 @@ Rejected:
   - `PORT`, the service's own port;
   - `PREVIEW_DIR`, a per-session temp directory
     (`$TMPDIR/kermanych-preview/<sessionId>/`). It is created before `setup` and deleted when the
-    session is finished or deleted. Orphans are swept at api start.
+    session is finished or deleted. Orphans are swept at api start, but only by an api on the
+    machine's own registry. An api on a custom `KERMANYCH_DB` (preview mode, Kermanych previewing
+    itself, a test) knows none of the real sessions, and the directory is shared by every
+    Kermanych on the machine.
   - `${VAR}` in `env` values expands only these variables; an unknown name makes the file invalid.
   - Commands run through `sh -c`, so they can use `$VAR` themselves.
 - **Readiness.** A service is ready when its `PORT` accepts a TCP connection.
@@ -344,15 +350,17 @@ Rejected:
   same environment (`claude-code-runtime.ts:224` passes `process.env`), so the preview adds no new
   privilege.
 
-## Changes (planned)
+## Changes
 
-- **`supabase/migrations/20261103090000_project_platform_preview_file.sql`**: decision 10.
+- **`supabase/migrations/20261103090000_project_platform.sql`**: decision 10. `tasks_guard()` is
+  re-created before the drop: plpgsql does not track the columns a function names.
 - **`packages/core`**:
-  - `platform.ts`: the project platform type plus the gate helper;
+  - `platform.ts`: `PLATFORMS`, `isPlatform`, `platformHasBrowser`;
+  - `preview.ts`: the file parser and validator, the variables, `PreviewState` and the HTTP shapes,
+    shared by api and ui;
   - `types.ts`: `Project.platform`, no `previewCommand` / `apiCommand`, no `Session.platform`, no
-    dead DTOs;
+    dead DTOs, `previews` in the snapshot, the `preview_update` event;
   - `management-actions.ts` and `i18n-codes.ts`: no `platform`;
-  - new `preview-config.ts`: file parser and validator, shared by api and ui;
   - `skills.ts`: the `preview-config` default skill.
 - **`packages/cloud`**:
   - `projects.ts` and `types.ts`: `platform` in, preview columns out;
@@ -360,6 +368,8 @@ Rejected:
 - **`apps/api`**:
   - `preview/preview.service.ts`: rewritten for the file, services, state, logs, crash detection,
     SIGKILL escalation, `PREVIEW_DIR`;
+  - `preview/preview-prompt.ts`: the «Доручити агенту» prompt;
+  - `browser/browser-host.ts`: `openPreview` and `isPaused`;
   - `http/sessions.controller.ts`: `GET /sessions/:id/preview`, `…/logs`, `POST …/configure`. The
     lifecycle stops move to the supervisor;
   - `supervisor.service.ts`:
@@ -372,54 +382,93 @@ Rejected:
   - `registry.service.ts`: `projects.platform`, old columns ignored;
   - `management-prompt.ts`: no platform.
 - **`apps/ui`**:
-  - `components/kit/KBrowserPane.vue`: the preview row, the logs panel and the empty states. The
-    row and the panel may become their own components;
+  - the row and the logs:
+    - `composables/useSessionPreview.ts` (one per pane: server state, config status, actions,
+      logs panel state, the web build's placeholder tab);
+    - `components/kit/KPreviewRow.vue`, `KPreviewLogs.vue`, `KPreviewWebPane.vue` (the web build's
+      tab);
+    - `lib/preview-view.ts` (status text, tab status, log merging);
+  - `components/kit/KBrowserPane.vue`: the row, the logs panel and the empty states;
+  - `KTabs.vue`: a `status` dot per tab;
   - `pages/AgentsPage.vue`:
     - removed: ▶, the modal, the launcher's platform, the doc-task platform, `previewBlocked`;
     - tab gating by platform and kind;
     - the tab dot;
     - the web-build tab;
-  - `stores/orchestrator.ts`: preview state from the snapshot and events;
+  - `stores/orchestrator.ts`: preview state from the snapshot and events; the dead `patchProject`
+    removed;
   - `stores/browser.ts`: close pages on a platform switch;
-  - `src-electron/session-browser/browsers.ts`: the preview origin with the last URL;
+  - Electron:
+    - `src-electron/session-browser/browsers.ts`: `openPreview`, `isPaused`, the preview origin
+      with the last URL;
+    - `electron-preload.ts`, `types/kermanych-bridge.d.ts`;
+  - `lib/browser-url.ts`: `httpOrigin`, `previewDestination` (the keep-path rule);
   - `pages/BoardPage.vue`, `lib/tasks-view.ts`, `lib/publish-backlog.ts`, `stores/board.ts`,
     `stores/management-chat.ts`: no task platform;
   - `layouts/MainLayout.vue` (new-project platform), `pages/SettingsPage.vue` (platform field,
-    «Файли сесії»), `lib/settings.ts`, `stores/projects.ts`;
+    «Файли сесії», section key `project-files`), `lib/settings.ts`, `stores/projects.ts`;
   - `lib/api.ts`;
   - i18n uk/en.
 - **Repo root**: `.kermanych/preview.json` for Kermanych itself.
-- **Tests**: update `preview.spec.ts`, `browser-mcp.spec.ts`, the cloud `projects` / `tasks` specs,
-  the management action / prompt / tickets specs, `tasks-view`, `publish-backlog`,
-  `sessions.from-task`, `registry`. New cases only where listed under Verification.
+- **Tests**:
+  - rewritten: `preview.spec.ts`;
+  - updated: `browser-mcp.spec.ts`, `finish.spec.ts`, `supervisor.discard.spec.ts`, the cloud
+    `projects` / `tasks` specs, the management action / prompt / tickets specs, `tasks-view`,
+    `publish-backlog`, `sessions.from-task`, `registry`, `registry.migration`,
+    `browser-url.spec.ts`;
+  - new: `preview-view.spec.ts`.
 
-## Verification (planned)
+## Verification
 
-- **`apps/api` vitest:**
-  - config validation (missing, invalid field, unknown `${VAR}`, two `open`);
-  - ports and env per service, ordered readiness;
-  - banner fallback on stderr;
-  - in-flight dedupe;
-  - crash after ready → `crashed` and the other services killed;
-  - stop escalates to SIGKILL;
-  - the log ring and cursor;
-  - stops on archive, finish and cascade delete;
-  - MCP `tools/list` by platform and kind, `call()` refusal, the preview tools.
-- **`packages/cloud`**: mapping specs, plus the RLS/trigger suite against the local stack for the
-  migration (`tasks_guard` without platform).
-- **`apps/ui`**: `vue-tsc` and vitest.
-- **Electron dev app** (`quasar dev -m electron`, preview mode, isolated DB), with a fixture repo
-  whose `.kermanych/preview.json` has two services:
-  - start from the row, and the page opens;
-  - logs per step;
-  - kill a service → red state, logs on the failed step;
-  - ↻ keeps the path;
-  - ◼ leaves the page;
-  - an app restart offers «Запустити превʼю»;
-  - a missing file → «Доручити агенту» → the agent writes the file and calls `preview_start`;
-  - a `backend` project has no tab and no tools;
-  - the web build tab;
-  - Kermanych previewing itself with the committed file.
+- **Unit and type checks:**
+  - `packages/core`: `tsc` and vitest, 230 tests pass. `packages/cloud`: vitest, 168 pass; the
+    RLS/trigger suite is skipped because Docker is not running on this machine, so the local
+    Supabase stack could not start.
+  - The migration's `tasks_guard()` was diffed against `20261023090000_task_auto_run.sql`: the
+    only differences are `platform` in rule 6 and the «NEW.» comment markers.
+  - `apps/api`: `tsc --noEmit` and vitest, 1155 tests pass and 4 are skipped. This includes the
+    rewritten `preview.spec.ts`: real child processes, ordered readiness, the stderr banner,
+    in-flight dedupe, crash → others killed, SIGKILL escalation, the log cursor.
+  - `apps/ui`: `vue-tsc` clean; vitest, 740 tests pass.
+- **Electron dev app.** `quasar dev -m electron` ran in preview mode with an isolated DB, `TMPDIR`
+  and `--user-data-dir`, driven over CDP. The fixture had two services (a node api and a web page
+  that fetches it through `${PORT_API}`) behind a 2 s `setup`:
+  - the header has no ▶;
+  - «Запустити превʼю» on the empty page went through setup → api → web → «Працює». The page
+    opened at the web port and showed the api's JSON;
+  - «Логи» opened a bottom panel (setup / api / web, ANSI stripped), and the page's height shrank
+    to 399 px;
+  - the page went to `/settings?x=1#frag`, then ↻: the new port kept the path, query and hash;
+  - `kill -9` of the web service gave «Впало (web, сигнал SIGKILL)» and a red tab dot. The api
+    service was stopped with it, and the page stayed;
+  - ◼ gave «Зупинене» and the page stayed;
+  - after ✕ the empty page offered only «Запустити превʼю». Starting from it reopened
+    `/settings?x=1#frag` on the new port;
+  - after a renderer reload, the row still showed «Працює» from the server snapshot.
+    `GET /sessions/:id/preview` returned the same state;
+  - a missing file showed «Превʼю не налаштоване». An invalid one showed the exact field
+    (`services: exactly one service needs "open": true (found 0)`);
+  - «Доручити агенту» on the invalid file: a real omp agent got the prompt and the skill, fixed
+    the file, called `preview_start` and `browser_snapshot`, and committed. The row then showed
+    «Працює»;
+  - the review fork's «Браузер» showed no preview row;
+  - `POST /projects/sync` with `platform: "backend"` removed the «Браузер» tab, closed both
+    pages and stopped both previews (their ports were dead). The `GET` refused with «a backend
+    project has no live preview»;
+  - Kermanych previewed itself from the committed `.kermanych/preview.json`: «Працює» after
+    10 s with warm dependencies. Its UI loaded the seeded demo data from its own preview api, and
+    `DELETE` left no process behind;
+  - quitting the app (`app.quit()`) killed a running preview's processes.
+- **Web build** (`quasar dev` against the same api, in the operator's browser pane): the
+  «Браузер» tab showed the row, «У вебзбірці сторінка відкривається в окремій вкладці» and ⤤;
+  ▶ started the preview, and the row showed «Працює» with the URL.
+- **Settings.** «Основне» has the platform control (locked without a cloud row), and «Файли
+  сесії» replaces «Команди».
+- **Not exercised in the app:**
+  - the «Новий проєкт» modal: preview mode has no workspace;
+  - saving the platform to the cloud;
+  - native sessions;
+  - archive and finish stops (covered by `supervisor.discard.spec.ts` and `finish.spec.ts`).
 
 ## Accepted risks
 

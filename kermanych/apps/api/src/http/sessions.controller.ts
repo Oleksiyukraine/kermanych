@@ -1,7 +1,7 @@
 // apps/api/src/http/sessions.controller.ts
 import { BadRequestException, Body, Controller, Delete, Get, NotFoundException, Param, Patch, Post, Query, Req, StreamableFile } from "@nestjs/common";
 import { isNativeHarness, isThinkingLevel, parseFindingTarget } from "@kermanych/core";
-import type { BranchPrefix, DocsWriteKind, ImageInput, Platform, RpcExtensionUIResponse, TaskDraft, ThinkingLevel } from "@kermanych/core";
+import type { BranchPrefix, DocsWriteKind, ImageInput, RpcExtensionUIResponse, ThinkingLevel } from "@kermanych/core";
 import { SupervisorService } from "../supervisor/supervisor.service";
 import { sessionFailure } from "./session-failure";
 import { RegistryService } from "../registry/registry.service";
@@ -165,19 +165,48 @@ export class SessionsController {
     return this.sup.getSubagentTranscript(id, subagentId);
   }
 
-  @Post(":id/preview")
-  async startPreview(@Param("id") id: string) {
+  // The live preview (docs/specs/2026-11-03-session-browser-preview.md). Every refusal — not an
+  // agent session, a back-end or mobile project, no session directory, a missing or invalid
+  // `.kermanych/preview.json` — is a plain 400 message.
+  @Get(":id/preview")
+  previewInfo(@Param("id") id: string) {
     try {
-      return await this.preview.start(id);
+      return this.preview.info(id);
+    } catch (err) {
+      throw sessionFailure(err);
+    }
+  }
+
+  // Answers at once, normally `starting`; progress arrives as `preview_update`.
+  @Post(":id/preview")
+  startPreview(@Param("id") id: string, @Body() b: { restart?: boolean } = {}) {
+    try {
+      return this.preview.start(id, { restart: b?.restart === true });
     } catch (err) {
       throw sessionFailure(err);
     }
   }
 
   @Delete(":id/preview")
-  stopPreview(@Param("id") id: string) {
-    this.preview.stop(id);
+  async stopPreview(@Param("id") id: string) {
+    await this.preview.stop(id);
     return { ok: true };
+  }
+
+  @Get(":id/preview/logs")
+  previewLogs(@Param("id") id: string, @Query("step") step?: string, @Query("since") since?: string) {
+    const after = Number(since);
+    return this.preview.logs(id, step ?? "", Number.isFinite(after) ? after : 0);
+  }
+
+  // «Доручити агенту»: a native session's busy refusal surfaces as the coded error.
+  @Post(":id/preview/configure")
+  async configurePreview(@Param("id") id: string) {
+    try {
+      return await this.sup.configurePreview(id);
+    } catch (err) {
+      throw sessionFailure(err);
+    }
   }
 
   @Get(":id/finish")
@@ -237,7 +266,6 @@ export class SessionsController {
   @Post(":id/finish")
   async finish(@Param("id") id: string) {
     try {
-      this.preview.stop(id);
       return await this.sup.finishSession(id);
     } catch (err) {
       throw sessionFailure(err);
@@ -260,7 +288,6 @@ export class SessionsController {
   @Post(":id/close-merged")
   async closeMerged(@Param("id") id: string) {
     try {
-      this.preview.stop(id);
       return await this.sup.closeMerged(id);
     } catch (err) {
       throw sessionFailure(err);
@@ -430,7 +457,6 @@ export class SessionsController {
   @Delete(":id")
   async remove(@Param("id") id: string) {
     try {
-      this.preview.stop(id);
       await this.sup.deleteSession(id);
     } catch (err) {
       throw sessionFailure(err);

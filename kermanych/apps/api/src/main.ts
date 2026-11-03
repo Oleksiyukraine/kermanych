@@ -43,7 +43,7 @@ export async function bootstrap(
   app.enableCors({ origin: "*" });
   app.setGlobalPrefix("api", { exclude: [] });
   app.enableShutdownHooks();
-  // Only a preview api sets KERMANYCH_SEED (see preview.service.ts); the real api never
+  // Only a preview api sets KERMANYCH_SEED (the repository's .kermanych/preview.json); the real api never
   // does, so its registry is never touched. Idempotent on an already-populated DB.
   if (process.env.KERMANYCH_SEED) seedDemo(app.get(RegistryService));
   const port = opts.port ?? (Number(process.env.PORT) || 4317);
