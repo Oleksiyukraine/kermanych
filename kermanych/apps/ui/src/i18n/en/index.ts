@@ -1822,6 +1822,7 @@ export const en: MessageSchema = {
       todoDeleted: 'Removed item {index} from the Action List: {text}',
       todoIndexMissing: 'The Action List has no item {index} — nothing was changed.',
       riskDeleteFailed: 'Could not delete risk {code}: {error}',
+      riskManagersOnly: 'The risk register is open to the workspace owner and managers only — nothing was done.',
       riskExportSaved: 'Risk register exported: {n} risk to “{file}”. | Risk register exported: {n} risks to “{file}”.',
       riskExportPrinting: 'Risk register ({n} risk) opened in the print dialog — choose “Save as PDF” there. | Risk register ({n} risks) opened in the print dialog — choose “Save as PDF” there.',
       riskExportNotFound: 'This workspace register has no {codes} — nothing was exported.',

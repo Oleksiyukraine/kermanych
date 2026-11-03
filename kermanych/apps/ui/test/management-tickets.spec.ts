@@ -54,6 +54,7 @@ vi.mock('../src/stores/projects', () => ({
     members: { w1: members },
     workspaceById: new Map([['w1', { id: 'w1', name: 'Acme' }]]),
     loadMembers: (ws: string) => loadMembers(ws),
+    canManageWorkspace: () => true,
   }),
 }));
 vi.mock('../src/stores/board', () => ({

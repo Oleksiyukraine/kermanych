@@ -1,7 +1,8 @@
 // Data access for the workspace risk register. Owns the snake_case <-> camelCase boundary for
 // `workspace_risks` and `workspace_risk_events`. Every call runs under the caller's JWT; the
-// RLS policies (read and write = workspace member) are the authorization surface and refusals
-// surface as thrown postgrest messages.
+// RLS policies (read and write = workspace owner or manager, can_access_workspace_risks — a
+// developer reads no rows and writes none) are the authorization surface and refusals surface
+// as thrown postgrest messages.
 //
 // A risk normally leaves the register by moving to `closed` or `materialized` with a closure
 // note: that keeps the row, its scores and its history as the lessons-learned input the
@@ -15,7 +16,7 @@
 //
 // It is a hard delete and the audit trail goes with it (`workspace_risk_events` cascades),
 // which is exactly why the grant behind it is narrower than every other write on this
-// table: insert and update are workspace-member, delete is workspace-OWNER.
+// table: read, insert and update are owner-or-manager, delete is workspace-OWNER.
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type {
   RiskCategory,
