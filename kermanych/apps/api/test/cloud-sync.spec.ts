@@ -7,7 +7,7 @@ import type { SupervisorService } from "../src/supervisor/supervisor.service";
 
 // Fake cloud transport. Mocked wholesale (no importOriginal) so the unit test needs no
 // built packages/cloud and can be switched to failing mode mid-test.
-// `taskStatusFromSession` is the identity map, mirroring packages/cloud/src/status.ts.
+// `taskStatusFromSession` and the two status constants mirror packages/cloud/src/status.ts.
 const pushed: { taskId: string; status: string; updatedAt: string }[] = [];
 let failing = false;
 // When armed, the NEXT push parks inside the transport until the test releases it. Every
@@ -18,7 +18,9 @@ type Card = { docsReport?: DocsReport; sessionReport?: SessionReport };
 const cards = new Map<string, Card>();
 const patches: ({ taskId: string } & Card)[] = [];
 vi.mock("@kermanych/cloud", () => ({
-  taskStatusFromSession: (s: { status: string }) => s.status,
+  taskStatusFromSession: (s: { status: string }) => (s.status === "tool" ? "thinking" : s.status),
+  SELF_DRIVING_TASK_STATUSES: ["queued", "thinking", "tool"],
+  TASK_STATUS_KEEPALIVE_MS: 45_000,
   pushTaskStatus: async (_client: unknown, taskId: string, status: string, updatedAt: string) => {
     if (gate) {
       const g = gate;
@@ -148,6 +150,30 @@ describe("CloudSyncService", () => {
 
     expect(pushed).toHaveLength(0);
     expect(registry.listOutbox()).toEqual([]);
+  });
+
+  it("re-pushes an unchanged running status once the keepalive has passed, never a waiting one", async () => {
+    // The coarse status no longer moves on every tool call, so without the keepalive a long
+    // turn would age its card into the board's «stale» hint while the machine is alive.
+    let clock = Date.parse(NOW);
+    const now = vi.spyOn(Date, "now").mockImplementation(() => clock);
+    try {
+      const { events } = make();
+      const tick = async (status: Session["status"], ms: number) => {
+        clock += ms;
+        events.next({ type: "session_update", session: session({ status }) });
+        await flush();
+      };
+      await tick("thinking", 0);
+      await tick("tool", 2_000); // same card status: no push
+      await tick("thinking", 40_000); // 42 s after the push: still under the keepalive
+      await tick("thinking", 3_000); // 45 s: the keepalive
+      await tick("waiting_input", 1_000);
+      await tick("waiting_input", 120_000); // quiet for hours by design: never re-pushed
+      expect(pushed.map((p) => p.status)).toEqual(["thinking", "thinking", "waiting_input"]);
+    } finally {
+      now.mockRestore();
+    }
   });
 
   it("keeps the row with attempts = 1 when the push fails, then drains on reconnect", async () => {
