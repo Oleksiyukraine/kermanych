@@ -1088,6 +1088,8 @@ export const uk = {
     appGeneral: {
       language: 'Мова',
       version: 'Версія',
+      assistantGesture: 'Жест для виклику асистента',
+      assistantGestureNote: 'Коло мишею проти годинникової стрілки відкриває асистента менеджменту з будь-якої вкладки — так само, як Ctrl/⌘ K чи персонаж біля лівого краю. Вимкніть, якщо жест спрацьовує випадково.',
     },
     // «Налаштування → Сповіщення» (docs/specs/2026-11-01-dock-attention.md).
     notifications: {
@@ -1408,6 +1410,8 @@ export const uk = {
         focusMode: 'Режим фокусу: сховати / показати бічну панель',
         saveSettings: 'Зберегти налаштування',
         closeWindow: 'Закрити вікно / підказку',
+        assistant: 'Асистент менеджменту: відкрити / закрити',
+        assistantGesture: 'Асистент менеджменту (жест; вимикається в «Загальне»)',
       },
       where: {
         composer: 'композер',
@@ -1829,6 +1833,10 @@ export const uk = {
       thinkingSec: 'Думає… {sec} с',
       attach: 'Долучити файл — зображення, PDF, Excel, Word, Pages або Markdown',
       removeFile: 'Прибрати файл «{name}»',
+      launcherTip: 'Асистент менеджменту — Ctrl/⌘ K або коло мишею проти годинникової стрілки',
+      launcherBusy: 'Асистент менеджменту думає…',
+      launcherUnread: 'Асистент менеджменту відповів',
+      overlayClose: 'Esc — закрити',
     },
     plan: {
       note: 'Цей чат витрачає ту саму підписку, що й агенти',

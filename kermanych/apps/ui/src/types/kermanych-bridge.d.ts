@@ -67,8 +67,9 @@ declare global {
     // text-only agent (native session) can open it.
     screenshot?: { data: string; mimeType: 'image/png'; path: string };
   }
-  // A key press in the page that belongs to the app (the address bar, find): main forwards it.
-  type KermanychBrowserShortcut = 'focus-address' | 'find';
+  // A key press in the page that belongs to the app (the address bar, find, the assistant's
+  // ⌘K — docs/specs/2026-11-03-assistant-overlay.md): main forwards it.
+  type KermanychBrowserShortcut = 'focus-address' | 'find' | 'assistant';
   interface KermanychBrowserBridge {
     // Attach the session's view at `bounds` (creating it on first use) and park any other.
     show: (sessionId: string, projectId: string, bounds: KermanychBrowserBounds) => void;

@@ -6,8 +6,8 @@
   recogniser, the «Загальне» and «Гарячі клавіші» settings panes, the session-browser key
   forwarding in `src-electron`, i18n `uk` / `en`, `kermanych/README.md`. No api, core or cloud
   change.
-- **Status:** decisions agreed with the operator in the deep-analysis interview (2026-11-03);
-  awaiting the go-ahead to implement.
+- **Status:** decisions agreed with the operator in the deep-analysis interview (2026-11-03),
+  approved the same day; implemented on this branch (see «Verification»).
 
 ## Goal
 
@@ -100,35 +100,51 @@ tab itself does not change.
 
 ## Implementation
 
-- **Extract the chat** from `ManagementPage.vue` into `components/management/ManagementAssistant.vue`
-  (props: `section`, `variant: 'dock' | 'overlay'`; emits `navigate` for citation clicks so the
-  overlay can close). The page renders it as the dock with pixel-identical visuals; the
-  overlay renders the same component. Styles move with it; the page keeps only its layout.
-- **`stores/assistant-overlay.ts`**: `open`, `unread`, `toggle()`, `close()`; sets `unread`
-  when `chat.busy` goes true → false while the overlay is closed and the route is outside
-  Менеджмент.
-- **`components/assistant/AssistantMascot.vue`** (the SVG character + states) and
-  **`components/assistant/AssistantOverlay.vue`** (backdrop, dialog, the no-workspace gate,
-  focus handling), mounted once in `MainLayout.vue`, both off on the Менеджмент route.
-- **`composables/useCircleGesture.ts`** — the recogniser as a pure function over pointer
-  samples plus a thin window listener; gated by the «Загальне» switch.
-- **⌘K** handler in `MainLayout.vue` beside the existing hotkeys; add `toggle-assistant` to the
-  session browser's forwarded shortcuts (`browsers.ts` `shortcut()`, preload type, `KBrowserPane`
-  / shell handler).
-- Settings: the gesture switch in «Загальне»; the ⌘K row and the circle in `KEYMAP`. i18n
-  `uk` / `en` for every new string.
+- **The chat is extracted** from `ManagementPage.vue` into
+  `components/management/ManagementAssistant.vue` (props `section`, `variant: 'dock' | 'overlay'`;
+  exposes `focus()`). The page renders it as the dock with unchanged geometry; the overlay renders
+  the same component with denser glass (94 % surface instead of 74 %), because over a whole page
+  the dock's frost let the page's text read through. Citation clicks route to Менеджмент →
+  Документація; the launcher closes the overlay on entering Менеджмент, so no event is needed.
+- **`stores/assistant-overlay.ts`**: `open`, `unread`, `summons`, `show()`, `close()`,
+  `summon()`, plus the persisted `assistantGestureOn` switch. A summons is a counter: the
+  Менеджмент dock (mounted only on that tab) focuses on it, the launcher toggles the overlay on it
+  everywhere else — so ⌘K, the gesture, the character and the session browser never need to know
+  which tab is on screen.
+- **`components/assistant/AssistantMascot.vue`** — the SVG character: a glossy graphite drop lit
+  warm from below by the accent, two white eyes with the logo's chevrons as pupils, the logo's bar
+  as the mouth. It blinks; while a turn is in flight it breathes, its pupils read and the mouth
+  blinks like a cursor; `prefers-reduced-motion` stills it. Chosen from seven drawn variants
+  (a plain logo disc, the logo tile, double chevrons, and three refinements of the two-eyed drop).
+- **`components/assistant/AssistantLauncher.vue`** — mounted once in `MainLayout.vue`: the
+  character (fixed, left edge, z 5001 so it stays the overlay's toggle), the overlay (teleported,
+  z 5000: above a full-screen session browser, below Quasar dialogs), the no-workspace gate, the
+  unread mark, focus in and back, ⌘K (capture phase; Ctrl+K inside the terminal stays the
+  shell's, as with Ctrl+\\), Esc (bubble phase, so the Хелпери panel keeps its own Esc), and the
+  session browser's forwarded `assistant` shortcut.
+- **`lib/circle-gesture.ts`** (the pure recogniser) and **`composables/useCircleGesture.ts`**
+  (the window listener, mouse pointers only, 1 s cooldown).
+- **Session browser:** `KeyK` → `assistant` in `MOD_SHORTCUTS` (`browsers.ts`), forwarded like
+  `find`; `KermanychBrowserShortcut` gains `'assistant'`; `KBrowserPane.runShortcut` ignores it.
+- Settings: the gesture switch in «Загальне»; ⌘K and the circle in `KEYMAP`. i18n `uk` / `en`.
 
 ## Verification
 
-- Unit test for the circle recogniser: a counter-clockwise circle hits; clockwise, a straight
-  line, a shake, a too-small/too-large circle, a too-slow circle and any move with a button
-  held do not.
-- Smoke in the live preview: open/close via the character, ⌘K (Latin and Ukrainian layout),
-  synthetic counter-clockwise pointer path; Esc, backdrop; draft and attachment survive
-  reopen; no-workspace gate; on Менеджмент the character is hidden and ⌘K focuses the dock;
-  the session browser parks while the overlay is open; the gesture switch turns it off.
-- Менеджмент tab screenshots before and after the extraction match.
-- Mascot: variant screenshots shown to the operator before the final one is chosen.
+- `test/circle-gesture.spec.ts`: a counter-clockwise circle hits once and only after it closes;
+  clockwise, unfinished, button held, too small, too large, too slow, two strokes split by a
+  pause, a shake and a straight line do not; a hand-drawn ellipse does.
+- Live preview (web build): character on Чат/Дошка/Налаштування, hidden on Менеджмент; click and
+  ⌘K / Ctrl+K open and close the overlay; a turn sent from the overlay is answered in it; closing
+  during a turn leaves the character «thinking», then the unread dot, cleared on reopening; the
+  draft survives close/reopen and the field takes focus; Esc and a backdrop click close; while
+  open the overlay counts as one visible `[role="dialog"]` (the session browser's parking signal),
+  while closed as none; a synthetic counter-clockwise pointer path toggles it, and does nothing
+  with the «Загальне» switch off; the no-workspace gate; on Менеджмент ⌘K unfolds and focuses the
+  dock; dark and light themes.
+- Менеджмент tab: the dock composer sits at the same box (562, 671, 680×52 in a 1280×800 window)
+  before and after the extraction.
+- Not exercised: the Electron build — ⌘K forwarded from inside a session browser page is covered
+  by the typecheck only.
 
 ## Documentation
 

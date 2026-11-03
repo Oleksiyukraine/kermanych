@@ -497,6 +497,12 @@
                  account settings, and both apply on click with no save bar. -->
             <KLangToggle />
           </div>
+          <!-- The assistant's mouse circle (docs/specs/2026-11-03-assistant-overlay.md): a
+               device-local preference like the theme, applied on click. -->
+          <div class="set__group">
+            <KCheckbox v-model="assistantGesture" :label="t('settings.appGeneral.assistantGesture')" />
+            <p class="set__note">{{ t('settings.appGeneral.assistantGestureNote') }}</p>
+          </div>
           <!-- The app's version. It used to sit beside the logo; the header gave that room to
                the project switcher, and «what am I running» is a settings-page question. -->
           <div class="set__group">
@@ -930,6 +936,7 @@ import { errorText, useAsyncAction, useKeyedAction } from '../composables/useAsy
 import { useOptimisticValue } from '../composables/useOptimisticValue';
 import { useLoadPhase } from '../composables/useLoadPhase';
 import { dockBadgeOn, dockBounceOn } from '../lib/dock';
+import { assistantGestureOn } from 'stores/assistant-overlay';
 import { voicePick } from '../lib/voice';
 import { locale } from '../lib/locale';
 import { isMoveRefusal, memberErrorText, moveRefusalText, NO_ROWS } from '../lib/cloud-errors';
@@ -1826,6 +1833,8 @@ const KEYMAP: readonly { act: string; keys: string; where: string }[] = [
   { act: 'settings.keymap.acts.openRow', keys: '⏎', where: 'settings.keymap.where.tables' },
   { act: 'settings.keymap.acts.toggleFiles', keys: '⌘B', where: 'settings.keymap.where.everywhere' },
   { act: 'settings.keymap.acts.focusMode', keys: '⌘\\', where: 'settings.keymap.where.everywhere' },
+  { act: 'settings.keymap.acts.assistant', keys: '⌘K', where: 'settings.keymap.where.everywhere' },
+  { act: 'settings.keymap.acts.assistantGesture', keys: '↺', where: 'settings.keymap.where.everywhere' },
   { act: 'settings.keymap.acts.saveSettings', keys: '⌘S', where: 'settings.keymap.where.thisScreen' },
   { act: 'settings.keymap.acts.closeWindow', keys: '⎋', where: 'settings.keymap.where.everywhere' },
 ];
@@ -1885,6 +1894,7 @@ watch(
 const hasDock = typeof window !== 'undefined' && !!window.kermanych?.dock;
 const badgeOn = dockBadgeOn;
 const bounceOn = dockBounceOn;
+const assistantGesture = assistantGestureOn;
 // `undefined` until main answers: a skeleton, not a guess.
 const popupsBlocked = ref<boolean | undefined>(undefined);
 const popupsPhase = useLoadPhase(() => popupsBlocked.value === undefined);

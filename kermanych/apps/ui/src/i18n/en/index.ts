@@ -1084,6 +1084,8 @@ export const en: MessageSchema = {
     appGeneral: {
       language: 'Language',
       version: 'Version',
+      assistantGesture: 'Gesture to call the assistant',
+      assistantGestureNote: 'A counter-clockwise mouse circle opens the management assistant from any tab — just like Ctrl/⌘ K or the character at the left edge. Turn it off if it fires by accident.',
     },
     notifications: {
       badge: 'Number on the icon',
@@ -1402,6 +1404,8 @@ export const en: MessageSchema = {
         focusMode: 'Focus mode: hide / show the sidebar',
         saveSettings: 'Save settings',
         closeWindow: 'Close window / tooltip',
+        assistant: 'Management assistant: open / close',
+        assistantGesture: 'Management assistant (gesture; off in “General”)',
       },
       where: {
         composer: 'composer',
@@ -1820,6 +1824,10 @@ export const en: MessageSchema = {
       thinkingSec: 'Thinking… {sec} s',
       attach: 'Attach a file — image, PDF, Excel, Word, Pages or Markdown',
       removeFile: 'Remove file “{name}”',
+      launcherTip: 'Management assistant — Ctrl/⌘ K or a counter-clockwise mouse circle',
+      launcherBusy: 'The management assistant is thinking…',
+      launcherUnread: 'The management assistant has answered',
+      overlayClose: 'Esc — close',
     },
     plan: {
       note: 'This chat spends the same subscription as the agents',
