@@ -16,6 +16,8 @@ import type {
   DocsWriteKind,
   MachineAlert,
   PreviewState,
+  QaRunScope,
+  TesterSettings,
 } from '@kermanych/core';
 import { connectSocket } from '../lib/socket';
 import { api, type MessageMode } from '../lib/api';
@@ -473,6 +475,20 @@ export const useOrchestrator = defineStore('orchestrator', () => {
     return api.mergeBranch(id, summary);
   }
 
+  // «Виконати тестування» (docs/specs/2026-11-04-qa-tester-agent.md): the api answers with the
+  // tester child, which the caller selects. The child's own row also arrives as session_update.
+  function runTester(id: string, scope: QaRunScope) {
+    return api.runTester(id, scope);
+  }
+
+  function getTesterSettings(projectId: string) {
+    return api.getTesterSettings(projectId);
+  }
+
+  function putTesterSettings(projectId: string, settings: TesterSettings) {
+    return api.putTesterSettings(projectId, settings);
+  }
+
   function archiveSession(id: string) {
     return api.archiveSession(id);
   }
@@ -694,6 +710,9 @@ export const useOrchestrator = defineStore('orchestrator', () => {
     branchSession,
     reviewSession,
     mergeBranch,
+    runTester,
+    getTesterSettings,
+    putTesterSettings,
     reopenSession,
     loadTranscript,
     subagents,

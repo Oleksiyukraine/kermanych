@@ -59,10 +59,10 @@ contextBridge.exposeInMainWorld('kermanych', {
   // The session browser: main owns one WebContentsView per session and lays it over the
   // placeholder whose bounds the Браузер tab reports.
   browser: {
-    show: (sessionId, projectId, bounds) => ipcRenderer.send('kermanych:browser:show', sessionId, projectId, bounds),
+    show: (sessionId, projectId, bounds, ephemeral) => ipcRenderer.send('kermanych:browser:show', sessionId, projectId, bounds, ephemeral === true),
     hide: (opts) => ipcRenderer.invoke('kermanych:browser:hide', opts ?? {}),
-    navigate: (sessionId, projectId, url) => ipcRenderer.invoke('kermanych:browser:navigate', sessionId, projectId, url),
-    openPreview: (sessionId, projectId, url) => ipcRenderer.invoke('kermanych:browser:open-preview', sessionId, projectId, url),
+    navigate: (sessionId, projectId, url, ephemeral) => ipcRenderer.invoke('kermanych:browser:navigate', sessionId, projectId, url, ephemeral === true),
+    openPreview: (sessionId, projectId, url, ephemeral) => ipcRenderer.invoke('kermanych:browser:open-preview', sessionId, projectId, url, ephemeral === true),
     back: (sessionId) => ipcRenderer.send('kermanych:browser:back', sessionId),
     forward: (sessionId) => ipcRenderer.send('kermanych:browser:forward', sessionId),
     reload: (sessionId) => ipcRenderer.send('kermanych:browser:reload', sessionId),
@@ -73,7 +73,7 @@ contextBridge.exposeInMainWorld('kermanych', {
     answerDialog: (sessionId, accept) => ipcRenderer.invoke('kermanych:browser:answer-dialog', sessionId, accept),
     answerAuth: (sessionId, id, credentials) => ipcRenderer.send('kermanych:browser:answer-auth', sessionId, id, credentials),
     setAgentPaused: (sessionId, paused) => ipcRenderer.send('kermanych:browser:set-agent-paused', sessionId, paused),
-    setViewport: (sessionId, projectId, viewport) => ipcRenderer.send('kermanych:browser:set-viewport', sessionId, projectId, viewport),
+    setViewport: (sessionId, projectId, viewport, ephemeral) => ipcRenderer.send('kermanych:browser:set-viewport', sessionId, projectId, viewport, ephemeral === true),
     find: (sessionId, query, forward) => ipcRenderer.send('kermanych:browser:find', sessionId, query, forward),
     stopFind: (sessionId) => ipcRenderer.send('kermanych:browser:stop-find', sessionId),
     close: (sessionId) => ipcRenderer.send('kermanych:browser:close', sessionId),

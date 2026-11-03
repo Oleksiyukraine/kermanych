@@ -10,9 +10,13 @@
 // blocking the page, an element is covered, …
 
 // Which session's browser, and the project whose cookie jar (Electron partition) it uses.
+// `ephemeral`: a «Тестувальник» run (docs/specs/2026-11-04-qa-tester-agent.md, decision 7) gets
+// an in-memory partition of its own instead of the project's persistent one, so every run starts
+// signed out and never signs the operator out; it dies with the view (close()).
 export interface BrowserTarget {
   sessionId: string;
   projectId: string;
+  ephemeral?: boolean;
 }
 
 // Where the page is after an action: the agent reads it to see whether a click navigated.

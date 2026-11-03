@@ -1014,7 +1014,10 @@ closes its pages.
   instead of the image), `browser_upload`,
   `browser_dialog`, `browser_console` (console, failed / 4xx / 5xx requests, downloads,
   popups, blocked links), `browser_network` (the request log) and `browser_evaluate`. Agent
-  sessions also get the preview tools (see [Live preview](#live-preview)).
+  sessions also get the preview tools (see [Live preview](#live-preview)). A «Тестувальник» run,
+  though a review-like branch, gets the browser tools, the preview tools (acting on its doer's
+  preview) and its own `report_qa_result`, `set_qa_checklist` and `browser_type_credential`
+  (see «Тестувальник» below).
   claude shows them as `mcp__kermanych__browser_*`. Managed sessions get them on launch and
   resume; native ones via `claude --mcp-config <file>` (a per-session `0600` file) or a
   second `omp --hook`. The endpoint is `POST /api/browser/mcp` on the local API with a
@@ -1024,7 +1027,9 @@ closes its pages.
   project's sessions get only those. An API started without the desktop app still hands the
   server out, but it lists only the findings tools and, for agent sessions, the preview tools.
 - **Cookies** are kept per project (Electron partition `persist:kermanych-browser-<projectId>`):
-  sessions of one project share logins, projects do not. The page's user agent carries no
+  sessions of one project share logins, projects do not. A «Тестувальник» run is the exception:
+  its page lives in a temporary in-memory partition of its own (`kermanych-tester-<sessionId>`),
+  starts signed out and is gone when the run is closed. The page's user agent carries no
   `Electron/` token. `target=_blank` links load in the same page; a `window.open` popup (an
   OAuth sign-in) opens as a small window of its own that keeps `window.opener` — yours to
   complete, the agent cannot drive it. `mailto:` / `tel:` open in the OS only from your own
@@ -1471,6 +1476,46 @@ request with nobody watching.
   the Mac from idle sleep (the screen may turn off); otherwise the machine sleeps as usual, so
   set macOS not to sleep on a dedicated box. The desktop app keeps its sign-in fresh while the
   window is hidden. Signing out on one machine currently signs you out on all of them.
+
+### «Тестувальник» (QA runs)
+
+«Тестувальник» (code id `tester`) walks the card's QA checklist in the live browser, item by item,
+and records a verdict for each (spec: `docs/specs/2026-11-04-qa-tester-agent.md`).
+
+- **Where it starts.** «Виконати тестування» on the «Завершити» sheet and in the header of the
+  session's **QA** tab. It is a separate child session `тестування: <name>` next to the doer, like
+  a review: it reads the code but never edits or commits it. It needs the desktop app, a project
+  whose platform has a browser, a session started from a card, and a doer that is not mid-turn;
+  otherwise the button is disabled with the reason. One tester per session at a time: while it runs,
+  the button reads «Тестування триває» and opens it. It takes an agent slot like any session.
+- **Which items.** The first run checks every item. Once items carry verdicts, the button offers
+  «Непройдені» (failed, blocked and untested — the default) or «Усі»; a run clears the old verdicts of
+  the items it is about to check. When the card has no checklist yet, the tester composes one first
+  (skill `qa-tester`), saves it to the card and walks it. A session without a card cannot be tested.
+- **The browser.** It drives the doer's live preview (starting it when it is not running) from a
+  browser of its own: a temporary partition, signed out on every run, so it never signs you out of the
+  project's browser. Watch it in the tester session's «Браузер» tab. A sign-in the agent cannot pass
+  (OAuth, SSO) is yours to complete there.
+- **Verdicts.** Each item gets ✓ passed, ✗ failed or ⏸ blocked with the agent's note (and a screenshot
+  under `docs/qa/<date>-<branch>/` for a failure), next to the human checkbox, on the QA tab and in the
+  board's card dialog. The checkbox keeps meaning «a person checked it»; the tester never ticks it.
+  Verdicts are written item by item through the `report_qa_result` tool and show up live.
+- **After the run.** ⤴ «Передати виконавцю» sends the doer one message with every failed and blocked
+  item, its note and screenshot, then closes the run; when everything passed it just closes it.
+  «Відкинути» closes it without a message. Screenshots are not committed by the tester. «Завершити» on
+  the doer stops a running tester first.
+- **Settings.** «ШІ-команда» → project → «Агенти» → «Тестувальник»: test accounts (name or role,
+  login, password, note), the sign-in page path and notes for the tester (test data, what never to
+  press). They are stored on this machine only (SQLite `tester_accounts`, `tester_settings`). The agent
+  sees account names, logins and notes, never a password: the `browser_type_credential` tool types it
+  into the page on the api side, and neither the transcript nor the tool result carries it. The
+  instruction and skills are the «Тестувальник» agent's on the workspace scope, as for every agent.
+- **The checklist is kept.** «Створити ПР» asks for a QA checklist only when the card has none, so a
+  second PR run no longer wipes ticks and verdicts. Ticks and verdicts are written per item in the
+  database (`qa_checklist_patch_items`, `qa_checklist_set_if_empty`, migration
+  `20261104090000_qa_checklist_item_functions.sql`).
+- **Routes.** `POST /api/sessions/:id/qa-run` (`{ scope?: "all" | "open" }`),
+  `GET` / `PUT /api/tester/projects/:id`; the socket event `qa_checklist_update`.
 
 ### Skills («ШІ-команда → Навички»)
 

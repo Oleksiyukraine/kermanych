@@ -1,7 +1,6 @@
 # «Тестувальник»: an agent that walks the QA checklist in the live browser
 
-- **Date:** 2026-11-04
-- **Status:** decisions settled in the interview; waiting for the operator's go-ahead before code.
+- **Status:** approved by the operator on 2026-11-04; implemented on `feature/add-qa-tester-agent`.
 - **Scope:** `packages/core` (the `tester` agent, QA verdict shape, prompt contract),
   `packages/cloud` (QA item patch / set-if-empty calls), `supabase/migrations` (two QA functions),
   `apps/api` (launch route, tester child session, MCP tools and gating, credentials in SQLite,
@@ -343,7 +342,7 @@ a scope, which a trigger does not provide. i18n: `agents.role.tester` = «Тес
 
 **`apps/ui`**
 - `lib/api.ts`, `stores/orchestrator.ts`: `runTester(id, scope)`; tester settings calls.
-- `stores/board.ts`: `setQaItemChecked` through `patchQaItem`.
+- `stores/board.ts`: `setQaItemChecked` through `patchQaItems`.
 - `components/agents/FinishSheet.vue`: «Виконати тестування» (with the «Непройдені / Усі» choice,
   disabled-with-hint, «Тестування триває» link).
 - `pages/AgentsPage.vue`: the same control in the QA tab header; verdict badges ✓ / ✗ / ⏸ with note and
@@ -353,6 +352,25 @@ a scope, which a trigger does not provide. i18n: `agents.role.tester` = «Тес
 - `components/settings/TesterPanel.vue` + `pages/AiTeamPage.vue` (project scope).
 - `lib/settings.ts`: `tester` in `NOT_TRIGGERABLE`.
 - i18n uk/en.
+
+## Implementation notes
+
+Details settled while building, within the decisions above:
+
+- The tester child has **no `taskId`** (its status must never mirror onto the card). Its QA tab shows
+  the doer's card checklist, live, without the run button; the tools write the doer's card.
+- Screenshots a tester saves with `browser_screenshot(path)` land in the **doer's** worktree (the
+  child has none); `report_qa_result` accepts a screenshot only when that file exists.
+- `scope: "open"` with every item already passed is refused by the api; the button then preselects
+  and locks «Усі» with a hint.
+- The hand-off message is labelled with the tester session's name: `[тестування: <doer>]: …`.
+- The ephemeral flag reaches Electron from both sides: the api's `BrowserTarget.ephemeral` and the
+  renderer's `show` / `navigate` / `openPreview` / `setViewport` IPC (`session.tester`), so a view the
+  operator opens first is already in `kermanych-tester-<id>`. `close(id)` clears that partition's storage.
+- A tester waiting for a slot keeps its opening prompt in `pendingPrompt`, so `restoreSlotQueue`
+  restarts it after an api restart.
+- A tester that ended in `error` / `stopped` still counts as «running» for its doer until it is
+  handed over or discarded: one run per doer at a time.
 
 ## Verification
 

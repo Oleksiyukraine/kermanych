@@ -323,6 +323,7 @@
                 :label="item.text"
                 @update:model-value="(v: boolean) => board.setQaItemChecked(editingTask!.id, item.id, v)"
               />
+              <QaVerdict v-if="item.agent" :verdict="item.agent" />
             </li>
           </ul>
         </div>
@@ -415,6 +416,7 @@ import KField from 'components/kit/KField.vue';
 import KModal from 'components/kit/KModal.vue';
 import KSelect, { type KSelectOption } from 'components/kit/KSelect.vue';
 import KCheckbox from 'components/kit/KCheckbox.vue';
+import QaVerdict from 'components/agents/QaVerdict.vue';
 import KKanbanCard from 'components/kit/KKanbanCard.vue';
 import KSkeleton from 'components/kit/KSkeleton.vue';
 import { useLoadPhase } from '../composables/useLoadPhase';

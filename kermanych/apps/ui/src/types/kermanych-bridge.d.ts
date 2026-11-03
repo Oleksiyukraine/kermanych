@@ -71,16 +71,18 @@ declare global {
   type KermanychBrowserShortcut = 'focus-address' | 'find';
   interface KermanychBrowserBridge {
     // Attach the session's view at `bounds` (creating it on first use) and park any other.
-    show: (sessionId: string, projectId: string, bounds: KermanychBrowserBounds) => void;
+    // `ephemeral` (here and below, on calls that may create the view): a «Тестувальник» run's
+    // view gets its own in-memory partition instead of the project's persistent one.
+    show: (sessionId: string, projectId: string, bounds: KermanychBrowserBounds, ephemeral?: boolean) => void;
     // Park whichever view is shown (it keeps running, invisible). With `freeze`, resolves with a
     // PNG data URL of what it showed, captured just before parking, for the pane to display in
     // its place while an overlay is open; otherwise (or when capture fails) null.
     hide: (opts?: { freeze?: boolean }) => Promise<string | null>;
     // Rejects with the load error; the pane also gets it as `state.error`.
-    navigate: (sessionId: string, projectId: string, url: string) => Promise<void>;
+    navigate: (sessionId: string, projectId: string, url: string, ephemeral?: boolean) => Promise<void>;
     // Open the session's live preview at `url` (creating the view on first use). A page on the
     // previous preview's origin keeps its path on the new one; never takes the keyboard.
-    openPreview: (sessionId: string, projectId: string, url: string) => Promise<void>;
+    openPreview: (sessionId: string, projectId: string, url: string, ephemeral?: boolean) => Promise<void>;
     back: (sessionId: string) => void;
     forward: (sessionId: string) => void;
     reload: (sessionId: string) => void;
@@ -93,7 +95,7 @@ declare global {
     // null cancels the sign-in.
     answerAuth: (sessionId: string, id: string, credentials: { username: string; password: string } | null) => void;
     setAgentPaused: (sessionId: string, paused: boolean) => void;
-    setViewport: (sessionId: string, projectId: string, viewport: KermanychBrowserViewport) => void;
+    setViewport: (sessionId: string, projectId: string, viewport: KermanychBrowserViewport, ephemeral?: boolean) => void;
     // Highlight matches of `query` (next/previous with `forward`); empty query or stopFind clears.
     find: (sessionId: string, query: string, forward: boolean) => void;
     stopFind: (sessionId: string) => void;

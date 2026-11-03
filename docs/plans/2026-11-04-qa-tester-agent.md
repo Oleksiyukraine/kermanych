@@ -2,6 +2,10 @@
 
 Task document: `docs/specs/2026-11-04-qa-tester-agent.md`. Paths below are under `kermanych/`.
 
+**Status:** steps 1–6 done (2026-11-04). Core, cloud, api and ui suites pass; the migration was run on
+PGlite; the settings panel, the routes and the disabled button were checked in the web preview. The
+full browser run (step 5's live path) still needs the desktop app.
+
 ## Steps
 
 1. **Core contract** — `packages/core/src/tester.ts` (tools, scope, refusal, hand-off text, prompt

@@ -87,7 +87,7 @@ export function qaHandoffText(testerName: string, testerSessionId: string, items
     return `- ${mark} — ${i.text}\n  ${i.agent.note.trim()}${shot}`;
   });
   return [
-    `[Тестування «${testerName}»]: ${bad.length} з ${items.length} пунктів QA-чеклиста не пройшли перевірку в браузері.`,
+    `[${testerName}]: ${bad.length} з ${items.length} пунктів QA-чеклиста не пройшли перевірку в браузері.`,
     "",
     ...lines,
     "",
