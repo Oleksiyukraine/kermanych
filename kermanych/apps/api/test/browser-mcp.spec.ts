@@ -60,7 +60,7 @@ function make(previewUrl?: string, where: { worktreePath?: string; worktree?: bo
     const reply = (await mcp.handle(s.id, { jsonrpc: "2.0", id: 1, method: "tools/call", params: { name, arguments: args } })) as { result: CallResult };
     return reply.result;
   };
-  return { mcp, host, s, call };
+  return { mcp, host, s, call, registry };
 }
 
 const tmpDirs: string[] = [];
@@ -103,6 +103,28 @@ describe("bearer and binding", () => {
     expect(mcp.bindingFor(s.id)).toEqual({ name: "kermanych", url: "http://127.0.0.1:4317/api/browser/mcp", token: expect.any(String) });
     const reply = (await mcp.handle(s.id, { jsonrpc: "2.0", id: 1, method: "tools/list" })) as { result: { tools: { name: string }[] } };
     expect(reply.result.tools.map((t) => t.name)).toEqual(["report_finding", "list_findings"]);
+  });
+
+  it("asks for the findings in the operator's agent language, English while none is chosen", async () => {
+    const { mcp, s, registry } = make();
+    const env = process.env.KERMANYCH_LANGUAGE;
+    delete process.env.KERMANYCH_LANGUAGE;
+    const reportDescription = async () => {
+      const reply = (await mcp.handle(s.id, { jsonrpc: "2.0", id: 1, method: "tools/list" })) as { result: { tools: { name: string; description: string }[] } };
+      return reply.result.tools.find((t) => t.name === "report_finding")!.description;
+    };
+    try {
+      expect(await reportDescription()).toContain("Write every field in English;");
+      registry.setAuthSession({ userId: "u1", accessToken: "t", agentLanguage: "uk" });
+      expect(await reportDescription()).toContain("Write every field in Ukrainian;");
+      registry.setAuthSession({ userId: "u1", accessToken: "t", agentLanguage: "en-ste-80" });
+      expect(await reportDescription()).toContain("Write every field in English;");
+      process.env.KERMANYCH_LANGUAGE = "de";
+      expect(await reportDescription()).toContain("Write every field in German;");
+    } finally {
+      if (env === undefined) delete process.env.KERMANYCH_LANGUAGE;
+      else process.env.KERMANYCH_LANGUAGE = env;
+    }
   });
 
   it("lists every browser tool, then the findings tools, each with a closed object schema", async () => {

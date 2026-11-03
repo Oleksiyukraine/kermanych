@@ -1280,9 +1280,11 @@ through the `report_finding` tool of its `kermanych` MCP server (spec:
 reproduction commands), acceptance criteria and an optional suggested fix. It reports at once,
 without asking you first, including in the middle of a «Глибокий аналіз» interview; it asks you
 only about a part of the problem that overlaps its own task. Then it continues its task.
-`list_findings` shows it what it already reported, so it does not repeat itself. The
-tool descriptions are the agent's whole instruction, so every runtime gets the same rules,
-native sessions included. Discussion and review branches have no such tools.
+`list_findings` shows it what it already reported, so it does not repeat itself. It writes
+the finding in the agent communication language («Мова спілкування агента»; English while none
+is chosen, and for an ASD-STE100 level). The tool descriptions are the agent's whole
+instruction, so every runtime gets the same rules, native sessions included. Discussion and
+review branches have no such tools.
 
 **Nothing is filed without you.** Findings are kept only on this machine (SQLite
 `session_findings`) and are deleted with their session and with their project. A session holds

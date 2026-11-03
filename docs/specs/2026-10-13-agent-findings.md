@@ -118,8 +118,12 @@ dismisses it.
    - Only what was **seen** in code or output, with `path:line` references or a reproduction
      command. No guesses, no style advice.
    - Call `list_findings` first and do not repeat a finding, including a dismissed one.
-   - Write the fields in English (as Менеджмент tickets are). The title is at most 120
-     characters.
+   - Write the fields in the agent communication language («Мова спілкування агента»,
+     resolved like the system-prompt directive: `KERMANYCH_LANGUAGE`, then the profile
+     preference); English while none is chosen and for an ASD-STE100 level. Code,
+     identifiers, paths and commands stay as they are. The title is at most 120 characters.
+     (Originally English, as Менеджмент tickets are; changed so the operator reads findings in
+     his own language.)
 
    Rejected: a line in `systemAppendOpts` (managed sessions only, so the runtimes would
    diverge). Rejected: an overridable default skill (skills reach omp only through `--config`,
