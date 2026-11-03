@@ -24,7 +24,8 @@ import { mkdirSync, realpathSync, lstatSync, writeFileSync } from "node:fs";
 import { basename, dirname, isAbsolute, join, relative, sep } from "node:path";
 import { RegistryService } from "../registry/registry.service";
 import { PreviewService } from "../preview/preview.service";
-import { FINDING_TOOLS, FINDING_TOOL_NAMES, callFindingTool } from "../findings/findings-tools";
+import { FINDING_TOOL_NAMES, callFindingTool, findingTools } from "../findings/findings-tools";
+import { resolveLanguage } from "../runtime/resolve-language";
 import { OUTCOME_TOOL, callOutcomeTool } from "../minion/outcome-tool";
 import type { MinionVerdictReport } from "@kermanych/core";
 import {
@@ -445,7 +446,8 @@ export class BrowserMcpService {
         return result({});
       case "tools/list": {
         const minion = this.registry.listSessions().find((s) => s.id === sessionId)?.minion === true;
-        const tools = browserHost() ? [...TOOLS, ...FINDING_TOOLS] : FINDING_TOOLS;
+        const findings = findingTools(resolveLanguage(process.env.KERMANYCH_LANGUAGE, this.registry.getAuthSession()?.agentLanguage));
+        const tools = browserHost() ? [...TOOLS, ...findings] : findings;
         return result({ tools: minion ? [...tools, OUTCOME_TOOL] : tools });
       }
       case "tools/call": {
