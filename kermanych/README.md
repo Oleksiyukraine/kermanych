@@ -1110,9 +1110,11 @@ repository is a folder that people and implementing agents read.
   design's session browser on the running preview, with the width presets, «◎ Вказати» and the
   picks tray (picks go to the agent, as on «Агенти»). Right: the agent's log and composer.
   The web build has no canvas (the session browser needs the desktop app): it shows the
-  design's saved folder instead — the screenshots and the rendered README. A project without a
-  preview command says so on the canvas, with a link to its settings. The page opens a design
-  from a desktop notification or «Карта агентів» too.
+  design's saved folder instead — the screenshots and the rendered README. Opening a design
+  starts its [live preview](#live-preview) when the branch has a valid `.kermanych/preview.json`;
+  without one the canvas's preview row offers «Доручити агенту», and a Back-end or Mobile project
+  has no canvas at all. The page opens a design from a desktop notification or «Карта агентів»
+  too.
 - **A design is an agent session.** «+ Новий дизайн» asks for a topic, an optional description
   and base branch, files a card on the board (`tasks.design`, migration
   `20261029090000_task_design.sql`) assigned to you, and launches it. The session runs on a
@@ -1135,8 +1137,8 @@ repository is a folder that people and implementing agents read.
   the prototype, commit as `design: <topic>`. The design reaches the default branch through
   «Створити ПР» and review, like code.
 - **From design to implementation.** «Задача →» on a design's README (on the page and in the
-  session's «Документація» tab) creates a card in the same project by default, platform
-  `web`, with the README as the description and the screenshots attached as card images. An
+  session's «Документація» tab) creates a card in the same project by default, with the README
+  as the description and the screenshots attached as card images. An
   agent working from such a card follows the default skill `implement-from-design`: read the
   README and screenshots, reuse the prototype, build every state, compare its own screenshots,
   delete the prototype.

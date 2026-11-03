@@ -3043,8 +3043,7 @@ export const en: MessageSchema = {
     },
     canvas: {
       desktopOnly: 'The canvas exists only in the desktop app: the web build has no session browser. Below is the design’s saved folder; the log and composer on the right work here too.',
-      needsCommand: 'This project has no preview command, so the canvas has nothing to show.',
-      needsCommandLink: 'Set the command in the project settings',
+      noBrowser: 'This project is set to Back-end or Mobile: it has no browser and no preview, so the canvas has nothing to show. Change the platform in the project settings.',
       retired: 'This design’s worktree is gone, so the canvas has nothing to show.',
     },
     folder: {

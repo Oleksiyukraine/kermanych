@@ -363,6 +363,12 @@ Rejected:
     dead DTOs, `previews` in the snapshot, the `preview_update` event;
   - `management-actions.ts` and `i18n-codes.ts`: no `platform`;
   - `skills.ts`: the `preview-config` default skill.
+- **Merged with `dev`'s «Дизайн» tab** (`docs/specs/2026-10-29-design-tab.md`):
+  - `pages/DesignPage.vue` starts a design's preview through the new API when the branch's file is
+    valid. The pane's own preview row replaces the «no preview command» note and its settings
+    link, and a Back-end or Mobile project shows a note in place of the canvas;
+  - `lib/doc-task.ts` / `components/docs/DocTaskDialog.vue`: a card from a document carries no
+    platform (`docTaskPlatform` removed).
 - **`packages/cloud`**:
   - `projects.ts` and `types.ts`: `platform` in, preview columns out;
   - `tasks.ts`: `platform` out.
