@@ -404,6 +404,7 @@ import { useI18n } from 'vue-i18n';
 import { confirmAction } from '../lib/confirm';
 import { BRANCH_PREFIXES, prependHelper, type Project, type ThinkingLevel } from '@kermanych/core';
 import type { Task, TaskStatus, WorkspaceMember } from '@kermanych/cloud';
+import { SELF_DRIVING_TASK_STATUSES } from '@kermanych/cloud';
 import { ACTIVE_STATUSES } from '@kermanych/core/status';
 import { useAuth } from 'stores/auth';
 import { useBoard } from 'stores/board';
@@ -427,6 +428,7 @@ import { useNow } from '../composables/useNow';
 import { useDelayedTrue } from '../composables/useDelayedTrue';
 import { useImageAttach } from '../composables/useImageAttach';
 import { useFileMention } from '../composables/useFileMention';
+import { useTaskDetails } from '../composables/useTaskDetails';
 import { imageToFile } from '../lib/images';
 import { relativeTime, renderTime } from '../lib/time';
 import { EFFORT_OPTIONS } from '../lib/effort';
@@ -942,20 +944,20 @@ async function publishProject(project: Project): Promise<void> {
 }
 
 // ── Staleness ─────────────────────────────────────────────────────────────────
-// Stale = the card claims to be working, but nothing has moved for a while. There is no
-// heartbeat in v1 (spec Non-goals), so the age of `updated_at` is the only signal — and
-// because tasks_guard() overwrites it with now() on every push, that age measures time
-// since the executing machine last PUSHED, which is exactly the thing that goes quiet.
+// Stale = the card claims to be working, but nothing has moved for a while. The age of
+// `updated_at` is the signal — tasks_guard() overwrites it with now() on every push, so that
+// age measures time since the executing machine last PUSHED, which is exactly the thing that
+// goes quiet. A live machine re-pushes a self-driving status every TASK_STATUS_KEEPALIVE_MS
+// (45 s, CloudSyncService), so STALE_MS must stay well above that.
 //
 // Only self-driving statuses qualify. `waiting_input` is excluded on purpose: a task
 // blocked on its owner's answer is legitimately idle for hours — that is not staleness,
 // that is the design (model B1). `backlog` and the five end states are not moving by
 // definition, so age says nothing about them either.
 const STALE_MS = 90_000;
-const SELF_DRIVING: readonly TaskStatus[] = ['queued', 'thinking', 'tool'];
 
 function isStale(task: Task): boolean {
-  return SELF_DRIVING.includes(task.status) && now.value - new Date(task.updatedAt).getTime() > STALE_MS;
+  return SELF_DRIVING_TASK_STATUSES.includes(task.status) && now.value - new Date(task.updatedAt).getTime() > STALE_MS;
 }
 
 // ── Assignee ──────────────────────────────────────────────────────────────────
@@ -1217,6 +1219,8 @@ const editorBusy = computed(() => submitting.value || launching.value !== null);
 const editingTask = computed(() =>
   editingId.value ? board.tasks.find((t) => t.id === editingId.value) : undefined,
 );
+// The list carries no QA checklist; the open editor holds its card so the store reads it.
+useTaskDetails(() => (editorOpen.value ? (editingId.value ?? undefined) : undefined));
 // How many QA items are ticked, for the «n/total» counter beside the checklist heading.
 const qaDone = computed(() => editingTask.value?.qaChecklist?.items.filter((i) => i.checked).length ?? 0);
 

@@ -198,6 +198,21 @@ describe("an operator trigger fires before the message is forwarded", () => {
     expect(launch.text).toBe("тригер «Хоче ПР» запускає «resolve-conflict»");
   });
 
+  // The picker offers every instruction-carrying agent but the card/design ones, «Комітер»
+  // included; a trigger naming it must start it, not end in «агента «commit» не існує».
+  it("runs «Комітер» for a trigger naming `commit`", async () => {
+    const { sup, registry, project } = make([t({ agentId: "commit", pattern: "закоміть" })]);
+    const s = registry.createSession({ projectId: project.id, name: "AAA", task: "t", worktreePath: "/tmp/wt", branch: "feature/aaa" });
+    registry.updateSession(s.id, { ompSessionFile: "/tmp/aaa.jsonl", status: "done" });
+    await sup.sendMessage(s.id, "закоміть це", "prompt");
+
+    expect(sent).toHaveLength(1);
+    expect(sent[0]!.text).toContain("Commit and push any pending work on this session's branch `feature/aaa`");
+    expect(sent[0]!.text).not.toContain("закоміть це");
+    const rows = sup.getTranscript(s.id).filter((r) => r.kind === "notice") as Extract<TranscriptEntry, { kind: "notice" }>[];
+    expect(rows.map((r) => r.code)).toEqual(["trigger_launches_agent"]);
+  });
+
   it("never matches Kermanych's own prompt, so a fired agent cannot loop", async () => {
     // `conflict` matches the resolve-conflict instruction itself, which goes back through
     // sendMessage. `source: "operator"` means the OPERATOR wrote the text; without that
