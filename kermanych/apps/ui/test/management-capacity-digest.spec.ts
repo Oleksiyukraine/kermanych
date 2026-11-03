@@ -20,7 +20,7 @@ vi.mock('../src/lib/api', () => ({
 }));
 vi.mock('../src/stores/orchestrator', () => ({ useOrchestrator: () => ({ selectedWorkspaceId: 'w1', notify: vi.fn() }) }));
 vi.mock('../src/stores/projects', () => ({
-  useProjects: () => ({ projects: [], members: { w1: [] }, workspaceById: new Map([['w1', { id: 'w1', name: 'Acme' }]]), loadMembers: vi.fn() }),
+  useProjects: () => ({ projects: [], members: { w1: [] }, workspaceById: new Map([['w1', { id: 'w1', name: 'Acme' }]]), loadMembers: vi.fn(), canManageWorkspace: () => true }),
 }));
 vi.mock('../src/stores/board', () => ({ useBoard: () => ({ createTask: vi.fn() }) }));
 vi.mock('../src/stores/jira', () => ({

@@ -62,7 +62,7 @@ import { api } from '../lib/api';
 import { handleOf } from '../lib/members';
 import { capacityDigest, capacityReport, digestRange, todayIso } from '../lib/capacity';
 import { readCapacityPrefs } from '../lib/capacity-prefs';
-import { readLayout } from '../lib/dashboard';
+import { readLayout, visibleTiles } from '../lib/dashboard';
 import { useHomeTodo } from './home-todo';
 import { homeDigest, todayTaskGroups } from '../lib/home-digest';
 import { todoPlainText } from '../lib/home-todo';
@@ -186,8 +186,11 @@ export const useManagementChat = defineStore('management-chat', () => {
 
   // The register as the assistant is shown it. Read from the SAME store the Risk Registry
   // screen renders, so the list in the prompt is the list on screen — including the row the
-  // assistant filed one turn ago, which is how it learns the code Postgres minted.
+  // assistant filed one turn ago, which is how it learns the code Postgres minted. Empty for a
+  // developer, who may not open the register: the assistant must not read it out to them
+  // (RLS returns no rows to them anyway, so this is the same answer without the query).
   function riskDigest(workspaceId: string): ManagementRiskRow[] {
+    if (!projects.canManageWorkspace(workspaceId)) return [];
     return (risks.byWorkspace[workspaceId] ?? []).map((r) => ({
       code: r.code,
       kind: r.kind,
@@ -362,7 +365,8 @@ export const useManagementChat = defineStore('management-chat', () => {
         /* no notes this turn */
       }
     return homeDigest({
-      layout: readLayout(workspaceId),
+      // The tiles the operator actually sees: a developer's Home has no Risk Registry tile.
+      layout: visibleTiles(readLayout(workspaceId), projects.canManageWorkspace(workspaceId)),
       todo: homeTodo.listFor(workspaceId),
       groups: jira.integration ? todayTaskGroups(jira.issues, todayIso(Date.now())) : [],
       notes: releaseNotes.byWorkspace[workspaceId] ?? [],
@@ -519,6 +523,13 @@ export const useManagementChat = defineStore('management-chat', () => {
   // «Ризик R-004 занесено» or «Реліз-ноти готові» may be said, because this is the only place
   // that knows it.
   async function run(workspaceId: string, action: ManagementAction): Promise<void> {
+    // The register is the owner's and managers' (core `managersOnly`). A developer's turn
+    // carries no register, so a risk action is the model working from nothing — refused with
+    // the reason here rather than as a row-level-security error from PostgREST.
+    if (action.kind.startsWith('risk.') && !projects.canManageWorkspace(workspaceId)) {
+      result(workspaceId, 'warn', globalTr.t('management.chat.riskManagersOnly'));
+      return;
+    }
     if (action.kind === 'risk.create') {
       try {
         // No cast and no mapping: `ManagementRiskFields` is deliberately the subset of
@@ -690,30 +701,30 @@ export const useManagementChat = defineStore('management-chat', () => {
     });
     busy.value = true;
     try {
-      // The register travels with the question, so the assistant can see what is already
-      // filed before it files another one. Fetched once per workspace: after that this store
-      // IS the local copy — `useRisks().create/save` upsert into it — and refetching every
-      // turn would flash the Risk Registry screen's loading state on each message.
-      if (!risks.byWorkspace[workspaceId]) await risks.load(workspaceId);
-      // The roster and the Jira board list are what a TICKET needs and nothing else on this
-      // surface does, so they are fetched here on the same once-per-workspace terms as the
-      // register, and each is cached by its own store. `probe` answers which Jira boards the
-      // workspace has and whether this machine holds a Jira token, which decides whether the
-      // assistant may offer Jira at all.
+      // The roster first: it is what a TICKET needs, and it is also what says whether this
+      // caller may see the register at all (a developer may not — core `managersOnly`). The
+      // Jira board list is fetched on the same once-per-workspace terms, and each is cached
+      // by its own store. `probe` answers which Jira boards the workspace has and whether this
+      // machine holds a Jira token, which decides whether the assistant may offer Jira at all.
       //
-      // Sequential rather than parallel with the register on purpose: three requests fired at
-      // one Supabase project on the first keystroke of a conversation buys nothing a person
-      // can perceive, and the register is the one a majority of turns actually reads.
+      // Sequential rather than parallel on purpose: three requests fired at one Supabase
+      // project on the first keystroke of a conversation buys nothing a person can perceive.
       // `loadMembers` THROWS on a cloud failure — the membership screen wants to know — while
       // this turn does not: an unreachable roster costs the assistant the ability to assign a
-      // ticket, not the ability to answer. Swallowed, and the context block then prints
-      // «список недоступний», which is the honest sentence for it.
+      // ticket (and, for a non-owner, the register), not the ability to answer. Swallowed, and
+      // the context block then prints «список недоступний», which is the honest sentence for it.
       if (!projects.members[workspaceId])
         try {
           await projects.loadMembers(workspaceId);
         } catch {
           /* no roster this turn */
         }
+      // The register travels with the question, so the assistant can see what is already
+      // filed before it files another one. Fetched once per workspace: after that this store
+      // IS the local copy — `useRisks().create/save` upsert into it — and refetching every
+      // turn would flash the Risk Registry screen's loading state on each message.
+      if (projects.canManageWorkspace(workspaceId) && !risks.byWorkspace[workspaceId])
+        await risks.load(workspaceId);
       if (jira.integration === undefined) await jira.probe(workspaceId);
       // The active board's mirror, loaded ONCE for the turn: the capacity and home digests
       // both read it, and a board nobody has opened yet is otherwise empty here.

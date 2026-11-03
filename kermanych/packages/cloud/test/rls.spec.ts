@@ -18,6 +18,7 @@ import { beforeAll, describe, expect, it } from "vitest";
 import { listAiAgentSkills, setAiAgentSkills } from "../src/agent-skills";
 import { deleteAiAgent, listAiAgents, upsertAiAgent } from "../src/ai-agents";
 import { createProject, listProjects, patchProject } from "../src/projects";
+import { createWorkspaceRisk, listRiskEvents, listWorkspaceRisks } from "../src/risks";
 import { deleteAiSkill, listAiSkills, upsertAiSkill } from "../src/skills";
 import { deleteAiTrigger, listAiTriggers, setAiTriggerSkills, upsertAiTrigger } from "../src/triggers";
 import { listMembers } from "../src/workspaces";
@@ -1356,6 +1357,76 @@ describe.skipIf(!URL || !ANON || !SERVICE)("supabase RLS and triggers", () => {
       await deleteJiraIntegration(owner.client, integrationId);
       expect(await getJiraIntegrationById(owner.client, integrationId)).toBeUndefined();
       expect(await listJiraIssues(owner.client, integrationId)).toEqual([]);
+    });
+  });
+
+  // ── the risk register ───────────────────────────────────────────────────────
+  // Its own workspace with all three roles seated: the register is the owner's and the
+  // managers' (20261103090000_workspace_risks_managers.sql), and a developer must read no row,
+  // no history, and write nothing — through PostgREST directly, not just through the ui.
+  describe("risk register", () => {
+    let riskWs: string;
+    let manager: TestUser;
+    let developer: TestUser;
+    let riskId: string;
+
+    const risk = {
+      kind: "threat",
+      category: "vendor",
+      cause: "shared sandbox",
+      event: "testing is blocked",
+      consequence: "UAT slips",
+      probability: 4,
+      impact: 4,
+      response: "reduce",
+      responseActions: "a dedicated tenant",
+    } as const;
+
+    beforeAll(async () => {
+      manager = await makeUser("risk-manager");
+      developer = await makeUser("risk-developer");
+      const ws = await owner.client
+        .from("workspaces")
+        .insert({ name: "rls-risk-ws", owner_id: owner.id })
+        .select()
+        .single();
+      if (ws.error) throw ws.error;
+      riskWs = ws.data.id as string;
+      for (const u of [manager, developer]) {
+        const seated = await owner.client.rpc("invite_workspace_member", { p_workspace_id: riskWs, p_email: u.email });
+        if (seated.error) throw seated.error;
+      }
+      const promoted = await owner.client.rpc("set_workspace_member_role", {
+        p_workspace_id: riskWs,
+        p_user_id: manager.id,
+        p_role: "manager",
+      });
+      if (promoted.error) throw promoted.error;
+    }, 30_000);
+
+    it("the owner and a manager file and read risks", async () => {
+      const filed = await createWorkspaceRisk(owner.client, { workspaceId: riskWs, ...risk });
+      riskId = filed.id;
+      await createWorkspaceRisk(manager.client, { workspaceId: riskWs, ...risk, event: "the vendor folds" });
+
+      expect((await listWorkspaceRisks(manager.client, riskWs)).map((r) => r.code).sort()).toEqual(["R-001", "R-002"]);
+      expect(await listRiskEvents(manager.client, riskId)).toHaveLength(1);
+    });
+
+    it("a developer reads no risk and no history", async () => {
+      expect(await listWorkspaceRisks(developer.client, riskWs)).toEqual([]);
+      expect(await listRiskEvents(developer.client, riskId)).toEqual([]);
+    });
+
+    it("a developer can neither file nor edit a risk", async () => {
+      await expect(createWorkspaceRisk(developer.client, { workspaceId: riskWs, ...risk })).rejects.toThrow(
+        /row-level security|violates/,
+      );
+      // An update the policy hides matches no row; the proof is the row as the owner reads it.
+      await developer.client.from("workspace_risks").update({ event: "rewritten" }).eq("id", riskId);
+      const rows = await listWorkspaceRisks(owner.client, riskWs);
+      expect(rows).toHaveLength(2);
+      expect(rows.find((r) => r.id === riskId)?.event).toBe(risk.event);
     });
   });
 });

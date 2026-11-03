@@ -43,6 +43,10 @@ export const useProjects = defineStore('projects', () => {
   const projects = ref<CloudProject[]>([]);
   // Keyed by WORKSPACE id now: membership is a workspace concept.
   const members = ref<Record<string, WorkspaceMember[]>>({});
+  // Workspaces whose LAST roster read failed. Kept so a screen gated on the caller's role can
+  // tell «not answered yet» from «will not be answered» and settle on the least-privileged
+  // view instead of a skeleton that never resolves (roleSettled below).
+  const membersFailed = ref<Record<string, true>>({});
   const loading = ref(false);
   const offlineError = ref<string | null>(null);
   // Has the FIRST load() finished (either way)? `loading` is false before load() starts too —
@@ -378,8 +382,19 @@ export const useProjects = defineStore('projects', () => {
   }
 
   async function loadMembers(workspaceId: string): Promise<WorkspaceMember[]> {
-    const list = await cloudListMembers(auth.client, workspaceId);
+    let list: WorkspaceMember[];
+    try {
+      list = await cloudListMembers(auth.client, workspaceId);
+    } catch (e) {
+      membersFailed.value = { ...membersFailed.value, [workspaceId]: true };
+      throw e;
+    }
     members.value = { ...members.value, [workspaceId]: list };
+    if (membersFailed.value[workspaceId]) {
+      const next = { ...membersFailed.value };
+      delete next[workspaceId];
+      membersFailed.value = next;
+    }
     return list;
   }
 
@@ -465,10 +480,24 @@ export const useProjects = defineStore('projects', () => {
     return (members.value[workspaceId] ?? []).find((m) => m.userId === uid)?.role;
   }
 
-  // May the caller administer the workspace's password vault — create/edit/delete a
-  // password, read any secret, decide access requests. Owner OR a seated manager. UX gate
-  // only; can_manage_workspace_passwords is the real one. The password vault is the first
-  // surface where the manager role carries authorization weight.
+  // Is the caller's role in this workspace as known as it is going to get? At once for the
+  // owner (the workspace row says so); otherwise once the roster read has answered — either
+  // way, because a failed read leaves myRole undefined and the caller on the developer view
+  // (RLS still decides), which is a settled answer, not a pending one.
+  function roleSettled(workspaceId: string): boolean {
+    return (
+      isWorkspaceOwner(workspaceId) ||
+      members.value[workspaceId] !== undefined ||
+      !!membersFailed.value[workspaceId]
+    );
+  }
+
+  // Owner OR a seated manager: the workspace's management role. It authorises the password
+  // vault — create/edit/delete a password, read any secret, decide access requests
+  // (can_manage_workspace_passwords) — and the risk register, which a developer neither
+  // opens nor sees on Home (can_access_workspace_risks, core `managersOnly`). UX gate only;
+  // those SQL predicates are the real ones. `false` until the roster is in for a non-owner,
+  // so a screen that must not flash manager content waits on roleSettled.
   function canManageWorkspace(workspaceId: string): boolean {
     const r = myRole(workspaceId);
     return r === 'owner' || r === 'manager';
@@ -511,6 +540,7 @@ export const useProjects = defineStore('projects', () => {
     isOwner,
     isWorkspaceOwner,
     myRole,
+    roleSettled,
     canManageWorkspace,
   };
 });

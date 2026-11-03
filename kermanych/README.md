@@ -1815,6 +1815,23 @@ That field is a real assistant, and it is deliberately narrow:
   is reported as the prompt malfunction it is, not dressed in a limitation the table does
   not have.
 
+### Who sees the risk register
+
+The Risk Registry belongs to the workspace owner and its managers. A member with the
+**developer** role does not get the section in the Менеджмент rail, a link to
+`/management/risk-registry` sends them to Home, and Home has no Risk Registry tile for them.
+The Менеджмент chat does not show them the register either: their turns carry no risks, and a
+risk action the assistant emits anyway (file, edit, delete, export) is refused with «The risk
+register is open to the workspace owner and managers only». The owner changes a member's
+role in Settings → Members.
+
+The database enforces the same rule: `workspace_risks` and `workspace_risk_events` are read
+and written only by the owner or a manager (`can_access_workspace_risks`); deleting a risk
+stays owner-only. A developer who queries the tables directly gets no rows and cannot insert
+or update one. This needs migration `20261103090000_workspace_risks_managers.sql` — push it
+before shipping this UI ([Applying a migration](#applying-a-migration-to-the-teams-project)).
+Spec: `docs/specs/2026-11-03-risk-registry-managers-only.md`.
+
 ### Exporting the risk register
 
 The Risk Registry screen exports to **PDF** or **Excel (.xlsx)** from the **Export** button in
