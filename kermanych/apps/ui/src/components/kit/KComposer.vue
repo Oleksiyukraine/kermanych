@@ -76,6 +76,18 @@
           :disabled="disabled"
           @click="fileInput?.click()"
         >📎</button>
+        <!-- «Голосова розмова» (docs/specs/2026-11-02-voice-conversation.md): only where the host
+             can hold one (`voice`); lit while this session's conversation runs. -->
+        <button
+          v-if="voice"
+          type="button"
+          class="k-composer__attach-btn"
+          :class="{ 'k-composer__attach-btn--on': voiceActive }"
+          v-tip="t('kit.composer.voiceTip')"
+          :aria-label="t('kit.composer.voice')"
+          :aria-pressed="voiceActive"
+          @click="emit('voice')"
+        ><KIcon class="k-composer__voice-icon" name="mic" /></button>
         <KChipSelect
           v-if="model && modelChipOptions.length"
           :model-value="model"
@@ -184,8 +196,12 @@ const props = withDefaults(
     usage?: Usage | undefined;
     // The tree a file mention reads — the session's. Absent: no @ button, and `@` is plain text.
     files?: { kind: 'session' | 'project'; id: string } | null | undefined;
+    // The host can start a voice conversation with this session: shows the 🎤 button.
+    voice?: boolean | undefined;
+    // This session's voice conversation is running: the button is lit.
+    voiceActive?: boolean | undefined;
   }>(),
-  { disabled: false, worktree: false, models: () => [], modelLoading: false, effortLoading: false },
+  { disabled: false, worktree: false, models: () => [], modelLoading: false, effortLoading: false, voice: false, voiceActive: false },
 );
 
 const emit = defineEmits<{
@@ -193,6 +209,7 @@ const emit = defineEmits<{
   send: [text: string, images: ImageInput[]];
   effort: [level: ThinkingLevel];
   setModel: [patch: { model: string; provider?: string }];
+  voice: [];
 }>();
 
 const focused = ref(false);
@@ -443,6 +460,13 @@ function submit(): void {
     cursor: default;
     opacity: 0.5;
   }
+}
+.k-composer__attach-btn--on,
+.k-composer__attach-btn--on:hover:not(:disabled) {
+  color: var(--k-accent);
+}
+.k-composer__voice-icon {
+  --k-icon-size: var(--k-icon-md);
 }
 
 // Session facts — flat, borderless chips: these are readings, so they get no hover, no caret

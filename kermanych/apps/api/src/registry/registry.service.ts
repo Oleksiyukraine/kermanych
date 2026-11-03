@@ -469,6 +469,9 @@ export class RegistryService {
     this.db.exec(
       `CREATE TABLE IF NOT EXISTS linear_tokens (org_url_key TEXT NOT NULL, user_id TEXT NOT NULL, api_key TEXT NOT NULL, account_id TEXT, PRIMARY KEY (org_url_key, user_id))`,
     );
+    // Per-user OpenAI API keys for the voice conversation (docs/specs/2026-11-02-voice-conversation.md),
+    // THIS machine only — the Jira/Linear custody rule.
+    this.db.exec(`CREATE TABLE IF NOT EXISTS voice_keys (user_id TEXT PRIMARY KEY, api_key TEXT NOT NULL)`);
     // Per-user Slack bot + app-level tokens, THIS machine only — the Jira/Linear custody
     // rule. Keyed by the KERMANYCH workspace (not the Slack team) because one Slack app is
     // bound to exactly one workspace; the team/bot identity rides along, learned from
@@ -673,6 +676,23 @@ export class RegistryService {
 
   deleteLinearToken(orgUrlKey: string, userId: string): void {
     this.db.prepare(`DELETE FROM linear_tokens WHERE org_url_key = ? AND user_id = ?`).run(orgUrlKey, userId);
+  }
+
+  // ── Voice (OpenAI) keys ──────────────────────────────────────────────────────
+
+  getVoiceKey(userId: string): string | undefined {
+    const row = this.db.prepare(`SELECT api_key as apiKey FROM voice_keys WHERE user_id = ?`).get(userId) as { apiKey: string } | undefined;
+    return row?.apiKey;
+  }
+
+  setVoiceKey(userId: string, apiKey: string): void {
+    this.db
+      .prepare(`INSERT INTO voice_keys (user_id, api_key) VALUES (?,?) ON CONFLICT(user_id) DO UPDATE SET api_key = excluded.api_key`)
+      .run(userId, apiKey);
+  }
+
+  deleteVoiceKey(userId: string): void {
+    this.db.prepare(`DELETE FROM voice_keys WHERE user_id = ?`).run(userId);
   }
 
   // ── Slack tokens ──────────────────────────────────────────────────────────────

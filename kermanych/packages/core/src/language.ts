@@ -59,6 +59,11 @@ const AGENT_LANGUAGE_ENGLISH_NAMES: Record<Exclude<AgentLanguage, SteLanguage>, 
   zh: "Chinese",
 };
 
+// The language's English name, for an instruction to a model. An ASD-STE100 level is English.
+export function agentLanguageEnglishName(lang: AgentLanguage): string {
+  return isSteLanguage(lang) ? "English" : AGENT_LANGUAGE_ENGLISH_NAMES[lang];
+}
+
 // The system-prompt append that makes the agent talk back in the chosen language. Backend-
 // neutral text: omp receives it via `--append-system-prompt`, the claude SDK via
 // `systemPrompt.append`. Names the language in English (an instruction to the model) and in

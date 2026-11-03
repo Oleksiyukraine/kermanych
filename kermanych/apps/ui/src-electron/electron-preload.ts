@@ -51,6 +51,11 @@ contextBridge.exposeInMainWorld('kermanych', {
   },
   // True while macOS refuses this app's pop-up notifications (no Apple team signature).
   notificationsBlocked: (): Promise<boolean> => ipcRenderer.invoke('kermanych:notifications-blocked'),
+  // The voice conversation (docs/specs/2026-11-02-voice-conversation.md): macOS's own microphone
+  // permission, asked once; false when the operator refused it in System Settings.
+  voice: {
+    requestMic: (): Promise<boolean> => ipcRenderer.invoke('kermanych:mic-access'),
+  },
   // The session browser: main owns one WebContentsView per session and lays it over the
   // placeholder whose bounds the Браузер tab reports.
   browser: {

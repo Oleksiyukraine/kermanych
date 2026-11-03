@@ -496,6 +496,19 @@
       <div class="kit__label">{{ t('kit.gallery.sec.composer') }}</div>
       <!-- The Хелпери picker lives inside the composer: press `/` on the empty field, or the
            `/` button in the controls row. -->
+      <!-- The voice conversation's bar sits right above the composer of the session it is bound to;
+           🎤 in the controls row starts and ends it. -->
+      <KVoiceBar
+        v-if="voiceSample"
+        phase="live"
+        activity="hearing"
+        :caption="{ who: 'operator', text: 'Давай другий варіант, і додай тест на порожній список' }"
+        :mic-level="0.55"
+        :muted="false"
+        :elapsed-ms="252_000"
+        @mute="() => {}"
+        @end="voiceSample = false"
+      />
       <KComposer
         v-model="composerDraft"
         :model="composerModel"
@@ -507,6 +520,9 @@
         @send="() => {}"
         @effort="(level) => (composerEffort = level)"
         @set-model="(p) => (composerModel = p.model)"
+        :voice="true"
+        :voice-active="voiceSample"
+        @voice="voiceSample = !voiceSample"
       />
     </section>
 
@@ -633,6 +649,7 @@ import KThoughtToggle from 'components/kit/KThoughtToggle.vue';
 import KTabs from 'components/kit/KTabs.vue';
 import KSubNav from 'components/kit/KSubNav.vue';
 import KComposer from 'components/kit/KComposer.vue';
+import KVoiceBar from 'components/kit/KVoiceBar.vue';
 import KChipSelect from 'components/kit/KChipSelect.vue';
 import KCheckbox from 'components/kit/KCheckbox.vue';
 import KSkeleton from 'components/kit/KSkeleton.vue';
@@ -671,6 +688,8 @@ const detailTabs = [
   { value: 'session', label: t('kit.gallery.detailTab.session') },
 ];
 const composerDraft = ref('');
+// The voice bar sample: 🎤 in the composer below shows and hides it, «Завершити» hides it.
+const voiceSample = ref(true);
 // The gallery has no session behind the chip, so the pick is held locally — the point here is
 // that the menu opens upward inside the row and reports the level it landed on.
 const composerEffort = ref<ThinkingLevel>('high');

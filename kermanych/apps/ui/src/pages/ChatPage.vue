@@ -199,6 +199,11 @@
               @expand-all="onExpandAll"
               @effort="effortPick.set"
               @set-model="onSetModel"
+              :voiceable="true"
+              :voice="voicePanel.bar.value"
+              @voice-start="voicePanel.start"
+              @voice-mute="voicePanel.mute"
+              @voice-end="voicePanel.end"
             >
               <!-- The log of this thread has not arrived yet: a skeleton, never «Порожній чат»,
                    which would claim a history-less chat. -->
@@ -259,6 +264,8 @@ import { relativeTime, renderTime } from '../lib/time';
 import { useNow } from '../composables/useNow';
 import { useResizablePanel } from '../composables/useResizablePanel';
 import { useAsyncAction, useKeyedAction } from '../composables/useAsyncAction';
+import { useVoicePanel } from '../composables/useVoicePanel';
+import { nextMode as modeFor } from '../lib/message-mode';
 import { useOptimisticValue } from '../composables/useOptimisticValue';
 import { useLoadPhase } from '../composables/useLoadPhase';
 import { LAUNCH_MODES, nativeHarnessName, nativeRuntimeFor, sessionLaunchMode, type LaunchMode } from '../lib/native-session';
@@ -336,6 +343,8 @@ const BIND_HINT = computed(() => t('chat.page.bindHint'));
 const selectedProject = computed(() => store.projects.find((p) => p.id === store.selectedProjectId));
 const isBound = computed(() => !!selectedProject.value?.localRepoPath);
 const chatSession = computed(() => store.sessions.find((s) => s.id === chatId.value));
+// The voice conversation (docs/specs/2026-11-02-voice-conversation.md) with this thread.
+const voicePanel = useVoicePanel(() => chatSession.value);
 // Promotion grows a worktree, so it is refused without a local binding; the strip states why.
 // A native chat has no ▶ at all, so there is nothing for the strip to explain.
 const promoteBlocked = computed(() => !!chatSession.value && !chatSession.value.native && !isBound.value);
@@ -498,13 +507,9 @@ const {
   max: () => (contentEl.value ? contentEl.value.clientWidth - MIN_DETAIL : Number.POSITIVE_INFINITY),
 });
 
-// Which omp message mode the next message takes. A fresh chat starts its first turn with a
-// prompt; a settled chat gets a follow-up; a live one is steered mid-turn. Same rule as the
-// Агенти panel, so a chat and an agent read identically.
+// Which omp message mode the next message takes (lib/message-mode.ts) — the Агенти rule.
 function nextMode(s: Session): MessageMode {
-  const history = store.transcripts[s.id] ?? [];
-  const hasTurn = history.some((e) => e.kind === 'user_text' || e.kind === 'assistant_text');
-  return !hasTurn ? 'prompt' : s.status === 'done' ? 'follow_up' : 'steer';
+  return modeFor(s, store.transcripts[s.id] ?? []);
 }
 
 // The bubble («надсилаю…») is the store's (`store.outgoing`); a failed send puts the text back

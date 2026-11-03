@@ -185,6 +185,14 @@
          composer's chip row below. -->
     <KStatusRow :session="session" />
 
+    <!-- The voice conversation bound to this session (docs/specs/2026-11-02-voice-conversation.md). -->
+    <KVoiceBar
+      v-if="voice && !isMerged"
+      v-bind="voice"
+      @mute="emit('voiceMute')"
+      @end="emit('voiceEnd')"
+    />
+
     <!-- floor 3 — composer: attachment strip + input row (paste / drop / 📎), with the
          session-level actions (rehydrate, summarise) parked on its right edge -->
     <div v-if="!isMerged" class="k-panel__composer">
@@ -202,9 +210,12 @@
         :context="session.contextPercent"
         :usage="session.usage"
         :files="session.worktree && !session.worktreePath ? null : { kind: 'session', id: session.id }"
+        :voice="voiceable"
+        :voice-active="!!voice"
         @send="(text, images) => emit('send', text, images)"
         @effort="(level) => emit('effort', level)"
         @set-model="(p) => emit('setModel', p)"
+        @voice="voice ? emit('voiceEnd') : emit('voiceStart')"
       >
         <template #actions>
           <KIconButton
@@ -256,6 +267,8 @@ import { followAfterScroll } from '../../lib/log-follow';
 import { slotWaitLabel } from '../../lib/slot-wait';
 import type { OutgoingMessage } from '../../lib/outgoing';
 import { needsSignIn } from '../../lib/session-auth';
+import KVoiceBar from './KVoiceBar.vue';
+import type { VoiceBarState } from '../../lib/voice';
 
 const { t } = useI18n();
 
@@ -307,6 +320,10 @@ const props = withDefaults(
     // (AgentsPage) owns one consolidated header — identity, status, actions, expand/collapse —
     // above its tabs, so the embedded panel would only stack a second, redundant one.
     bare?: boolean;
+    // The host can hold a voice conversation with this session: the composer shows 🎤.
+    voiceable?: boolean;
+    // The voice conversation's state while it is bound to THIS session, else null.
+    voice?: VoiceBarState | null;
   }>(),
   {
     promoting: false,
@@ -326,6 +343,8 @@ const props = withDefaults(
     composerDisabled: false,
     models: () => [],
     bare: false,
+    voiceable: false,
+    voice: null,
   },
 );
 
@@ -348,6 +367,9 @@ const emit = defineEmits<{
   expandAll: [value: boolean];
   effort: [level: ThinkingLevel];
   setModel: [patch: { model: string; provider?: string }];
+  voiceStart: [];
+  voiceMute: [];
+  voiceEnd: [];
 }>();
 
 const draft = ref('');

@@ -466,6 +466,11 @@
               @expand-all="onExpandAll"
               @effort="onEffort"
               @set-model="onSetModel"
+              :voiceable="true"
+              :voice="voicePanel.bar.value"
+              @voice-start="voicePanel.start"
+              @voice-mute="voicePanel.mute"
+              @voice-end="voicePanel.end"
             >
               <!-- Not loaded yet ≠ empty: «Журнал порожній» only once the transcript answered. -->
               <KSkeleton v-if="logPhase === 'skeleton'" variant="lines" :rows="6" />
@@ -1312,6 +1317,8 @@ import { slotWaitLabel } from '../lib/slot-wait';
 import { markdownPreview } from '../lib/markdown-preview';
 import KSkeleton from 'components/kit/KSkeleton.vue';
 import { useAsyncAction, useKeyedAction, errorText } from '../composables/useAsyncAction';
+import { useVoicePanel } from '../composables/useVoicePanel';
+import { nextMode as modeFor } from '../lib/message-mode';
 import { useOptimisticValue } from '../composables/useOptimisticValue';
 import { useLoadPhase } from '../composables/useLoadPhase';
 import { usePending } from 'stores/pending';
@@ -1709,6 +1716,8 @@ function isBoundFor(projectId: string): boolean {
 const selectedSession = computed(() =>
   store.sessions.find((s) => s.id === store.selectedSessionId),
 );
+// The voice conversation (docs/specs/2026-11-02-voice-conversation.md) from the detail panel.
+const voicePanel = useVoicePanel(() => selectedSession.value);
 const selectedDecision = computed(() => (selectedSession.value ? sessionDecisionReason(t, selectedSession.value) : undefined));
 
 // Inline rename of the open agent: double-click its name in the header. Enter and blur
@@ -3199,13 +3208,9 @@ function onRowClick(s: Session): void {
 }
 
 // ── Detail panel emits → store actions ───────────────────────────────────
-// Which omp message mode the session's next message takes. An empty session (a fresh quick
-// chat) starts its first turn with a prompt. Otherwise: a settled session gets a fresh
-// follow-up; a live one is steered mid-turn.
+// Which omp message mode the session's next message takes (lib/message-mode.ts).
 function nextMode(s: Session): MessageMode {
-  const history = store.transcripts[s.id] ?? [];
-  const hasTurn = history.some((e) => e.kind === 'user_text' || e.kind === 'assistant_text');
-  return !hasTurn ? 'prompt' : s.status === 'done' ? 'follow_up' : 'steer';
+  return modeFor(s, store.transcripts[s.id] ?? []);
 }
 
 // The composer clears on send and the store shows the «надсилаю…» bubble at once; the panel

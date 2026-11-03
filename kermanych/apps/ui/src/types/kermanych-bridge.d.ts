@@ -139,6 +139,9 @@ declare global {
       // Electron only. Resolves true while macOS refuses this app's pop-up notifications: the app
       // has no Apple team signature. Read once per launch.
       notificationsBlocked?: () => Promise<boolean>;
+      // Electron only, optional for the same stale-preload reason. macOS's microphone permission
+      // for the voice conversation: asked on first use, false once refused in System Settings.
+      voice?: { requestMic: () => Promise<boolean> };
       // Electron only. Optional for the same stale-preload reason; the Браузер tab is hidden
       // without it.
       browser?: KermanychBrowserBridge;

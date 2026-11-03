@@ -175,6 +175,11 @@
             @expand-all="onExpandAll"
             @effort="effortPick.set"
             @set-model="onSetModel"
+            :voiceable="true"
+            :voice="voicePanel.bar.value"
+            @voice-start="voicePanel.start"
+            @voice-mute="voicePanel.mute"
+            @voice-end="voicePanel.end"
           >
             <!-- Not loaded yet ≠ empty: «Журнал порожній» only once the transcript answered. -->
             <KSkeleton v-if="logPhase === 'skeleton'" variant="lines" :rows="6" />
@@ -274,6 +279,8 @@ import { useNow } from '../composables/useNow';
 import { useMarkSeen } from '../composables/useMarkSeen';
 import { useResizablePanel } from '../composables/useResizablePanel';
 import { errorText, useAsyncAction, useKeyedAction } from '../composables/useAsyncAction';
+import { useVoicePanel } from '../composables/useVoicePanel';
+import { nextMode as modeFor } from '../lib/message-mode';
 import { useOptimisticValue } from '../composables/useOptimisticValue';
 import { useLoadPhase } from '../composables/useLoadPhase';
 import { useSendPicks } from '../composables/useSendPicks';
@@ -352,6 +359,8 @@ function initialDesign(projectId: string | undefined): string | undefined {
 
 const designId = ref<string | undefined>(initialDesign(store.selectedProjectId));
 const design = computed(() => designs.value.find((s) => s.id === designId.value));
+// The voice conversation (docs/specs/2026-11-02-voice-conversation.md) with this design session.
+const voicePanel = useVoicePanel(() => design.value);
 // The open design is read by the rule of «Агенти», which never opens one: without this a design's
 // result would light the sidebar and the Dock icon's number for good.
 useMarkSeen(() => design.value);
@@ -436,12 +445,9 @@ const logTabs = computed(() => [{ value: 'log', label: t('agents.tabs.log') }]);
 
 const panelEl = ref<(ComponentPublicInstance & { restoreDraft: (text: string, images: readonly ImageInput[]) => void }) | null>(null);
 
-// Which omp message mode the next message takes: a fresh session starts with a prompt, a
-// settled one gets a follow-up, a live one is steered mid-turn — the Агенти and Чат rule.
+// Which omp message mode the next message takes (lib/message-mode.ts) — the Агенти rule.
 function nextMode(s: Session): MessageMode {
-  const history = store.transcripts[s.id] ?? [];
-  const hasTurn = history.some((e) => e.kind === 'user_text' || e.kind === 'assistant_text');
-  return !hasTurn ? 'prompt' : s.status === 'done' ? 'follow_up' : 'steer';
+  return modeFor(s, store.transcripts[s.id] ?? []);
 }
 
 // The bubble («надсилаю…») is the store's; a failed send puts the text back in the composer.

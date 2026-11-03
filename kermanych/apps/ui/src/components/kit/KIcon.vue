@@ -45,7 +45,9 @@ export type KIconName =
   | 'fullscreenExit'
   | 'chevronDown'
   | 'chevronRight'
-  | 'coins';
+  | 'coins'
+  | 'mic'
+  | 'micOff';
 </script>
 
 <script setup lang="ts">
@@ -187,6 +189,10 @@ const ICONS: Record<KIconName, readonly string[]> = {
   // A session card's spend (KSessionCard): Lucide's coins. The model, tokens and cost live in
   // its tooltip; the mark has to say «what it cost is in here» before anyone hovers it.
   coins: ['M2 8a6 6 0 1 0 12 0a6 6 0 1 0-12 0', 'M18.09 10.37A6 6 0 1 1 10.34 18', 'M7 6h1v4', 'm16.71 13.88.7.71-2.82 2.82'],
+  // The voice conversation (KComposer's start button, KVoiceBar, the top-bar pill): Lucide's mic
+  // and mic-off. 🎤 would render as a colour emoji beside line marks.
+  mic: ['M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z', 'M19 10v2a7 7 0 0 1-14 0v-2', 'M12 19v3'],
+  micOff: ['m2 2 20 20', 'M18.89 13.23A7.12 7.12 0 0 0 19 12v-2', 'M5 10v2a7 7 0 0 0 12 5', 'M15 9.34V5a3 3 0 0 0-5.68-1.33', 'M9 9v3a3 3 0 0 0 5.12 2.12', 'M12 19v3'],
 };
 
 const props = defineProps<{ name: KIconName }>();

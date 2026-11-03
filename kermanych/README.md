@@ -888,6 +888,45 @@ each turn the first message becomes the thread's name, as for a managed chat.
   conversation into a worktree, and a native conversation cannot be forked. «В беклог» (⊕)
   works.
 
+## Voice conversation («Голосова розмова»)
+
+Talk to a session's agent by voice, the way ChatGPT's voice mode works (spec:
+`docs/specs/2026-11-02-voice-conversation.md`). OpenAI's GPT-Live (`gpt-live-1`) listens and
+speaks full duplex — interrupt it at any time — and hands everything about the task to the
+session's own agent (omp / claude, with the repository and its tools). GPT-Live is only the agent's
+voice: it never answers about the code itself, and asks back only when it did not hear you.
+
+- **Where.** 🎤 in the composer of every managed conversation: «Агенти» (agents, «Глибокий
+  аналіз», discussions, reviews), «Чат» and «Дизайн». Not native sessions, not «Менеджмент».
+- **The key.** Settings → Застосунок → «Голос»: your own OpenAI API key, stored in this machine's
+  SQLite (`voice_keys`) like the Jira/Linear tokens — never in the cloud, never in the window;
+  the local api exchanges the window's WebRTC offer with OpenAI (`POST /api/voice/session`).
+  `OPENAI_API_KEY` in the api's environment wins over the stored key. «Перевірити» proves the key
+  can use `gpt-live-1`. The same pane picks the voice (default `marin`); the conversation speaks
+  the agent's language («Мова спілкування агента», an ASD-STE100 level is English), or the UI
+  language when none is set.
+- **What the agent gets.** Your words since the previous hand-off, sent in the same mode typed
+  text takes — so speaking during a running turn steers it — under a short voice note (a speech
+  transcript, answer briefly, no tables). The log shows your own words with a 🎤 mark, after a
+  restart too. When the turn ends GPT-Live retells the last reply (code blocks and tables become
+  «shown in the chat»); while the agent works it gets silent progress, so «що він зараз робить?»
+  has an answer.
+- **Its questions.** A «Потрібне рішення» block is read aloud with numbered options. Answer with
+  a number («другий», «варіант три»), «так» / «ні», or free text for an input; an unclear answer
+  is asked again rather than guessed. The buttons keep working.
+- **One conversation per app**, bound to the session it started in: switch pages or agents and
+  it keeps talking to that session; a pill beside the settings gear shows it with 🔇 and ✕.
+  Starting one elsewhere asks first. It ends on «Завершити», when the session is archived,
+  removed or errors, when the window closes, and after **3 minutes of silence** (no speech either
+  way and no running turn). Ending it never stops the agent. A dropped connection is not
+  re-established.
+- **Cost.** $0.05 per minute of conversation, billed per second to your key, plus 15 s at each
+  connection start; the agent runs on your usual Claude / omp plan.
+- **macOS microphone.** The first conversation triggers the system prompt
+  (`NSMicrophoneUsageDescription`). The `.dmg` is unsigned, so macOS may ask again after
+  installing a new build. Refused once: System Settings → Privacy & Security → Microphone. The
+  embedded session browser never gets the microphone.
+
 ## Agent map («Карта агентів»)
 
 Every agent on this machine as one tree (spec: `docs/specs/2026-10-22-agent-map.md`):

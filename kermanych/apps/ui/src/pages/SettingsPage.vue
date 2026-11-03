@@ -576,6 +576,65 @@
           <SteGuide />
         </div>
 
+        <!-- ── APP · ГОЛОС ──────────────────────────────────────────────────── -->
+        <!-- docs/specs/2026-11-02-voice-conversation.md, decisions 3 and 11. The key lives in the
+             api on this machine; the window only learns its source and last four characters. -->
+        <div v-else-if="section.key === 'app-voice'" class="set__form">
+          <div class="set__group">
+            <span class="set__label">{{ t('settings.voice.key') }}</span>
+            <KSkeleton v-if="voiceKeyPhase === 'skeleton'" variant="line" width="60%" />
+            <template v-else-if="voiceKeyPhase === 'ready' && voiceKey">
+              <p class="set__note">
+                {{ voiceKey.source === 'env' ? t('settings.voice.keyEnv', { hint: voiceKey.hint })
+                  : voiceKey.source === 'stored' ? t('settings.voice.keyStored', { hint: voiceKey.hint })
+                  : t('settings.voice.keyNone') }}
+              </p>
+              <KField
+                v-if="voiceKey.source !== 'env'"
+                v-model="voiceKeyInput"
+                type="password"
+                placeholder="sk-…"
+                :label="voiceKey.source === 'stored' ? t('settings.voice.keyReplace') : t('settings.voice.keyField')"
+                @keydown.enter="saveVoiceKey.run()"
+              />
+              <div class="set__row">
+                <KBtn
+                  v-if="voiceKey.source !== 'env'"
+                  variant="secondary"
+                  :loading="saveVoiceKey.busy.value"
+                  :disabled="!voiceKeyInput.trim()"
+                  @click="saveVoiceKey.run()"
+                >{{ t('settings.voice.save') }}</KBtn>
+                <KBtn v-if="voiceKey.source" variant="ghost" :loading="checkVoiceKey.busy.value" @click="checkVoiceKey.run()">
+                  {{ t('settings.voice.check') }}
+                </KBtn>
+                <KBtn v-if="voiceKey.source === 'stored'" variant="ghost" :loading="removeVoiceKey.busy.value" @click="removeVoiceKey.run()">
+                  {{ t('settings.voice.remove') }}
+                </KBtn>
+              </div>
+              <p v-if="voiceCheck" class="set__note" role="status">{{ voiceCheck }}</p>
+            </template>
+            <p v-else-if="voiceKeyPhase === 'blank'" class="set__note">{{ t('settings.voice.keyUnknown') }}</p>
+            <p class="set__note">{{ t('settings.voice.keyNote') }}</p>
+          </div>
+
+          <div class="set__rule"></div>
+
+          <div class="set__group">
+            <span class="set__label">{{ t('settings.voice.voice') }}</span>
+            <!-- Applies on selection, to the next conversation: GPT-Live fixes the voice at start. -->
+            <KSelect v-model="voiceChoice" :options="VOICE_OPTIONS" searchable />
+            <p class="set__note">{{ t('settings.voice.voiceNote') }}</p>
+          </div>
+
+          <div class="set__rule"></div>
+
+          <div class="set__group">
+            <span class="set__label">{{ t('settings.voice.language') }}</span>
+            <p class="set__note">{{ t('settings.voice.languageNote', { language: voiceLanguageLabel }) }}</p>
+          </div>
+        </div>
+
         <!-- ── APP · АКАУНТ ─────────────────────────────────────────────────── -->
         <div v-else-if="section.key === 'app-account'" class="set__form">
           <div class="set__group">
@@ -846,7 +905,7 @@ import { onBeforeRouteLeave, useRoute, useRouter } from 'vue-router';
 import { useI18n } from 'vue-i18n';
 import { confirmAction } from '../lib/confirm';
 import type { EnvFileView, ThinkingLevel, AgentLanguage, DocsPolicyKey, DocsRule, MachineResources } from '@kermanych/core';
-import { AGENT_LANGUAGES, AGENT_LANGUAGE_LABELS, DEFAULT_DOCS_POLICY, DOCS_LAYOUT, DOCS_RULES } from '@kermanych/core';
+import { AGENT_LANGUAGES, AGENT_LANGUAGE_LABELS, DEFAULT_DOCS_POLICY, DOCS_LAYOUT, DOCS_RULES, VOICE_IDS } from '@kermanych/core';
 import type { AssignableRole, WorkspaceMember, WorkspaceRole } from '@kermanych/cloud';
 import type { KTheme } from '@kermanych/tokens';
 import { useOrchestrator } from 'stores/orchestrator';
@@ -854,7 +913,7 @@ import { useProjects } from 'stores/projects';
 import { modelOptions, effortOptions } from '../lib/models';
 import { EFFORT_OPTIONS } from '../lib/effort';
 import { useAuth } from 'stores/auth';
-import { api } from '../lib/api';
+import { api, type VoiceKeyStatus } from '../lib/api';
 import { theme, setTheme } from '../lib/theme';
 import { percent, planWindow, renderWindow } from '../lib/format';
 import { until, renderTime } from '../lib/time';
@@ -865,6 +924,8 @@ import { errorText, useAsyncAction, useKeyedAction } from '../composables/useAsy
 import { useOptimisticValue } from '../composables/useOptimisticValue';
 import { useLoadPhase } from '../composables/useLoadPhase';
 import { dockBadgeOn, dockBounceOn } from '../lib/dock';
+import { voicePick } from '../lib/voice';
+import { locale } from '../lib/locale';
 import { isMoveRefusal, memberErrorText, moveRefusalText, NO_ROWS } from '../lib/cloud-errors';
 import {
   buildEnvRows,
@@ -1830,6 +1891,52 @@ watch(
     popupsBlocked.value = await read();
   },
   { immediate: true },
+);
+
+// ── VOICE ───────────────────────────────────────────────────────────────────
+// docs/specs/2026-11-02-voice-conversation.md. The OpenAI key is written to the api (this machine
+// only) and never read back; `undefined` until the api answers, `null` when it did not.
+const voiceKey = ref<VoiceKeyStatus | null | undefined>(undefined);
+const voiceKeyPhase = useLoadPhase(() => voiceKey.value === undefined);
+const voiceKeyInput = ref('');
+// The last «Перевірити» verdict, cleared whenever the key changes.
+const voiceCheck = ref('');
+watch(
+  () => section.value.key,
+  async (key) => {
+    if (key !== 'app-voice' || voiceKey.value) return;
+    try {
+      voiceKey.value = await api.voiceKey();
+    } catch {
+      voiceKey.value = null;
+    }
+  },
+  { immediate: true },
+);
+const saveVoiceKey = useAsyncAction(async () => {
+  if (!voiceKeyInput.value.trim()) return;
+  voiceKey.value = await api.setVoiceKey(voiceKeyInput.value);
+  voiceKeyInput.value = '';
+  voiceCheck.value = '';
+});
+const removeVoiceKey = useAsyncAction(async () => {
+  voiceKey.value = await api.setVoiceKey('');
+  voiceCheck.value = '';
+});
+const checkVoiceKey = useAsyncAction(async () => {
+  voiceCheck.value = '';
+  try {
+    await api.checkVoiceKey();
+    voiceCheck.value = t('settings.voice.checkOk');
+  } catch (e) {
+    voiceCheck.value = errorText(e);
+  }
+});
+const voiceChoice = voicePick;
+const VOICE_OPTIONS: readonly KSelectOption[] = VOICE_IDS.map((id) => ({ value: id, label: id }));
+// The conversation speaks the agent's language, or the screen's when none is set (decision 11).
+const voiceLanguageLabel = computed(() =>
+  auth.language ? AGENT_LANGUAGE_LABELS[auth.language] : locale.value === 'en' ? 'English' : 'Українська',
 );
 
 // ── RESOURCES ───────────────────────────────────────────────────────────────

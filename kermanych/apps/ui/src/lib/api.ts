@@ -604,8 +604,9 @@ export const api = {
   promoteChat: (id: string, taskId: string): Promise<Session> =>
     post<Session>(`/sessions/${id}/promote`, { taskId }),
 
-  sendMessage: (id: string, text: string, mode: MessageMode, images?: ImageInput[]): Promise<unknown> =>
-    post(`/sessions/${id}/message`, { text, mode, images }),
+  // `voice`: the text is a transcript from a voice conversation (docs/specs/2026-11-02-voice-conversation.md).
+  sendMessage: (id: string, text: string, mode: MessageMode, images?: ImageInput[], voice?: boolean): Promise<unknown> =>
+    post(`/sessions/${id}/message`, { text, mode, images, ...(voice ? { voice: true } : {}) }),
 
   setEffort: (id: string, level: ThinkingLevel): Promise<Session> =>
     post<Session>(`/sessions/${id}/effort`, { level }),
@@ -851,4 +852,16 @@ export const api = {
 
   setAccountLanguage: (language: AgentLanguage): Promise<void> =>
     post<void>('/account/language', { language }),
+
+  // ── Voice conversation (docs/specs/2026-11-02-voice-conversation.md) ──────────────────
+  // The OpenAI key stays in the api: the window only learns where it comes from and its last
+  // four characters, and hands its WebRTC offer to the api for GPT-Live's answer.
+  voiceKey: (): Promise<VoiceKeyStatus> => get<VoiceKeyStatus>('/voice/key'),
+  // An empty key deletes the stored one.
+  setVoiceKey: (key: string): Promise<VoiceKeyStatus> => put<VoiceKeyStatus>('/voice/key', { key }),
+  checkVoiceKey: (): Promise<{ ok: true }> => post<{ ok: true }>('/voice/check', {}),
+  voiceSession: (body: { sdp: string; voice: string; language: string }): Promise<{ id: string; sdp: string }> =>
+    post<{ id: string; sdp: string }>('/voice/session', body),
 };
+
+export type VoiceKeyStatus = { source: 'env' | 'stored' | null; hint?: string };
