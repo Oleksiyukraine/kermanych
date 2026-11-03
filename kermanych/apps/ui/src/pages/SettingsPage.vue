@@ -497,6 +497,26 @@
                  account settings, and both apply on click with no save bar. -->
             <KLangToggle />
           </div>
+          <!-- The character at the window's left edge (docs/specs/2026-11-03-assistant-mascot-
+               choice.md): each tile is the character itself. Device-local, applied on click. -->
+          <div class="set__group">
+            <span class="set__label">{{ t('settings.appGeneral.assistantMascot') }}</span>
+            <div class="set__mascots">
+              <button
+                v-for="m in ASSISTANT_MASCOTS"
+                :key="m"
+                type="button"
+                class="set__mascot"
+                :class="{ 'set__mascot--on': mascot === m }"
+                :aria-pressed="mascot === m"
+                @click="mascot = m"
+              >
+                <span class="set__mascot-art"><AssistantMascot :busy="false" :variant="m" /></span>
+                <span class="set__mascot-name">{{ t(`settings.appGeneral.assistantMascots.${m}`) }}</span>
+              </button>
+            </div>
+            <p class="set__note">{{ t('settings.appGeneral.assistantMascotNote') }}</p>
+          </div>
           <!-- The assistant's mouse circle (docs/specs/2026-11-03-assistant-overlay.md): a
                device-local preference like the theme, applied on click. -->
           <div class="set__group">
@@ -936,7 +956,8 @@ import { errorText, useAsyncAction, useKeyedAction } from '../composables/useAsy
 import { useOptimisticValue } from '../composables/useOptimisticValue';
 import { useLoadPhase } from '../composables/useLoadPhase';
 import { dockBadgeOn, dockBounceOn } from '../lib/dock';
-import { assistantGestureOn } from 'stores/assistant-overlay';
+import { ASSISTANT_MASCOTS, assistantGestureOn, assistantMascot } from 'stores/assistant-overlay';
+import AssistantMascot from 'components/assistant/AssistantMascot.vue';
 import { voicePick } from '../lib/voice';
 import { locale } from '../lib/locale';
 import { isMoveRefusal, memberErrorText, moveRefusalText, NO_ROWS } from '../lib/cloud-errors';
@@ -1895,6 +1916,7 @@ const hasDock = typeof window !== 'undefined' && !!window.kermanych?.dock;
 const badgeOn = dockBadgeOn;
 const bounceOn = dockBounceOn;
 const assistantGesture = assistantGestureOn;
+const mascot = assistantMascot;
 // `undefined` until main answers: a skeleton, not a guess.
 const popupsBlocked = ref<boolean | undefined>(undefined);
 const popupsPhase = useLoadPhase(() => popupsBlocked.value === undefined);
@@ -2626,6 +2648,58 @@ const badges = computed<Record<string, number | undefined>>(() => ({
   color: var(--k-text);
   background: var(--k-surface2);
   font-weight: var(--k-fw-semibold);
+}
+
+// ── ASSISTANT CHARACTER PICKER ──────────────────────────────────────────────
+.set__mascots {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--k-sp-2);
+}
+
+.set__mascot {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  width: 104px;
+  padding: 10px 6px 8px;
+  font-family: var(--k-font-ui);
+  font-size: var(--k-fs-sm);
+  color: var(--k-muted);
+  background: var(--k-surface);
+  border: var(--k-rule-thin) solid var(--k-line);
+  border-radius: var(--k-r);
+  cursor: pointer;
+  transition: border-color 0.12s, color 0.12s;
+
+  &:hover {
+    color: var(--k-text);
+    border-color: var(--k-line-strong);
+  }
+
+  &:focus-visible {
+    outline: 1px solid var(--k-accent);
+    outline-offset: 1px;
+  }
+}
+
+.set__mascot--on {
+  color: var(--k-text);
+  font-weight: var(--k-fw-medium);
+  border-color: var(--k-accent);
+  box-shadow: var(--k-glow-focus);
+}
+
+.set__mascot-art {
+  display: block;
+  width: 44px;
+  height: 44px;
+}
+
+.set__mascot-name {
+  text-align: center;
+  line-height: 1.2;
 }
 
 // ── DOCUMENTATION POLICY ────────────────────────────────────────────────────

@@ -20,6 +20,21 @@ export const assistantGestureOn: Ref<boolean> = persisted(
   (on) => (on ? '1' : '0'),
 );
 
+/**
+ * «Персонаж асистента»: which character peeks out of the window's left edge
+ * (docs/specs/2026-11-03-assistant-mascot-choice.md). In the order the picker shows them; the
+ * first is the default, and a stored id no longer in the list reads as it.
+ */
+export const ASSISTANT_MASCOTS = ['bot-eyes', 'bot', 'drop', 'tile', 'eyes', 'captain', 'spark'] as const;
+export type AssistantMascotId = (typeof ASSISTANT_MASCOTS)[number];
+
+export const assistantMascot: Ref<AssistantMascotId> = persisted<AssistantMascotId>(
+  'kermanych.assistant.mascot',
+  ASSISTANT_MASCOTS[0],
+  (raw) => ASSISTANT_MASCOTS.find((id) => id === raw) ?? null,
+  (id) => id,
+);
+
 export const useAssistantOverlay = defineStore('assistant-overlay', () => {
   const open = ref(false);
   // An answer finished while the overlay was closed: the mascot wears a dot until it is opened.
