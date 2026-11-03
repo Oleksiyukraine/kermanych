@@ -262,8 +262,8 @@
               :loading="runNowAction.busy.value"
               @click="onRunNow(selectedSession)"
             >{{ t('agents.slotWait.runNow') }}</KBtn>
-            <!-- Primary session actions — one column that outlives the tab choice, so preview,
-                 finish and defer are on screen in Лог, Зміни and Сесія alike. -->
+            <!-- Primary session actions — one column that outlives the tab choice, so finish and
+                 defer are on screen in Лог, Зміни and Сесія alike. -->
             <div class="agents__actions">
               <KIconButton
                 v-if="(store.subagents[selectedSession.id]?.length ?? 0) > 0"
@@ -279,15 +279,6 @@
                 >⤴</KIconButton>
               </template>
               <template v-else-if="!selectedSession.archived">
-                <!-- `title` names the action even while disabled; the reason a disabled ▶ can't
-                     act is the visible line under this bar. -->
-                <KIconButton
-                  :active="!!store.previews[selectedSession.id]"
-                  :loading="previewStarting(selectedSession.id) || previewStopAction.busy.value"
-                  :disabled="!isBoundFor(selectedSession.projectId) || selectedBlocked || (previewStart.busy.value && !previewStarting(selectedSession.id))"
-                  :title="store.previews[selectedSession.id] ? t('agents.actions.previewStop') : t('agents.actions.previewStart')"
-                  @click="togglePreview(selectedSession)"
-                >{{ store.previews[selectedSession.id] ? '◼' : '▶' }}</KIconButton>
                 <KIconButton
                   v-if="selectedSession.status !== 'merged'"
                   :disabled="selectedPending"
@@ -391,9 +382,6 @@
             >✕</button>
           </div>
         </div>
-        <!-- The reason the ▶ above is down, on its own strip so it shows in every tab the
-             disabled button is — a disabled control carries no reachable tooltip. -->
-        <p v-if="previewBlocked" class="agents__detail-note">{{ previewBindHint }}</p>
         <KTabs v-model="detailTab" :tabs="detailTabs" class="agents__detail-tabs" @close="onDetailTabClose">
           <template #end>
             <template v-if="detailTab === 'log' && !selectedSession.native">
@@ -507,24 +495,25 @@
                 :key="selectedSession.id"
                 :session="selectedSession"
                 :sending="sendingPicks"
-                :starting="previewStarting(selectedSession.id)"
                 :hold="resizing || splitResizing"
                 @send="onSendPicks(selectedSession)"
               />
             </div>
           </template>
         </div>
-        <!-- Desktop only. Mounted only while this tab is open: the pane parks the native view
-             when it unmounts, so every other tab, a deselect and leaving Агенти hide the page. -->
-        <div v-if="detailTab === 'browser' && sessionBrowser.available && !browserSplit" class="agents__tabpane">
+        <!-- Desktop: mounted only while this tab is open — the pane parks the native view when it
+             unmounts, so every other tab, a deselect and leaving Агенти hide the page. The web
+             build has no page to embed: an `agent` session's tab is the preview row and logs. -->
+        <div v-if="detailTab === 'browser' && browserTab && !browserSplit" class="agents__tabpane">
           <KBrowserPane
+            v-if="sessionBrowser.available"
             :key="selectedSession.id"
             :session="selectedSession"
             :sending="sendingPicks"
-            :starting="previewStarting(selectedSession.id)"
             :hold="resizing"
             @send="onSendPicks(selectedSession)"
           />
+          <KPreviewWebPane v-else :key="selectedSession.id" :session="selectedSession" />
         </div>
         <div v-if="detailTab === 'changes'" class="agents__tabpane agents__changes">
           <div v-if="worktreeGone" class="agents__pane-blank">
@@ -1000,23 +989,6 @@
             </div>
           </div>
 
-          <div>
-            <div class="agents-launcher__label-row agents-launcher__label-row--tight">
-              <span class="agents-launcher__label">{{ t('agents.launcher.platformLabel') }}</span>
-              <span class="agents-launcher__optional mono">{{ t('agents.launcher.optional') }}</span>
-            </div>
-            <div class="agents-launcher__seg">
-              <button
-                v-for="opt in platformOptions"
-                :key="opt"
-                type="button"
-                class="agents-launcher__seg-btn mono"
-                :class="{ 'agents-launcher__seg-btn--active': opt === draftPlatform }"
-                @click="draftPlatform = draftPlatform === opt ? undefined : opt"
-              >{{ opt }}</button>
-            </div>
-          </div>
-
           <div class="agents-launcher__block agents-launcher__block--stack">
             <div class="agents-launcher__check">
               <KCheckbox v-model="draftWorktree" :label="t('agents.launcher.worktreeLabel')" />
@@ -1132,30 +1104,6 @@
       <template #controls>
         <KBtn variant="ghost" @click="mergeOpen = false">{{ t('agents.launcher.cancel') }}</KBtn>
         <KBtn variant="primary" :loading="mergeBusy" @click="submitMerge">{{ mergeIsReview ? t('agents.merge.give') : t('agents.merge.pour') }}</KBtn>
-      </template>
-    </KModal>
-
-    <!-- PREVIEW CONFIG — how to run this project's app for a live branch preview -->
-    <KModal v-model="previewCfgOpen" :title="t('agents.preview.title')" :persistent="previewCfgSave.busy.value">
-      <div class="agents__form">
-        <label class="agents__field">
-          <span class="agents__field-label">{{ t('agents.preview.webLabel') }}</span>
-          <textarea v-model="draftWebCmd" class="agents__textarea mono" rows="2" />
-        </label>
-        <label class="agents__field">
-          <span class="agents__field-label">{{ t('agents.preview.apiLabel') }}</span>
-          <textarea v-model="draftApiCmd" class="agents__textarea mono" rows="2" />
-        </label>
-        <p class="agents__hint mono">
-          {{ t('agents.preview.hint') }}
-        </p>
-        <p v-if="previewCfgError" class="agents__error" role="alert">{{ previewCfgError }}</p>
-      </div>
-      <template #controls>
-        <KBtn variant="ghost" :disabled="previewCfgSave.busy.value" @click="previewCfgOpen = false">{{ t('agents.launcher.cancel') }}</KBtn>
-        <KBtn variant="primary" :loading="previewCfgSave.busy.value" :disabled="!draftWebCmd.trim()" @click="submitPreviewConfig">
-          {{ t('agents.preview.run') }}
-        </KBtn>
       </template>
     </KModal>
 
@@ -1295,7 +1243,7 @@ import KFilePicker from 'components/kit/KFilePicker.vue';
 import KCheckbox from 'components/kit/KCheckbox.vue';
 import KField from 'components/kit/KField.vue';
 import KSelect from 'components/kit/KSelect.vue';
-import { BRANCH_PREFIXES, PLATFORMS, prependHelper, type BranchPrefix, type Platform } from '@kermanych/core';
+import { BRANCH_PREFIXES, platformHasBrowser, prependHelper, type BranchPrefix } from '@kermanych/core';
 import { useImageAttach } from '../composables/useImageAttach';
 import { useFileMention } from '../composables/useFileMention';
 import { useNow } from '../composables/useNow';
@@ -1309,6 +1257,8 @@ import { useVirtualList } from '../composables/useVirtualList';
 import { nativeHarnessName, nativeRuntimeFor, sessionCostKnown, sessionLaunchMode, LAUNCH_MODES, readLaunchMode, writeLaunchMode, type LaunchMode } from '../lib/native-session';
 import KTerminalView from 'components/kit/KTerminalView.vue';
 import KBrowserPane from 'components/kit/KBrowserPane.vue';
+import KPreviewWebPane from 'components/kit/KPreviewWebPane.vue';
+import { previewTabStatus } from '../lib/preview-view';
 import FinishSheet from 'components/agents/FinishSheet.vue';
 import { useSessionBrowser } from 'stores/browser';
 import { useSendPicks } from '../composables/useSendPicks';
@@ -1373,10 +1323,8 @@ watch(
   },
 );
 
-// Two things come from here: previewCommand/apiCommand are CLOUD config that any workspace
-// member may edit, so that write goes to Supabase and mirrors itself into the local row —
-// a local-only edit would not survive the next sync — and the cloud project list, which is
-// the authority on which projects a selected workspace holds (see `scopedIds`).
+// The cloud project list: the authority on which projects a selected workspace holds (see
+// `scopedIds`), and the cloud row a card or a doc-task needs.
 const projects = useProjects();
 // The shared board's task cards. «Нова задача» files one here — a card is the only form of
 // task a teammate can ever see — and «Задачі» lists the ones assigned to me.
@@ -1707,12 +1655,6 @@ const engineSessionIdHint = computed(() => {
   return s.runtime === 'codex' ? t('agents.native.engineIdHintCodex') : t('agents.native.engineIdHintOmp');
 });
 const isBound = computed(() => !!launchProject.value?.localRepoPath);
-
-// Row-level check: the board can show sessions of an orphan project whose row is still here
-// but whose binding was never made, so per-row actions ask about the row's own project.
-function isBoundFor(projectId: string): boolean {
-  return !!store.projects.find((p) => p.id === projectId)?.localRepoPath;
-}
 const selectedSession = computed(() =>
   store.sessions.find((s) => s.id === store.selectedSessionId),
 );
@@ -1788,19 +1730,6 @@ const parentOfSelected = computed<Session | undefined>(() =>
     : undefined,
 );
 
-// The one control in the Сесія tab a missing binding disables, and the third instance of the
-// dead-tooltip pattern in this file — the only one with no visible substitute anywhere, since
-// the meta list above carries no binding row. Derived from BIND_HINT rather than written out,
-// so the two cannot drift into saying different things about the same state.
-const previewBindHint = computed(() => t('agents.hints.previewBind', { bind: t('agents.hints.bind') }));
-const previewBlocked = computed(() => {
-  const s = selectedSession.value;
-  if (!s || s.archived) return false;
-  // Matches the branch that renders the preview toggle, so the line cannot appear beside a
-  // cluster that has no such button (a discussion, a review, or the archived view).
-  if (s.kind === 'discussion' || s.kind === 'review') return false;
-  return !isBoundFor(s.projectId);
-});
 // A plain load that failed leaves `transcripts[id]` unset; this ends the skeleton for it.
 const transcriptFailed = ref<string | null>(null);
 // `transcripts[id]` is `undefined` until the first load answers; the derived views below fold
@@ -2017,10 +1946,21 @@ function onQaToggle(itemId: string, checked: boolean): void {
 // per session (localStorage `kermanych.agents.tab.<id>`) so reopening an agent lands where the
 // operator left it; a fresh session defaults to the log.
 const sessionBrowser = useSessionBrowser();
-// Beside the Лог instead of its own tab — see «Session browser beside the Лог» below.
-const browserSplit = computed(() => sessionBrowser.available && sessionBrowser.split);
+// Whether the selected session has a Браузер tab (docs/specs/2026-11-03-session-browser-
+// preview.md, decisions 8–9): never in a back-end or mobile project; in the desktop app for
+// every session here (a discussion or review fork gets the plain browser, no preview); in the
+// web build, which cannot embed the page, only for an `agent` session — its tab is the preview
+// row and logs.
+const browserTab = computed(() => {
+  const s = selectedSession.value;
+  if (!s) return false;
+  const project = store.projects.find((p) => p.id === s.projectId);
+  return platformHasBrowser(project?.platform) && (sessionBrowser.available || s.kind === 'agent');
+});
+// Beside the Лог instead of its own tab (desktop only) — see «Session browser beside the Лог» below.
+const browserSplit = computed(() => browserTab.value && sessionBrowser.available && sessionBrowser.split);
 const detailTabs = computed(() => {
-  const tabs: { value: string; label: string; count?: number; live?: boolean; closeLabel?: string }[] = [
+  const tabs: { value: string; label: string; count?: number; live?: boolean; status?: 'busy' | 'ok' | 'error'; closeLabel?: string }[] = [
     { value: 'log', label: t('agents.tabs.log') },
     // Counts appear once their data has: a «0» on a tab still loading would be a false answer.
     { value: 'changes', label: t('agents.tabs.changes'), ...(changesInfo.value ? { count: changesInfo.value.files.length } : {}) },
@@ -2032,20 +1972,23 @@ const detailTabs = computed(() => {
   // checklist for a task-linked session and an empty state otherwise (it fills after «Створити
   // ПР»); the count is 0 until then.
   tabs.push({ value: 'qa', label: t('agents.tabs.qa'), ...(qaNotLoaded.value ? {} : { count: qaChecklist.value?.items.length ?? 0 }) });
-  // The session browser exists only in the desktop app. Its dot pulses while the agent is
-  // driving the page (a browser tool call in the last few seconds). Beside the Лог («Поруч із
-  // логом») it has no tab of its own, and the dot moves to Лог, where the page now is. Its ✕
-  // closes the page and is there only while one is open: the tab itself always stays.
-  if (sessionBrowser.available) {
-    const id = store.selectedSessionId;
-    const live = !!id && sessionBrowser.agentLive.has(id);
-    if (browserSplit.value) tabs[0]!.live = live;
+  // Its dot pulses while the agent is driving the page (a browser tool call in the last few
+  // seconds); its status mark is the live preview's (spinner starting, green running, red
+  // crashed or failed). Beside the Лог («Поруч із логом») it has no tab of its own, and both
+  // move to Лог, where the page now is. Its ✕ closes the page (not the preview) and is there
+  // only while one is open: the tab itself always stays.
+  const s = selectedSession.value;
+  if (browserTab.value && s) {
+    const live = sessionBrowser.agentLive.has(s.id);
+    const status = s.kind === 'agent' ? previewTabStatus(store.previews[s.id]) : undefined;
+    const marks = { live, ...(status ? { status } : {}) };
+    if (browserSplit.value) Object.assign(tabs[0]!, marks);
     else
       tabs.push({
         value: 'browser',
         label: t('agents.tabs.browser'),
-        live,
-        ...(id && sessionBrowser.states[id] ? { closeLabel: t('agents.browser.close') } : {}),
+        ...marks,
+        ...(sessionBrowser.states[s.id] ? { closeLabel: t('agents.browser.close') } : {}),
       });
   }
   return tabs;
@@ -2057,7 +2000,7 @@ watch(
     const saved = id ? localStorage.getItem(`kermanych.agents.tab.${id}`) : null;
     detailTab.value =
       saved === 'changes' || saved === 'session' || saved === 'docs' || saved === 'findings' || saved === 'qa' ||
-      (saved === 'browser' && sessionBrowser.available && !browserSplit.value)
+      (saved === 'browser' && browserTab.value && !browserSplit.value)
         ? saved
         : 'log';
   },
@@ -2078,9 +2021,17 @@ function onDetailTabClose(tab: string): void {
 // at the browser when it flips, and the detail follows it: on, the Браузер tab folds into Лог;
 // off, the page gets its tab back and stays on screen. The seam between log and browser works
 // like the board's (drag or arrow keys), and both halves keep a usable minimum.
-watch(browserSplit, (on) => {
-  if (on && detailTab.value === 'browser') detailTab.value = 'log';
-  else if (!on && detailTab.value === 'log' && sessionBrowser.available) detailTab.value = 'browser';
+watch(
+  () => sessionBrowser.split,
+  (on) => {
+    if (!browserTab.value || !sessionBrowser.available) return;
+    if (on && detailTab.value === 'browser') detailTab.value = 'log';
+    else if (!on && detailTab.value === 'log') detailTab.value = 'browser';
+  },
+);
+// The project switched to back-end or mobile under the open tab: the tab is gone (spec decision 9).
+watch(browserTab, (on) => {
+  if (!on && detailTab.value === 'browser') detailTab.value = 'log';
 });
 const MIN_SPLIT_LOG = 360;
 const MIN_SPLIT_BROWSER = 320;
@@ -2235,7 +2186,6 @@ const answering = computed(
   () => answerAction.busy.value || (!!selectedSession.value && pending.isPending(answerKey(selectedSession.value.id))),
 );
 const summaryAction = useAsyncAction((s: Session) => store.sendMessage(s.id, t('agents.prompt.summary'), nextMode(s)));
-const previewStopAction = useAsyncAction((s: Session) => store.stopPreview(s.id));
 
 // Any session action in flight (the actions are page-wide, like the one header they serve).
 const actionInFlight = computed(
@@ -2248,8 +2198,7 @@ const actionInFlight = computed(
     archiveAction.busy.value ||
     unarchiveAction.busy.value ||
     resumeNativeAction.busy.value ||
-    restartAction.busy.value ||
-    previewStopAction.busy.value,
+    restartAction.busy.value,
 );
 function isSessionPending(id: string): boolean {
   return pending.isPending(sessionKey(id));
@@ -2718,7 +2667,6 @@ const draftEffort = ref<ThinkingLevel | ''>('');
 // «+ Новий дизайн», which also marks it `design`; a stored design card still shows its own.
 const draftPrefix = ref<BranchPrefix>('feature');
 const prefixOptions = computed(() => BRANCH_PREFIXES.filter((p) => p !== 'design' || draftPrefix.value === 'design'));
-const platformOptions = PLATFORMS;
 const modelPickOptions = computed(() => modelOptions(store.models));
 // The effort ladder narrows to the chosen model's own (empty for a non-reasoning model);
 // «за замовчуванням» or an unknown alias keeps the full ladder. Labels stay ours (lib/effort).
@@ -2726,7 +2674,6 @@ const effortPickOptions = computed(() => {
   const allowed = effortOptions(store.models, draftModel.value || undefined);
   return EFFORT_OPTIONS.filter((o) => allowed.includes(o.value)).map((o) => ({ value: o.value, label: t(o.labelKey) }));
 });
-const draftPlatform = ref<Platform | undefined>(undefined);
 const draftWorktree = ref(true);
 // «Приховати з дошки». Off by default: a card is team work unless its author says
 // otherwise, and a default-hidden launcher would quietly empty the board.
@@ -2929,9 +2876,6 @@ function openLauncher(card?: Task, deepAnalysis = false): void {
   draftPrefix.value = (BRANCH_PREFIXES as readonly string[]).includes(card?.prefix ?? '')
     ? (card!.prefix as BranchPrefix)
     : 'feature';
-  draftPlatform.value = (PLATFORMS as readonly string[]).includes(card?.platform ?? '')
-    ? (card!.platform as Platform)
-    : undefined;
   draftWorktree.value = card?.worktree ?? true;
   draftHidden.value = card?.hidden ?? false;
   const modes = cardModesFromCard(card, deepAnalysis);
@@ -2963,7 +2907,6 @@ function openTaskFromText(text: string): void {
   draftModel.value = textDefault?.defaultModel ?? '';
   draftEffort.value = textDefault?.defaultEffort ?? '';
   draftPrefix.value = 'feature';
-  draftPlatform.value = undefined;
   draftWorktree.value = true;
   draftHidden.value = false;
   draftDeep.value = false;
@@ -3009,7 +2952,6 @@ async function submitLauncher(asTask: boolean): Promise<void> {
     model: draftModel.value.trim() || undefined,
     effort: draftEffort.value || undefined,
     prefix: draftPrefix.value,
-    platform: draftPlatform.value,
     worktree: draftWorktree.value,
     hidden: draftHidden.value,
     deepAnalysis: draftDeep.value,
@@ -3475,156 +3417,7 @@ function openDocTask(path: string): void {
   docTaskSession.value = selectedSession.value ?? null;
   docTaskPath.value = path;
   docTaskOpen.value = true;
-}
 
-// ── Live preview (per-session worktree app on a free port) ─────────────────
-const loadingHtml = computed(
-  () => `<p style="font:14px system-ui;padding:24px;color:#888">${t('agents.preview.loadingText')}</p>`,
-);
-// A fresh worktree carries no dependencies and no build output (`dist` is gitignored), so
-// each command installs first and then runs the package script — which builds that
-// package's workspace deps itself (see apps/*/package.json). Naming the deps here instead
-// is what broke this: the old api command built @kermanych/core only, and the api also
-// imports @kermanych/cloud, so `nest build` died with TS2307 before the preview ever
-// listened. The web command must stand on its own too — a project may configure no api
-// command at all, and the UI needs @kermanych/cloud built to load.
-const DEFAULT_WEB_CMD = 'cd kermanych && pnpm install && pnpm --filter @kermanych/ui dev';
-const DEFAULT_API_CMD =
-  'cd kermanych && pnpm install && pnpm --filter @kermanych/api build && pnpm --filter @kermanych/api start';
-const previewCfgOpen = ref(false);
-const previewCfgSession = ref<Session | null>(null);
-const draftWebCmd = ref('');
-const draftApiCmd = ref('');
-// The config modal's save error, rendered inside it (the modal stays open on failure).
-const previewCfgError = ref<string | null>(null);
-
-// A preview start is long (install + build in a fresh worktree), so its progress lives on the
-// session, not in a modal: ▶ spins from the click until `store.previews[id]` is set (the store
-// sets it inside `startPreview`), the run guard refuses a second start meanwhile, and in the
-// desktop app the browser pane shows «Піднімаю превʼю гілки…» in its place (`starting`).
-const previewStartingId = ref<string | null>(null);
-const previewStart = useAsyncAction(async (win: Window | null, s: Session) => {
-  previewStartingId.value = s.id;
-  try {
-    await launchInto(win, s);
-  } finally {
-    previewStartingId.value = null;
-  }
-});
-function previewStarting(id: string): boolean {
-  return previewStart.busy.value && previewStartingId.value === id;
-}
-
-async function launchInto(win: Window | null, s: Session): Promise<void> {
-  // Desktop app: the preview goes to the session's own browser, so that is where the operator
-  // should be looking while it starts. Beside the Лог the browser is on screen already.
-  if (window.kermanych?.browser && store.selectedSessionId === s.id) {
-    detailTab.value = browserSplit.value ? 'log' : 'browser';
-  }
-  try {
-    const res = await store.startPreview(s.id);
-    if (res.needsCommand) {
-      win?.close();
-      openPreviewConfig(s);
-      return;
-    }
-    // Desktop app: the preview opens in the session's own browser (no placeholder window was
-    // opened — `win` is null). In a browser the placeholder tab (opened inside the click,
-    // before any await, so no popup blocker bites) is pointed at the preview.
-    if (!res.url) win?.close();
-    else if (window.kermanych?.browser) void sessionBrowser.navigate(s.id, s.projectId, res.url);
-    else if (win) win.location.href = res.url;
-    else window.open(res.url, '_blank');
-  } catch (e) {
-    win?.close();
-    window.alert(t('agents.preview.launchFailed', { error: errorText(e) }));
-    openPreviewConfig(s, true); // reopen prefilled with working defaults so the user can fix it
-  }
-}
-
-async function togglePreview(s: Session): Promise<void> {
-  if (sessionBlocked(s) || previewStart.busy.value) return;
-  if (store.previews[s.id]) {
-    // The stop call keeps this same bar on screen: the ◼ spins while it runs.
-    await previewStopAction.run(s);
-    return;
-  }
-  const p = store.projects.find((x) => x.id === s.projectId);
-  if (!p?.previewCommand) {
-    openPreviewConfig(s);
-    return;
-  }
-  const win = previewPlaceholder();
-  await previewStart.run(win, s);
-}
-
-// The browser build's «loading…» tab for a preview, opened synchronously inside the click so
-// the popup blocker lets it through. None in the desktop app (`null`): the preview goes to the
-// session browser there, and its pane shows the same «Піднімаю превʼю гілки…» while the start
-// runs (`previewStarting` → KBrowserPane `starting`).
-function previewPlaceholder(): Window | null {
-  if (window.kermanych?.browser) return null;
-  const win = window.open('', '_blank');
-  win?.document.write(loadingHtml.value);
-  return win;
-}
-
-function openPreviewConfig(s: Session, forceDefaults = false): void {
-  previewCfgSession.value = s;
-  const p = store.projects.find((x) => x.id === s.projectId);
-  draftWebCmd.value = (forceDefaults ? '' : p?.previewCommand ?? '') || DEFAULT_WEB_CMD;
-  draftApiCmd.value = (forceDefaults ? '' : p?.apiCommand ?? '') || DEFAULT_API_CMD;
-  previewCfgError.value = null;
-  previewCfgOpen.value = true;
-}
-
-// The save is short, so the modal stays open (persistent) with «Запустити» spinning, shows a
-// failure inside itself and closes only once the commands are saved; the start that follows
-// is long and reports on the session (`previewStart`).
-const previewCfgSave = useAsyncAction(
-  async (projectId: string, patch: { previewCommand: string; apiCommand?: string }) => {
-    await projects.patch(projectId, patch);
-    return true;
-  },
-  { onError: (e) => { previewCfgError.value = t('agents.preview.saveFailed', { error: errorText(e) }); } },
-);
-
-async function submitPreviewConfig(): Promise<void> {
-  const s = previewCfgSession.value;
-  if (!s || previewCfgSave.busy.value) return;
-  // previewCommand/apiCommand are CLOUD config, so the write needs a cloud row — and per
-  // the approved role matrix ANY workspace member may make it: `projects_update_member`
-  // (20260827100000_workspaces.sql:338) replaced the owner-only policy this gate used to
-  // cite. Membership needs no separate check, because the cloud list is RLS-scoped: a
-  // project with a row in `projects.byId` is one whose workspace this user belongs to.
-  // Same predicate as the settings modal's `isInCloud` (MainLayout.vue:1419).
-  //
-  // The pre-check itself stays. RLS is the real gate, but a refused UPDATE matches zero
-  // rows and postgrest reports it as "Cannot coerce the result to a single JSON object" —
-  // unreadable. Refuse here in Ukrainian instead, inside the modal so the entered commands
-  // are not lost. The two false states are not the same sentence, for the same reason
-  // MainLayout's `noCloudRowHint` splits them: a claim about where a project lives must
-  // never outrun what we actually checked.
-  if (!projects.byId.has(s.projectId)) {
-    previewCfgError.value = projects.listRead
-      ? t('agents.preview.notBoundLocal')
-      : t('agents.preview.notBoundOffline');
-    return;
-  }
-  previewCfgError.value = null;
-  const patch: { previewCommand: string; apiCommand?: string } = {
-    previewCommand: draftWebCmd.value.trim(),
-  };
-  const apiCmd = draftApiCmd.value.trim();
-  if (apiCmd) patch.apiCommand = apiCmd;
-  // Opened inside the click, before the await, for the popup blocker (see previewPlaceholder).
-  const win = previewPlaceholder();
-  if (!(await previewCfgSave.run(s.projectId, patch))) {
-    win?.close();
-    return;
-  }
-  previewCfgOpen.value = false;
-  await previewStart.run(win, s);
 }
 </script>
 
@@ -4179,16 +3972,6 @@ async function submitPreviewConfig(): Promise<void> {
   background: var(--k-line);
 }
 
-// The preview-blocked reason, on its own strip below the bar so it is on screen in every tab
-// the disabled ▶ is — a disabled control carries no reachable tooltip.
-.agents__detail-note {
-  flex: none;
-  margin: 0;
-  padding: 5px 12px 0;
-  font-size: var(--k-fs-xs);
-  color: var(--k-muted);
-}
-
 .agents__panel {
   flex: 1;
   min-height: 0;
@@ -4667,17 +4450,9 @@ async function submitPreviewConfig(): Promise<void> {
 .agents-launcher__label-row .agents-launcher__label {
   margin-bottom: 0;
 }
-.agents-launcher__label-row--tight {
-  justify-content: flex-start;
-  gap: 8px;
-}
-.agents-launcher__hint-inline,
-.agents-launcher__optional {
+.agents-launcher__hint-inline {
   font-size: 11px;
   color: var(--k-muted);
-}
-.agents-launcher__optional {
-  font-size: 10.5px;
 }
 
 .agents-launcher__task {

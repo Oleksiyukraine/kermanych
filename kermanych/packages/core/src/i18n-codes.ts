@@ -299,7 +299,6 @@ export type ManagementRejectionCode =
   // ticket.create — the block as a whole:
   | "ticket_no_project" // a ticket.create without a project name (params: { title })
   | "ticket_prefix_unknown" // a branch prefix nobody offers (params: { value, allowed })
-  | "ticket_platform_unknown" // a platform nobody offers (params: { value, allowed })
   // ticket.questions — the unfiled-ticket questions block:
   | "ticket_questions_no_target" // a ticket.questions without a forTicket (params: none)
   | "ticket_questions_empty" // a ticket.questions with no questions (params: { forTicket })
@@ -360,7 +359,6 @@ export const MANAGEMENT_REJECTION_CODES = [
   "field_not_name_string",
   "ticket_no_project",
   "ticket_prefix_unknown",
-  "ticket_platform_unknown",
   "ticket_questions_no_target",
   "ticket_questions_empty",
   "todo_create_empty",

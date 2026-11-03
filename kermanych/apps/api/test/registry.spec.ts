@@ -220,14 +220,23 @@ test("backlog task persists launch config (model, prefix, kind, status) round-tr
   expect(read.prefix).toBe("fix");
 });
 
-test("session platform persists and round-trips", () => {
+// docs/specs/2026-11-03-session-browser-preview.md, decision 9: the platform is the project's.
+// NULL is «Не визначено»; a cloud refresh without one clears it; an unknown word reads as none.
+test("project platform round-trips through upsert and patch; absent and unknown read as none", () => {
   const r = new RegistryService(":memory:");
-  const g = r.upsertProject({ id: "p-app", name: "app", localRepoPath: "/tmp/app" });
-  const s = r.createSession({ projectId: g.id, name: "task", task: "do it", worktreePath: "/wt", branch: "kermanych/task", platform: "web" });
-  expect(r.listSessions(g.id)[0].platform).toBe("web");
-  const u = r.updateSession(s.id, { platform: "mobile" });
-  expect(u.platform).toBe("mobile");
-  expect(r.listSessions(g.id)[0].platform).toBe("mobile");
+  expect(r.upsertProject({ id: "p-app", name: "app", localRepoPath: "/tmp/app" }).platform).toBeUndefined();
+  expect(r.upsertProject({ id: "p-app", name: "app", platform: "backend" }).platform).toBe("backend");
+  expect(r.patchProject("p-app", { name: "app 2" }).platform).toBe("backend");
+  expect(r.listProjects()[0].platform).toBe("backend");
+  r.patchProject("p-app", { platform: "web" });
+  expect(r.listProjects()[0].platform).toBe("web");
+  r.patchProject("p-app", { platform: null });
+  expect(r.listProjects()[0]).not.toHaveProperty("platform");
+  r.upsertProject({ id: "p-app", name: "app", platform: "mobile" });
+  expect(r.upsertProject({ id: "p-app", name: "app" }).platform).toBeUndefined();
+  // A newer build's value is not a Platform here.
+  (r as unknown as { db: { exec(sql: string): void } }).db.exec(`UPDATE projects SET platform = 'watch'`);
+  expect(r.listProjects()[0]).not.toHaveProperty("platform");
 });
 
 test("updateSession moves a session to another project and round-trips", () => {

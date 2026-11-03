@@ -206,7 +206,10 @@ workspace ──► project ──► task ──► session
 - A **workspace** groups the projects of one product — `back-end`, `admin`,
   `mobile` — and holds its team. Membership lives here and nowhere else.
 - A **project** is one git repository. It belongs to exactly one workspace and
-  has no owner of its own.
+  has no owner of its own. Its **platform** — Web, Back-end, Mobile or «Не визначено»,
+  picked in «Новий проєкт» and changed in its settings → «Основне» — decides whether its
+  sessions get the [session browser and the live preview](#session-browser): Back-end and
+  Mobile projects have neither.
 - A **task** is a card on the shared board. Running one creates a **session** —
   a git worktree plus one `omp` child — on the machine of whoever runs it; see
   [Cloud tasks and local sessions](#cloud-tasks-and-local-sessions).
@@ -373,7 +376,7 @@ selects it, so apply it before shipping a client that knows it
 launcher, in the board's create/edit form and in the findings dialog, and it is stored on the
 card (`tasks.auto_run`). Only the card's author can switch it on; anyone can switch it off; and
 when anyone but the author changes what the card asks for (title, description, project, base
-branch, model, effort, prefix, platform, worktree, images, «Глибокий аналіз»), the database
+branch, model, effort, prefix, worktree, images, «Глибокий аналіз»), the database
 switches it off. It does not combine with «Глибокий аналіз», which needs a person to interview.
 Such cards carry the «Посіпака» mark on «Дошка» and in «Задачі». What the minion does with them
 is described under [Cloud tasks and local sessions](#cloud-tasks-and-local-sessions) →
@@ -962,15 +965,20 @@ spawned → their nested subagents.
 
 ## Session browser
 
-In the desktop app every session has its own browser (specs:
-`docs/specs/2026-10-05-embedded-browser.md`, `docs/specs/2026-10-08-session-browser-rework.md`).
-It is a real Chromium page. The agent of that session drives the same page, and you watch it
-live. The web build has no session browser.
+In the desktop app every session on «Агенти» has its own browser (specs:
+`docs/specs/2026-10-05-embedded-browser.md`, `docs/specs/2026-10-08-session-browser-rework.md`,
+`docs/specs/2026-11-03-session-browser-preview.md`). It is a real Chromium page. The agent of
+that session drives the same page, and you watch it live. The branch's
+[live preview](#live-preview) runs from the same tab. Only projects whose platform is Web or
+«Не визначено» have it: a Back-end or Mobile project shows no Браузер tab, runs no preview and
+gives its agents no browser tools, and switching a project to one of them stops its previews and
+closes its pages.
 
 - **Where it is.** The **Браузер** tab of the session, or — with ◫ **Поруч із логом** in its
   toolbar — beside the Лог behind a draggable seam (the Браузер tab then disappears; ◫ again
   puts it back). While the agent is using the browser, a dot pulses on the tab and ◎ on the
-  session's card on the board.
+  session's card on the board; a second dot shows the preview: green while it runs, red when it
+  crashed or failed to start.
 - **Toolbar.** ← → ↻ (✕ while loading), the address (a URL, `localhost:5173`, or words to
   search), the viewport (**За розміром панелі**, or a fixed width — 390 / 768 / 1280 / 1440;
   wider than the pane, the page is laid out at that width and drawn scaled, with the
@@ -979,8 +987,7 @@ live. The web build has no session browser.
   Keys: <kbd>⌘L</kbd> address, <kbd>⌘F</kbd> find in page, <kbd>⌘R</kbd> reload (the page,
   not the app), <kbd>⌘[</kbd> / <kbd>⌘]</kbd> back / forward; <kbd>⌘W</kbd> and zoom keys do
   nothing in the page.
-- **Preview.** ▶ starts the session's live preview and opens it here instead of the system
-  browser.
+- **Discussion and review branches** get a plain browser: no preview row and no browser tools.
 - **Point at a problem.** Press **◎ Вказати** and click an element (the click does not reach
   the page; <kbd>Shift</kbd>+click keeps picking; <kbd>Esc</kbd> cancels). Same-origin iframes
   work too. Each pick lands in a tray above the page with a cropped screenshot, its selector
@@ -990,9 +997,9 @@ live. The web build has no session browser.
   HTML and computed styles. A managed session gets the crops as images; a native session gets
   their file paths (under `$TMPDIR/kermanych-browser/`) and, like any helper, accepts the
   message only while idle — a refusal keeps the tray. The tray survives an app reload.
-- **Who drives.** Click **Агент** to pause the agent: its browser tools refuse until you click
-  **Повернути**. The agent's page loads never take the keyboard from whatever you are typing
-  in.
+- **Who drives.** Click **Агент** to pause the agent: its browser tools, `preview_start` and
+  `preview_stop` refuse until you click **Повернути**. The agent's page loads never take the
+  keyboard from whatever you are typing in.
 - **Page dialogs.** `alert` / `confirm` show as a bar above the page; you or the agent answer
   it (the agent's action reports the dialog). «Leave site?» is always allowed; `prompt()` is
   not supported by Electron.
@@ -1006,14 +1013,16 @@ live. The web build has no session browser.
   `.png` under `docs/` — it writes the image into the worktree and answers with the path
   instead of the image), `browser_upload`,
   `browser_dialog`, `browser_console` (console, failed / 4xx / 5xx requests, downloads,
-  popups, blocked links), `browser_network` (the request log) and `browser_evaluate`.
+  popups, blocked links), `browser_network` (the request log) and `browser_evaluate`. Agent
+  sessions also get the preview tools (see [Live preview](#live-preview)).
   claude shows them as `mcp__kermanych__browser_*`. Managed sessions get them on launch and
   resume; native ones via `claude --mcp-config <file>` (a per-session `0600` file) or a
   second `omp --hook`. The endpoint is `POST /api/browser/mcp` on the local API with a
-  per-session bearer; a session's calls run one at a time (dialog, console and network
-  answer at once). The same server also carries the findings tools `report_finding` and
-  `list_findings` (see «Agent findings» below). An API started without the desktop app still
-  hands the server out, but it lists only the findings tools.
+  per-session bearer; a session's calls run one at a time (dialog, console, network and the
+  preview tools answer at once). The same server also carries the findings tools
+  `report_finding` and `list_findings` (see «Agent findings» below); a Back-end or Mobile
+  project's sessions get only those. An API started without the desktop app still hands the
+  server out, but it lists only the findings tools and, for agent sessions, the preview tools.
 - **Cookies** are kept per project (Electron partition `persist:kermanych-browser-<projectId>`):
   sessions of one project share logins, projects do not. The page's user agent carries no
   `Electron/` token. `target=_blank` links load in the same page; a `window.open` popup (an
@@ -1031,6 +1040,65 @@ live. The web build has no session browser.
   **Відкрити знову**; the agent's `browser_navigate` opens a new page, its other browser tools
   refuse until then and name the last address. It is deleted with its session.
 
+### Live preview
+
+The branch's own app, run from the session directory (the worktree, or the main checkout of an
+in-place session) on free ports, so you see the work in progress without touching your own dev
+servers (spec: `docs/specs/2026-11-03-session-browser-preview.md`). Agent sessions of Web and
+«Не визначено» projects have it, in the **Браузер** tab: a row under the toolbar shows its state
+(не налаштоване / setup… / запускається `web`… / працює / впало / зупинене), the services and
+their ports, ▶ / ◼, ↻ (restart), **Логи** and, while the config is missing or broken,
+**Доручити агенту**. A finished session has no worktree, so it has no preview.
+
+- **The config is a file in the repository, `.kermanych/preview.json`**, read from the session
+  directory, so it travels with the branch whose code it builds. Kermanych's own:
+
+  ```json
+  {
+    "setup": "cd kermanych && pnpm install && pnpm --filter '@kermanych/ui^...' build",
+    "services": [
+      { "name": "api", "command": "cd kermanych && pnpm --filter @kermanych/api start",
+        "env": { "KERMANYCH_DB": "${PREVIEW_DIR}/kermanych.sqlite", "KERMANYCH_SEED": "1", "KERMANYCH_PREVIEW": "1" } },
+      { "name": "web", "open": true, "command": "cd kermanych && pnpm --filter @kermanych/ui exec quasar dev",
+        "env": { "VITE_API_BASE": "http://localhost:${PORT_API}/api", "VITE_KERMANYCH_PREVIEW": "1" } }
+    ]
+  }
+  ```
+
+  - `setup` (optional) runs before the services on every start, so it must be idempotent; it
+    has 20 minutes.
+  - `services` start in order; each gets 5 minutes to accept a connection on its `PORT` before
+    the next one starts. Exactly one has `"open": true`: the page the browser opens. It also
+    counts as ready when it prints a `http://localhost:<port>` URL whose port accepts, for dev
+    servers that ignore `PORT`.
+  - Every step gets `PORT_<NAME>` for every service (`web-app` → `PORT_WEB_APP`) and
+    `PREVIEW_DIR`, a temp directory of the session (`$TMPDIR/kermanych-preview/<sessionId>/`,
+    deleted when the session is finished or deleted); each service also gets its own `PORT`.
+    `${VAR}` in `env` expands only these names, and they cannot be overridden.
+  - A missing or invalid file shows in the row with the exact field. **Доручити агенту** sends
+    the session's agent a Kermanych prompt with the default skill `preview-config` (override it
+    like any skill): it writes the file, tries it and commits it with its work.
+- **Starting.** ▶ in the row, **Запустити превʼю** on the empty page, or the agent's
+  `preview_start`. Once it runs, the page opens it; a restart keeps the page's path on the new
+  port, so `/settings` stays `/settings`. **Логи** opens a panel under the page with one tab per
+  step (the last 2 000 lines each); after a failure it opens by itself on the failed step.
+- **Stopping.** ◼, the agent's `preview_stop`, or by itself on «Завершити», closing a merged
+  session, deleting or archiving the session, a switch of the project to Back-end or Mobile, and
+  quitting the app. Stopping the agent and closing the page (✕) do not stop it. A step that exits
+  while the preview runs stops the rest and the row shows «Впало» with its exit code; nothing
+  restarts by itself, and the page stays where it was. After an app restart the empty page
+  offers **Запустити превʼю** instead of the dead address.
+- **Agent tools** (agent sessions only): `preview_start` (`restart` optional; waits up to 60 s,
+  and on a failure returns the step and its last log lines), `preview_status` (`wait` up to
+  60 s), `preview_stop`, `preview_logs` (`step`, `lines`). Nothing tells the agent to use them
+  by itself: ask it, or put it in a project skill.
+- **Not limited.** Previews have no cap: each one runs until it is stopped.
+- **The web build** has no embedded page. Its Браузер tab keeps the row and the logs, ▶ opens
+  the preview in a new tab, and ⤤ opens it again.
+- **API.** `GET` / `POST` (`{ restart? }`) / `DELETE /api/sessions/:id/preview`,
+  `GET /api/sessions/:id/preview/logs?step=&since=`, `POST /api/sessions/:id/preview/configure`;
+  the state is pushed on the socket (`preview_update`, and `previews` in the snapshot).
+
 ## Designs («Дизайн»)
 
 The «Дизайн» tab, right after «Чат», is where a screen is designed with an agent (spec:
@@ -1042,9 +1110,11 @@ repository is a folder that people and implementing agents read.
   design's session browser on the running preview, with the width presets, «◎ Вказати» and the
   picks tray (picks go to the agent, as on «Агенти»). Right: the agent's log and composer.
   The web build has no canvas (the session browser needs the desktop app): it shows the
-  design's saved folder instead — the screenshots and the rendered README. A project without a
-  preview command says so on the canvas, with a link to its settings. The page opens a design
-  from a desktop notification or «Карта агентів» too.
+  design's saved folder instead — the screenshots and the rendered README. Opening a design
+  starts its [live preview](#live-preview) when the branch has a valid `.kermanych/preview.json`;
+  without one the canvas's preview row offers «Доручити агенту», and a Back-end or Mobile project
+  has no canvas at all. The page opens a design from a desktop notification or «Карта агентів»
+  too.
 - **A design is an agent session.** «+ Новий дизайн» asks for a topic, an optional description
   and base branch, files a card on the board (`tasks.design`, migration
   `20261029090000_task_design.sql`) assigned to you, and launches it. The session runs on a
@@ -1067,8 +1137,8 @@ repository is a folder that people and implementing agents read.
   the prototype, commit as `design: <topic>`. The design reaches the default branch through
   «Створити ПР» and review, like code.
 - **From design to implementation.** «Задача →» on a design's README (on the page and in the
-  session's «Документація» tab) creates a card in the same project by default, platform
-  `web`, with the README as the description and the screenshots attached as card images. An
+  session's «Документація» tab) creates a card in the same project by default, with the README
+  as the description and the screenshots attached as card images. An
   agent working from such a card follows the default skill `implement-from-design`: read the
   README and screenshots, reuse the prototype, build every state, compare its own screenshots,
   delete the prototype.
@@ -1137,8 +1207,8 @@ An async operation without feedback reads as a bug or a frozen app. Spec:
   blocked, menu items and ⌘ shortcuts included.
 - **Modals.** A short operation keeps the modal open and `persistent` while it runs, with
   `:loading` on the primary button. The modal closes only on success, and the error shows
-  inside it. A long operation (starting a preview) closes the modal and shows progress on the
-  entity instead.
+  inside it. A long operation (creating a pull request) closes the modal and shows progress on
+  the entity instead.
 - **The top progress bar** (`KProgressBar`, `stores/activity.ts`) shows only foreground work:
   actions and the loads the operator triggered (`activity.trackLoad`). It appears after 300 ms.
   Polling, tickers, reconcile and realtime never light it.
@@ -1155,7 +1225,7 @@ developer's machine. The direction is always task → session.
 
 1. **Create** — any member of the project's workspace creates a task, from the board
    (`/#/board`) or from «Агенти» / «Чат», with a title, a description and optional launch
-   params (model, branch prefix, platform, base branch). A card filed from the board is
+   params (model, branch prefix, base branch). A card filed from the board is
    unassigned unless its author picks someone; a card filed from «Агенти» or «Чат» is
    assigned to its author, because that is the machine about to run it. Either way it is a
    row in the cloud `tasks` — there is no local-only task — so the whole workspace sees it.
@@ -1508,8 +1578,8 @@ another project of the same workspace: by default the first one, and you pick th
 a request or the frontend for a handoff. The card's title is the document's first heading. Its
 description is the document text, read from the worktree so an uncommitted document works too,
 headed by the project, branch and path it came from. The assignee is optional, as on the
-board, and model and effort are the target project's defaults. A request card gets platform
-`backend`. That side's agent starts from the card while this session keeps working.
+board, and model and effort are the target project's defaults. That side's agent starts from
+the card while this session keeps working.
 «Копіювати текст» copies the same text for pasting into a session that is already running.
 
 The instructions for each document are the default skills `task-spec`, `task-plan`,

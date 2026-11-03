@@ -102,20 +102,16 @@
             </template>
             <p v-else-if="!isBound" class="design__canvas-note">{{ t('agents.hints.bind') }}</p>
             <p v-else-if="retired" class="design__canvas-note">{{ t('design.canvas.retired') }}</p>
-            <div v-else-if="noCommand" class="design__canvas-note">
-              <p class="design__canvas-text">{{ t('design.canvas.needsCommand') }}</p>
-              <RouterLink class="design__canvas-link" :to="{ name: 'settings', params: { section: 'project-commands' } }">
-                {{ t('design.canvas.needsCommandLink') }}
-              </RouterLink>
-            </div>
+            <p v-else-if="!browserOk" class="design__canvas-note">{{ t('design.canvas.noBrowser') }}</p>
             <!-- Mounted only while a design is open here: the pane parks the native view when it
-                 unmounts, so another design, a modal or leaving Дизайн hides the page. -->
+                 unmounts, so another design, a modal or leaving Дизайн hides the page. Its preview
+                 row says when the branch has no valid .kermanych/preview.json and offers
+                 «Доручити агенту». -->
             <KBrowserPane
               v-else
               :key="design.id"
               :session="design"
               :sending="sendingPicks"
-              :starting="previewStart.busyFor(design.id)"
               :hold="railResizing || logResizing"
               :splittable="false"
               @send="sendPicks(design)"
@@ -261,7 +257,7 @@
 import { computed, nextTick, onMounted, ref, watch, type ComponentPublicInstance } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { useI18n } from 'vue-i18n';
-import { buildChatBlocks, designReadmePath, taskNameFromText } from '@kermanych/core';
+import { buildChatBlocks, designReadmePath, platformHasBrowser, taskNameFromText } from '@kermanych/core';
 import type { ImageInput, RpcExtensionUIResponse, Session, ThinkingLevel } from '@kermanych/core';
 import { useOrchestrator } from 'stores/orchestrator';
 import { useBoard } from 'stores/board';
@@ -582,29 +578,22 @@ const { run: onNewTask } = useAsyncAction(async (text: string) => {
 });
 
 // ── Canvas ──────────────────────────────────────────────────────────────────
-// Opening a design starts its preview — the call Агенти's ▶ makes (POST /sessions/:id/preview,
-// idempotent while one runs) — unless the session browser already holds a page for it (the
-// agent may be on a prototype route; reloading the root over it would lose that). The start is
-// long (install + build in a fresh worktree), so it shows on the canvas (KBrowserPane
-// `starting`), keyed per design so switching designs never mixes two starts up.
-const commandMissing = ref(new Set<string>());
-const noCommand = computed(
-  () => !!design.value && (!selectedProject.value?.previewCommand || commandMissing.value.has(design.value.id)),
-);
+// Opening a design starts its preview (docs/specs/2026-11-03-session-browser-preview.md): the
+// call the pane's ▶ makes, which the api answers at once and dedupes while one runs; once it runs,
+// the api opens it in the session browser. Skipped when the session browser already holds a
+// page for it (the agent may be on a prototype route; reloading the root over it would lose
+// that), and when the branch has no valid `.kermanych/preview.json` — the pane's preview row says
+// so and offers «Доручити агенту». A back-end or mobile project has no browser at all (decision 9).
+const browserOk = computed(() => platformHasBrowser(selectedProject.value?.platform));
 const previewStart = useKeyedAction(async (id: string) => {
-  const s = store.sessions.find((x) => x.id === id);
-  if (!s) return;
-  const res = await store.startPreview(id);
-  if (res.needsCommand) {
-    commandMissing.value = new Set(commandMissing.value).add(id);
-    return;
-  }
-  commandMissing.value.delete(id);
-  if (res.url) void sessionBrowser.navigate(id, s.projectId, res.url);
+  const info = await store.previewInfo(id);
+  if (info.config.kind !== 'ok') return;
+  const phase = info.state?.phase;
+  if (phase === 'starting' || phase === 'running') return;
+  await store.startPreview(id);
 });
 async function ensurePreview(s: Session): Promise<void> {
-  if (!sessionBrowser.available || !isBound.value || retired.value || s.archived) return;
-  if (!selectedProject.value?.previewCommand) return; // the canvas says so instead
+  if (!sessionBrowser.available || !isBound.value || retired.value || s.archived || !browserOk.value) return;
   // What main already has for this session (the view may predate this window).
   await sessionBrowser.refresh(s.id).catch(() => undefined);
   if (designId.value !== s.id || sessionBrowser.states[s.id] || previewStart.busyFor(s.id)) return;
@@ -648,15 +637,6 @@ watch(
     void ensurePreview(s);
   },
   { immediate: true },
-);
-// The command was just set (Налаштування → Команди, or by a teammate): start now.
-watch(
-  () => selectedProject.value?.previewCommand,
-  (cmd) => {
-    if (!cmd || !design.value) return;
-    commandMissing.value = new Set();
-    void ensurePreview(design.value);
-  },
 );
 
 // ── Toolbar ─────────────────────────────────────────────────────────────────

@@ -1,7 +1,7 @@
 // Cloud coordination rows in camelCase. Postgres columns are snake_case; the
 // mapping lives inside this package (see projects.ts / tasks.ts) and nothing
 // outside @kermanych/cloud ever sees a snake_case key.
-import type { AgentLanguage, AgentRuntimeKind, DocsPolicy, DocsReport, FindingKind, QaChecklist, RiskCategory, RiskKind, RiskResponse, RiskStatus, SessionReport, SessionStatus, ThinkingLevel } from "@kermanych/core";
+import type { AgentLanguage, AgentRuntimeKind, DocsPolicy, DocsReport, FindingKind, Platform, QaChecklist, RiskCategory, RiskKind, RiskResponse, RiskStatus, SessionReport, SessionStatus, ThinkingLevel } from "@kermanych/core";
 
 // Re-exported from core so the cloud enum and the local session enum cannot drift.
 // The Postgres type `task_status` carries the same eleven labels.
@@ -32,8 +32,9 @@ export type CloudProject = {
   name: string;
   gitRemoteUrl?: string;
   conventions?: string;
-  previewCommand?: string;
-  apiCommand?: string;
+  // What the project ships (core Platform). Absent = «Не визначено»: the session browser and
+  // the live preview stay on; back-end and mobile turn both off.
+  platform?: Platform;
   defaultBranch?: string;
   // The «за замовчуванням» a new task/agent in this project pre-selects: `defaultModel` is an
   // omp model id. Absent = leave the choice to omp, which is what an empty picker already means.
@@ -90,7 +91,6 @@ export type Task = {
   // text in Postgres (omp owns the vocabulary), taken at its word here — see toTask().
   effort?: ThinkingLevel;
   prefix?: string;
-  platform?: string;
   // `tasks.worktree` is `not null default true`, so unlike every other launch param this
   // key is always present. `false` means the launcher's «Ізолювати у worktree» was cleared:
   // run in the project folder itself. createSessionFromTask honours that only for the
@@ -150,7 +150,6 @@ export type TaskInsert = {
   model?: string;
   effort?: ThinkingLevel | ""; // "" from the board's shared create/edit form; toTaskRow nulls it
   prefix?: string;
-  platform?: string;
   // Supplied ONLY by the one-time publication of pre-cutover local backlog rows, which
   // reuses the local session id so a repeated pass collides instead of duplicating. Same
   // trick as CloudProjectInsert.id (projects.ts:95).
@@ -175,7 +174,6 @@ export type TaskPatch = {
   model?: string;
   effort?: ThinkingLevel | ""; // "" clears the column (toTaskRow turns a blank into null)
   prefix?: string;
-  platform?: string;
   worktree?: boolean;
   hidden?: boolean;
   deepAnalysis?: boolean;

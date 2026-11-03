@@ -124,7 +124,7 @@ describe('ticket.create on the default board', () => {
   it('files the card with the body the app composed and the assignee it resolved', async () => {
     managementChat.mockResolvedValue(
       reply([
-        { kind: 'ticket.create', project: 'Kermanych UI', assignee: 'Оля', prefix: 'feature', platform: 'web', ticket: TICKET },
+        { kind: 'ticket.create', project: 'Kermanych UI', assignee: 'Оля', prefix: 'feature', ticket: TICKET },
       ]),
     );
     createTask.mockImplementation((input: Record<string, unknown>) => ({ ...input, id: 't1' }));
@@ -140,7 +140,6 @@ describe('ticket.create on the default board', () => {
     expect(input.projectId).toBe('p1');
     expect(input.assigneeId).toBe('u-olya');
     expect(input.prefix).toBe('feature');
-    expect(input.platform).toBe('web');
     expect(input.title).toBe(TICKET.title);
     expect(input.description).toContain('## Context');
     expect(input.description).toContain('## User flow');
