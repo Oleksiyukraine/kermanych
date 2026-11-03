@@ -566,6 +566,9 @@
          on the board page being open. Renders nothing until such a merge happens. -->
     <JiraMergePrompt />
     <LinearMergePrompt />
+    <!-- The Менеджмент assistant from anywhere: the character at the left edge, ⌘K, the
+         mouse circle, and the overlay they open (docs/specs/2026-11-03-assistant-overlay.md). -->
+    <AssistantLauncher />
   </q-layout>
 </template>
 
@@ -626,6 +629,7 @@ import { useTerminal } from 'stores/terminal';
 import { useVoice } from 'stores/voice';
 import JiraMergePrompt from 'components/jira/JiraMergePrompt.vue';
 import LinearMergePrompt from 'components/linear/LinearMergePrompt.vue';
+import AssistantLauncher from 'components/assistant/AssistantLauncher.vue';
 import KDirPicker from 'components/kit/KDirPicker.vue';
 import OnboardingChecklist from 'components/onboarding/OnboardingChecklist.vue';
 import { useOnboarding } from 'stores/onboarding';
