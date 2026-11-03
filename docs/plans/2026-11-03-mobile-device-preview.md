@@ -63,8 +63,30 @@ Task document: `docs/specs/2026-11-03-mobile-device-preview.md`. Paths below are
    - Files: `apps/ui/src/{components/kit,composables,lib,pages,stores}/…`, i18n,
      `apps/ui/test/*`.
    - Check: ui `vue-tsc`, `vitest run`.
-5. **Integration.** [ ]
+5. **Integration.** [x]
    - The README.
-   - Full type checks and test suites (≤ 4 workers, one run at a time).
-   - The dev-app smoke from the task document's Verification: the fixture on both platforms, then
-     g-app with Flutter.
+   - Full type checks and test suites (≤ 4 workers, one run at a time): core 271, api 1274 (+4
+     skipped), ui 851 pass; `tsc` / `vue-tsc` clean.
+   - Review pass: 7 findings fixed (deleted-base start, project choice overwritten by ▶, ↻ not
+     restarting the app, Android console-port race, iOS boot abort leak, Android rotation,
+     startup sweep vs. a booting clone).
+   - Smoke, api on an isolated DB + the web build in the browser pane:
+     - fixture (`com.apple.Preferences` / `com.android.settings`) on iOS 26.0, iOS 18.3 and
+       Android API 32: real `device_*` calls over the MCP endpoint (snapshot, tap by ref, stale
+       ref refused, Cyrillic typing, wait_for, back refused on iOS, open_url, app
+       restart/terminate → «Застосунок впав», pause refusal), the tab's live screen (JPEG and
+       RGB888), operator tap, «◎ Вказати», the re-clone confirm iOS → Android (old clone
+       deleted), ↻ keeping the emulator's pid, ◼ (device down, clone kept), ◼ during a boot (no
+       booted clone left), delete (clone, emulator, serve-sim gone);
+     - the device path under Electron's own runtime (`ELECTRON_RUN_AS_NODE`): 112 frames in 3 s;
+     - Flutter 3.47.9 (`brew install --cask flutter`), a `flutter create` app with
+       `flutter run -d $DEVICE_ID` as the `"device": true` service: running on iOS (~45 s
+       first build) and Android (~5 min first Gradle build), hot reload by `kill -USR1` showed
+       the new text in `device_snapshot`, `device_tap` on «Increment» worked on both;
+     - g-app itself does not build on this machine: `lib/firebase_options.dart`,
+       `android/app/google-services.json` and `.env.*` are not in the repository (nor in the
+       operator's checkout). Kermanych ran device → setup → `flutter run` and showed the
+       build's own error in the row. The operator's final check on g-app needs those files.
+   - Not exercised: the packaged dmg (`asarUnpack` of serve-sim), a real agent driving the tools
+     through omp/claude (the tools were called over the same MCP endpoint), «Доручити агенту» on a
+     Mobile project.
