@@ -1434,12 +1434,13 @@ request with nobody watching.
   `.env` and your `GIT_TOKEN`: the database keeps a card's author as created, lets only the
   author switch automatic execution on, and switches it off when anyone else edits what the
   card asks for.
-- **Activation.** «ШІ-команда» → project → «Агенти» → «Посіпака» → «Активувати на цій машині».
+- **Activation.** «ШІ-команда» → project → «Агенти» → «Посіпака» (its page,
+  `/ai-team/agents/minion`) → «Активувати на цій машині».
   It is stored on this machine only (SQLite `minion_projects`), for any number of projects, and
   needs the project bound to a local repository. Deactivating stops taking new cards; a run in
   progress goes on.
 - **How many at once.** One cap for the whole machine, across its projects: 1 by default, up
-  to 8, set on the same card. A minion run starts only on a free agent slot and only while none
+  to 8, set on the same page. A minion run starts only on a free agent slot and only while none
   of your own sessions waits for one («Ресурси машини»), so your launches never queue behind it.
 - **A run.** An ordinary agent session of the card's project in a fresh worktree, on your
   runtime, with the card's model and effort and every rule of the repository and the project
@@ -1495,6 +1496,25 @@ request with nobody watching.
   the Mac from idle sleep (the screen may turn off); otherwise the machine sleeps as usual, so
   set macOS not to sleep on a dedicated box. The desktop app keeps its sign-in fresh while the
   window is hidden. Signing out on one machine currently signs you out on all of them.
+
+### Agents («ШІ-команда → Агенти»)
+
+A short list of Kermanych's own agents (spec: `docs/specs/2026-11-03-ai-team-agent-pages.md`),
+grouped by stage of work: «Виконання», «Дизайн», «Перевірка і здача», and the two with no
+instruction of their own. Each row has the agent's icon, one line on what it does, «переписано»
+when its instruction is not Kermanych's default, and the number of assigned skills. A row opens
+the agent's page, `/ai-team/agents/<id>` (deep-linkable; an unknown id lands on the list). The
+page explains how the agent works: when it runs, what it does, what it gets (each `{{hole}}`),
+what Kermanych appends that no override changes, and how it ends.
+
+- **Workspace scope:** the page edits the agent's instruction and its skill sequence. Leaving the
+  page with an unsaved instruction asks first; switching the project or workspace in the
+  sidebar drops the draft.
+- **Project scope:** the same list, and the page is read-only. It shows what this project's
+  launch gets — the project's own row, else the workspace's, else the default (the source is
+  named) — and links to the workspace scope. «Посіпака»'s page also has its machine block
+  (activation, cap, pause).
+- **User scope:** no agent layer.
 
 ### Skills («ШІ-команда → Навички»)
 
@@ -1694,7 +1714,24 @@ it will simply push its real status again.
 (`packages/core/src/management.ts` is the one table that names them) plus a chat
 field docked to the foot of the page.
 
-That field is a real assistant, and it is deliberately narrow:
+**The same chat, from any tab.** A small character — the logo's `›_` as a face — peeks out of
+the window's left edge everywhere except the Менеджмент tab. Click it, press
+<kbd>Ctrl</kbd>/<kbd>⌘</kbd>+<kbd>K</kbd> (matched by the physical key, so the Ukrainian layout
+works; also inside a session's browser page), or draw a counter-clockwise circle with the mouse,
+no button held, and the chat opens as an overlay in the middle of the screen. It is the same
+conversation as the tab's, with the same composer — helpers, attachments, the plan chip, «Новий
+чат». Every turn sent from the overlay is asked as the «Огляд» section, so documentation search
+stays on the Документація section. Esc, a click outside, <kbd>⌘K</kbd>, the character or another
+circle closes it; a question in flight keeps running, the character shows it is thinking, then
+wears a dot until you look at the answer. A half-written question and its attachments wait for
+the next opening. On the Менеджмент tab the same keys and gesture put the cursor in the tab's own
+field instead. The circle can be switched off in Settings → «Загальне» if it fires by accident;
+it does not work over a session's browser page, which the app cannot see the mouse over. The
+character itself is yours to pick in the same pane, under «Персонаж асистента»: seven drawings,
+from the terminal bot (the default) to the original glossy drop; the choice is kept on this
+computer. (docs/specs/2026-11-03-assistant-overlay.md, docs/specs/2026-11-03-assistant-mascot-choice.md)
+
+Wherever it is opened, that chat is a real assistant, and it is deliberately narrow:
 
 - **It only reads code, and it writes in exactly five places.** Its file tools are the
   read-only subset (`read`, `grep`, `glob`) — it can look at your repositories but it cannot
