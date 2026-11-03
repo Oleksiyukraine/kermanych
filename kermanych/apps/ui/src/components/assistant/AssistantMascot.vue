@@ -1,73 +1,206 @@
 <template>
-  <!-- The assistant's character (docs/specs/2026-11-03-assistant-overlay.md, decision 1): the
-       logo's `›_` turned into a face — the chevrons are the pupils, the bar is the mouth — on a
-       glossy graphite drop lit warm from below by the brand accent. Drawn, not an asset, so it
-       scales and themes without a file. One instance in the app, so the gradient ids are fixed. -->
+  <!-- The assistant's character (docs/specs/2026-11-03-assistant-overlay.md, decision 1), one of
+       seven the operator picks in Settings → «Загальне» (docs/specs/2026-11-03-assistant-mascot-
+       choice.md). Every face sits in the right half and looks right, into the app, because the
+       launcher hides the left 46 %. Drawn, not assets, so they scale without files. Gradient and
+       clip ids come from useId(): the picker renders all seven beside the launcher's. -->
   <svg
     class="mascot"
     :class="{ 'mascot--busy': busy }"
     viewBox="0 0 100 100"
     aria-hidden="true"
   >
-    <defs>
-      <radialGradient id="k-mascot-body" cx="36%" cy="26%" r="82%">
-        <stop offset="0" stop-color="#55504b" />
-        <stop offset=".38" stop-color="#26231f" />
-        <stop offset=".8" stop-color="#0d0c0b" />
-        <stop offset="1" stop-color="#050404" />
-      </radialGradient>
-      <radialGradient id="k-mascot-bounce" cx="62%" cy="96%" r="55%">
-        <stop offset="0" stop-color="#ff563c" stop-opacity=".45" />
-        <stop offset=".6" stop-color="#ff563c" stop-opacity=".07" />
-        <stop offset="1" stop-color="#ff563c" stop-opacity="0" />
-      </radialGradient>
-      <linearGradient id="k-mascot-shine" x1="0" y1="0" x2="0" y2="1">
-        <stop offset="0" stop-color="#fff" stop-opacity=".55" />
-        <stop offset="1" stop-color="#fff" stop-opacity="0" />
-      </linearGradient>
-      <radialGradient id="k-mascot-glow" cx="50%" cy="50%" r="50%">
-        <stop offset=".55" stop-color="#ff563c" stop-opacity=".3" />
-        <stop offset="1" stop-color="#ff563c" stop-opacity="0" />
-      </radialGradient>
-      <radialGradient id="k-mascot-eye" cx="40%" cy="30%" r="80%">
-        <stop offset="0" stop-color="#fff" />
-        <stop offset=".7" stop-color="#f1efec" />
-        <stop offset="1" stop-color="#cfcac4" />
-      </radialGradient>
-      <clipPath id="k-mascot-clip"><path :d="BODY" /></clipPath>
-    </defs>
-
-    <circle class="mascot__glow" cx="50" cy="50" r="50" fill="url(#k-mascot-glow)" />
-    <g class="mascot__body">
-      <path :d="BODY" fill="url(#k-mascot-body)" />
-      <g clip-path="url(#k-mascot-clip)">
-        <path :d="BODY" fill="url(#k-mascot-bounce)" />
-        <path :d="BODY" fill="none" stroke="#fff" stroke-opacity=".1" stroke-width="1.2" />
-      </g>
-      <ellipse cx="38" cy="23" rx="18" ry="7" fill="url(#k-mascot-shine)" />
-      <ellipse cx="29" cy="30" rx="3" ry="2" fill="#fff" opacity=".5" />
-
-      <!-- Eyes look right, into the app: the nearer one larger. They blink now and then, and
-           while a turn is in flight the pupils glance up-and-back as if reading. -->
-      <g class="mascot__eyes">
-        <ellipse cx="57" cy="45" rx="8.6" ry="11.2" fill="url(#k-mascot-eye)" />
-        <ellipse cx="75" cy="45" rx="7.4" ry="10" fill="url(#k-mascot-eye)" />
-        <g class="mascot__pupils">
-          <path d="M56 40.2 L60.6 45 L56 49.8" class="mascot__pupil" stroke-width="3.6" />
-          <path d="M74.4 40.8 L78.6 45 L74.4 49.2" class="mascot__pupil" stroke-width="3.3" />
+    <!-- «Бот із шевронами»: the terminal bot wearing the drop's eyes and the logo's bar. -->
+    <template v-if="variant === 'bot-eyes'">
+      <defs>
+        <radialGradient :id="`${uid}-eye`" cx="40%" cy="30%" r="80%">
+          <stop offset="0" stop-color="#fff" />
+          <stop offset=".7" stop-color="#f1efec" />
+          <stop offset="1" stop-color="#cfcac4" />
+        </radialGradient>
+      </defs>
+      <g class="mascot__body">
+        <line x1="70" y1="17" x2="70" y2="7" stroke="#3a3834" stroke-width="3" stroke-linecap="round" />
+        <circle class="mascot__signal" cx="70" cy="6" r="4.2" fill="#ff563c" />
+        <rect x="9" y="16" width="83" height="76" rx="18" fill="#34322e" />
+        <rect x="9" y="16" width="83" height="76" rx="18" fill="none" stroke="#fff" stroke-opacity=".12" stroke-width="1.2" />
+        <rect x="16.5" y="23.5" width="68" height="61" rx="11" fill="#0b0a09" />
+        <g class="mascot__eyes">
+          <ellipse cx="57" cy="46" rx="8.6" ry="11.2" :fill="`url(#${uid}-eye)`" />
+          <ellipse cx="75" cy="46" rx="7.4" ry="10" :fill="`url(#${uid}-eye)`" />
+          <g class="mascot__pupils mascot__chevrons">
+            <path d="M56 41.2 L60.6 46 L56 50.8" stroke-width="3.6" />
+            <path d="M74.4 41.8 L78.6 46 L74.4 50.2" stroke-width="3.3" />
+          </g>
         </g>
+        <rect class="mascot__mouth" x="60" y="65" width="14" height="4.4" rx="1" fill="#f3f2f2" />
       </g>
-      <!-- The logo's bar as the mouth — and, while the assistant thinks, a blinking cursor. -->
-      <rect class="mascot__mouth" x="61" y="62" width="13" height="4" rx="2" fill="#f3f2f2" />
-    </g>
+    </template>
+
+    <!-- «Термінал-бот»: monitor head, block-cursor eyes, an accent mouth, a light on the antenna. -->
+    <template v-else-if="variant === 'bot'">
+      <g class="mascot__body">
+        <line x1="70" y1="17" x2="70" y2="7" stroke="#3a3834" stroke-width="3" stroke-linecap="round" />
+        <circle class="mascot__signal" cx="70" cy="6" r="4.2" fill="#ff563c" />
+        <rect x="9" y="16" width="83" height="76" rx="18" fill="#34322e" />
+        <rect x="9" y="16" width="83" height="76" rx="18" fill="none" stroke="#fff" stroke-opacity=".12" stroke-width="1.2" />
+        <rect x="16.5" y="23.5" width="68" height="61" rx="11" fill="#0b0a09" />
+        <g class="mascot__eyes">
+          <g class="mascot__pupils">
+            <rect x="56" y="38" width="8" height="13" rx="1.6" fill="#f3f2f2" />
+            <rect x="71" y="38" width="8" height="13" rx="1.6" fill="#f3f2f2" />
+          </g>
+        </g>
+        <rect class="mascot__mouth" x="58" y="63" width="18" height="5" rx="1" fill="#ff563c" />
+      </g>
+    </template>
+
+    <!-- «Логотип»: the logo tile come alive — its chevron a winking eye, its bar the mouth. -->
+    <template v-else-if="variant === 'tile'">
+      <g class="mascot__body">
+        <rect x="9" y="9" width="82" height="82" rx="17" fill="#12110f" stroke="#fff" stroke-opacity=".14" stroke-width="1.2" />
+        <g class="mascot__nudge">
+          <path :d="LOGO_CHEVRON" fill="#ff563c" transform="translate(45.5 29) scale(.034) translate(-244 -214)" />
+        </g>
+        <circle class="mascot__eyes" cx="76" cy="39" r="6.2" fill="#f3f2f2" />
+        <rect class="mascot__mouth" x="58" y="61" width="23" height="6.5" fill="#f3f2f2" />
+      </g>
+    </template>
+
+    <!-- «Великі очі»: a flat squircle, big eyes, an accent cursor for a mouth. -->
+    <template v-else-if="variant === 'eyes'">
+      <defs>
+        <clipPath :id="`${uid}-clip`"><path :d="SQUIRCLE" /></clipPath>
+      </defs>
+      <g class="mascot__body">
+        <path :d="SQUIRCLE" fill="#151412" />
+        <g :clip-path="`url(#${uid}-clip)`"><circle cx="60" cy="38" r="52" fill="#23211f" /></g>
+        <path :d="SQUIRCLE" fill="none" stroke="#fff" stroke-opacity=".14" stroke-width="1.2" />
+        <g class="mascot__eyes">
+          <circle cx="57" cy="44" r="9.4" fill="#f3f2f2" />
+          <circle cx="78" cy="44" r="8.6" fill="#f3f2f2" />
+          <g class="mascot__pupils">
+            <circle cx="60.4" cy="45" r="4.8" fill="#12110f" />
+            <circle cx="81.2" cy="45" r="4.4" fill="#12110f" />
+            <circle cx="62" cy="43" r="1.5" fill="#fff" />
+            <circle cx="82.7" cy="43" r="1.4" fill="#fff" />
+          </g>
+        </g>
+        <rect class="mascot__mouth" x="61" y="63" width="15" height="4.8" rx="1" fill="#ff563c" />
+      </g>
+    </template>
+
+    <!-- «Капітан»: a керманич holds the helm — a peaked cap, the chevron as its badge. -->
+    <template v-else-if="variant === 'captain'">
+      <g class="mascot__body">
+        <circle cx="50" cy="56" r="36" fill="#1c1b19" stroke="#fff" stroke-opacity=".14" stroke-width="1.2" />
+        <g class="mascot__eyes">
+          <ellipse cx="60" cy="53" rx="6.4" ry="7.6" fill="#f3f2f2" />
+          <ellipse cx="78" cy="53" rx="5.6" ry="7" fill="#f3f2f2" />
+          <g class="mascot__pupils">
+            <circle cx="62.2" cy="54" r="3.2" fill="#12110f" />
+            <circle cx="80" cy="54" r="2.9" fill="#12110f" />
+          </g>
+        </g>
+        <rect class="mascot__mouth" x="63" y="70" width="14" height="4.6" rx="1" fill="#f3f2f2" />
+        <!-- The crown is outlined so it does not melt into the light theme's canvas. -->
+        <path d="M22 30 C19 17 33 8 53 8 C73 8 85 15 82 30 Z" fill="#f3f2f2" stroke="#12110f" stroke-opacity=".35" stroke-width="1.2" />
+        <rect x="22" y="25" width="60" height="7" fill="#ff563c" />
+        <path d="M50 31 L85 31 C92 31 95 34 92 36.5 C82 39.5 62 39 50 35.5 Z" fill="#0b0a09" stroke="#fff" stroke-opacity=".18" stroke-width="1" />
+        <path :d="LOGO_CHEVRON" fill="#12110f" transform="translate(61.5 12) scale(.017) translate(-244 -214)" />
+      </g>
+    </template>
+
+    <!-- «Іскра»: the character in the accent, a dark face, flat two-tone shading. -->
+    <template v-else-if="variant === 'spark'">
+      <defs>
+        <clipPath :id="`${uid}-clip`"><path :d="SPARK" /></clipPath>
+      </defs>
+      <g class="mascot__body">
+        <path :d="SPARK" fill="#d9432b" />
+        <g :clip-path="`url(#${uid}-clip)`"><circle cx="64" cy="46" r="45" fill="#ff563c" /></g>
+        <ellipse cx="57" cy="62.5" rx="4" ry="2.2" fill="#ff9a86" opacity=".8" />
+        <ellipse cx="85" cy="62.5" rx="3.4" ry="2" fill="#ff9a86" opacity=".8" />
+        <g class="mascot__eyes">
+          <g class="mascot__pupils">
+            <ellipse cx="64" cy="50" rx="4.8" ry="6.2" fill="#12110f" />
+            <ellipse cx="80" cy="50" rx="4.4" ry="5.8" fill="#12110f" />
+            <circle cx="65.7" cy="47.4" r="1.6" fill="#fff" />
+            <circle cx="81.6" cy="47.6" r="1.5" fill="#fff" />
+          </g>
+        </g>
+        <rect class="mascot__mouth" x="65" y="63" width="13" height="4.4" rx="1" fill="#12110f" />
+      </g>
+    </template>
+
+    <!-- «Крапля», the first character: a glossy graphite drop lit warm from below by the accent. -->
+    <template v-else>
+      <defs>
+        <radialGradient :id="`${uid}-body`" cx="36%" cy="26%" r="82%">
+          <stop offset="0" stop-color="#55504b" />
+          <stop offset=".38" stop-color="#26231f" />
+          <stop offset=".8" stop-color="#0d0c0b" />
+          <stop offset="1" stop-color="#050404" />
+        </radialGradient>
+        <radialGradient :id="`${uid}-bounce`" cx="62%" cy="96%" r="55%">
+          <stop offset="0" stop-color="#ff563c" stop-opacity=".45" />
+          <stop offset=".6" stop-color="#ff563c" stop-opacity=".07" />
+          <stop offset="1" stop-color="#ff563c" stop-opacity="0" />
+        </radialGradient>
+        <linearGradient :id="`${uid}-shine`" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0" stop-color="#fff" stop-opacity=".55" />
+          <stop offset="1" stop-color="#fff" stop-opacity="0" />
+        </linearGradient>
+        <radialGradient :id="`${uid}-glow`" cx="50%" cy="50%" r="50%">
+          <stop offset=".55" stop-color="#ff563c" stop-opacity=".3" />
+          <stop offset="1" stop-color="#ff563c" stop-opacity="0" />
+        </radialGradient>
+        <radialGradient :id="`${uid}-eye`" cx="40%" cy="30%" r="80%">
+          <stop offset="0" stop-color="#fff" />
+          <stop offset=".7" stop-color="#f1efec" />
+          <stop offset="1" stop-color="#cfcac4" />
+        </radialGradient>
+        <clipPath :id="`${uid}-clip`"><path :d="DROP" /></clipPath>
+      </defs>
+      <circle cx="50" cy="50" r="50" :fill="`url(#${uid}-glow)`" />
+      <g class="mascot__body">
+        <path :d="DROP" :fill="`url(#${uid}-body)`" />
+        <g :clip-path="`url(#${uid}-clip)`">
+          <path :d="DROP" :fill="`url(#${uid}-bounce)`" />
+          <path :d="DROP" fill="none" stroke="#fff" stroke-opacity=".1" stroke-width="1.2" />
+        </g>
+        <ellipse cx="38" cy="23" rx="18" ry="7" :fill="`url(#${uid}-shine)`" />
+        <ellipse cx="29" cy="30" rx="3" ry="2" fill="#fff" opacity=".5" />
+        <g class="mascot__eyes">
+          <ellipse cx="57" cy="45" rx="8.6" ry="11.2" :fill="`url(#${uid}-eye)`" />
+          <ellipse cx="75" cy="45" rx="7.4" ry="10" :fill="`url(#${uid}-eye)`" />
+          <g class="mascot__pupils mascot__chevrons">
+            <path d="M56 40.2 L60.6 45 L56 49.8" stroke-width="3.6" />
+            <path d="M74.4 40.8 L78.6 45 L74.4 49.2" stroke-width="3.3" />
+          </g>
+        </g>
+        <rect class="mascot__mouth" x="61" y="62" width="13" height="4" rx="2" fill="#f3f2f2" />
+      </g>
+    </template>
   </svg>
 </template>
 
 <script setup lang="ts">
-defineProps<{ busy: boolean }>();
+import { useId } from 'vue';
+import type { AssistantMascotId } from 'stores/assistant-overlay';
 
+defineProps<{ busy: boolean; variant: AssistantMascotId }>();
+
+const uid = `k-mascot-${useId()}`;
+
+// The logo's chevron verbatim (MainLayout.vue, a 1024 box); each use places it with
+// translate(x y) scale(s) translate(-244 -214), so (x, y) is its top-left corner.
+const LOGO_CHEVRON = 'M244 214 L344 214 L642 512 L344 810 L244 810 L244 730 L462 512 L244 294 Z';
 // A slightly squared drop: rounder than the logo's tile, less perfect than a circle.
-const BODY = 'M50 9 C74 9 91 25 91 50 C91 75 74 92 50 92 C26 92 9 75 9 50 C9 25 26 9 50 9 Z';
+const DROP = 'M50 9 C74 9 91 25 91 50 C91 75 74 92 50 92 C26 92 9 75 9 50 C9 25 26 9 50 9 Z';
+const SQUIRCLE = 'M50 8 C79 8 92 21 92 50 C92 79 79 92 50 92 C21 92 8 79 8 50 C8 21 21 8 50 8 Z';
+// A drop leaning forward, its tip trailing back to the top left.
+const SPARK = 'M20 10 C46 13 92 26 92 58 C92 79 76 92 56 92 C35 92 17 78 17 57 C17 40 21 26 20 10 Z';
 </script>
 
 <style scoped lang="scss">
@@ -78,18 +211,22 @@ const BODY = 'M50 9 C74 9 91 25 91 50 C91 75 74 92 50 92 C26 92 9 75 9 50 C9 25 
   overflow: visible;
 }
 
-.mascot__pupil {
+.mascot__chevrons {
   fill: none;
   stroke: #ff563c;
   stroke-linecap: round;
   stroke-linejoin: round;
 }
 
-// Transforms on SVG parts scale around their own box, not the viewBox origin.
+// Transforms on SVG parts scale around their own box, not the viewBox origin. A part placed by
+// a transform attribute (the logo chevron) is wrapped in a group instead: a CSS transform would
+// replace the attribute.
 .mascot__eyes,
 .mascot__pupils,
 .mascot__mouth,
-.mascot__body {
+.mascot__body,
+.mascot__nudge,
+.mascot__signal {
   transform-box: fill-box;
   transform-origin: center;
 }
@@ -111,7 +248,8 @@ const BODY = 'M50 9 C74 9 91 25 91 50 C91 75 74 92 50 92 C26 92 9 75 9 50 C9 25 
   }
 }
 
-// Thinking: the body breathes, the pupils read up-and-back, the mouth blinks like a cursor.
+// Thinking: the body breathes, the pupils read up-and-back, the mouth blinks like a cursor, the
+// bots' antenna light flickers and the tile's chevron nudges forward like a prompt.
 .mascot--busy {
   .mascot__body {
     animation: mascot-breathe 1.8s ease-in-out infinite;
@@ -123,6 +261,14 @@ const BODY = 'M50 9 C74 9 91 25 91 50 C91 75 74 92 50 92 C26 92 9 75 9 50 C9 25 
 
   .mascot__mouth {
     animation: mascot-cursor 1s steps(1, end) infinite;
+  }
+
+  .mascot__signal {
+    animation: mascot-cursor 0.7s steps(1, end) infinite;
+  }
+
+  .mascot__nudge {
+    animation: mascot-nudge 0.9s ease-in-out infinite;
   }
 }
 
@@ -159,11 +305,23 @@ const BODY = 'M50 9 C74 9 91 25 91 50 C91 75 74 92 50 92 C26 92 9 75 9 50 C9 25 
   }
 }
 
+@keyframes mascot-nudge {
+  0%,
+  100% {
+    transform: translateX(0);
+  }
+  50% {
+    transform: translateX(2.5px);
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .mascot__eyes,
   .mascot--busy .mascot__body,
   .mascot--busy .mascot__pupils,
-  .mascot--busy .mascot__mouth {
+  .mascot--busy .mascot__mouth,
+  .mascot--busy .mascot__signal,
+  .mascot--busy .mascot__nudge {
     animation: none;
   }
 }

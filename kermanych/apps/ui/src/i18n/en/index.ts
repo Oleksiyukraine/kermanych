@@ -1080,6 +1080,17 @@ export const en: MessageSchema = {
       version: 'Version',
       assistantGesture: 'Gesture to call the assistant',
       assistantGestureNote: 'A counter-clockwise mouse circle opens the management assistant from any tab — just like Ctrl/⌘ K or the character at the left edge. Turn it off if it fires by accident.',
+      assistantMascot: 'Assistant character',
+      assistantMascotNote: 'The one peeking out of the window’s left edge. Changes at once, on this computer only.',
+      assistantMascots: {
+        'bot-eyes': 'Chevron bot',
+        bot: 'Terminal bot',
+        drop: 'Drop',
+        tile: 'Logo',
+        eyes: 'Big eyes',
+        captain: 'Captain',
+        spark: 'Spark',
+      },
     },
     notifications: {
       badge: 'Number on the icon',

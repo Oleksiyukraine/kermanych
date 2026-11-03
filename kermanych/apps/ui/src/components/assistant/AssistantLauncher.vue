@@ -14,7 +14,7 @@
     :aria-expanded="overlay.open"
     @click="overlay.summon()"
   >
-    <AssistantMascot :busy="chat.busy" />
+    <AssistantMascot :busy="chat.busy" :variant="assistantMascot" />
     <span v-if="overlay.unread" class="asst-launch__dot" aria-hidden="true"></span>
   </button>
 
@@ -80,7 +80,7 @@ import { MANAGEMENT_DEFAULT_SECTION } from '@kermanych/core';
 import { useOrchestrator } from 'stores/orchestrator';
 import { useProjects } from 'stores/projects';
 import { useManagementChat } from 'stores/management-chat';
-import { assistantGestureOn, useAssistantOverlay } from 'stores/assistant-overlay';
+import { assistantGestureOn, assistantMascot, useAssistantOverlay } from 'stores/assistant-overlay';
 import ManagementAssistant from 'components/management/ManagementAssistant.vue';
 import AssistantMascot from './AssistantMascot.vue';
 import { useCircleGesture } from '../../composables/useCircleGesture';
