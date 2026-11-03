@@ -17,6 +17,7 @@
         class="k-diff"
         :class="{ 'k-diff--max': maximized }"
         :aria-label="t('kit.diff.fileChanges', { path })"
+        @keydown="find.onKeydown"
       >
         <header class="k-diff__head">
           <span class="k-diff__path mono">{{ path }}</span>
@@ -24,6 +25,13 @@
           <span v-if="diff?.truncated" class="k-diff__note mono">
             {{ t('kit.diff.truncated', { count: rowCount }) }}
           </span>
+          <KIconButton
+            v-if="find.available.value"
+            :title="t('kit.fileView.find.open')"
+            :active="find.shown.value"
+            :aria-pressed="find.shown.value"
+            @click="find.toggle"
+          ><KIcon class="k-diff__icon" name="search" /></KIconButton>
           <KIconButton
             v-if="canPlain"
             :title="diffOn ? t('kit.diff.hideDiff') : t('kit.diff.showDiff')"
@@ -36,6 +44,17 @@
           <KFullscreenButton :on="maximized" @click="maximized = !maximized" />
           <KIconButton :title="t('kit.diff.collapse')" @click="emit('close')">✕</KIconButton>
         </header>
+
+        <KFindBar
+          v-if="find.shown.value"
+          v-model:query="find.query.value"
+          v-model:match-case="find.matchCase.value"
+          v-model:whole-word="find.wholeWord.value"
+          :count="find.count.value"
+          :has-hits="find.total.value > 0"
+          @step="find.step"
+          @close="find.close"
+        />
 
         <KSplitPanes
           class="k-diff__panes"
@@ -54,7 +73,7 @@
                 <p v-else-if="plainError" class="k-diff__msg k-diff__msg--error mono" role="alert">{{ plainError }}</p>
                 <p v-else-if="plainBinary" class="k-diff__msg mono">{{ t('kit.diff.binary') }}</p>
                 <div v-else class="k-diff__body k-scroller" tabindex="0">
-                  <KCodeView :path="path" :text="plainText" />
+                  <KCodeView :path="path" :text="plainText" :hits="find.hits.value" :current-hit="find.currentHit.value" />
                 </div>
               </template>
               <p v-else-if="loading" class="k-diff__msg mono">{{ t('kit.diff.loading') }}</p>
@@ -73,6 +92,8 @@
               :path="path"
               :load="load"
               :refresh-key="diff"
+              :find="find.previewFind.value"
+              @found="find.setRenderedTotal"
             />
           </template>
         </KSplitPanes>
@@ -95,9 +116,12 @@
 // whenever the caller refreshes the diff.
 //
 // The diff itself is optional: with `load`, the ± button swaps the paired rows for the whole
-// current file, highlighted — the file as it reads now rather than what changed in it.
+// current file, highlighted — the file as it reads now rather than what changed in it. That
+// view, and a Markdown preview, also have find in file (⌘F or the magnifier,
+// composables/useFindInText.ts).
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
+import { useFindInText } from '../../composables/useFindInText';
 import { useFullscreenPopover } from '../../composables/useFullscreenPopover';
 import { useLoadPhase } from '../../composables/useLoadPhase';
 import type { FileDiff } from '../../lib/api';
@@ -105,6 +129,7 @@ import { diffShown, docPreviewKind, initialViewMode, rememberedViewMode, type Vi
 import KCodeView from './KCodeView.vue';
 import KDiffRows from './KDiffRows.vue';
 import KDocPreview from './KDocPreview.vue';
+import KFindBar from './KFindBar.vue';
 import KFullscreenButton from './KFullscreenButton.vue';
 import KIcon from './KIcon.vue';
 import KIconButton from './KIconButton.vue';
@@ -215,6 +240,17 @@ watch(maximized, (on, was) => {
   });
 }, { immediate: true });
 onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown));
+
+// Find in file: over the whole file (± off) once its text is on screen, and over a Markdown
+// preview — not over the diff rows, an HTML page or a PDF.
+const find = useFindInText(
+  () => (!showDiff.value && plainFor.value === props.path && !plainBinary.value && !plainError.value
+    && shownMode.value !== 'preview'
+    ? plainText.value
+    : null),
+  sectionEl,
+  () => previewable.value && shownMode.value !== 'source' && previewKind.value === 'markdown',
+);
 
 // Only shown next to the truncation note, where "перші N" has to name what is on screen.
 const rowCount = computed(() =>

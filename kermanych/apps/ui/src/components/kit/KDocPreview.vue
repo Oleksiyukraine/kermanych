@@ -1,5 +1,6 @@
 <template>
   <div
+    ref="rootEl"
     class="k-doc-preview k-scroller"
     tabindex="0"
     :aria-label="t('kit.docPreview.label', { path })"
@@ -61,11 +62,17 @@
 // re-reads while an agent keeps editing; an unchanged body is left alone, so a refresh never
 // resets the scroll of a page that did not change. A click on an in-repo link of a Markdown
 // doc is handed to the caller as `open`, with the repo-relative path it points at.
+//
+// `find` (the viewer's find bar, composables/useFindInText.ts) marks matches in a Markdown doc
+// and reports how many there are as `found`; with `current` it scrolls to that one. An HTML page
+// (opaque sandbox) and a PDF (Chromium's viewer) are out of reach, so neither is searched.
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
+import type { PreviewFind } from '../../composables/useFindInText';
 import { useLoadPhase } from '../../composables/useLoadPhase';
 import { usePanZoom } from '../../composables/usePanZoom';
 import { docPreviewKind } from '../../lib/doc-preview';
+import { findRanges } from '../../lib/find-in-text';
 import { renderDoc } from '../../lib/markdown';
 import KSkeleton from './KSkeleton.vue';
 
@@ -74,8 +81,9 @@ const props = defineProps<{
   load: (path: string) => Promise<Blob>;
   text?: string | null;
   refreshKey?: unknown;
+  find?: PreviewFind | null;
 }>();
-const emit = defineEmits<{ open: [path: string] }>();
+const emit = defineEmits<{ open: [path: string]; found: [count: number] }>();
 
 const { t } = useI18n();
 
@@ -224,11 +232,92 @@ watch(
 );
 watch([() => props.path, () => props.refreshKey, () => props.text], () => void refresh(), { immediate: true });
 
+// ── Find ─────────────────────────────────────────────────────────────────
+// Marked with the CSS Custom Highlight API rather than <mark>s: the doc's markup (its v-html,
+// the diagram boxes) stays as rendered. The two Highlights are shared by every preview on the
+// page, so each one adds and removes only its own ranges.
+const rootEl = ref<HTMLElement | null>(null);
+let ownHits: Range[] = [];
+let ownCurrent: Range | null = null;
+// The step last scrolled to, so a re-render of the doc (an agent editing it) does not scroll
+// the page back to the match.
+let scrolledFor = '';
+
+function highlight(name: 'k-find' | 'k-find-current'): Highlight | null {
+  if (typeof CSS === 'undefined' || !CSS.highlights) return null;
+  let h = CSS.highlights.get(name);
+  if (!h) {
+    h = new Highlight();
+    h.priority = name === 'k-find-current' ? 1 : 0;
+    CSS.highlights.set(name, h);
+  }
+  return h;
+}
+
+function clearFind(): void {
+  const all = highlight('k-find');
+  for (const r of ownHits) all?.delete(r);
+  if (ownCurrent) highlight('k-find-current')?.delete(ownCurrent);
+  ownHits = [];
+  ownCurrent = null;
+}
+
+function paintFind(): void {
+  clearFind();
+  const f = props.find;
+  const el = markdownEl.value;
+  if (!f || !el || kind.value !== 'markdown') {
+    scrolledFor = '';
+    emit('found', 0);
+    return;
+  }
+  ownHits = findRanges(el, f.query, { matchCase: f.matchCase, wholeWord: f.wholeWord });
+  const all = highlight('k-find');
+  for (const r of ownHits) all?.add(r);
+  emit('found', ownHits.length);
+  const current = f.current === undefined ? undefined : ownHits[f.current];
+  if (!current) {
+    scrolledFor = '';
+    return;
+  }
+  ownCurrent = current;
+  highlight('k-find-current')?.add(current);
+  const key = `${f.query}|${f.matchCase}|${f.wholeWord}|${f.current}`;
+  if (key === scrolledFor) return;
+  scrolledFor = key;
+  scrollToRange(current);
+}
+
+// To the middle of the pane, unless the match is already in view.
+function scrollToRange(range: Range): void {
+  const box = rootEl.value;
+  if (!box) return;
+  const r = range.getBoundingClientRect();
+  const view = box.getBoundingClientRect();
+  if (r.top >= view.top && r.bottom <= view.bottom) return;
+  box.scrollTop += r.top - view.top - box.clientHeight / 2;
+}
+
+watch([() => props.find, markdownHtml, markdownEl], paintFind, { flush: 'post' });
+
 onBeforeUnmount(() => {
   run++;
+  clearFind();
   dropDocument();
 });
 </script>
+
+<style lang="scss">
+// Find-in-preview marks (see «Find» above), the same amber as KCodeView's. A highlight
+// pseudo-element takes no scoped attribute, so these are global — the names are this
+// component's own.
+::highlight(k-find) {
+  background-color: color-mix(in srgb, var(--k-warning) 28%, transparent);
+}
+::highlight(k-find-current) {
+  background-color: color-mix(in srgb, var(--k-warning) 65%, transparent);
+}
+</style>
 
 <style scoped lang="scss">
 .k-doc-preview {
