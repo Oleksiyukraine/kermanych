@@ -1402,12 +1402,13 @@ request with nobody watching.
   `.env` and your `GIT_TOKEN`: the database keeps a card's author as created, lets only the
   author switch automatic execution on, and switches it off when anyone else edits what the
   card asks for.
-- **Activation.** «ШІ-команда» → project → «Агенти» → «Посіпака» → «Активувати на цій машині».
+- **Activation.** «ШІ-команда» → project → «Агенти» → «Посіпака» (its page,
+  `/ai-team/agents/minion`) → «Активувати на цій машині».
   It is stored on this machine only (SQLite `minion_projects`), for any number of projects, and
   needs the project bound to a local repository. Deactivating stops taking new cards; a run in
   progress goes on.
 - **How many at once.** One cap for the whole machine, across its projects: 1 by default, up
-  to 8, set on the same card. A minion run starts only on a free agent slot and only while none
+  to 8, set on the same page. A minion run starts only on a free agent slot and only while none
   of your own sessions waits for one («Ресурси машини»), so your launches never queue behind it.
 - **A run.** An ordinary agent session of the card's project in a fresh worktree, on your
   runtime, with the card's model and effort and every rule of the repository and the project
@@ -1463,6 +1464,25 @@ request with nobody watching.
   the Mac from idle sleep (the screen may turn off); otherwise the machine sleeps as usual, so
   set macOS not to sleep on a dedicated box. The desktop app keeps its sign-in fresh while the
   window is hidden. Signing out on one machine currently signs you out on all of them.
+
+### Agents («ШІ-команда → Агенти»)
+
+A short list of Kermanych's own agents (spec: `docs/specs/2026-11-03-ai-team-agent-pages.md`),
+grouped by stage of work: «Виконання», «Дизайн», «Перевірка і здача», and the two with no
+instruction of their own. Each row has the agent's icon, one line on what it does, «переписано»
+when its instruction is not Kermanych's default, and the number of assigned skills. A row opens
+the agent's page, `/ai-team/agents/<id>` (deep-linkable; an unknown id lands on the list). The
+page explains how the agent works: when it runs, what it does, what it gets (each `{{hole}}`),
+what Kermanych appends that no override changes, and how it ends.
+
+- **Workspace scope:** the page edits the agent's instruction and its skill sequence. Leaving the
+  page with an unsaved instruction asks first; switching the project or workspace in the
+  sidebar drops the draft.
+- **Project scope:** the same list, and the page is read-only. It shows what this project's
+  launch gets — the project's own row, else the workspace's, else the default (the source is
+  named) — and links to the workspace scope. «Посіпака»'s page also has its machine block
+  (activation, cap, pause).
+- **User scope:** no agent layer.
 
 ### Skills («ШІ-команда → Навички»)
 

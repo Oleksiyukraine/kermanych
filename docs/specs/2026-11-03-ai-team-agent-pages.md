@@ -70,7 +70,7 @@ works.
    - **Виконання:** Посіпака, Промоутер
    - **Дизайн:** Дизайнер, Зберегти дизайн
    - **Перевірка і здача:** Ревізор, Провізор, Комітер, Вирішувач конфліктів
-   - **Без ШІ:** Завершити, Саммарі
+   - **Без власної інструкції:** Завершити, Саммарі (worded per decision 8 rather than «Без ШІ»)
 
    The grouping is presentation and lives in `lib/ai-team.ts`, not in `@kermanych/core`.
    *Rejected:* grouping by kind (session / procedure / automation — technical); a flat list.
@@ -114,15 +114,16 @@ works.
    per group (no such tokens in the theme).
 
 7. **Leaving an agent page with an unsaved instruction asks first.** `onBeforeRouteLeave` /
-   `onBeforeRouteUpdate` → `confirmAction`: «Інструкцію змінено і не збережено. Піти без
-   збереження?» («Піти» / «Лишитися»). Changing the project or workspace in the sidebar changes
-   no route and keeps today's behaviour: the draft is dropped, so text typed for one workspace is
-   never saved into another.
+   `onBeforeRouteUpdate` → `confirmAction` («Піти без збереження? Інструкцію «…» змінено і не
+   збережено.», confirm «Піти»; the cancel is the dialog's own). Changing the scope, the project
+   or the workspace changes no route and keeps today's behaviour: the draft is dropped, so text
+   typed for one workspace is never saved into another.
    *Rejected:* dropping silently; keeping drafts per agent in memory (unsaved text lost unseen).
 
 8. **The «без ШІ» kind label is reworded to «автоматика»** with the tooltip «Керманич виконує
-   сам — власної інструкції й навичок немає». «Саммарі» does reach a model: it sends a fixed
-   request into the same session, answered by that session's model. «без ШІ» says otherwise.
+   сам — власної інструкції й навичок немає», and the note on an automation's page no longer says
+   «модель тут не задіяна». «Саммарі» does reach a model: it sends a fixed request into the same
+   session, answered by that session's model. The list's group caption follows (decision 4).
    (Settled by the author during writing; the operator may overrule.)
 
 ## Fact sheet for «Як працює»
@@ -146,21 +147,30 @@ Collected from code; the texts are written from it.
 
 - `router/routes.ts`: `ai-team/:section?/:item?`.
 - `lib/ai-team.ts`: `AI_TEAM_AGENT_GROUPS` (group key → agent ids), `AGENT_ICONS`
-  (id → `KIconName`), `aiTeamAgent(id)` (the `AgentDef` or undefined), and the pure resolution of
-  the project view (project row → workspace row → default; sequence whole from the first scope
-  that has one, the `SkillsService.assignedFor` comparator).
-- `components/settings/AiAgentsList.vue` (new): the grouped list; reads the owner's agent rows and
-  sequences (project scope: the project's and its workspace's).
-- `components/settings/AiAgentPage.vue` (new): one agent. The workspace editor logic of
-  `AiAgentsPanel.vue` moves here for one agent (one draft, one save / reset, one sequence) and
-  `AiAgentsPanel.vue` is deleted. The read-only project view replaces `MinionPanel.vue`'s
-  instruction block; its machine block moves to `components/settings/MinionMachineBlock.vue` and
+  (id → `KIconName`), `aiTeamAgent(id)` (the `AgentDef` or undefined), and `resolveAgent` — the
+  launch's resolution over any mix of rows (the top scope's row alone decides the instruction,
+  broken or blank → default; the sequence whole from the top scope that has one, the
+  `SkillsService.assignedFor` comparator).
+- `composables/useAiAgentRows.ts` (new): reads the agent rows and sequences of the owners a page
+  is about (`agentOwners`: a project and its workspace, or a workspace).
+- `components/settings/AiAgentsList.vue` (new): the grouped list.
+- `components/settings/AiAgentPage.vue` (new): one agent — meta, «Як працює», then the editor or
+  the read-only view, and «Посіпака»'s machine block.
+- `components/settings/AiAgentEditor.vue` (new): the workspace editor of `AiAgentsPanel.vue` for
+  one agent (one draft, one save / reset, one sequence) and the leave guard; keyed on the owner,
+  so a workspace switch remounts it. `AiAgentsPanel.vue` is deleted.
+- `components/settings/AiAgentReadonly.vue` (new): the project view, replacing `MinionPanel.vue`'s
+  instruction block; the machine block moves to `components/settings/MinionMachineBlock.vue` and
   `MinionPanel.vue` is deleted.
+- `pages/AiTeamPage.vue`: the agent page's header (breadcrumb, disc, name, tagline) in place of
+  the section heading; an `:item` that names no agent, or sits under another section, is
+  replaced away; the rail's «Агенти» row from an agent page goes back to the list.
 - `KIcon.vue`: the eight new names of decision 6.
-- `i18n/{uk,en}`: `aiTeam.agents.*` (groups, list marks, breadcrumb, page headings, source labels,
-  the leave confirmation) and `aiTeam.agents.about.<id>.*` (tagline and the «Як працює»
-  sub-sections); the `aiTeam.sections.agents` sub / blurb reworded; `settings.agentKind.automation`
-  per decision 8. Keys the deleted panels used and nothing else reads are removed.
+- `i18n/{uk,en}`: `aiTeam.agents.*` (groups, list marks, breadcrumb, page headings, source labels)
+  and `aiTeam.agents.about.<id>.*` from `i18n/<locale>/agent-about.ts` (tagline and the «Як
+  працює» sub-sections); `confirmations.leaveAgent` and `confirmations.label.leave`; the
+  `aiTeam.sections.agents` sub / blurb reworded; `settings.agentKind.automation` and
+  `settings.aiAgents.automationNote` per decision 8. Keys only the deleted panels read are removed.
 
 ## Out of scope
 

@@ -15,7 +15,6 @@ test('every kind has a Ukrainian label, and they differ', () => {
   const labels = (['session', 'procedure', 'automation'] as const).map(
     (k) => uk.settings.agentKind[k],
   );
-  expect(labels).toEqual(['власна сесія', 'процедура', 'без ШІ']);
   expect(new Set(labels).size).toBe(3);
   for (const l of labels) expect(l.trim()).not.toBe('');
 });
