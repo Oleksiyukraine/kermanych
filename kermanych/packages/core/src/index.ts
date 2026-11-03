@@ -98,8 +98,28 @@ export {
   AGENT_LANGUAGE_LABELS,
   isAgentLanguage,
   agentLanguageDirective,
+  agentLanguageEnglishName,
   type AgentLanguage,
 } from "./language";
+export { DEFAULT_VOICE, VOICE_IDS, VOICE_MODEL, isVoiceId, voiceLanguage, voiceLivePrompt, type VoiceId } from "./voice";
+export {
+  COMMENTARY_CHUNK_CHARS,
+  PROGRESS_EVERY_MS,
+  VOICE_NOTE,
+  VOICE_SILENCE_HANGUP_MS,
+  delegationAction,
+  describeUiRequest,
+  finalReply,
+  parseUiAnswer,
+  progressNote,
+  shouldHangUp,
+  takeUtterance,
+  toCommentaryChunks,
+  unwrapVoiceMessage,
+  voiceMessagePrompt,
+  type HeardFragment,
+  type VoiceAction,
+} from "./voice-bridge";
 export { STE_LEVELS, STE_RULES, type SteCell, type SteLevel, type SteRule, type SteRuleId } from "./ste";
 export {
   ASSIGNED_BLOCK_HEADER,
@@ -131,6 +151,9 @@ export {
   TASK_PLAN_SKILL,
   FRONTEND_HANDOFF_SKILL,
   API_REQUEST_SKILL,
+  DESIGN_SPEC_SKILL,
+  IMPLEMENT_FROM_DESIGN_SKILL,
+  DESIGN_README,
   docsPolicy,
   docsPolicyAppend,
   docsLayoutKind,
@@ -167,6 +190,8 @@ export {
 export {
   AGENTS,
   MINION_AGENT_ID,
+  DESIGNER_AGENT_ID,
+  DESIGN_SAVE_AGENT_ID,
   PR_CONVENTIONS_FALLBACK,
   KERMANYCH_COAUTHOR,
   COAUTHOR_DIRECTIVE,
@@ -181,6 +206,15 @@ export {
   type AgentKind,
 } from "./agents";
 export { DEEP_ANALYSIS_SKILL, deepAnalysisPrompt } from "./deep-analysis";
+export {
+  DESIGN_SCREENS_DIR,
+  DESIGN_WIDTHS,
+  designDirFor,
+  designReadmePath,
+  designDirOf,
+  designScreenshots,
+  designCommitMessage,
+} from "./design";
 export {
   FINDING_KINDS,
   FINDING_STATUSES,

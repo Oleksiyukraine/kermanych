@@ -59,6 +59,7 @@ function cloudTask(over: Partial<Task> = {}): Task {
     updatedAt: NOW,
     worktree: true,
     autoRun: false,
+    design: false,
     ...over,
   };
   cloudTasks.set(t.id, t);

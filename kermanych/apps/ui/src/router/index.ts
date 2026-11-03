@@ -1,6 +1,7 @@
 import { watch } from 'vue';
 import { defineRouter } from '#q-app/wrappers';
 import {
+  START_LOCATION,
   createMemoryHistory,
   createRouter,
   createWebHashHistory,
@@ -28,7 +29,7 @@ export default defineRouter(({ store }) => {
   // session, so a signed-in user never sees /login flash by. The pinia instance
   // comes from defineRouter's context because guards run outside a component.
   let watching = false;
-  Router.beforeEach(async (to) => {
+  Router.beforeEach(async (to, from) => {
     const auth = useAuth(store);
     await auth.ready;
 
@@ -59,6 +60,15 @@ export default defineRouter(({ store }) => {
 
     const isPublic = to.matched.some((r) => r.meta.public === true);
     if (!auth.user && !isPublic) return { name: 'login' };
+    // A restart opens the app at «/»; the first navigation goes back to the page the operator
+    // was last on instead. A reload (⌘R) keeps its hash and never lands here with «/».
+    if (from === START_LOCATION && auth.user && to.fullPath === '/') {
+      const last = readLastRoute();
+      if (last && last !== '/') {
+        const resolved = Router.resolve(last);
+        if (resolved.matched.length && !resolved.matched.some((r) => r.meta.public === true)) return last;
+      }
+    }
     // Already signed in: the signed-out screens have nothing to show. Covers a
     // persisted session landing straight on /auth/callback, where no `user`
     // transition happens for the watcher to see.
@@ -68,5 +78,27 @@ export default defineRouter(({ store }) => {
     return true;
   });
 
+  Router.afterEach((to) => {
+    if (!to.matched.some((r) => r.meta.public === true)) writeLastRoute(to.fullPath);
+  });
+
   return Router;
 });
+
+// The last signed-in page, for the restart above. Guarded: refused storage only means the app
+// opens on its first page, as before.
+const LAST_ROUTE_KEY = 'kermanych.lastRoute';
+function readLastRoute(): string | null {
+  try {
+    return localStorage.getItem(LAST_ROUTE_KEY);
+  } catch {
+    return null;
+  }
+}
+function writeLastRoute(path: string): void {
+  try {
+    localStorage.setItem(LAST_ROUTE_KEY, path);
+  } catch {
+    /* storage unavailable */
+  }
+}

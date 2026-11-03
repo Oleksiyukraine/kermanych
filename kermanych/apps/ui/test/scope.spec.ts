@@ -40,6 +40,7 @@ function task(id: string, projectId: string, over: Partial<Task> = {}): Task {
     worktree: true,
     hidden: false,
     deepAnalysis: false,
+    design: false,
     autoRun: false,
     ...over,
   };

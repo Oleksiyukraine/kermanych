@@ -94,6 +94,9 @@
    the card (Агенти, Чати), in every theme. Rejected: always animated (endless motion on a
    finished session distracts); animating every running card (five parallel agents turn the
    list into a garland).
+   *Amended by `docs/specs/2026-10-29-agent-list-cards.md`, decisions 4 and 6:* every working
+   card now wears the ring (dimmer when not selected, all rings in one phase), and «working» is
+   `thinking` / `tool` only — `queued` no longer runs it.
 7. **Entering Hermes uses the circle wipe** (`lib/reveal.ts`), like dark/light. Rejected: a
    custom canvas reveal like the Matrix rain — more code to own, and it would make this theme
    louder than the others.

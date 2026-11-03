@@ -5,12 +5,15 @@
 // the platform and kind gates (docs/specs/2026-11-03-session-browser-preview.md).
 import { HttpException } from "@nestjs/common";
 import type { HttpAdapterHost } from "@nestjs/core";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { RegistryService } from "../src/registry/registry.service";
 import type { PreviewService } from "../src/preview/preview.service";
 import type { Platform, PreviewState, Session } from "@kermanych/core";
 import { setBrowserHost, type BrowserActionResult, type BrowserHost, type BrowserNetworkEntry } from "../src/browser/browser-host";
-import { BrowserMcpService, NETWORK_OUTPUT_LIMIT } from "../src/browser/browser-mcp.service";
+import { BrowserMcpService, NETWORK_OUTPUT_LIMIT, screenshotFile } from "../src/browser/browser-mcp.service";
 import { BrowserMcpController } from "../src/http/browser-mcp.controller";
 
 const http = { httpAdapter: { getHttpServer: () => ({ address: () => ({ port: 4317 }) }) } } as unknown as HttpAdapterHost;
@@ -45,10 +48,17 @@ function fakeHost() {
   } satisfies BrowserHost;
 }
 
-function make(previewUrl?: string, opts: { platform?: Platform; kind?: Session["kind"] } = {}) {
+function make(
+  previewUrl?: string,
+  opts: { platform?: Platform; kind?: Session["kind"]; worktreePath?: string; worktree?: boolean } = {},
+) {
   const registry = new RegistryService(":memory:");
   registry.upsertProject({ id: "p1", name: "p", localRepoPath: "/tmp/p1", ...(opts.platform ? { platform: opts.platform } : {}) });
-  const s = registry.createSession({ projectId: "p1", name: "n", task: "t", worktreePath: "", branch: "b", ...(opts.kind ? { kind: opts.kind } : {}) });
+  const s = registry.createSession({
+    projectId: "p1", name: "n", task: "t", worktreePath: opts.worktreePath ?? "", branch: "b",
+    ...(opts.kind ? { kind: opts.kind } : {}),
+    ...(opts.worktree === undefined ? {} : { worktree: opts.worktree }),
+  });
   const running: PreviewState = { phase: "running", url: "http://localhost:5199", services: [{ name: "web", port: 5199 }] };
   const preview = {
     urlOf: vi.fn(() => previewUrl),
@@ -67,12 +77,22 @@ function make(previewUrl?: string, opts: { platform?: Platform; kind?: Session["
     return reply.result;
   };
   const list = async () => ((await mcp.handle(s.id, { jsonrpc: "2.0", id: 1, method: "tools/list" })) as { result: { tools: { name: string }[] } }).result.tools.map((t) => t.name);
-  return { mcp, host, s, call, list, preview };
+  return { mcp, host, s, call, list, preview, registry };
 }
 
 const PREVIEW_TOOL_NAMES = ["preview_start", "preview_status", "preview_stop", "preview_logs"];
 
-afterEach(() => setBrowserHost(undefined));
+const tmpDirs: string[] = [];
+function tmp(): string {
+  const dir = mkdtempSync(join(tmpdir(), "kermanych-shot-"));
+  tmpDirs.push(dir);
+  return dir;
+}
+
+afterEach(() => {
+  setBrowserHost(undefined);
+  for (const dir of tmpDirs.splice(0)) rmSync(dir, { recursive: true, force: true });
+});
 
 describe("bearer and binding", () => {
   it("one token per session, reused until revoked; the controller refuses anything else", async () => {
@@ -101,6 +121,28 @@ describe("bearer and binding", () => {
     setBrowserHost(undefined);
     expect(mcp.bindingFor(s.id)).toEqual({ name: "kermanych", url: "http://127.0.0.1:4317/api/browser/mcp", token: expect.any(String) });
     expect(await list()).toEqual([...PREVIEW_TOOL_NAMES, "report_finding", "list_findings"]);
+  });
+
+  it("asks for the findings in the operator's agent language, English while none is chosen", async () => {
+    const { mcp, s, registry } = make();
+    const env = process.env.KERMANYCH_LANGUAGE;
+    delete process.env.KERMANYCH_LANGUAGE;
+    const reportDescription = async () => {
+      const reply = (await mcp.handle(s.id, { jsonrpc: "2.0", id: 1, method: "tools/list" })) as { result: { tools: { name: string; description: string }[] } };
+      return reply.result.tools.find((t) => t.name === "report_finding")!.description;
+    };
+    try {
+      expect(await reportDescription()).toContain("Write every field in English;");
+      registry.setAuthSession({ userId: "u1", accessToken: "t", agentLanguage: "uk" });
+      expect(await reportDescription()).toContain("Write every field in Ukrainian;");
+      registry.setAuthSession({ userId: "u1", accessToken: "t", agentLanguage: "en-ste-80" });
+      expect(await reportDescription()).toContain("Write every field in English;");
+      process.env.KERMANYCH_LANGUAGE = "de";
+      expect(await reportDescription()).toContain("Write every field in German;");
+    } finally {
+      if (env === undefined) delete process.env.KERMANYCH_LANGUAGE;
+      else process.env.KERMANYCH_LANGUAGE = env;
+    }
   });
 
   it("lists every browser tool, then the preview tools, then the findings tools, each with a closed object schema", async () => {
@@ -412,5 +454,80 @@ describe("preview tools", () => {
     const chat = make(undefined, { kind: "chat" });
     expect((await chat.call("preview_status")).isError).toBe(true);
     expect(chat.preview.settled).not.toHaveBeenCalled();
+  });
+});
+
+describe("browser_screenshot with path", () => {
+  // "iVBORw0K" is the fake host's base64 — the PNG signature's first 6 bytes.
+  const png = Buffer.from("iVBORw0K", "base64");
+
+  it("saves the PNG under the worktree's docs/ and answers with the path, not the image", async () => {
+    const worktree = tmp();
+    const { host, s, call } = make(undefined, { worktreePath: worktree });
+    const path = "docs/design/2026-10-29-orders/screens/list-empty@390.png";
+    expect(await call("browser_screenshot", { path, full_page: true })).toEqual({ content: [{ type: "text", text: `saved ${path} (${png.length} bytes)` }] });
+    expect(host.screenshot).toHaveBeenCalledWith({ sessionId: s.id, projectId: "p1" }, { fullPage: true });
+    expect(readFileSync(join(worktree, path))).toEqual(png);
+  });
+
+  it("refuses a bad path or a session without its own worktree, capturing and writing nothing", async () => {
+    const worktree = tmp();
+    const inWorktree = make(undefined, { worktreePath: worktree });
+    for (const path of ["../x.png", "src/x.png", "docs/x.jpg"]) {
+      const out = await inWorktree.call("browser_screenshot", { path });
+      expect(out.isError, path).toBe(true);
+    }
+    expect(inWorktree.host.screenshot).not.toHaveBeenCalled();
+
+    const checkout = tmp();
+    const inCheckout = make(undefined, { worktreePath: checkout, worktree: false });
+    const out = await inCheckout.call("browser_screenshot", { path: "docs/x.png" });
+    expect(out.isError).toBe(true);
+    expect(out.content[0].text).toMatch(/worktree/);
+    expect(inCheckout.host.screenshot).not.toHaveBeenCalled();
+    expect(existsSync(join(checkout, "docs"))).toBe(false);
+  });
+});
+
+describe("screenshotFile", () => {
+  it("accepts a .png under docs/, resolved inside the worktree", () => {
+    const worktree = tmp();
+    const file = screenshotFile(worktree, "docs/a/b@390.png");
+    expect(file.endsWith(join("docs", "a", "b@390.png"))).toBe(true);
+    expect(screenshotFile(worktree, "docs/Shot.PNG").endsWith("Shot.PNG")).toBe(true);
+  });
+
+  it.each([
+    ["../x.png"],
+    ["/abs/docs/x.png"],
+    ["docs/../x.png"],
+    ["docs/./x.png"],
+    ["docs//x.png"],
+    ["docs\\x.png"],
+    ["src/x.png"],
+    ["docs"],
+    ["docs/x.jpg"],
+    ["docs/.png"],
+  ])("refuses %s", (path) => {
+    expect(() => screenshotFile(tmp(), path)).toThrow(/`path`/);
+  });
+
+  it("refuses a path that a symlink inside docs/ leads out of the worktree", () => {
+    const worktree = tmp();
+    const outside = tmp();
+    mkdirSync(join(worktree, "docs"));
+    symlinkSync(outside, join(worktree, "docs", "link"));
+    expect(() => screenshotFile(worktree, "docs/link/x.png")).toThrow(/outside/);
+    expect(() => screenshotFile(worktree, "docs/link/deeper/x.png")).toThrow(/outside/);
+    // A symlink to /tmp itself, as an agent might plant it.
+    symlinkSync("/tmp", join(worktree, "docs", "tmp"));
+    expect(() => screenshotFile(worktree, "docs/tmp/x.png")).toThrow(/outside/);
+  });
+
+  it("refuses a dangling symlink at the file itself", () => {
+    const worktree = tmp();
+    mkdirSync(join(worktree, "docs"));
+    symlinkSync(join(tmp(), "missing.png"), join(worktree, "docs", "x.png"));
+    expect(() => screenshotFile(worktree, "docs/x.png")).toThrow(/outside/);
   });
 });

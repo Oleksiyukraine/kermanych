@@ -77,6 +77,7 @@
         <KIconButton :title="t('kit.gallery.iconTip.archive')">⤓</KIconButton>
         <KIconButton :title="t('kit.gallery.iconTip.delete')">✕</KIconButton>
         <KIconButton active :title="t('kit.gallery.iconTip.previewActive')">◼</KIconButton>
+        <KFullscreenButton :on="galleryFullscreen" @click="galleryFullscreen = !galleryFullscreen" />
       </div>
       <div class="kit__caption mono">
         {{ t('kit.gallery.cap.actionButtons') }}
@@ -329,10 +330,8 @@
            hides it whenever the labels are on screen. Passing one would document a
            combination the app never renders. -->
       <div class="kit__sidebar">
-        <KNavItem :label="t('kit.gallery.nav.active')" :count="3" :active="navActive === 'active'" @click="navActive = 'active'" />
-        <KNavItem :label="t('kit.gallery.nav.waiting')" :count="2" :active="navActive === 'waiting'" @click="navActive = 'waiting'" />
+        <KNavItem :label="t('kit.gallery.nav.agents')" :count="3" :active="navActive === 'agents'" @click="navActive = 'agents'" />
         <KNavItem :label="t('kit.gallery.nav.completed')" :count="12" :active="navActive === 'completed'" @click="navActive = 'completed'" />
-        <KNavItem :label="t('kit.gallery.nav.errors')" :count="1" :active="navActive === 'errors'" @click="navActive = 'errors'" />
         <KNavItem :label="t('kit.gallery.nav.tasks')" :count="5" :active="navActive === 'tasks'" @click="navActive = 'tasks'" />
       </div>
       <div class="kit__caption mono">
@@ -423,6 +422,15 @@
       </div>
       <div class="kit__caption mono">{{ t('kit.gallery.cap.sessionDeep') }}</div>
 
+      <!-- DESIGN — a «Дизайн» session (KDesignMark), beside the analysis mark for the same reason. -->
+      <div class="kit__cards">
+        <KSessionCard
+          branch="design/orders-list" :title="t('kit.gallery.sessionCard.designTitle')" :time="t('kit.gallery.sessionCard.designTime')"
+          status="tool" :status-line="t('kit.gallery.sessionCard.designStatus')" model="opus-5" harness="managed" design
+        />
+      </div>
+      <div class="kit__caption mono">{{ t('kit.gallery.cap.sessionDesign') }}</div>
+
       <!-- «ПОСІПАКА» — a session the minion runs (KMinionMark), one whose run stopped on a
            choice for the operator (KDecisionMark, the reason in its tooltip), and one that found
            nothing to change (KNotNeededMark, muted, the evidence in its tooltip). -->
@@ -488,6 +496,19 @@
       <div class="kit__label">{{ t('kit.gallery.sec.composer') }}</div>
       <!-- The Хелпери picker lives inside the composer: press `/` on the empty field, or the
            `/` button in the controls row. -->
+      <!-- The voice conversation's bar sits right above the composer of the session it is bound to;
+           🎤 in the controls row starts and ends it. -->
+      <KVoiceBar
+        v-if="voiceSample"
+        phase="live"
+        activity="hearing"
+        :caption="{ who: 'operator', text: 'Давай другий варіант, і додай тест на порожній список' }"
+        :mic-level="0.55"
+        :muted="false"
+        :elapsed-ms="252_000"
+        @mute="() => {}"
+        @end="voiceSample = false"
+      />
       <KComposer
         v-model="composerDraft"
         :model="composerModel"
@@ -499,6 +520,9 @@
         @send="() => {}"
         @effort="(level) => (composerEffort = level)"
         @set-model="(p) => (composerModel = p.model)"
+        :voice="true"
+        :voice-active="voiceSample"
+        @voice="voiceSample = !voiceSample"
       />
     </section>
 
@@ -531,15 +555,18 @@
         <span class="kit__view-sep" aria-hidden="true"></span>
         <KViewModeToggle v-model="galleryViewMode" />
       </div>
-      <div class="kit__view-frame" :class="`kit__view-frame--${galleryViewMode}`">
-        <pre v-if="galleryViewMode !== 'preview'" class="kit__view-source mono">{{ viewModeSample }}</pre>
-        <KDocPreview
-          v-if="galleryViewMode !== 'source'"
-          path="docs/specs/view-mode.md"
-          :load="loadViewModeSample"
-          :text="viewModeSample"
-        />
-      </div>
+      <!-- No storage-key: dragging the sample's divider leaves the viewers' split alone. -->
+      <KSplitPanes
+        class="kit__view-frame"
+        :show="galleryViewMode === 'source' ? 'start' : galleryViewMode === 'preview' ? 'end' : 'both'"
+      >
+        <template #start>
+          <pre class="kit__view-source mono">{{ viewModeSample }}</pre>
+        </template>
+        <template #end>
+          <KDocPreview path="docs/specs/view-mode.md" :load="loadViewModeSample" :text="viewModeSample" />
+        </template>
+      </KSplitPanes>
       <div class="kit__caption mono">
         {{ t('kit.gallery.cap.viewMode') }}
       </div>
@@ -622,6 +649,7 @@ import KThoughtToggle from 'components/kit/KThoughtToggle.vue';
 import KTabs from 'components/kit/KTabs.vue';
 import KSubNav from 'components/kit/KSubNav.vue';
 import KComposer from 'components/kit/KComposer.vue';
+import KVoiceBar from 'components/kit/KVoiceBar.vue';
 import KChipSelect from 'components/kit/KChipSelect.vue';
 import KCheckbox from 'components/kit/KCheckbox.vue';
 import KSkeleton from 'components/kit/KSkeleton.vue';
@@ -629,7 +657,9 @@ import KProgressBar from 'components/kit/KProgressBar.vue';
 import KDiffView from 'components/kit/KDiffView.vue';
 import KDocPreview from 'components/kit/KDocPreview.vue';
 import KIcon from 'components/kit/KIcon.vue';
+import KFullscreenButton from 'components/kit/KFullscreenButton.vue';
 import KViewModeToggle from 'components/kit/KViewModeToggle.vue';
+import KSplitPanes from 'components/kit/KSplitPanes.vue';
 import type { ViewMode } from '../lib/doc-preview';
 import type { FileDiff } from '../lib/api';
 import type { LaunchMode } from '../lib/native-session';
@@ -649,7 +679,7 @@ const subNavItems = [
   { value: 'risks', label: 'Risk Registry' },
   { value: 'releases', label: 'Release Notes' },
 ];
-const navActive = ref('active');
+const navActive = ref('agents');
 const navStacked = ref('skills');
 const detailTab = ref('log');
 const detailTabs = [
@@ -658,6 +688,8 @@ const detailTabs = [
   { value: 'session', label: t('kit.gallery.detailTab.session') },
 ];
 const composerDraft = ref('');
+// The voice bar sample: 🎤 in the composer below shows and hides it, «Завершити» hides it.
+const voiceSample = ref(true);
 // The gallery has no session behind the chip, so the pick is held locally — the point here is
 // that the menu opens upward inside the row and reports the level it landed on.
 const composerEffort = ref<ThinkingLevel>('high');
@@ -690,6 +722,8 @@ const diffSample: FileDiff = {
   truncated: false,
 };
 const galleryDiffOn = ref(true);
+// The action row's full-screen sample: a toggle, so both of its drawn states show.
+const galleryFullscreen = ref(false);
 const galleryViewMode = ref<ViewMode>('split');
 const viewModeSample = t('kit.gallery.viewModeSample');
 // KDocPreview reads images and the body through `load`; the sample has neither to fetch.
@@ -1058,14 +1092,11 @@ function onPanelEffort(level: ThinkingLevel) { lastAction.value = `effort: ${lev
   background: var(--k-line-strong);
 }
 .kit__view-frame {
-  display: grid;
   height: 220px;
   margin-top: var(--k-sp-3);
   border: 1px solid var(--k-line-strong);
   border-radius: var(--k-r);
   overflow: hidden;
-
-  &--split { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
 }
 .kit__view-source {
   margin: 0;
@@ -1076,10 +1107,6 @@ function onPanelEffort(level: ThinkingLevel) { lastAction.value = `effort: ${lev
   color: var(--k-text);
   background: var(--k-bg);
 }
-.kit__view-frame--split .kit__view-source {
-  box-shadow: inset -1px 0 0 0 var(--k-line-strong);
-}
-
 .kit__caption {
   margin-top: 14px;
   font-size: 11px;

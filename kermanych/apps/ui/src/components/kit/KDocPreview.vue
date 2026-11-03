@@ -1,5 +1,12 @@
 <template>
-  <div class="k-doc-preview" :aria-label="t('kit.docPreview.label', { path })">
+  <div
+    ref="rootEl"
+    class="k-doc-preview k-scroller"
+    tabindex="0"
+    :aria-label="t('kit.docPreview.label', { path })"
+    @click="onClick"
+    v-on="panZoom.listeners"
+  >
     <div v-if="phase === 'skeleton'" class="k-doc-preview__pad">
       <KSkeleton variant="lines" :rows="6" />
     </div>
@@ -10,9 +17,19 @@
       v-else-if="kind === 'markdown'"
       ref="markdownEl"
       class="k-doc-preview__pad k-doc-preview__markdown k-log__markdown"
-      @click="onMarkdownClick"
       v-html="markdownHtml"
     ></div>
+    <!-- An <img> never runs an SVG's scripts or loads its external resources, so a
+         repository SVG is drawn without being trusted. -->
+    <!-- Pinch or ⌘-scroll to zoom, swipe or drag to move, double-click to fit (usePanZoom). -->
+    <div
+      v-else-if="(kind === 'svg' || kind === 'image') && pictureUrl"
+      ref="stageEl"
+      class="k-doc-preview__stage"
+      data-pz-stage="free"
+    >
+      <img class="k-doc-preview__picture" :src="pictureUrl" :alt="path" draggable="false">
+    </div>
     <!-- An empty sandbox: no scripts, no forms, no top navigation, and an opaque origin, so
          the page cannot reach the app or its api key. -->
     <iframe
@@ -36,17 +53,26 @@
 
 <script setup lang="ts">
 // The rendered side of a file viewer: Markdown through the docs renderer, HTML in an empty
-// sandbox, PDF in Chromium's own viewer. The caller hands over a `load` for the raw bytes of
+// sandbox, PDF in Chromium's own viewer, a picture as an <img>. A picture, and each diagram inside a doc,
+// pinches and moves (usePanZoom). The caller hands over a `load` for the raw bytes of
 // any repo-relative path — the same reader for the file itself and for a Markdown file's
 // relative images — so this component never learns whether it sits on a session or a project.
 //
 // `text` skips the fetch when the caller already holds the body (KFileView). `refreshKey`
 // re-reads while an agent keeps editing; an unchanged body is left alone, so a refresh never
-// resets the scroll of a page that did not change.
+// resets the scroll of a page that did not change. A click on an in-repo link of a Markdown
+// doc is handed to the caller as `open`, with the repo-relative path it points at.
+//
+// `find` (the viewer's find bar, composables/useFindInText.ts) marks matches in a Markdown doc
+// and reports how many there are as `found`; with `current` it scrolls to that one. An HTML page
+// (opaque sandbox) and a PDF (Chromium's viewer) are out of reach, so neither is searched.
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
+import type { PreviewFind } from '../../composables/useFindInText';
 import { useLoadPhase } from '../../composables/useLoadPhase';
+import { usePanZoom } from '../../composables/usePanZoom';
 import { docPreviewKind } from '../../lib/doc-preview';
+import { findRanges } from '../../lib/find-in-text';
 import { renderDoc } from '../../lib/markdown';
 import KSkeleton from './KSkeleton.vue';
 
@@ -55,7 +81,9 @@ const props = defineProps<{
   load: (path: string) => Promise<Blob>;
   text?: string | null;
   refreshKey?: unknown;
+  find?: PreviewFind | null;
 }>();
+const emit = defineEmits<{ open: [path: string]; found: [count: number] }>();
 
 const { t } = useI18n();
 
@@ -66,6 +94,9 @@ const error = ref<string | null>(null);
 const markdownHtml = ref('');
 const srcdoc = ref('');
 const pdfUrl = ref<string | null>(null);
+const pictureUrl = ref<string | null>(null);
+const stageEl = ref<HTMLElement | null>(null);
+const panZoom = usePanZoom();
 const markdownEl = ref<HTMLElement | null>(null);
 const phase = useLoadPhase(() => loadedFor.value !== props.path);
 
@@ -79,6 +110,9 @@ let run = 0;
 function dropDocument(): void {
   if (pdfUrl.value) URL.revokeObjectURL(pdfUrl.value);
   pdfUrl.value = null;
+  if (pictureUrl.value) URL.revokeObjectURL(pictureUrl.value);
+  pictureUrl.value = null;
+  panZoom.reset(stageEl.value);
   for (const url of imageUrls.values()) URL.revokeObjectURL(url);
   imageUrls.clear();
   markdownHtml.value = '';
@@ -110,6 +144,17 @@ async function refresh(): Promise<void> {
       dropDocument();
       shownBytes = bytes;
       pdfUrl.value = URL.createObjectURL(new Blob([bytes], { type: 'application/pdf' }));
+    } else if (k === 'svg' || k === 'image') {
+      // An SVG's body may already be at hand; typed explicitly, since an <img> draws an SVG
+      // only from an image/svg+xml blob.
+      const blob = k === 'svg' && props.text != null
+        ? new Blob([props.text], { type: 'image/svg+xml' })
+        : await props.load(path);
+      const bytes = new Uint8Array(await blob.arrayBuffer());
+      if (id !== run || sameBytes(shownBytes, bytes)) return;
+      dropDocument();
+      shownBytes = bytes;
+      pictureUrl.value = URL.createObjectURL(k === 'svg' ? new Blob([bytes], { type: 'image/svg+xml' }) : blob);
     } else {
       const text = props.text ?? (await (await props.load(path)).text());
       if (id !== run || text === shownText) return;
@@ -133,6 +178,7 @@ async function refresh(): Promise<void> {
 // renderDoc leaves a relative image as data-doc-path with no src; fetch each through `load`.
 async function resolveImages(id: number): Promise<void> {
   await nextTick();
+  wrapDiagrams();
   const imgs = markdownEl.value?.querySelectorAll<HTMLImageElement>('img[data-doc-path]') ?? [];
   for (const img of imgs) {
     const rel = img.dataset.docPath;
@@ -152,10 +198,27 @@ async function resolveImages(id: number): Promise<void> {
   }
 }
 
-// In-repo links render as href="#" (the docs page navigates its tree with them); here there
-// is no tree to move, so the click must not scroll the pane to the top.
-function onMarkdownClick(e: MouseEvent): void {
-  if ((e.target as HTMLElement | null)?.closest('a[data-doc-path]')) e.preventDefault();
+// Each picture of the doc gets its own clipped box to pinch and move in (usePanZoom's
+// `inline` stage). One inside a link is a badge or a pointer: it stays a plain image.
+function wrapDiagrams(): void {
+  for (const img of markdownEl.value?.querySelectorAll<HTMLImageElement>('img') ?? []) {
+    if (img.closest('a, [data-pz-stage]')) continue;
+    const box = document.createElement('span');
+    box.className = 'k-doc-preview__diagram';
+    box.dataset.pzStage = 'inline';
+    img.draggable = false;
+    img.replaceWith(box);
+    box.append(img);
+  }
+}
+
+// Delegated — v-html content has no template to bind to. An in-repo link renders as href="#":
+// the click must not scroll the pane to the top, and goes to the caller instead.
+function onClick(e: MouseEvent): void {
+  const link = (e.target as HTMLElement | null)?.closest<HTMLAnchorElement>('a[data-doc-path]');
+  if (!link) return;
+  e.preventDefault();
+  if (link.dataset.docPath) emit('open', link.dataset.docPath);
 }
 
 watch(
@@ -169,11 +232,92 @@ watch(
 );
 watch([() => props.path, () => props.refreshKey, () => props.text], () => void refresh(), { immediate: true });
 
+// ── Find ─────────────────────────────────────────────────────────────────
+// Marked with the CSS Custom Highlight API rather than <mark>s: the doc's markup (its v-html,
+// the diagram boxes) stays as rendered. The two Highlights are shared by every preview on the
+// page, so each one adds and removes only its own ranges.
+const rootEl = ref<HTMLElement | null>(null);
+let ownHits: Range[] = [];
+let ownCurrent: Range | null = null;
+// The step last scrolled to, so a re-render of the doc (an agent editing it) does not scroll
+// the page back to the match.
+let scrolledFor = '';
+
+function highlight(name: 'k-find' | 'k-find-current'): Highlight | null {
+  if (typeof CSS === 'undefined' || !CSS.highlights) return null;
+  let h = CSS.highlights.get(name);
+  if (!h) {
+    h = new Highlight();
+    h.priority = name === 'k-find-current' ? 1 : 0;
+    CSS.highlights.set(name, h);
+  }
+  return h;
+}
+
+function clearFind(): void {
+  const all = highlight('k-find');
+  for (const r of ownHits) all?.delete(r);
+  if (ownCurrent) highlight('k-find-current')?.delete(ownCurrent);
+  ownHits = [];
+  ownCurrent = null;
+}
+
+function paintFind(): void {
+  clearFind();
+  const f = props.find;
+  const el = markdownEl.value;
+  if (!f || !el || kind.value !== 'markdown') {
+    scrolledFor = '';
+    emit('found', 0);
+    return;
+  }
+  ownHits = findRanges(el, f.query, { matchCase: f.matchCase, wholeWord: f.wholeWord });
+  const all = highlight('k-find');
+  for (const r of ownHits) all?.add(r);
+  emit('found', ownHits.length);
+  const current = f.current === undefined ? undefined : ownHits[f.current];
+  if (!current) {
+    scrolledFor = '';
+    return;
+  }
+  ownCurrent = current;
+  highlight('k-find-current')?.add(current);
+  const key = `${f.query}|${f.matchCase}|${f.wholeWord}|${f.current}`;
+  if (key === scrolledFor) return;
+  scrolledFor = key;
+  scrollToRange(current);
+}
+
+// To the middle of the pane, unless the match is already in view.
+function scrollToRange(range: Range): void {
+  const box = rootEl.value;
+  if (!box) return;
+  const r = range.getBoundingClientRect();
+  const view = box.getBoundingClientRect();
+  if (r.top >= view.top && r.bottom <= view.bottom) return;
+  box.scrollTop += r.top - view.top - box.clientHeight / 2;
+}
+
+watch([() => props.find, markdownHtml, markdownEl], paintFind, { flush: 'post' });
+
 onBeforeUnmount(() => {
   run++;
+  clearFind();
   dropDocument();
 });
 </script>
+
+<style lang="scss">
+// Find-in-preview marks (see «Find» above), the same amber as KCodeView's. A highlight
+// pseudo-element takes no scoped attribute, so these are global — the names are this
+// component's own.
+::highlight(k-find) {
+  background-color: color-mix(in srgb, var(--k-warning) 28%, transparent);
+}
+::highlight(k-find-current) {
+  background-color: color-mix(in srgb, var(--k-warning) 65%, transparent);
+}
+</style>
 
 <style scoped lang="scss">
 .k-doc-preview {
@@ -190,6 +334,40 @@ onBeforeUnmount(() => {
 }
 .k-doc-preview__markdown :deep(img) {
   max-width: 100%;
+}
+// The picture's own pane: it moves inside, nothing scrolls. touch-action none hands every
+// finger to the pointer handlers rather than to the page's own pan and zoom.
+.k-doc-preview__stage {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  touch-action: none;
+  cursor: grab;
+}
+// A diagram inside a doc: clipped to its own fitted size. One finger still scrolls the doc;
+// the pinch is the diagram's. It takes a grab cursor only once zoomed in.
+.k-doc-preview__markdown :deep(.k-doc-preview__diagram) {
+  display: inline-block;
+  max-width: 100%;
+  overflow: hidden;
+  vertical-align: top;
+  line-height: 0;
+  touch-action: pan-x pan-y;
+  img { display: block; transform-origin: 0 0; user-select: none; }
+  &[data-panzoom='zoomed'] { cursor: grab; }
+}
+.k-doc-preview :deep([data-panzoom='dragging']) { cursor: grabbing; }
+// Laid out at the stage's width (fit), then moved and scaled from its top-left corner.
+.k-doc-preview__picture {
+  position: absolute;
+  top: 0;
+  left: 0;
+  display: block;
+  width: 100%;
+  height: auto;
+  transform-origin: 0 0;
+  user-select: none;
 }
 .k-doc-preview__msg {
   margin: 0;

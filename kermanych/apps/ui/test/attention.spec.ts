@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import type { Session } from '@kermanych/core';
-import { attentionByProject, flagsError, isUnseen, levelOf, sumAttention, NO_ATTENTION } from '../src/lib/attention';
+import { attentionByProject, attentionOutside, flagsError, isUnseen, isYourTurnEvent, levelOf, sumAttention, yourTurnCount, NO_ATTENTION } from '../src/lib/attention';
 
 function session(over: Partial<Session> & { id: string }): Session {
   return {
@@ -101,6 +101,74 @@ describe('sumAttention', () => {
         { input: 0, error: 1, running: 1, result: 3 },
       ]),
     ).toEqual({ input: 1, error: 1, running: 3, result: 3 });
+  });
+});
+
+// The Dock icon's number (docs/specs/2026-11-01-dock-attention.md).
+describe('yourTurnCount', () => {
+  it('counts what waits for the operator across projects, not what is running or already read', () => {
+    const map = attentionByProject(
+      [
+        session({ id: 'a', status: 'waiting_input' }),
+        session({ id: 'b', status: 'conflict' }),
+        session({ id: 'c', status: 'done' }),
+        session({ id: 'd', status: 'thinking' }),
+        session({ id: 'e', status: 'queued' }),
+        session({ id: 'f', status: 'error', projectId: 'p2' }),
+        session({ id: 'g', status: 'in_review', projectId: 'p2' }),
+        session({ id: 'h', status: 'stopped', projectId: 'p2' }),
+      ],
+      (s) => s.id !== 'g',
+    );
+    expect(yourTurnCount(sumAttention(map.values()))).toBe(4);
+  });
+});
+
+// The Dock icon's bounce and the pop-up.
+describe('isYourTurnEvent', () => {
+  const noParent = (): Session | undefined => undefined;
+
+  it('fires when a session moves into each status that hands the turn to the operator', () => {
+    for (const status of ['waiting_input', 'error', 'conflict', 'done', 'in_review'] as const) {
+      expect(isYourTurnEvent('thinking', session({ id: 'a', status }), noParent)).toBe(true);
+    }
+    // A session that first shows up already failed (a launch that broke) is the operator's turn.
+    expect(isYourTurnEvent(undefined, session({ id: 'a', status: 'error' }), noParent)).toBe(true);
+  });
+
+  it('stays quiet on a repeat and on moves that leave nothing to the operator', () => {
+    expect(isYourTurnEvent('done', session({ id: 'a', status: 'done' }), noParent)).toBe(false);
+    expect(isYourTurnEvent('done', session({ id: 'a', status: 'thinking' }), noParent)).toBe(false);
+    expect(isYourTurnEvent('thinking', session({ id: 'a', status: 'stopped' }), noParent)).toBe(false);
+    expect(isYourTurnEvent('in_review', session({ id: 'a', status: 'merged' }), noParent)).toBe(false);
+  });
+
+  it('ignores chats, archived agents and forks of a completed parent', () => {
+    expect(isYourTurnEvent('thinking', session({ id: 'a', status: 'done', kind: 'chat' }), noParent)).toBe(false);
+    expect(isYourTurnEvent('thinking', session({ id: 'a', status: 'error', archived: true }), noParent)).toBe(false);
+    const merged = session({ id: 'p', status: 'merged' });
+    const fork = session({ id: 'f', status: 'done', kind: 'discussion', parentSessionId: 'p' });
+    expect(isYourTurnEvent('thinking', fork, (id) => (id === 'p' ? merged : undefined))).toBe(false);
+  });
+});
+
+describe('attentionOutside', () => {
+  // The switcher's mark: what waits in the projects off screen. The scope's own agents are
+  // the list in front of the operator and must not light it.
+  it('sums only the listed projects outside the scope', () => {
+    const byProject = new Map([
+      ['here', { input: 1, error: 0, running: 0, result: 0 }],
+      ['fe', { input: 0, error: 1, running: 2, result: 0 }],
+      ['be', { input: 1, error: 0, running: 0, result: 1 }],
+      ['unlisted', { input: 5, error: 0, running: 0, result: 0 }],
+    ]);
+    expect(attentionOutside(byProject, ['here', 'fe', 'be', 'quiet'], new Set(['here']))).toEqual({
+      input: 1,
+      error: 1,
+      running: 2,
+      result: 1,
+    });
+    expect(attentionOutside(byProject, ['here'], new Set(['here']))).toEqual(NO_ATTENTION);
   });
 });
 

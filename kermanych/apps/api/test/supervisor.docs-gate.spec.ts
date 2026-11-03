@@ -83,14 +83,15 @@ afterEach(() => {
 
 // A project (switch on unless told otherwise, default rules unless given) and an agent session
 // on a real worktree branched off `dev`; `work` runs inside the worktree before the row exists.
-async function seed(work: (wtDir: string) => void, docsRequired = true, docsPolicy?: DocsPolicy): Promise<{ id: string; wtDir: string }> {
+// `designDir` makes it a «Дизайн» session (docs/specs/2026-10-29-design-tab.md).
+async function seed(work: (wtDir: string) => void, docsRequired = true, docsPolicy?: DocsPolicy, designDir?: string): Promise<{ id: string; wtDir: string }> {
   reg.upsertProject({ id: P, name: "g", localRepoPath: repo, docsRequired, docsPolicy });
   const parent = mkdtempSync(join(tmpdir(), "kmq-docs-gate-wt-"));
   trash.push(parent);
   const wtDir = join(parent, "wt");
   await wt.addWorktree(repo, wtDir, "kermanych/s1");
   work(wtDir);
-  const s = reg.createSession({ projectId: P, name: "task", task: "t", worktreePath: wtDir, branch: "kermanych/s1", baseBranch: "dev" });
+  const s = reg.createSession({ projectId: P, name: "task", task: "t", worktreePath: wtDir, branch: "kermanych/s1", baseBranch: "dev", ...(designDir ? { designDir } : {}) });
   reg.updateSession(s.id, { status: "done" });
   return { id: s.id, wtDir };
 }
@@ -153,7 +154,7 @@ describe("the documentation gate", () => {
   // Per-kind rules: a relaxed spec/schemas no longer block, a required plan does, and an
   // optional API request never does.
   it("applies the project's per-kind rules", async () => {
-    const policy: DocsPolicy = { spec: "optional", plan: "required", schemas: "off", handoff: "off", apiRequest: "optional" };
+    const policy: DocsPolicy = { spec: "optional", plan: "required", schemas: "off", handoff: "off", apiRequest: "optional", design: "optional" };
     const { id, wtDir } = await seed(codeOnly, true, policy);
 
     expect((await sup.finishInfo(id)).docsGate).toEqual({ enabled: true, failures: ["plan"] });
@@ -161,6 +162,65 @@ describe("the documentation gate", () => {
     write(wtDir, "docs/plans/2026-09-30-x.md", "# Plan\n");
     await sup.createPullRequest(id);
     expect(prompts.at(-1)).toMatch(/gh pr create/);
+  });
+});
+
+// «Дизайн» (docs/specs/2026-10-29-design-tab.md): a design branch is checked for its own
+// folder's README only — the default policy's spec and docs-impact rules do not apply to it.
+const DESIGN = "docs/design/2026-10-29-orders";
+const prototype = (d: string) => write(d, "src/__design/orders/list.vue", "<template />\n");
+
+describe("a design session's gate", () => {
+  it("lets PR and finish through under the default policy once its README is on the branch", async () => {
+    const { id } = await seed((d) => {
+      prototype(d);
+      write(d, `${DESIGN}/README.md`, "# Orders\n");
+    }, true, undefined, DESIGN);
+
+    expect((await sup.finishInfo(id)).docsGate).toEqual({ enabled: true, failures: [] });
+    await sup.createPullRequest(id);
+    expect(prompts.at(-1)).toMatch(/gh pr create/);
+    expect(await sup.finishSession(id)).toEqual({ finished: true, branch: "kermanych/s1" });
+  });
+
+  it("refuses PR, commit and finish without its README, and completeDocs names the folder with the design-spec skill", async () => {
+    const { id } = await seed((d) => {
+      prototype(d);
+      // Another design's README does not count: the gate checks this session's own folder.
+      write(d, "docs/design/2026-10-01-other/README.md", "# Other\n");
+    }, true, undefined, DESIGN);
+
+    for (const act of [() => sup.createPullRequest(id), () => sup.commitChanges(id), () => sup.finishSession(id)])
+      await expect(act()).rejects.toThrow(/^documentation required: design-readme/);
+    expect(prompts).toHaveLength(0);
+
+    expect(await sup.completeDocs(id)).toEqual({ sent: true, failures: ["design-readme"] });
+    const p = prompts.at(-1)!;
+    expect(p).toContain(`\`${DESIGN}\``);
+    expect(p).toContain(DEFAULT_SKILLS.find((d) => d.name === "design-spec")!.body.trim());
+    expect(p).not.toContain(DEFAULT_SKILLS.find((d) => d.name === "task-spec")!.body.trim());
+  });
+});
+
+describe("saveDesign", () => {
+  it("sends the design-save procedure with the folder, the branch and the commit message", async () => {
+    const { id } = await seed(prototype, true, undefined, DESIGN);
+
+    expect(await sup.saveDesign(id)).toEqual({ sent: true });
+    const p = prompts.at(-1)!;
+    expect(p).toMatch(/^Save this design now/);
+    expect(p).toContain(`${DESIGN}/README.md`);
+    expect(p).toContain(`${DESIGN}/screens/`);
+    expect(p).toContain("`kermanych/s1`");
+    expect(p).toContain("`design: task`");
+  });
+
+  it("refuses a session that is not a design", async () => {
+    const { id } = await seed(prototype);
+    await expect(sup.saveDesign(id)).rejects.toThrow(/only design sessions/);
+    const chat = await sup.createChat(P);
+    await expect(sup.saveDesign(chat.id)).rejects.toThrow(/only design sessions/);
+    expect(prompts).toHaveLength(0);
   });
 });
 

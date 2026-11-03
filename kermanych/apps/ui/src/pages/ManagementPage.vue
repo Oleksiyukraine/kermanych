@@ -33,7 +33,7 @@
 
       <nav class="mgmt__rail-list" :aria-label="t('management.nav.railLabel')">
         <KNavItem
-          v-for="s in MANAGEMENT_SECTIONS"
+          v-for="s in railSections"
           :key="s.name"
           :label="s.label"
           :icon="SECTION_ICONS[s.name]"
@@ -67,7 +67,12 @@
       </div>
       <template v-else>
         <div class="mgmt__body">
-          <router-view :workspace-id="workspaceId" :workspace-name="workspaceName" />
+          <!-- A manager-only section (core `managersOnly`) renders only once the caller's role
+               says they may open it: a developer is sent Home by the watcher below, and the
+               moment before the roster answers is a skeleton rather than a flash of the
+               register. -->
+          <router-view v-if="sectionAllowed" :workspace-id="workspaceId" :workspace-name="workspaceName" />
+          <KSkeleton v-else-if="!roleSettled" variant="rows" :rows="4" />
         </div>
 
         <!-- The Менеджмент assistant, FLOATING over the section pane rather than sitting in
@@ -253,7 +258,8 @@
 import { computed, nextTick, onUnmounted, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { useI18n } from 'vue-i18n';
-import { MANAGEMENT_SECTIONS, prependHelper } from '@kermanych/core';
+import { confirmAction } from '../lib/confirm';
+import { MANAGEMENT_DEFAULT_SECTION, MANAGEMENT_SECTIONS, prependHelper } from '@kermanych/core';
 import { useOrchestrator } from 'stores/orchestrator';
 import { useProjects } from 'stores/projects';
 import { useManagementChat } from 'stores/management-chat';
@@ -328,6 +334,43 @@ const chipPhase = useLoadPhase(() => {
   return !!id && !projects.workspaceById.has(id) && (!projects.loadSettled || projects.loading);
 });
 
+// ── Who may open what ────────────────────────────────────────────────────────
+// A manager-only section is the owner's and managers' (projects.canManageWorkspace). The
+// roster that answers the question is read here, once per workspace, because the shell is
+// the one place that knows a workspace is open — the sections and the Home tiles below only
+// read the answer. A failed read settles on the developer view (projects.roleSettled).
+watch(
+  workspaceId,
+  (id) => {
+    if (id && !projects.members[id]) projects.loadMembers(id).catch(() => undefined);
+  },
+  { immediate: true },
+);
+
+const roleSettled = computed(() => !!workspaceId.value && projects.roleSettled(workspaceId.value));
+const canManage = computed(() => !!workspaceId.value && projects.canManageWorkspace(workspaceId.value));
+
+// The rail drops a manager-only row once the role is KNOWN to forbid it, not while it is
+// pending: a manager's rail must not lose a row for the length of a roster read, and a
+// developer who clicks it in that moment meets the skeleton and then Home, never the screen.
+const railSections = computed(() =>
+  MANAGEMENT_SECTIONS.filter((s) => !s.managersOnly || !roleSettled.value || canManage.value),
+);
+
+const sectionAllowed = computed(
+  () => !MANAGEMENT_SECTIONS.find((s) => s.name === activeSection.value)?.managersOnly || canManage.value,
+);
+
+// A deep link or a stale tab lands a developer on a manager-only route: replace it with
+// Home, so Back does not walk them into it again.
+watch(
+  [sectionAllowed, roleSettled],
+  ([allowed, settled]) => {
+    if (!allowed && settled) void router.replace({ name: MANAGEMENT_DEFAULT_SECTION });
+  },
+  { immediate: true },
+);
+
 // ── The assistant ────────────────────────────────────────────────────────────
 const chat = useManagementChat();
 const draft = ref('');
@@ -392,7 +435,22 @@ function autoGrow(): void {
 
 // «Новий чат» keeps the composer locked until the api has dropped the old conversation
 // (stores/management-chat.ts `resetting`); the store reports a failure in the log itself.
-const { run: newChat } = useAsyncAction(() => chat.reset());
+// It clears the conversation for good, so it asks first — unless there is none to lose. The
+// question comes before the action: reading the dialog is not work in progress, so it neither
+// lights the progress bar nor holds the button busy.
+const resetChat = useAsyncAction(() => chat.reset());
+async function newChat(): Promise<void> {
+  if (resetChat.busy.value) return;
+  if (chat.hasConversation) {
+    const ok = await confirmAction({
+      title: t('confirmations.newChat.title'),
+      message: t('confirmations.newChat.message'),
+      confirmLabel: t('confirmations.label.clear'),
+    });
+    if (!ok) return;
+  }
+  await resetChat.run();
+}
 const composerLocked = computed(() => chat.busy || chat.resetting);
 const canSend = computed(() => (draft.value.trim().length > 0 || attachFiles.value.length > 0) && !composerLocked.value);
 

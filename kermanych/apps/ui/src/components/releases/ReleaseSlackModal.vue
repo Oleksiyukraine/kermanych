@@ -98,6 +98,7 @@
 // stores/release-slack.ts; this modal only drives it.
 import { computed, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
+import { confirmAction } from '../../lib/confirm';
 import KModal from 'components/kit/KModal.vue';
 import KBtn from 'components/kit/KBtn.vue';
 import KField from 'components/kit/KField.vue';
@@ -211,8 +212,13 @@ function connectAccount(): Promise<void> {
   });
 }
 
-function disconnectAccount(): Promise<void> {
-  return attempt(disconnecting, () => store.disconnect(props.workspaceId));
+async function disconnectAccount(): Promise<void> {
+  const ok = await confirmAction({
+    title: t('confirmations.slackAccount.title'),
+    message: t('confirmations.slackAccount.message'),
+    confirmLabel: t('confirmations.label.disconnect'),
+  });
+  if (ok) await attempt(disconnecting, () => store.disconnect(props.workspaceId));
 }
 
 function saveChannel(): Promise<void> {
@@ -222,8 +228,13 @@ function saveChannel(): Promise<void> {
   });
 }
 
-function removeChannel(): Promise<void> {
-  return attempt(removing, () => store.removeChannel(props.workspaceId));
+async function removeChannel(): Promise<void> {
+  const ok = await confirmAction({
+    title: t('confirmations.slackChannel.title'),
+    message: t('confirmations.slackChannel.message'),
+    confirmLabel: t('confirmations.label.remove'),
+  });
+  if (ok) await attempt(removing, () => store.removeChannel(props.workspaceId));
 }
 
 async function copyManifest(): Promise<void> {

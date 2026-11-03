@@ -146,6 +146,7 @@ import LinearTicketDialog from './LinearTicketDialog.vue';
 import { api } from '../../lib/api';
 import { useAsyncAction } from '../../composables/useAsyncAction';
 import { useLoadPhase } from '../../composables/useLoadPhase';
+import { useRememberedChoice } from '../../composables/useRememberedChoice';
 import {
   assigneeOptions,
   filterByAssignee,
@@ -179,9 +180,6 @@ const phase = useLoadPhase(() => linear.integration === undefined || (linear.loa
 // The search box filters the cards, never the columns: an empty column under a query
 // still says which column it is, so the board keeps its shape while you type.
 const query = ref('');
-// The assignee chip: '' is «anyone» and the board's resting state. Deliberately NOT
-// persisted, exactly like `query`.
-const assignee = ref('');
 // The team name stays in the bar while filtering too — it says WHICH board you are
 // searching, and losing it mid-search reads as the board having changed.
 const boardName = computed(() => linear.integration?.teamName ?? '');
@@ -194,17 +192,20 @@ const assigneeChoices = computed(() => [
   ...assigneeOptions(linear.issues).map((o) => ({ value: o.id, label: o.name })),
 ]);
 
+// The assignee chip: '' is «anyone» and the board's resting state. Remembered per workspace
+// on this device, falling back to «anyone» once a person holds no card (useRememberedChoice)
+// — the same rules as the Jira board. The search box is not kept.
+const assignee = useRememberedChoice(
+  () => `kermanych.linear.assignee.${props.workspaceId}`,
+  () => assigneeChoices.value,
+  () => !linear.loading,
+);
+
 // Both narrowings, one after the other: the search box over the assignee's cards.
 const matched = computed(() => filterByAssignee(filterIssues(linear.issues, query.value), assignee.value));
 const filtering = computed(() => query.value.trim() !== '' || assignee.value !== '');
 const grouped = computed(() => issuesByColumn(linear.columns, matched.value));
 
-// A sync (or a reassignment in Linear) can retire the very person the chip is filtering by,
-// which would leave the board empty with no cards to explain why. Falling back to «anyone»
-// keeps the board readable; «Unassigned» is always a valid choice, so it never expires.
-watch(assigneeChoices, (choices) => {
-  if (assignee.value && !choices.some((c) => c.value === assignee.value)) assignee.value = '';
-});
 
 // ── detail / editors ──────────────────────────────────────────────────────────
 const openedIssueId = ref<string | null>(null);

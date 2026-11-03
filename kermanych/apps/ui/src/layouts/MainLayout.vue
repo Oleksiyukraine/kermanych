@@ -1,20 +1,10 @@
 <template>
   <q-layout view="hHh Lpr fFf" class="shell">
-    <!-- LEFT SIDEBAR — bucket nav + projects + folder binding + account (v3 section 07) -->
-    <q-drawer model-value side="left" :width="collapsed ? 76 : 264" :breakpoint="0" class="shell__sidebar">
+    <!-- LEFT SIDEBAR — first-run checklist + workspaces/projects + collapse toggle (v3 section 07).
+         Focus mode takes it off screen entirely (the header's ⛶ / ⌘\); «« / »» only changes its
+         width, and leaving focus mode brings back whichever width was set. -->
+    <q-drawer :model-value="!focusMode" side="left" :width="collapsed ? 76 : 264" :breakpoint="0" class="shell__sidebar">
       <div class="shell__side-inner" :class="{ 'shell--min': minified }">
-        <nav class="shell__buckets">
-          <KNavItem
-            v-for="b in buckets"
-            :key="b.key"
-            :label="t(b.label)"
-            :icon="b.icon"
-            :count="bucketCounts[b.key]"
-            :tip="minified ? t(b.label) : undefined"
-            :active="store.selectedBucket === b.key"
-            @click="onBucket(b.key)"
-          />
-        </nav>
         <!-- FIRST-RUN CHECKLIST — stays until the account dismisses it (stores/onboarding.ts).
              Its hint doubles as a progress read (done/total); the row opens the modal. -->
         <KNavItem
@@ -26,7 +16,7 @@
           :active="onb.open"
           @click="onb.show()"
         />
-        <div class="shell__divider"></div>
+        <div v-if="onb.sidebarVisible" class="shell__divider"></div>
         <div class="shell__side-label shell__side-label--row">
           <span>{{ t('common.nav.workspaces') }}</span>
           <button
@@ -119,37 +109,7 @@
             </ul>
           </li>
         </ul>
-        <div class="shell__user">
-          <KUserButton
-            class="shell__account"
-            :label="accountLabel"
-            :avatar-url="auth.profile?.avatarUrl"
-            :title="accountHint"
-            @click="goSettings('app-account')"
-          />
-          <!-- Name and plan spend stack, so the name rides up and the windows sit under it.
-               One row per authenticated provider (in practice one), each window a percent of
-               its rolling quota — the only unit providers meter plans in. -->
-          <div class="shell__account-meta">
-            <span class="shell__account-name">{{ accountName }}</span>
-            <div
-              v-for="p in planLines"
-              :key="p.provider"
-              v-tip="p.hint"
-              class="shell__account-plan mono"
-            >
-              <span v-if="planLines.length > 1" class="shell__plan-provider">{{ p.provider }}</span>
-              <span
-                v-for="w in p.windows"
-                :key="w.id"
-                class="shell__plan-window"
-                :class="{
-                  'shell__plan-window--warn': w.used >= 80 && w.used < 95,
-                  'shell__plan-window--hot': w.used >= 95,
-                }"
-              >{{ w.short }} {{ w.percent }}</span>
-            </div>
-          </div>
+        <div class="shell__side-foot">
           <button
             class="shell__toggle"
             v-tip="collapsed ? t('common.nav.expandPanel') : t('common.nav.collapsePanel')"
@@ -160,7 +120,9 @@
       </div>
     </q-drawer>
 
-    <!-- TOP BAR — brand + segmented view nav + project actions (v3) -->
+    <!-- TOP BAR — brand, focus toggle, project switcher + segmented view nav + app actions (v3).
+         The version lives under Settings → «Загальне», not here: this row is where the
+         operator reads where they are, and the switcher needs the room. -->
     <q-header class="shell__header">
       <div class="shell__brand">
         <svg class="shell__mark" viewBox="0 0 1024 1024" aria-hidden="true">
@@ -169,7 +131,35 @@
           <rect x="636" y="726" width="300" height="84" fill="#f3f2f2" />
         </svg>
         <span class="shell__logo">{{ t('common.nav.logo') }}</span>
-        <span class="shell__ver mono">v1.1.2</span>
+        <!-- FOCUS MODE — hides the left sidebar so the work area takes the screen; the footer
+             stays. Here rather than in the sidebar because the sidebar is what it hides: the
+             way back has to be where the way in was. Ctrl/⌘ \ does the same. -->
+        <KIconButton
+          class="shell__focus"
+          :active="focusMode"
+          :aria-pressed="focusMode"
+          :title="t('common.nav.focusMode')"
+          @click="toggleFocusMode"
+        ><KIcon name="focus" /></KIconButton>
+        <!-- Where the operator is, and the way to anywhere else — always on screen, the only
+             project list in focus mode (spec docs/specs/2026-10-29-agents-tab-and-focus-mode.md). -->
+        <KProjectSwitcher
+          :groups="switcherGroups"
+          :ungrouped="sidebarProjects.ungrouped"
+          :ungrouped-label="localOnlyLabel"
+          :project-id="store.selectedProjectId"
+          :workspace-id="store.selectedWorkspaceId"
+          :attention-of="attentionOf"
+          :workspace-attention="workspaceAttention"
+          :minion="minionProjects"
+          :outside="outsideAttention"
+          :empty-label="t('common.nav.switcherEmpty')"
+          :all-projects-label="(name: string) => t('common.nav.switcherAllProjects', { name })"
+          :menu-label="t('common.nav.switcher')"
+          :outside-hint="outsideHint"
+          @select-project="selectProject"
+          @select-workspace="selectWorkspace"
+        />
       </div>
       <KTopNav
         class="shell__nav"
@@ -178,6 +168,28 @@
         @update:model-value="goView"
       />
       <div class="shell__actions">
+        <!-- The voice conversation, wherever the operator is (docs/specs/2026-11-02-voice-conversation.md,
+             decision 8): its session and time, the session one click away, 🔇 and «Завершити». -->
+        <div v-if="voice.bar" class="shell__voice mono" role="status">
+          <button
+            type="button"
+            class="shell__voice-open"
+            v-tip="t('voice.pillOpen')"
+            :aria-label="t('voice.pill', { name: voiceSessionName })"
+            @click="openVoiceSession"
+          >
+            <KIcon class="shell__voice-icon" :name="voice.bar.muted ? 'micOff' : 'mic'" />
+            <span class="shell__voice-name">{{ voiceSessionName }}</span>
+            <span class="shell__voice-time">{{ voiceClock }}</span>
+          </button>
+          <KIconButton
+            :active="voice.bar.muted"
+            :disabled="voice.bar.phase !== 'live'"
+            :title="voice.bar.muted ? t('kit.voiceBar.unmute') : t('kit.voiceBar.mute')"
+            @click="voice.toggleMute()"
+          ><KIcon class="shell__voice-icon" name="micOff" /></KIconButton>
+          <KIconButton :loading="voice.bar.phase === 'ending'" :title="t('kit.voiceBar.end')" @click="void voice.end()">✕</KIconButton>
+        </div>
         <!-- AI LOGIN REQUIRED — the provider CLI behind the operator's runtime is signed out on
              this machine (composables/useProviderSignIn.ts). Present only then; its tooltip
              names the command, a click asks again after the operator has logged in. -->
@@ -227,27 +239,84 @@
            the page, toggled from the footer, and persists across views. Under both sits the
            integrated terminal panel, as in an IDE: it takes its height from the work area. -->
       <div class="shell__main">
-        <div class="shell__workarea">
-          <KFileManager
-            v-if="store.fileManagerVisible && store.fileManagerSide === 'left'"
-            class="shell__fm shell__fm--left"
-          />
+        <div ref="workareaEl" class="shell__workarea">
+          <template v-if="store.fileManagerVisible && store.fileManagerSide === 'left'">
+            <KFileManager class="shell__fm shell__fm--left" :style="{ width: `${fmLeft.size.value}px` }" />
+          <div
+            class="shell__fm-resizer shell__fm-resizer--left"
+            :class="{ 'shell__fm-resizer--on': fmLeft.resizing.value }"
+            role="separator"
+            aria-orientation="vertical"
+            :aria-label="t('common.nav.fileManagerResize')"
+            :aria-valuenow="Math.round(fmLeft.size.value)"
+            :aria-valuemin="FM_MIN"
+            tabindex="0"
+            v-tip="t('common.nav.fileManagerResizeTip')"
+            @pointerdown="fmLeft.startResize"
+            @keydown="fmLeft.onKeydown"
+          ></div>
+          </template>
           <div class="shell__page">
             <router-view />
           </div>
-          <KFileManager
-            v-if="store.fileManagerVisible && store.fileManagerSide === 'right'"
-            class="shell__fm shell__fm--right"
-          />
+          <template v-if="store.fileManagerVisible && store.fileManagerSide === 'right'">
+          <div
+            class="shell__fm-resizer shell__fm-resizer--right"
+            :class="{ 'shell__fm-resizer--on': fmRight.resizing.value }"
+            role="separator"
+            aria-orientation="vertical"
+            :aria-label="t('common.nav.fileManagerResize')"
+            :aria-valuenow="Math.round(fmRight.size.value)"
+            :aria-valuemin="FM_MIN"
+            tabindex="0"
+            v-tip="t('common.nav.fileManagerResizeTip')"
+            @pointerdown="fmRight.startResize"
+            @keydown="fmRight.onKeydown"
+          ></div>
+            <KFileManager class="shell__fm shell__fm--right" :style="{ width: `${fmRight.size.value}px` }" />
+          </template>
         </div>
         <KTerminalPanel v-if="terminal.panelVisible" />
       </div>
     </q-page-container>
 
-    <!-- STATUS BAR — a VS Code-style footer: git pull and the current branch for the selected
-         repo. There is deliberately no Push: work leaves the machine through the PR flow only,
-         never as a blind push of whatever branch the project repo sits on. -->
+    <!-- STATUS BAR — a VS Code-style footer: the account with its plan spend, then git pull and
+         the current branch for the selected repo. There is deliberately no Push: work leaves the
+         machine through the PR flow only, never as a blind push of whatever branch the project
+         repo sits on. -->
     <q-footer class="shell__footer">
+      <!-- Account, at the bar's left edge under the sidebar it used to close: avatar, name over
+           plan spend. One row per authenticated provider (in practice one), each window a
+           percent of its rolling quota — the only unit providers meter plans in. -->
+      <div class="shell__user">
+        <KUserButton
+          class="shell__account"
+          :label="accountLabel"
+          :avatar-url="auth.profile?.avatarUrl"
+          :title="accountHint"
+          @click="goSettings('app-account')"
+        />
+        <div class="shell__account-meta">
+          <span class="shell__account-name">{{ accountName }}</span>
+          <div
+            v-for="p in planLines"
+            :key="p.provider"
+            v-tip="p.hint"
+            class="shell__account-plan mono"
+          >
+            <span v-if="planLines.length > 1" class="shell__plan-provider">{{ p.provider }}</span>
+            <span
+              v-for="w in p.windows"
+              :key="w.id"
+              class="shell__plan-window"
+              :class="{
+                'shell__plan-window--warn': w.used >= 80 && w.used < 95,
+                'shell__plan-window--hot': w.used >= 95,
+              }"
+            >{{ w.short }} {{ w.percent }}</span>
+          </div>
+        </div>
+      </div>
       <!-- File-manager dock, left: shows the selected session's files between the sidebar and
            the page. Clicking it again collapses the dock. -->
       <button
@@ -489,6 +558,8 @@
 
     <!-- TOAST STACK — transient notifications (errors etc.) -->
     <KToast :toasts="store.toasts" @dismiss="store.dismissToast" />
+    <!-- Every destructive action asks here first (lib/confirm.ts). -->
+    <KConfirmDialog />
 
     <!-- JIRA MERGE PROMPT — global on purpose: a shadow task reaches `merged` wherever
          the user happens to be, and the «куди перенести тікет?» question must not depend
@@ -499,10 +570,10 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, onUnmounted, ref, watch } from 'vue';
+import { computed, nextTick, onBeforeUnmount, onMounted, onUnmounted, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { useI18n } from 'vue-i18n';
-import type { MachineResources, ResourceDecision, Session } from '@kermanych/core';
+import type { MachineResources, ResourceDecision } from '@kermanych/core';
 import { useOrchestrator } from 'stores/orchestrator';
 import { useProjects } from 'stores/projects';
 import { useAuth } from 'stores/auth';
@@ -514,10 +585,9 @@ import { IS_PREVIEW } from '../lib/preview';
 import { api } from '../lib/api';
 import { isPlatform, MANAGEMENT_DEFAULT_SECTION } from '@kermanych/core';
 import { canDropProject, sessionScopedProjectIds } from '../lib/scope';
-import { myBacklogTasks } from '../lib/tasks-view';
 import { PLATFORM_CHOICES } from '../lib/settings';
-import { bucketOf, type Bucket } from '../lib/buckets';
-import { attentionByProject, sumAttention, NO_ATTENTION, type Attention } from '../lib/attention';
+import { attentionByProject, attentionOutside, describeAttention, levelOf, sumAttention, yourTurnCount, NO_ATTENTION, type Attention } from '../lib/attention';
+import { dockBadgeOn } from '../lib/dock';
 import { theme, toggleTheme } from '../lib/theme';
 import type { KTheme } from '@kermanych/tokens';
 import { locale, toggleLocale } from '../lib/locale';
@@ -532,15 +602,18 @@ import { useProviderSignIn } from '../composables/useProviderSignIn';
 import KRailItem, { type RailProject } from 'components/kit/KRailItem.vue';
 import KWorkspaceRow from 'components/kit/KWorkspaceRow.vue';
 import KTopNav from 'components/kit/KTopNav.vue';
+import KProjectSwitcher from 'components/kit/KProjectSwitcher.vue';
 import KNavItem from 'components/kit/KNavItem.vue';
 import KModal from 'components/kit/KModal.vue';
 import KField from 'components/kit/KField.vue';
 import KSelect from 'components/kit/KSelect.vue';
 import KBtn from 'components/kit/KBtn.vue';
 import KToast from 'components/kit/KToast.vue';
+import KConfirmDialog from 'components/kit/KConfirmDialog.vue';
 import KProgressBar from 'components/kit/KProgressBar.vue';
 import { useActivity } from '../stores/activity';
 import KIconButton from 'components/kit/KIconButton.vue';
+import { useResizablePanel } from '../composables/useResizablePanel';
 import KUserButton from 'components/kit/KUserButton.vue';
 import KFileManager from 'components/kit/KFileManager.vue';
 import KTerminalPanel from 'components/kit/KTerminalPanel.vue';
@@ -550,6 +623,7 @@ import KSpinner from 'components/kit/KSpinner.vue';
 import { useAsyncAction, useKeyedAction, errorText } from '../composables/useAsyncAction';
 import { useLoadPhase } from '../composables/useLoadPhase';
 import { useTerminal } from 'stores/terminal';
+import { useVoice } from 'stores/voice';
 import JiraMergePrompt from 'components/jira/JiraMergePrompt.vue';
 import LinearMergePrompt from 'components/linear/LinearMergePrompt.vue';
 import KDirPicker from 'components/kit/KDirPicker.vue';
@@ -563,6 +637,20 @@ import { useOnboarding } from 'stores/onboarding';
 const store = useOrchestrator();
 const terminal = useTerminal();
 const projects = useProjects();
+// ── VOICE CONVERSATION PILL ─────────────────────────────────────────────────
+const voice = useVoice();
+const voiceSessionName = computed(() => store.sessions.find((s) => s.id === voice.sessionId)?.name ?? '');
+const voiceClock = computed(() => {
+  const s = Math.floor((voice.bar?.elapsedMs ?? 0) / 1000);
+  return `${String(Math.floor(s / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`;
+});
+function openVoiceSession(): void {
+  const s = store.sessions.find((x) => x.id === voice.sessionId);
+  if (!s) return;
+  store.selectProject(s.projectId);
+  store.selectSession(s.id);
+  void router.push({ name: s.kind === 'chat' ? 'chat' : 'agents' });
+}
 const auth = useAuth();
 // Foreground work started through useAsyncAction / trackLoad — drives the top progress bar.
 const activity = useActivity();
@@ -579,11 +667,37 @@ const route = useRoute();
 const router = useRouter();
 const { t, te } = useI18n();
 
-// The left sidebar collapses to give the board full width; the choice persists so a reload
-// keeps the operator's layout. breakpoint:0 means the drawer never self-closes, so this
-// model-value is the only thing that shows/hides it.
+// The left sidebar narrows to a 76px rail to give the board more width; the choice persists
+// so a reload keeps the operator's layout. breakpoint:0 means the drawer never self-closes, so
+// its model-value — `!focusMode` — is the only thing that shows/hides it.
 const collapsed = ref(localStorage.getItem('kermanych.sidebar-collapsed') === '1');
 watch(collapsed, (v) => localStorage.setItem('kermanych.sidebar-collapsed', v ? '1' : '0'));
+
+// FOCUS MODE — the sidebar off screen entirely, on every route; the footer stays (account
+// limits, terminal, file manager and git are needed mid-task). Independent of `collapsed`:
+// leaving focus mode brings back whichever width the operator had. The header switcher is the
+// project list meanwhile. Persisted like the width.
+// Spec: docs/specs/2026-10-29-agents-tab-and-focus-mode.md, decisions 11–12.
+const FOCUS_KEY = 'kermanych.focus-mode';
+const focusMode = ref(localStorage.getItem(FOCUS_KEY) === '1');
+watch(focusMode, (v) => localStorage.setItem(FOCUS_KEY, v ? '1' : '0'));
+function toggleFocusMode(): void {
+  focusMode.value = !focusMode.value;
+}
+// Ctrl/⌘ \ — matched on the PHYSICAL key (`code`), so the Ukrainian layout, where that key
+// types «ґ», works too. Unlike ⌘B it fires inside text fields: the composer is where a
+// focused operator types, and the chord types nothing there. The one exception is Ctrl+\
+// inside the integrated terminal, which is the shell's SIGQUIT and stays the shell's; ⌘\
+// never reaches a shell. Capture phase, so the terminal's own keydown handling cannot
+// swallow the chord first.
+function onFocusHotkey(e: KeyboardEvent): void {
+  if (e.code !== 'Backslash' || !(e.metaKey || e.ctrlKey) || e.altKey || e.shiftKey) return;
+  if (!e.metaKey && (e.target as HTMLElement | null)?.closest?.('.xterm')) return;
+  e.preventDefault();
+  toggleFocusMode();
+}
+onMounted(() => window.addEventListener('keydown', onFocusHotkey, true));
+onBeforeUnmount(() => window.removeEventListener('keydown', onFocusHotkey, true));
 
 // The rail's WIDTH tweens (css/app.scss transitions the drawer's inline width), but the
 // content swap between labels and icons is a `display` switch that no transition can carry,
@@ -713,6 +827,20 @@ watch(
   },
 );
 
+// A design's one view is «Дизайн» (docs/specs/2026-10-29-design-tab.md): «Агенти» has no row
+// for it. Whatever selects one — a desktop notification, a machine alert, a card on «Карта
+// агентів» — lands on that page with the design open, and «Агенти» keeps no selection it cannot
+// draw. The page itself switches to the design's project (its `session` query watcher).
+watch(
+  () => store.selectedSessionId,
+  (id) => {
+    const s = id ? store.sessions.find((x) => x.id === id) : undefined;
+    if (!s?.designDir) return;
+    store.selectSession(undefined);
+    void router.push({ name: 'design', query: { session: s.id } });
+  },
+);
+
 // A sidebar click changes SCOPE and never navigates (Requirement 5). It used to push
 // /agents from any non-project-scoped view, which meant the team board threw the operator
 // out the moment they touched the tree; both the board and Агенти read the scope, so there
@@ -793,8 +921,8 @@ onMounted(async () => {
   }
 });
 
-// The board store is app-wide now: Агенти renders my backlog cards from it and the sidebar
-// counts them, so it must be live on every route, not only on /#/board. subscribe() is
+// The board store is app-wide now: Агенти renders my backlog cards from it and its «Задачі»
+// tab counts them, so it must be live on every route, not only on /#/board. subscribe() is
 // idempotent — BoardPage no longer owns this.
 onMounted(() => void board.subscribe());
 onUnmounted(() => board.unsubscribe());
@@ -814,6 +942,36 @@ function onFileManagerHotkey(e: KeyboardEvent): void {
 }
 onMounted(() => window.addEventListener('keydown', onFileManagerHotkey));
 onBeforeUnmount(() => window.removeEventListener('keydown', onFileManagerHotkey));
+
+// The dock's width, dragged from the seam it shares with the page (or nudged with the arrows
+// once the seam has focus). One remembered width per side, since the seam sits on the dock's
+// inner edge: the right dock grows leftwards, the left one rightwards. The page always keeps
+// FM_PAGE_MIN, so a wide dock cannot squeeze it away.
+const FM_MIN = 240;
+const FM_PAGE_MIN = 420;
+const workareaEl = ref<HTMLElement | null>(null);
+const fmMax = (): number =>
+  workareaEl.value ? workareaEl.value.clientWidth - FM_PAGE_MIN : Number.POSITIVE_INFINITY;
+const fmLeft = useResizablePanel({
+  storageKey: 'kermanych.fileManager.width.left',
+  defaultSize: 340,
+  min: FM_MIN,
+  max: fmMax,
+  edge: 'right',
+});
+const fmRight = useResizablePanel({
+  storageKey: 'kermanych.fileManager.width.right',
+  defaultSize: 340,
+  min: FM_MIN,
+  max: fmMax,
+  edge: 'left',
+});
+// Re-clamp once the work area can be measured, and whenever the dock opens or moves.
+watch(
+  () => [store.fileManagerVisible, store.fileManagerSide] as const,
+  () => void nextTick(() => { fmLeft.refresh(); fmRight.refresh(); }),
+  { immediate: true },
+);
 
 // The integrated terminal (KTerminalPanel). Opening the panel on a bound project that has no
 // shell starts one, as VS Code does — the click means «give me a terminal», not «show me an
@@ -870,6 +1028,14 @@ function attentionOf(projectId: string): Attention {
   return attentionById.value.get(projectId) ?? NO_ATTENTION;
 }
 
+// The Dock icon's number (docs/specs/2026-11-01-dock-attention.md): «ваш хід» summed over every
+// project — questions, failures and unread results, the sidebar's marks without «працює». Sent on
+// every change and when «Число на іконці» flips; 0 once this shell unmounts (sign-out). The web
+// build has no Dock, and no bridge to send it through.
+const dockCount = computed(() => (dockBadgeOn.value ? yourTurnCount(sumAttention(attentionById.value.values())) : 0));
+watch(dockCount, (n) => window.kermanych?.dock?.setBadge(n), { immediate: true });
+onBeforeUnmount(() => window.kermanych?.dock?.setBadge(0));
+
 // Segmented view nav. One table drives the labels, the active segment and the
 // push target, so a new view is one row here plus its route record. `section` is
 // the record the URL must match — for the nested Менеджмент tab that is the
@@ -880,6 +1046,7 @@ const VIEWS = [
   { value: 'agents', label: 'common.nav.viewAgents', route: 'agents', section: 'agents' },
   { value: 'board', label: 'common.nav.viewBoard', route: 'board', section: 'board' },
   { value: 'chat', label: 'common.nav.viewChat', route: 'chat', section: 'chat' },
+  { value: 'design', label: 'common.nav.viewDesign', route: 'design', section: 'design' },
   {
     value: 'management',
     label: 'common.nav.viewManagement',
@@ -942,55 +1109,6 @@ function onLangToggle(e: MouseEvent): void {
   const el = e.currentTarget;
   toggleLocale(locale.value === 'uk' ? 'en' : 'uk', el instanceof HTMLElement ? el.getBoundingClientRect() : null);
 }
-
-// The marks are drawn (KIcon), not typed. They only ever show while the rail is minified,
-// which is precisely where the label is gone and the mark alone has to say which bucket it
-// opens — a job the text glyphs this replaced could not do: ◉ read as a radio button, ☰ as a
-// menu, ⤓ as a download and ↺ as a reload.
-const buckets = [
-  { key: 'active', label: 'common.nav.bucketActive', icon: 'activity' },
-  { key: 'waiting', label: 'common.nav.bucketWaiting', icon: 'waiting' },
-  { key: 'completed', label: 'common.nav.bucketCompleted', icon: 'done' },
-  { key: 'errors', label: 'common.nav.bucketErrors', icon: 'alert' },
-  { key: 'tasks', label: 'common.nav.bucketTasks', icon: 'tasks' },
-] as const;
-function onBucket(key: Bucket): void {
-  store.setBucket(key);
-  if (route.name !== 'agents') void router.push({ name: 'agents' });
-}
-// Fleet tally per sidebar bucket (replaces the old footer KStatusBar). Uses bucketOf so the
-// rail count and the Агенти list can never disagree about which bucket a session lands in.
-//
-// Scoped by ASKING the Агенти page's predicate, not by re-deriving it. It used to test
-// `s.projectId !== store.selectedProjectId`, which was true while a workspace-only selection
-// rendered a blank page and became a falsehood the moment that page started listing a whole
-// workspace: every session was skipped and the rail printed «Активні 0 / Задачі 0» two
-// columns from a header counting real cards. «Задачі 0» is the costly one — an operator
-// scanning the rail concludes the workspace has no backlog and never opens it. One answer in
-// one place is the only version of this that stays true.
-const bucketCounts = computed(() => {
-  const inScope = new Set(
-    sessionScopedProjectIds(
-      { workspaceId: store.selectedWorkspaceId, projectId: store.selectedProjectId },
-      { projects: projects.projects, listRead: projects.listRead },
-      store.projectWorkspace,
-    ),
-  );
-  const byId = new Map(store.sessions.map((s) => [s.id, s]));
-  const parent = (id: string): Session | undefined => byId.get(id);
-  const c: Record<Bucket, number> = { active: 0, waiting: 0, completed: 0, errors: 0, tasks: 0 };
-  for (const s of store.sessions) {
-    if (!inScope.has(s.projectId)) continue;
-    if (s.kind === 'chat') continue;
-    c[bucketOf(s, parent)]++;
-  }
-  // «Задачі» shows two things now: my cloud backlog cards, and any stranded pre-cutover
-  // local row. The badge counts both, because a count that disagrees with the list it counts
-  // is worse than no count (lib/buckets.ts:2-4). myBacklogTasks applies the same scope, so
-  // the set is passed to it rather than re-tested here.
-  c.tasks += myBacklogTasks(board.tasks, auth.user?.id ?? '', [...inScope]).length;
-  return c;
-});
 
 // The tree: cloud workspaces, each with its own cloud projects, in cloud order.
 // `groupProjectsByWorkspace` DROPS a project whose workspace is not in the list — RLS
@@ -1092,6 +1210,30 @@ const localOnlyLabel = computed(() =>
 function workspaceAttention(workspaceId: string): Attention {
   return sumAttention((sidebarProjects.value.byWorkspace.get(workspaceId) ?? []).map((p) => attentionOf(p.id)));
 }
+
+// THE HEADER SWITCHER reads the same tree, tiles and marks as the sidebar — one copy of
+// each — so a project looks the same in both places.
+const switcherGroups = computed(() =>
+  tree.value.map((g) => ({ workspace: g.workspace, projects: sidebarProjects.value.byWorkspace.get(g.workspace.id) ?? [] })),
+);
+// Its mark: what needs the operator in the projects outside the current scope — the scope
+// the Агенти list shows (lib/scope.ts), so nothing on screen is counted twice.
+const outsideAttention = computed(() => {
+  const inScope = new Set(
+    sessionScopedProjectIds(
+      { workspaceId: store.selectedWorkspaceId, projectId: store.selectedProjectId },
+      { projects: projects.projects, listRead: projects.listRead },
+      store.projectWorkspace,
+    ),
+  );
+  const listed = [...sidebarProjects.value.byWorkspace.values()].flat().concat(sidebarProjects.value.ungrouped);
+  return attentionOutside(attentionById.value, listed.map((p) => p.id), inScope);
+});
+const outsideHint = computed(() =>
+  levelOf(outsideAttention.value) === 'idle'
+    ? ''
+    : ` · ${t('common.nav.switcherElsewhere')}${describeAttention(outsideAttention.value, t)}`,
+);
 
 // DRAG A PROJECT INTO ANOTHER WORKSPACE — hand-rolled HTML5 DnD. It is one gesture, and a
 // drag-and-drop library would bring its own reactivity model along for it.
@@ -1586,8 +1728,8 @@ const planLines = computed(() =>
   })),
 );
 
-// The collapsed rail hides the row, and the tile is a bare picture either way — so its
-// tooltip carries the identity, the same figures in short form, and the action.
+// The tile is a bare picture, so its tooltip (and aria-label) carries the identity, the
+// same figures in short form, and the action.
 const accountHint = computed(() => {
   const spend = planLines.value
     .flatMap((p) => p.windows.map((w) => `${w.short} ${w.percent}`))
@@ -1712,15 +1854,12 @@ const pullHint = computed(() => {
 .shell__side-inner:not(.shell--min) :deep(.k-nav-item__icon) {
   display: none;
 }
-// A 76px rail has room for the tile and nothing else; the account tooltip carries the name
-// and the plan figures while the sidebar is minified.
-.shell--min .shell__side-label,
-.shell--min .shell__account-meta {
+// A 76px rail has room for the icons and the toggle, nothing else.
+.shell--min .shell__side-label {
   display: none;
 }
-.shell--min .shell__user {
+.shell--min .shell__side-foot {
   justify-content: center;
-  flex-direction: column;
 }
 .shell--min :deep(.k-nav-item) {
   justify-content: center;
@@ -1785,7 +1924,6 @@ const pullHint = computed(() => {
 }
 .shell__side-inner:not(.shell--min) {
   .shell__side-label,
-  .shell__account-meta,
   :deep(.k-nav-item__text),
   :deep(.k-count),
   :deep(.k-rail__name),
@@ -1817,12 +1955,6 @@ const pullHint = computed(() => {
   :deep(.k-rail--indent) {
     transition: none;
   }
-}
-
-.shell__buckets {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
 }
 
 // The right margin is 1px, not the 4px on the other three sides: the rows below carry a
@@ -1918,14 +2050,25 @@ const pullHint = computed(() => {
   &:hover { color: var(--k-text); }
 }
 
-// account chip — pinned to the foot of the sidebar: avatar, name over plan spend, toggle.
-.shell__user {
+// The sidebar's foot: the collapse toggle alone, pinned to the bottom and right-aligned.
+.shell__side-foot {
   margin-top: auto;
+  display: flex;
+  justify-content: flex-end;
+  padding-top: var(--k-sp-3);
+  border-top: 1px solid var(--k-line);
+}
+
+// Account chip at the footer's left edge: avatar, name over plan spend. It shrinks before
+// the git controls do, and the name ellipsises inside it.
+.shell__user {
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 260px;
   display: flex;
   align-items: center;
   gap: var(--k-sp-2);
-  padding-top: var(--k-sp-3);
-  border-top: 1px solid var(--k-line);
+  margin-right: var(--k-sp-3);
 }
 
 .shell__account {
@@ -2019,6 +2162,7 @@ const pullHint = computed(() => {
   display: flex;
   align-items: center;
   gap: var(--k-sp-2);
+  min-width: 0;
 }
 
 .shell__mark {
@@ -2035,9 +2179,12 @@ const pullHint = computed(() => {
   color: var(--k-text);
 }
 
-.shell__ver {
-  font-size: var(--k-fs-xs);
-  color: var(--k-muted);
+// The ⚙ / theme buttons' control, so the header has one kind of glyph button; its accent
+// frame (`active`) says focus mode is on.
+.shell__focus {
+  flex: none;
+  margin-left: var(--k-sp-2);
+  --k-icon-size: var(--k-icon-md);
 }
 
 // The selected workspace, centred in the gap between the brand and the segmented nav.
@@ -2067,6 +2214,44 @@ const pullHint = computed(() => {
   align-items: center;
   gap: var(--k-sp-2);
 }
+
+// The voice pill: accent-framed — something live, not a blocker like the sign-out pill beside it.
+.shell__voice {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 28px;
+  padding: 0 2px 0 8px;
+  border: 1px solid var(--k-accent);
+  border-radius: var(--k-r);
+  color: var(--k-accent);
+  font-size: 12px;
+}
+.shell__voice-open {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 220px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+
+  &:focus-visible {
+    outline: 1px solid var(--k-accent);
+    outline-offset: 2px;
+  }
+}
+.shell__voice-name {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  color: var(--k-text);
+}
+.shell__voice-time { color: var(--k-muted); }
+.shell__voice-icon { --k-icon-size: var(--k-icon-sm); }
 
 // The sign-out pill: danger-framed so it reads as a blocker next to the quiet icon cluster,
 // at the icon buttons' 28px height so the row stays one line.
@@ -2272,7 +2457,7 @@ const pullHint = computed(() => {
   display: flex;
   align-items: center;
   gap: var(--k-sp-1);
-  height: 34px;
+  height: 44px;
   padding: 0 var(--k-sp-2);
   background: var(--k-bg);
   border-top: 1px solid var(--k-line-strong);
@@ -2395,7 +2580,7 @@ const pullHint = computed(() => {
 .shell__main {
   display: flex;
   flex-direction: column;
-  height: calc(100vh - 90px);
+  height: calc(100vh - 100px);
   min-height: 0;
   overflow: hidden;
 }
@@ -2422,7 +2607,7 @@ const pullHint = computed(() => {
 .shell__workarea > .shell__fm {
   flex: none;
   box-sizing: border-box;
-  width: 340px;
+  // The width itself is inline: dragged from .shell__fm-resizer, 340px until then.
   height: calc(100% - 2 * var(--k-sp-3));
   margin-top: var(--k-sp-3);
   margin-bottom: var(--k-sp-3);
@@ -2432,5 +2617,39 @@ const pullHint = computed(() => {
 }
 .shell__workarea > .shell__fm--right {
   margin-right: var(--k-sp-3);
+}
+
+// The seam between the page and the dock: a 7px grab strip laid over the page's own 12px
+// gutter (negative margin, so it takes no width), with a 1px rule that shows only on hover,
+// focus and drag — the gutter stays a plain gap at rest. Same feel as the Агенти board's
+// resizer.
+.shell__fm-resizer {
+  position: relative;
+  z-index: 3;
+  flex: none;
+  width: 7px;
+  margin-block: var(--k-sp-3);
+  cursor: col-resize;
+  touch-action: none;
+  user-select: none;
+
+  &--right { margin-left: -9px; margin-right: 2px; }
+  &--left { margin-right: -9px; margin-left: 2px; }
+
+  &::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: 50%;
+    width: 1px;
+    transform: translateX(-50%);
+    background: transparent;
+    transition: background 0.12s;
+  }
+  &:hover::before,
+  &:focus-visible::before,
+  &--on::before { background: var(--k-accent); }
+  &:focus-visible { outline: none; }
 }
 </style>

@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import type { Session } from '@kermanych/core';
-import { bucketOf } from '../src/lib/buckets';
+import { bucketOf, readBucket } from '../src/lib/buckets';
 
 // Minimal session rows: only the fields the bucket rule reads.
 function session(over: Partial<Session> & { id: string }): Session {
@@ -25,62 +25,64 @@ function resolver(...rows: Session[]) {
 }
 
 describe('bucketOf', () => {
-  it('files an agent by its own state, completed first', () => {
+  it('files a session by its own state, completed first', () => {
     const live = session({ id: 'a', status: 'thinking' });
     const backlog = session({ id: 'b', status: 'backlog', kind: 'task' });
     const merged = session({ id: 'c', status: 'merged' });
     const aside = session({ id: 'd', status: 'done', archived: true });
     const find = resolver(live, backlog, merged, aside);
-    expect(bucketOf(live, find)).toBe('active');
+    expect(bucketOf(live, find)).toBe('agents');
     expect(bucketOf(backlog, find)).toBe('tasks');
     expect(bucketOf(merged, find)).toBe('completed');
     expect(bucketOf(aside, find)).toBe('completed');
   });
 
-  it('files a finished-but-unclosed agent as waiting', () => {
-    const done = session({ id: 'a', status: 'done' });
-    const stopped = session({ id: 'b', status: 'stopped' });
-    // A pushed PR is settled work that is NOT closed out: it belongs beside `done`, never
-    // in «Завершені», or the cards somebody still has to review are the ones nobody sees.
-    const review = session({ id: 'c', status: 'in_review' });
-    const find = resolver(done, stopped, review);
-    expect(bucketOf(done, find)).toBe('waiting');
-    expect(bucketOf(stopped, find)).toBe('waiting');
-    expect(bucketOf(review, find)).toBe('waiting');
+  // Everything an agent can be between launch and close-out is one tab: settled, stopped,
+  // pushed for review, crashed, conflicted. A pushed PR in particular must never read as
+  // completed, or the cards somebody still has to review are the ones nobody sees.
+  it('files every unclosed agent state under agents', () => {
+    const states = ['queued', 'thinking', 'tool', 'waiting_input', 'done', 'stopped', 'in_review', 'error', 'conflict'] as const;
+    const rows = states.map((status) => session({ id: status, status }));
+    const find = resolver(...rows);
+    for (const s of rows) expect(bucketOf(s, find)).toBe('agents');
   });
 
-  it('files an agent needing attention under errors', () => {
-    const err = session({ id: 'a', status: 'error' });
-    const conflict = session({ id: 'b', status: 'conflict' });
-    const find = resolver(err, conflict);
-    expect(bucketOf(err, find)).toBe('errors');
-    expect(bucketOf(conflict, find)).toBe('errors');
+  it('lets the archive flag win over any agent state', () => {
+    const crashed = session({ id: 'a', status: 'error', archived: true });
+    expect(bucketOf(crashed, resolver(crashed))).toBe('completed');
   });
 
-  // The point of the rule: branchSession settles a fresh fork at `done` immediately, so on
-  // its own status every branch would leave its live parent's bucket the moment it is made.
-  it('keeps a settled fork in its live parent bucket', () => {
+  // A fork is filed by its parent: archived or still running, it stays beside the agent it
+  // hangs off rather than in another tab.
+  it('keeps an archived fork with its live parent', () => {
     const parent = session({ id: 'p', status: 'waiting_input' });
-    const fork = session({ id: 'f', status: 'done', kind: 'discussion', parentSessionId: 'p' });
-    expect(bucketOf(fork, resolver(parent, fork))).toBe('active');
+    const fork = session({ id: 'f', status: 'done', kind: 'discussion', parentSessionId: 'p', archived: true });
+    expect(bucketOf(fork, resolver(parent, fork))).toBe('agents');
   });
 
-  it('follows the parent out of Активні when it settles', () => {
+  it('follows the parent into Завершені while still running', () => {
     const parent = session({ id: 'p', status: 'merged' });
     const fork = session({ id: 'f', status: 'thinking', kind: 'review', parentSessionId: 'p' });
-    expect(bucketOf(fork, resolver(parent, fork))).toBe('completed');
-  });
-
-  it('follows the parent into Завершені', () => {
-    const parent = session({ id: 'p', status: 'done', archived: true });
-    const fork = session({ id: 'f', status: 'done', kind: 'discussion', parentSessionId: 'p' });
     expect(bucketOf(fork, resolver(parent, fork))).toBe('completed');
   });
 
   // A fork outlives its parent only if a delete raced the socket update; it must still be
   // reachable in some bucket rather than dropping out of every list.
   it('falls back to its own status when the parent is gone', () => {
-    const fork = session({ id: 'f', status: 'stopped', kind: 'discussion', parentSessionId: 'p' });
-    expect(bucketOf(fork, resolver(fork))).toBe('waiting');
+    const fork = session({ id: 'f', status: 'stopped', kind: 'discussion', parentSessionId: 'p', archived: true });
+    expect(bucketOf(fork, resolver(fork))).toBe('completed');
+  });
+});
+
+describe('readBucket', () => {
+  it('reads the retired buckets as agents and drops anything else', () => {
+    expect(readBucket('active')).toBe('agents');
+    expect(readBucket('waiting')).toBe('agents');
+    expect(readBucket('errors')).toBe('agents');
+    expect(readBucket('completed')).toBe('completed');
+    expect(readBucket('tasks')).toBe('tasks');
+    expect(readBucket('toString')).toBeUndefined();
+    expect(readBucket('archived')).toBeUndefined();
+    expect(readBucket(3)).toBeUndefined();
   });
 });

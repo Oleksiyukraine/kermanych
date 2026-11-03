@@ -50,9 +50,11 @@ import { WatchdogService } from "./machine/watchdog.service";
 import { MinionController } from "./http/minion.controller";
 import { MinionService } from "./minion/minion.service";
 import { BranchNameService } from "./supervisor/branch-name.service";
+import { VoiceController } from "./http/voice.controller";
+import { VoiceService } from "./voice/voice.service";
 
 @Module({
-  controllers: [AuthController, ProjectsController, SessionsController, FsController, UsageController, CloudController, SkillsController, SkillImportController, ManagementController, ManagementMcpController, ModelsController, JiraController, LinearController, SlackController, AccountController, DocsController, NativeController, BrowserMcpController, MachineController, MinionController],
+  controllers: [AuthController, ProjectsController, SessionsController, FsController, UsageController, CloudController, SkillsController, SkillImportController, ManagementController, ManagementMcpController, ModelsController, JiraController, LinearController, SlackController, AccountController, DocsController, NativeController, BrowserMcpController, MachineController, MinionController, VoiceController],
   providers: [
     RegistryService, WorktreeService, SupervisorService, PreviewService, EnvFileService, EventsGateway,
     UsageService,
@@ -83,6 +85,10 @@ import { BranchNameService } from "./supervisor/branch-name.service";
     // one tool-less one-shot child on the runtime's fast model. The supervisor depends on it;
     // it knows nothing back, only the runtime preference (RegistryService).
     BranchNameService,
+    // The voice conversation (docs/specs/2026-11-02-voice-conversation.md): the operator's OpenAI
+    // key (RegistryService) and the SDP exchange with GPT-Live. The bridge to the agent runs in
+    // the window, through the same /sessions endpoints typed text uses.
+    VoiceService,
     // Dependency direction, stated once: CloudSyncService → { SupervisorService,
     // RegistryService, AuthService }. The supervisor never knows the mirror exists — it is
     // a pure `events$` subscriber, like EventsGateway.

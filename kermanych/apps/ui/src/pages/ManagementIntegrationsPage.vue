@@ -423,6 +423,7 @@
 // connects is already named for it.
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
+import { confirmAction } from '../lib/confirm';
 import KBtn from 'components/kit/KBtn.vue';
 import KField from 'components/kit/KField.vue';
 import KModal from 'components/kit/KModal.vue';
@@ -624,6 +625,12 @@ function saveToken(): void {
 async function removeToken(): Promise<void> {
   const site = settingsBoard.value?.siteUrl;
   if (!site || removingToken.value) return;
+  const ok = await confirmAction({
+    title: t('confirmations.removeToken.title', { service: 'Jira' }),
+    message: t('confirmations.removeToken.message', { service: 'Jira' }),
+    confirmLabel: t('confirmations.label.remove'),
+  });
+  if (!ok) return;
   removingToken.value = true;
   try {
     await api.jiraDeleteToken(site);
@@ -642,6 +649,12 @@ function addBoardFromSettings(): void {
 async function disconnect(): Promise<void> {
   const board = settingsBoard.value;
   if (!board || disconnecting.value) return;
+  const ok = await confirmAction({
+    title: t('confirmations.disconnect.title', { service: 'Jira' }),
+    message: t('confirmations.disconnect.message', { service: 'Jira' }),
+    confirmLabel: t('confirmations.label.disconnect'),
+  });
+  if (!ok) return;
   flowError.value = '';
   disconnecting.value = true;
   try {
@@ -756,6 +769,12 @@ function saveLinearToken(): void {
 async function removeLinearToken(): Promise<void> {
   const org = linear.integration?.orgUrlKey;
   if (!org || removingLinearToken.value) return;
+  const ok = await confirmAction({
+    title: t('confirmations.removeToken.title', { service: 'Linear' }),
+    message: t('confirmations.removeToken.message', { service: 'Linear' }),
+    confirmLabel: t('confirmations.label.remove'),
+  });
+  if (!ok) return;
   removingLinearToken.value = true;
   try {
     await api.linearDeleteToken(org);
@@ -785,6 +804,12 @@ function changeLinearTeam(): void {
 
 async function disconnectLinear(): Promise<void> {
   if (disconnectingLinear.value) return;
+  const ok = await confirmAction({
+    title: t('confirmations.disconnect.title', { service: 'Linear' }),
+    message: t('confirmations.disconnect.message', { service: 'Linear' }),
+    confirmLabel: t('confirmations.label.disconnect'),
+  });
+  if (!ok) return;
   linearFlowError.value = '';
   disconnectingLinear.value = true;
   try {
@@ -1002,6 +1027,12 @@ async function saveSlackToken(): Promise<void> {
 
 async function removeSlackToken(): Promise<void> {
   if (removingSlackToken.value) return;
+  const ok = await confirmAction({
+    title: t('confirmations.removeToken.title', { service: 'Slack' }),
+    message: t('confirmations.removeToken.message', { service: 'Slack' }),
+    confirmLabel: t('confirmations.label.remove'),
+  });
+  if (!ok) return;
   removingSlackToken.value = true;
   try {
     await api.slackDeleteToken(props.workspaceId);
@@ -1018,6 +1049,12 @@ function changeSlackChannel(): void {
 
 async function disconnectSlack(): Promise<void> {
   if (disconnectingSlack.value) return;
+  const ok = await confirmAction({
+    title: t('confirmations.disconnect.title', { service: 'Slack' }),
+    message: t('confirmations.disconnect.message', { service: 'Slack' }),
+    confirmLabel: t('confirmations.label.disconnect'),
+  });
+  if (!ok) return;
   slackFlowError.value = '';
   disconnectingSlack.value = true;
   try {

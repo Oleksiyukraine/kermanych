@@ -5,24 +5,28 @@
 // pure functions, because apps/ui has no component tests (see lib/scope.ts:1-3); AgentMap.vue
 // only hands the result to Vue Flow.
 import { ACTIVE_STATUSES, type Session, type SubagentNode } from '@kermanych/core';
-import { bucketOf, type Bucket } from './buckets';
+import { bucketOf, readBucket, type Bucket } from './buckets';
 import { byNewestLaunch } from './agents-board';
 
-// The chips above the map: the sidebar's buckets minus «Задачі» — a backlog card has no agent
-// behind it. Same rule as the sidebar (bucketOf), so a fork follows its parent's bucket.
+// The chips above the map: the «Агенти» tabs minus «Задачі» — a backlog card has no agent
+// behind it. Same rule as the tabs (bucketOf), so a fork follows its parent's bucket.
 export type MapBucket = Exclude<Bucket, 'tasks'>;
-export const MAP_BUCKETS: readonly MapBucket[] = ['active', 'waiting', 'errors', 'completed'];
+export const MAP_BUCKETS: readonly MapBucket[] = ['agents', 'completed'];
 // Everything still in play; the finished history is one chip away.
-export const DEFAULT_MAP_BUCKETS: readonly MapBucket[] = ['active', 'waiting', 'errors'];
+export const DEFAULT_MAP_BUCKETS: readonly MapBucket[] = ['agents'];
 
 // The chip choice as stored in localStorage. Anything unreadable — absent, not JSON, from an
 // older build — reads as the default; an EMPTY list is a real choice (every chip off) and stays.
+// A choice stored before the three agent buckets merged («active», «waiting», «errors») reads
+// through readBucket as «agents»: dropping those names would turn the usual stored value into
+// an empty list, and the map would open blank after the update.
 export function parseMapBuckets(raw: string | null): MapBucket[] {
   if (raw === null) return [...DEFAULT_MAP_BUCKETS];
   try {
     const value: unknown = JSON.parse(raw);
     if (!Array.isArray(value)) return [...DEFAULT_MAP_BUCKETS];
-    return MAP_BUCKETS.filter((b) => value.includes(b));
+    const chosen = new Set(value.map(readBucket));
+    return MAP_BUCKETS.filter((b) => chosen.has(b));
   } catch {
     return [...DEFAULT_MAP_BUCKETS];
   }

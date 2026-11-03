@@ -97,14 +97,21 @@ import {
   type PrCheckState,
   DEFAULT_SKILLS,
   type SkillView,
+  DESIGNER_AGENT_ID,
+  DESIGN_SAVE_AGENT_ID,
+  DESIGN_SPEC_SKILL,
+  designDirFor,
+  designCommitMessage,
+  voiceMessagePrompt,
 } from "@kermanych/core";
 import { claimTaskForLaunch, createTask, getTask, listProjects, patchTask, releaseLaunchClaim, type CloudProject, type AiTrigger, type Task, type TaskPatch } from "@kermanych/cloud";
 import { AuthService } from "../auth/auth.service";
 import { ModelsService } from "../models/models.service";
 import { NativeSessionService, nativeUnsupported } from "../native/native-session.service";
 import { CodedError } from "../management/coded-error";
+import { todayIso } from "../management/management-prompt";
 import { firstPrUrl } from "./pr-url";
-import { launchToolsFor } from "./chat-tools";
+import { launchAppendFor, launchToolsFor } from "./chat-tools";
 import { MachineResourcesService } from "../machine/machine-resources.service";
 import { WatchdogService } from "../machine/watchdog.service";
 import { BranchNameService, type BranchContext } from "./branch-name.service";
@@ -355,6 +362,8 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
         this.onNativeChange(e.sessionId);
         this.pushUpdate(e.sessionId);
         this.drainSlots();
+        // A native turn's tool calls surface only as these changes.
+        void this.syncBranch(e.sessionId).catch(() => {});
         return;
       }
       if (e.type === "settled") {
@@ -1104,9 +1113,14 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
 
     // The board stores launch params as free text; validate them against the local
     // vocabularies instead of casting, so a bad card cannot produce a bogus branch prefix.
-    const prefix: BranchPrefix = (BRANCH_PREFIXES as readonly string[]).includes(task.prefix ?? "")
-      ? (task.prefix as BranchPrefix)
-      : "feature";
+    // A design card is always a `design/` branch, whatever the card says
+    // (docs/specs/2026-10-29-design-tab.md); a minion never runs one (its queries skip them).
+    const design = task.design && !minion;
+    const prefix: BranchPrefix = design
+      ? "design"
+      : (BRANCH_PREFIXES as readonly string[]).includes(task.prefix ?? "")
+        ? (task.prefix as BranchPrefix)
+        : "feature";
 
     // A shared card must never commandeer another developer's checkout, which is what the
     // hardcoded `true` here used to guarantee. The in-place option is personal, so it
@@ -1130,6 +1144,9 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     // than running the wrong provider's model; an unreadable catalog keeps the id untouched.
     // A native session carries neither model nor effort: the harness's own `/model` owns them.
     const model = native ? undefined : await this.models.validModel(this.runtimeFor(), task.model);
+    // The design's folder is named once, from the launch day and the branch's own slug (already
+    // made unique), and stays on the row: a resume or a slot replay reads it back, never re-derives.
+    const designDir = design ? designDirFor(todayIso(), branch.slice("design/".length)) : undefined;
     const session = this.registry.createSession({
       projectId: project.id,
       taskId: task.id,
@@ -1150,6 +1167,7 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
       // A «Глибокий аналіз» card opens with the wrapped prompt (launch → openingPrompt). The
       // minion never takes one: that agent interviews a person.
       ...(task.deepAnalysis && !minion ? { deepAnalysis: true } : {}),
+      ...(designDir ? { designDir } : {}),
       ...(minion ? { minion: true } : {}),
       // A minion run of a finding card carries the kind for its opening prompt (decision 14).
       ...(minion && task.findingKind ? { findingKind: task.findingKind } : {}),
@@ -1187,7 +1205,7 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     const extensionPath = await this.ompTriggers(project.id, project.localRepoPath, session.id);
     const browserMcp = this.browser?.bindingFor(session.id);
     const runtime = managedRuntime(session.runtime);
-    const rpc = createRuntime(runtime, { cwd: project.localRepoPath, ...launchToolsFor("chat"), ...(await this.spawnOpts(session.id, runtime, project.localRepoPath, configPath)), ...(extensionPath ? { extensionPath } : {}), ...(browserMcp ? { mcp: browserMcp } : {}), ...this.systemAppendOpts(project.id) });
+    const rpc = createRuntime(runtime, { cwd: project.localRepoPath, ...launchToolsFor("chat"), ...(await this.spawnOpts(session.id, runtime, project.localRepoPath, configPath)), ...(extensionPath ? { extensionPath } : {}), ...(browserMcp ? { mcp: browserMcp } : {}), ...this.systemAppendOpts(project.id, "chat") });
     const live = this.wireLive(session.id, rpc, "queued");
     try {
       await this.startChild(session.id, rpc);
@@ -1372,16 +1390,17 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
 
   // The system-prompt append for one spawn, shaped for a spread into any createRuntime() opts:
   // the user's agent communication language, then — when the project's documentation switch is
-  // on — the policy built from its per-kind rules (docsPolicyAppend). Every createRuntime site
+  // on — the policy built from its per-kind rules (docsPolicyAppend), then what the session
+  // kind's tool restriction means for the model (launchAppendFor). Every createRuntime site
   // passes it, so the policy reaches chats, agents, discussions, reviews and resumes alike on
-  // both runtimes. Empty object when neither applies, so the agent keeps its own default. Read
+  // both runtimes. Empty object when nothing applies, so the agent keeps its own default. Read
   // fresh per spawn: a preference or setting change takes on the next spawn without a restart.
-  private systemAppendOpts(projectId: string): { appendSystemPrompt?: string } {
+  private systemAppendOpts(projectId: string, kind: Session["kind"]): { appendSystemPrompt?: string } {
     const language = languageAppendFor(this.registry.getAuthSession()?.agentLanguage);
     const project = this.registry.listProjects().find((p) => p.id === projectId);
     const docs = project?.docsRequired ? docsPolicyAppend(docsPolicy(project.docsPolicy)) : undefined;
     // The machine resource paragraph (test workers, no watch mode) while limits apply.
-    const append = [language, docs, this.resources?.promptParagraph()].filter(Boolean).join("\n\n");
+    const append = [language, docs, this.resources?.promptParagraph(), launchAppendFor(kind)].filter(Boolean).join("\n\n");
     return append ? { appendSystemPrompt: append } : {};
   }
 
@@ -1475,7 +1494,7 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     const extensionPath = await this.ompTriggers(project.id, cwd, id);
     const browserMcp = this.browser?.bindingFor(id);
     const runtime = managedRuntime(saved.runtime);
-    const rpc = createRuntime(runtime, { cwd, model, ...(effort ? { thinking: effort } : {}), ...(fork ? { fork } : {}), ...(await this.spawnOpts(id, runtime, cwd, configPath)), ...(extensionPath ? { extensionPath } : {}), ...(browserMcp ? { mcp: browserMcp } : {}), ...this.systemAppendOpts(project.id) });
+    const rpc = createRuntime(runtime, { cwd, model, ...(effort ? { thinking: effort } : {}), ...(fork ? { fork } : {}), ...(await this.spawnOpts(id, runtime, cwd, configPath)), ...(extensionPath ? { extensionPath } : {}), ...(browserMcp ? { mcp: browserMcp } : {}), ...this.systemAppendOpts(project.id, saved.kind) });
     const live = this.wireLive(id, rpc, "queued");
     try {
       await this.startChild(id, rpc);
@@ -1503,8 +1522,13 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
         // documentation current is deterministic, not left to the model reading the librarian
         // skill. A locally-created session with no card carries the trailer alone.
         this.appendEntry(id, this.userEntry(firstPrompt, images));
+        // A task's text is the operator's ask, so a leading Хелпер (`/el10`, picked in the
+        // launcher or the board editor) expands here exactly as in a chat message: the row
+        // keeps the slash, a notice says what was added, the model reads the instruction.
+        const helped = expandHelpers(firstPrompt);
+        if (helped.used.length) this.appendEntry(id, this.noticeEntry(helperNotice(helped.used)));
         const directives = saved.taskId ? `${COAUTHOR_DIRECTIVE}\n\n${DOC_MAINTAIN_DIRECTIVE}` : COAUTHOR_DIRECTIVE;
-        const modelPrompt = await this.openingPrompt(saved, firstPrompt, cwd);
+        const modelPrompt = await this.openingPrompt(saved, helped.text, cwd);
         rpc.prompt(`${modelPrompt}\n\n${directives}`, images);
         // A minion run's time cap counts from this spawn to its first verdict (decision 9).
         if (saved.minion) this.startMinionClock(id);
@@ -1568,6 +1592,15 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
       const about = kind ? `\n\n${minionFindingLine(kind)}` : "";
       return `${renderInstruction(agentById(MINION_AGENT_ID)!, { task: card }, template)}${about}${block}\n\n${MINION_OUTCOME_CONTRACT}`;
     }
+    // A «Дизайн» session (docs/specs/2026-10-29-design-tab.md) opens with the Дизайнер's
+    // instruction around the card — its folder, topic and description — plus the `design-spec`
+    // skill after the assigned ones, like the minion's extra. Native sessions take it too: the
+    // instruction is the task the operator chose, as with deep analysis.
+    if (session.designDir && firstPrompt.trim()) {
+      const { template, block } = await this.agentPrompt(session.projectId, DESIGNER_AGENT_ID, cwd, [DESIGN_SPEC_SKILL]);
+      const description = firstPrompt.trim() === session.name.trim() ? "" : firstPrompt.trim();
+      return renderInstruction(agentById(DESIGNER_AGENT_ID)!, { designDir: session.designDir, topic: session.name, description }, template).trimEnd() + block;
+    }
     if (!session.deepAnalysis || !firstPrompt.trim()) return firstPrompt;
     let block = "";
     try {
@@ -1626,7 +1659,7 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
 
     const configPath = await this.ompSkills(s.projectId, cwd, child.id);
     const extensionPath = await this.ompTriggers(s.projectId, cwd, child.id);
-    const rpc = createRuntime(parentRuntime, { cwd, fork: forkHandle, ...launchToolsFor("discussion"), ...(await this.spawnOpts(child.id, parentRuntime, cwd, configPath)), ...(extensionPath ? { extensionPath } : {}), ...this.systemAppendOpts(s.projectId) });
+    const rpc = createRuntime(parentRuntime, { cwd, fork: forkHandle, ...launchToolsFor("discussion"), ...(await this.spawnOpts(child.id, parentRuntime, cwd, configPath)), ...(extensionPath ? { extensionPath } : {}), ...this.systemAppendOpts(s.projectId, "discussion") });
     const childLive = this.wireLive(child.id, rpc, "queued");
     try {
       await this.startChild(child.id, rpc);
@@ -1699,7 +1732,7 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     const configPath = await this.ompSkills(s.projectId, cwd, child.id);
     const extensionPath = await this.ompTriggers(s.projectId, cwd, child.id);
     const childRuntime = managedRuntime(child.runtime);
-    const rpc = createRuntime(childRuntime, { cwd, ...launchToolsFor("review"), ...(await this.spawnOpts(child.id, childRuntime, cwd, configPath)), ...(extensionPath ? { extensionPath } : {}), ...this.systemAppendOpts(s.projectId) });
+    const rpc = createRuntime(childRuntime, { cwd, ...launchToolsFor("review"), ...(await this.spawnOpts(child.id, childRuntime, cwd, configPath)), ...(extensionPath ? { extensionPath } : {}), ...this.systemAppendOpts(s.projectId, "review") });
     const childLive = this.wireLive(child.id, rpc, "queued");
     try {
       await this.startChild(child.id, rpc);
@@ -1821,9 +1854,13 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
 
   // Echo the user's own message (initial task or follow-up) into the transcript so
   // the log reads as a full conversation. Images ride along as data URLs for render.
-  private userEntry(text: string, images?: ImageInput[]): TranscriptEntry {
+  private userEntry(text: string, images?: ImageInput[], voice?: boolean): TranscriptEntry {
     const at = this.stamp();
-    return { kind: "user_text", id: `u${at}`, at, text, ...(images?.length ? { images: images.map((i) => `data:${i.mimeType};base64,${i.data}`) } : {}) };
+    return {
+      kind: "user_text", id: `u${at}`, at, text,
+      ...(images?.length ? { images: images.map((i) => `data:${i.mimeType};base64,${i.data}`) } : {}),
+      ...(voice ? { via: "voice" as const } : {}),
+    };
   }
 
   // A Kermanych-authored row in the conversation. A fired trigger changed what the child was
@@ -1854,6 +1891,7 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
       this.mergeTaskDetails(l, (e as Extract<RpcEvent, { type: "tool_execution_end" }>).result?.details);
       this.emitSubagents(id, l);
     }
+    if (e.type === "tool_execution_end") void this.syncBranch(id).catch(() => {});
     // Progress heartbeat (in-memory) — distinct from last_activity_at, which user sends also
     // bump. The UI uses this to spot a wedged turn. `response` frames are replies to the
     // supervisor's OWN commands (chiefly the 2s get_state poll below), not agent progress:
@@ -2020,6 +2058,8 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
   // — the pushed branch, freshly fetched — has origin's base. A failed fetch leaves the refs the
   // agent's own fetch wrote, so the check still compares against something recent.
   private async checkTurnEnd(id: string, settled: Session["status"], review: boolean): Promise<void> {
+    // Best effort: a branch it could not read must not cost the conflict check below.
+    await this.syncBranch(id).catch(() => {});
     const s = this.registry.listSessions().find((x) => x.id === id);
     const g = s && this.registry.listProjects().find((p) => p.id === s.projectId);
     if (!s || !g || s.kind !== "agent") return;
@@ -2056,6 +2096,22 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
           "warn",
         ),
       );
+  }
+
+  // The agent may rename its branch (`git branch -m`, asked to match the ticket). Its own
+  // worktree is the truth, so the record follows it — the panels show it, and merge, PR and
+  // delete name it. Run after every tool call (a rename is one) and at turn end, so a long
+  // turn does not leave the panels stale. Only a session's own worktree: an agent on the
+  // project checkout has no worktreePath, and a branch there may be the operator's own switch.
+  private async syncBranch(id: string): Promise<void> {
+    const path = this.registry.listSessions().find((x) => x.id === id)?.worktreePath;
+    if (!path) return;
+    const head = await this.worktree.workingBranch(path);
+    // Re-read: the row may have moved (finished, merged) while git ran.
+    const s = this.registry.listSessions().find((x) => x.id === id);
+    if (!head || !s || s.worktreePath !== path || head === s.branch) return;
+    this.registry.updateSession(id, { branch: head });
+    this.pushUpdate(id);
   }
 
   private stopPoll(l: Live) {
@@ -2147,10 +2203,11 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
 
   // The OPERATOR's own message. Everything Kermanych sends itself goes through
   // `sendAsKermanych`, which is the same delivery with the operator's own affordances off.
-  async sendMessage(id: string, text: string, mode: "prompt" | "follow_up" | "steer", images?: ImageInput[]) {
+  // `voice`: said in a voice conversation (docs/specs/2026-11-02-voice-conversation.md, decision 6).
+  async sendMessage(id: string, text: string, mode: "prompt" | "follow_up" | "steer", images?: ImageInput[], opts: { voice?: boolean } = {}) {
     // The operator took over a «Посіпака» run: it works again, with no clock from here on.
     this.attendMinionRun(id);
-    await this.deliver(id, text, mode, images, true);
+    await this.deliver(id, text, mode, images, true, undefined, opts);
   }
 
   // Kermanych's own prompt into a session: a fired trigger's agent, a PR request, a merged
@@ -2178,14 +2235,15 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     images: ImageInput[] | undefined,
     fromOperator: boolean,
     replay?: () => Promise<unknown>,
+    opts: { voice?: boolean } = {},
   ): Promise<boolean> {
     const row = this.registry.listSessions().find((x) => x.id === id);
     if (!row) throw new Error("session not found");
     // Refused now, not after a wait: a parked message the harness cannot take would vanish on
     // replay with nobody left to tell (deliverNative's own check).
     if (row.native && (images?.length || (fromOperator && parseCommand(text)))) throw nativeUnsupported();
-    const parked = replay ?? (() => this.deliver(id, text, mode === "prompt" && this.turnRunning(row) ? "follow_up" : mode, images, fromOperator));
-    return this.withSlot(row, () => this.deliverNow(row, text, mode, images, fromOperator), parked, { text, images });
+    const parked = replay ?? (() => this.deliver(id, text, mode === "prompt" && this.turnRunning(row) ? "follow_up" : mode, images, fromOperator, undefined, opts));
+    return this.withSlot(row, () => this.deliverNow(row, text, mode, images, fromOperator, opts), parked, { text, images });
   }
 
   private async deliverNow(
@@ -2194,6 +2252,7 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     mode: "prompt" | "follow_up" | "steer",
     images: ImageInput[] | undefined,
     fromOperator: boolean,
+    opts: { voice?: boolean } = {},
   ): Promise<void> {
     const id = row.id;
     if (row.native) return this.deliverNative(id, text, images, fromOperator);
@@ -2208,7 +2267,8 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     // intercepted BEFORE the task-name capture and the trigger/helper passes: `/compact` is not
     // the ask, so it must neither name a fresh chat nor match an operator trigger. The typed
     // command line stays in the transcript, the way a helper's slash does.
-    if (fromOperator) {
+    // A voice transcript is never a command: speech that happens to start with a slash is speech.
+    if (fromOperator && !opts.voice) {
       const cmd = parseCommand(text);
       if (cmd) {
         this.appendEntry(id, this.userEntry(text));
@@ -2219,7 +2279,7 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     // A chat's opening message IS the ask. Record it once, so promoting the chat can name the
     // agent and its branch after the thing being built, and so review/PR prompts have a task.
     if (text.trim() && s?.kind === "chat" && !s.task.trim()) this.registry.updateSession(id, { task: text.trim() });
-    if (text.trim() || images?.length) this.appendEntry(id, this.userEntry(text, images));
+    if (text.trim() || images?.length) this.appendEntry(id, this.userEntry(text, images, opts.voice));
 
     // Operator-sourced triggers run BEFORE the message reaches the child: Kermanych is the
     // only party that sees the operator's text, and an `agent` action has to be Kermanych's
@@ -2235,7 +2295,11 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     // the operator wrote, so the guidance is read before the request it applies to. The
     // transcript keeps the operator's own text as the visible row and the notices above say
     // what was prepended to it.
-    const body = fired?.body ? `${fired.body}\n\n${helped.text}` : helped.text;
+    const prompted = fired?.body ? `${fired.body}\n\n${helped.text}` : helped.text;
+    // The voice note goes in front of everything, so the history re-read after a restart can
+    // recognise the message by its first line and show the operator's words again
+    // (messages-to-transcript.ts).
+    const body = opts.voice ? voiceMessagePrompt(prompted) : prompted;
     // An idle child starts a turn from this write; it holds its agent slot from now (Live.turnPending).
     if (!ACTIVE_STATUSES.includes(l.live.status ?? "done")) l.turnPending = true;
     if (mode === "steer") l.rpc.steer(body, images);
@@ -2606,6 +2670,24 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     }
     return { ok: true };
   }
+
+  // «Зберегти дизайн» (docs/specs/2026-10-29-design-tab.md): one Kermanych prompt into the
+  // Дизайнер — screenshots of every listed screen and state, the README brought in line with the
+  // prototype, one commit `design: <topic>`. Ungated, like «Написати хендоф»: saving is how the
+  // README the gate wants gets written. Nothing is armed: the agent commits on its own branch, so
+  // the turn settles like any other.
+  async saveDesign(id: string): Promise<{ sent: true }> {
+    const s = this.registry.listSessions().find((x) => x.id === id);
+    if (!s) throw new Error("session not found");
+    if (s.kind !== "agent" || !s.designDir) throw new Error(`only design sessions can save a design (this is ${s.kind === "agent" ? "an ordinary agent" : `a ${s.kind}`})`);
+    const dir = s.worktreePath || this.project(s.projectId).localRepoPath;
+    const { template, block } = await this.agentPrompt(s.projectId, DESIGN_SAVE_AGENT_ID, dir);
+    const prompt =
+      renderInstruction(agentById(DESIGN_SAVE_AGENT_ID)!, { designDir: s.designDir, branch: s.branch, message: designCommitMessage(s.name) }, template) + block;
+    // Parked for an agent slot: replayed whole later, like commitChanges.
+    await this.sendAsKermanych(id, prompt, "prompt", () => this.saveDesign(id));
+    return { sent: true };
+  }
   answerUi(id: string, res: RpcExtensionUIResponse) {
     if (this.registry.listSessions().find((x) => x.id === id)?.native) throw nativeUnsupported();
     this.map.get(id)?.rpc.answerUi(res);
@@ -2781,7 +2863,7 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     const dirty = await this.worktree.hasUncommitted(dir);
     const conflicts = await this.worktree.unmergedFiles(dir);
     const files = await this.worktree.changedFiles(dir, from);
-    const docsGate = await this.evaluateDocsGate(g, dir, files);
+    const docsGate = await this.evaluateDocsGate(g, dir, files, s.designDir);
     if (!conflicts.length) this.clearConflict(s);
     return { branch: s.branch, target, ahead, behind, dirty, conflicts, files, docsGate };
   }
@@ -2836,22 +2918,25 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     const g = this.boundProject(s.projectId);
     if (s.worktree && !s.worktreePath) throw new Error("session has no worktree — reopen it to continue");
     const { dir, from } = await this.branchBase(s, g);
-    return this.evaluateDocsGate(g, dir, await this.worktree.changedFiles(dir, from));
+    return this.evaluateDocsGate(g, dir, await this.worktree.changedFiles(dir, from), s.designDir);
   }
 
   // The pure gate (core docsGateFailures) over an already-listed change set. Only the changed
   // task documents are read — for their `## Documentation impact` declaration; a deleted or
-  // unreadable one reads as empty, so it can never declare `None`.
-  private async evaluateDocsGate(project: Project, dir: string, files: readonly ChangedFile[]): Promise<DocsGate> {
+  // unreadable one reads as empty, so it can never declare `None`. A design session
+  // (`designDir`) is checked for its own folder's README only (docs/specs/2026-10-29-design-tab.md).
+  private async evaluateDocsGate(project: Project, dir: string, files: readonly ChangedFile[], designDir?: string): Promise<DocsGate> {
     if (!project.docsRequired) return { enabled: false, failures: [] };
     const policy = docsPolicy(project.docsPolicy);
     const paths = files.map((f) => f.path);
-    const specBodies = await Promise.all(
-      paths
-        .filter((p) => docsLayoutKind(p) === "spec" && isMarkupPath(p))
-        .map((p) => this.worktree.readFileContent(dir, p).then((f) => f.content, () => "")),
-    );
-    return { enabled: true, failures: docsGateFailures({ policy, paths, specBodies }) };
+    const specBodies = designDir
+      ? []
+      : await Promise.all(
+          paths
+            .filter((p) => docsLayoutKind(p) === "spec" && isMarkupPath(p))
+            .map((p) => this.worktree.readFileContent(dir, p).then((f) => f.content, () => "")),
+        );
+    return { enabled: true, failures: docsGateFailures({ policy, paths, specBodies, ...(designDir ? { designDir } : {}) }) };
   }
 
   // PR, commit-to-PR and finish refuse while the gate fails — right after each action's own
@@ -2882,7 +2967,10 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
         console.warn(`[supervisor] no documentation skills for ${id}: ${(err as Error).message}`);
       }
     }
-    await this.sendAsKermanych(id, docsCompletionPrompt(failures) + block, "prompt");
+    // The core ask says "the design folder your instruction names"; the folder is named here too,
+    // because the instruction may be far back in a long conversation.
+    const folder = failures.includes("design-readme") && s.designDir ? `\n\nThe design folder is \`${s.designDir}\`.` : "";
+    await this.sendAsKermanych(id, docsCompletionPrompt(failures) + folder + block, "prompt");
     return { sent: true, failures };
   }
 
@@ -3707,7 +3795,7 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     // Forks (discussion/review) never get the session browser; agents and chats do.
     const browserMcp = s.kind === "discussion" || s.kind === "review" ? undefined : this.browser?.bindingFor(id);
     const handle = refork ? { fork: refork } : runtimeKind === "claude-code" && resumeHandle ? { resume: resumeHandle } : {};
-    const rpc = createRuntime(runtimeKind, { cwd: dir, ...launchToolsFor(s.kind), ...handle, ...(await this.spawnOpts(id, runtimeKind, dir, configPath)), ...(extensionPath ? { extensionPath } : {}), ...(browserMcp ? { mcp: browserMcp } : {}), ...this.systemAppendOpts(s.projectId) });
+    const rpc = createRuntime(runtimeKind, { cwd: dir, ...launchToolsFor(s.kind), ...handle, ...(await this.spawnOpts(id, runtimeKind, dir, configPath)), ...(extensionPath ? { extensionPath } : {}), ...(browserMcp ? { mcp: browserMcp } : {}), ...this.systemAppendOpts(s.projectId, s.kind) });
     const live = this.wireLive(id, rpc, s.status);
     try {
       await this.startChild(id, rpc);

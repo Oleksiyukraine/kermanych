@@ -74,6 +74,11 @@ export type Session = {
   // Stamped when the session is created and never changed. Absent means a session a person
   // started, even when its card allows auto-run.
   minion?: boolean;
+  // A «Дизайн» session (docs/specs/2026-10-29-design-tab.md): the repository-relative folder
+  // its design lands in, e.g. `docs/design/2026-10-29-orders-list`. Stamped from a design card
+  // at launch (designDirFor) and never changed; its presence is what makes the session a design.
+  // Absent for every other session.
+  designDir?: string;
   // A minion run of a card filed from a «Знахідка»: the finding's kind, stamped from the card
   // when the run is created, so its opening prompt — a relaunch's too — carries the per-kind rules
   // (docs/specs/2026-10-23-minion-auto-run.md, decision 14). Absent for every other session.
@@ -200,7 +205,9 @@ export type SubscriptionUsage = { fetchedAt: string; providers: ProviderUsage[] 
 export type ToolStat = string | { key: string; params?: Record<string, string | number | boolean> };
 
 export type TranscriptEntry =
-  | { kind: "user_text"; id: string; at: number; text: string; images?: string[] }
+  // `via: "voice"`: said in a voice conversation (docs/specs/2026-11-02-voice-conversation.md) —
+  // `text` is the operator's own words; the child received them under the voice note (voice-bridge.ts).
+  | { kind: "user_text"; id: string; at: number; text: string; images?: string[]; via?: "voice" }
   | { kind: "assistant_text"; id: string; at: number; text: string }
   | { kind: "assistant_thinking"; id: string; at: number; text: string; ms?: number; tokens?: number }
   | {

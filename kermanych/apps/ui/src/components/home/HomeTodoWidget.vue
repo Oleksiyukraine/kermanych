@@ -80,7 +80,7 @@
           type="button"
           v-tip="t('management.home.todo.remove')"
           :aria-label="t('management.home.todo.remove')"
-          @click="removeAt(i)"
+          @click="askRemove(item)"
         >✕</button>
       </li>
     </ol>
@@ -105,9 +105,10 @@
 // ever survives a reload.
 import { computed, nextTick, onMounted, onUnmounted, watch, ref, type ComponentPublicInstance } from 'vue';
 import { useI18n } from 'vue-i18n';
+import { confirmAction } from '../../lib/confirm';
 import KIconButton from 'components/kit/KIconButton.vue';
 import { useHomeTodo } from 'stores/home-todo';
-import { newTodoItem, numberOf, sanitizeInline, type TodoItem, type TodoKind } from '../../lib/home-todo';
+import { newTodoItem, numberOf, sanitizeInline, todoPlainText, type TodoItem, type TodoKind } from '../../lib/home-todo';
 
 const props = defineProps<{ workspaceId: string }>();
 
@@ -201,6 +202,24 @@ function addItem(kind?: TodoKind, index = items.value.length): void {
   const item = newTodoItem(kind ?? activeKind.value);
   items.value.splice(index, 0, item);
   void nextTick(() => editors.get(item.id)?.focus());
+}
+
+// The ✕ asks first when the row has text to lose; an empty row (and Backspace, which only
+// ever removes an empty one) goes straight away.
+async function askRemove(item: TodoItem): Promise<void> {
+  const text = todoPlainText(item.html).trim();
+  if (text) {
+    const ok = await confirmAction({
+      title: t('confirmations.deleteTodo.title'),
+      message: t('confirmations.deleteTodo.message', { text }),
+      confirmLabel: t('confirmations.label.delete'),
+    });
+    if (!ok) return;
+  }
+  // The list may have moved while the dialog was open: remove this item, wherever it is now —
+  // and nothing if it is already gone, rather than whatever took its place.
+  const at = items.value.indexOf(item);
+  if (at !== -1) removeAt(at);
 }
 
 function removeAt(i: number): void {

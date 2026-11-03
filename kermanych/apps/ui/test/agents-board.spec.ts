@@ -2,11 +2,14 @@ import { describe, expect, it } from 'vitest';
 import type { Session } from '@kermanych/core';
 import type { Task } from '@kermanych/cloud';
 import {
+  agentsOrder,
+  byAgentsGroup,
   byNewestLaunch,
   byNewestSession,
   byNewestTask,
   filterSessions,
   filterTaskCards,
+  forkMarks,
   newestActivityAt,
 } from '../src/lib/agents-board';
 
@@ -123,7 +126,7 @@ describe('byNewestSession', () => {
 });
 
 describe('byNewestLaunch', () => {
-  // The «Активні» promise: a running agent keeps its slot. Two agents working at once both
+  // The «Агенти» promise: a running agent keeps its slot. Two agents working at once both
   // stamp lastActivityAt on every event — the order must not follow those stamps, or the
   // cards trade places on every tool call.
   it('ignores activity, so concurrent agents do not swap places', () => {
@@ -168,5 +171,84 @@ describe('newestActivityAt', () => {
       ]),
     ).toBe(Date.parse('2026-08-30T14:00:00.000Z'));
     expect(newestActivityAt([])).toBe(0);
+  });
+});
+
+// launched N hours after 00:00 — the higher, the newer
+const at = (h: number): string => `2026-08-30T${String(h).padStart(2, '0')}:00:00.000Z`;
+
+describe('agentsOrder', () => {
+  it('puts the agents that need a human first, each part in launch order', () => {
+    const rows = [
+      session({ id: 'old-done', status: 'done', createdAt: at(1) }),
+      session({ id: 'old-crash', status: 'error', createdAt: at(2) }),
+      session({ id: 'working', status: 'thinking', createdAt: at(5) }),
+      session({ id: 'asking', status: 'waiting_input', createdAt: at(3) }),
+      session({ id: 'merge', status: 'conflict', createdAt: at(4) }),
+      session({ id: 'stopped', status: 'stopped', createdAt: at(6) }),
+    ];
+    expect(agentsOrder(rows).map((s) => s.id)).toEqual([
+      'merge', 'asking', 'old-crash',
+      'stopped', 'working', 'old-done',
+    ]);
+  });
+
+  // Activity stamps move on every tool call; the order must not follow them.
+  it('keeps concurrent agents in place while they work', () => {
+    const a = session({ id: 'a', createdAt: at(1), lastActivityAt: at(9) });
+    const b = session({ id: 'b', createdAt: at(2), lastActivityAt: at(3) });
+    expect(agentsOrder([a, b]).map((s) => s.id)).toEqual(['b', 'a']);
+    expect(agentsOrder([{ ...b, lastActivityAt: at(10) }, a]).map((s) => s.id)).toEqual(['b', 'a']);
+  });
+
+  // A fork stays under its parent, and a fork that needs the operator lifts its family.
+  it('ranks a family by any member that needs a human, forks under their parent', () => {
+    const rows = [
+      session({ id: 'fresh', status: 'thinking', createdAt: at(8) }),
+      session({ id: 'parent', status: 'done', createdAt: at(1) }),
+      session({ id: 'fork-late', status: 'done', kind: 'discussion', parentSessionId: 'parent', createdAt: at(5) }),
+      session({ id: 'fork-asks', status: 'waiting_input', kind: 'discussion', parentSessionId: 'parent', createdAt: at(3) }),
+    ];
+    expect(agentsOrder(rows).map((s) => s.id)).toEqual(['parent', 'fork-late', 'fork-asks', 'fresh']);
+  });
+
+  it('lets a fork whose parent is not listed head its own family', () => {
+    const orphan = session({ id: 'orphan', status: 'error', parentSessionId: 'gone', createdAt: at(1) });
+    const live = session({ id: 'live', createdAt: at(2) });
+    expect(agentsOrder([live, orphan]).map((s) => s.id)).toEqual(['orphan', 'live']);
+  });
+});
+
+describe('byAgentsGroup', () => {
+  // Under a workspace scope the project groups follow the tab's rule one level up.
+  it('leads with a project that needs the operator, then by newest launch', () => {
+    const calm = [session({ id: 'c', createdAt: at(9) })];
+    const older = [session({ id: 'o', createdAt: at(2) })];
+    const urgent = [session({ id: 'u', status: 'conflict', createdAt: at(1) })];
+    const groups = [calm, older, urgent].sort(byAgentsGroup).map((g) => g[0]!.id);
+    expect(groups).toEqual(['u', 'c', 'o']);
+  });
+});
+
+describe('forkMarks', () => {
+  const fork = (id: string, parent: string) =>
+    session({ id, kind: 'discussion', parentSessionId: parent });
+
+  // Siblings read as one bracket: every fork but the last carries the spine on.
+  it('ties the forks under their parent and ends the spine at the last one', () => {
+    const rows = [session({ id: 'p' }), fork('f1', 'p'), fork('f2', 'p'), session({ id: 'next' })];
+    expect(forkMarks(rows)).toEqual([
+      { fork: false, continues: false },
+      { fork: true, continues: true },
+      { fork: true, continues: false },
+      { fork: false, continues: false },
+    ]);
+  });
+
+  // Orphans are swept to the end of the other tabs' list, often next to an unrelated agent
+  // or to a sibling orphan; an elbow there would claim a parent that is not on screen.
+  it('leaves a fork whose parent is not directly above it a plain row', () => {
+    const rows = [session({ id: 'other' }), fork('o1', 'gone'), fork('o2', 'gone')];
+    expect(forkMarks(rows).map((m) => m.fork)).toEqual([false, false, false]);
   });
 });

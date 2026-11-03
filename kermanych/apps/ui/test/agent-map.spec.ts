@@ -39,7 +39,7 @@ function input(over: Partial<MapInput>): MapInput {
     ],
     projectWorkspace: { p1: 'w1', p2: 'w1' },
     workspaces: [{ id: 'w1', name: 'FS', color: '#36f' }],
-    buckets: ['active', 'waiting', 'errors'],
+    buckets: ['agents'],
     unknownProject: '?',
     ...over,
   };
@@ -97,11 +97,13 @@ describe('buildAgentTree', () => {
   it('files sessions by the chips: a fork follows its parent, chats and backlog never show', () => {
     const sessions = [
       session({ id: 'live' }),
-      // Its own status is done, its parent's is live — it rides with «Активні».
+      // Its own status is done, its parent's is live — it rides with its parent.
       session({ id: 'fork', kind: 'review', status: 'done', parentSessionId: 'live' }),
       session({ id: 'idle', status: 'done' }),
       session({ id: 'broken', status: 'conflict' }),
       session({ id: 'old', status: 'merged' }),
+      // Still running, but its parent is merged: it goes to the history with it.
+      session({ id: 'late', kind: 'discussion', status: 'thinking', parentSessionId: 'old' }),
       session({ id: 'aside', status: 'done', archived: true }),
       session({ id: 'chat', kind: 'chat' }),
       session({ id: 'todo', kind: 'task', status: 'backlog' }),
@@ -112,10 +114,8 @@ describe('buildAgentTree', () => {
       walk(buildAgentTree(input({ sessions, buckets })));
       return out.sort();
     };
-    expect(ids(['active'])).toEqual(['fork', 'live']);
-    expect(ids(['waiting'])).toEqual(['idle']);
-    expect(ids(['errors'])).toEqual(['broken']);
-    expect(ids(['completed'])).toEqual(['aside', 'old']);
+    expect(ids(['agents'])).toEqual(['broken', 'fork', 'idle', 'live']);
+    expect(ids(['completed'])).toEqual(['aside', 'late', 'old']);
     expect(ids([])).toEqual([]);
   });
 
@@ -182,11 +182,18 @@ describe('activeAgentCount', () => {
 
 describe('parseMapBuckets', () => {
   it('falls back to the default for anything unreadable and keeps an empty choice', () => {
-    expect(parseMapBuckets(null)).toEqual(['active', 'waiting', 'errors']);
-    expect(parseMapBuckets('nope')).toEqual(['active', 'waiting', 'errors']);
-    expect(parseMapBuckets('{"a":1}')).toEqual(['active', 'waiting', 'errors']);
+    expect(parseMapBuckets(null)).toEqual(['agents']);
+    expect(parseMapBuckets('nope')).toEqual(['agents']);
+    expect(parseMapBuckets('{"a":1}')).toEqual(['agents']);
     expect(parseMapBuckets('[]')).toEqual([]);
-    expect(parseMapBuckets('["completed","tasks","active"]')).toEqual(['active', 'completed']);
+    expect(parseMapBuckets('["completed","tasks"]')).toEqual(['completed']);
+  });
+
+  // The usual value stored before the agent buckets merged must open the same map, not an
+  // empty one.
+  it('reads a choice stored before the merge as agents', () => {
+    expect(parseMapBuckets('["active","waiting","errors"]')).toEqual(['agents']);
+    expect(parseMapBuckets('["errors","completed"]')).toEqual(['agents', 'completed']);
   });
 });
 

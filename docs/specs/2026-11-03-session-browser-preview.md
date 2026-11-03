@@ -352,8 +352,9 @@ Rejected:
 
 ## Changes
 
-- **`supabase/migrations/20261103090000_project_platform.sql`**: decision 10. `tasks_guard()` is
-  re-created before the drop: plpgsql does not track the columns a function names.
+- **`supabase/migrations/20261103100000_project_platform.sql`**: decision 10. `tasks_guard()` is
+  re-created before the drop: plpgsql does not track the columns a function names. Not
+  `20261103090000`: `dev`'s `20261103090000_workspace_risks_managers.sql` holds that version.
 - **`packages/core`**:
   - `platform.ts`: `PLATFORMS`, `isPlatform`, `platformHasBrowser`;
   - `preview.ts`: the file parser and validator, the variables, `PreviewState` and the HTTP shapes,

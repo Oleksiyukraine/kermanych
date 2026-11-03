@@ -55,6 +55,7 @@ const routes: RouteRecordRaw[] = [
       { path: 'board', name: 'board', component: () => import('pages/BoardPage.vue'), meta: { public: false } },
       { path: 'kit', name: 'kit', component: () => import('pages/KitGalleryPage.vue'), meta: { public: false } },
       { path: 'chat', name: 'chat', component: () => import('pages/ChatPage.vue'), meta: { public: false } },
+      { path: 'design', name: 'design', component: () => import('pages/DesignPage.vue'), meta: { public: false } },
       // Налаштування is ONE record with the category in a param, not a nested
       // shell like Менеджмент below: all eleven categories share a single
       // component, because the save bar and the draft they queue into are one

@@ -27,7 +27,7 @@ Task document: `docs/specs/2026-11-03-session-browser-preview.md`. Paths below a
    of the task platform removal and the project platform field). [x] The RLS/trigger suite was
    not run: Docker is not running on this machine.
    - Files:
-     - `supabase/migrations/20261103090000_project_platform.sql`;
+     - `supabase/migrations/20261103100000_project_platform.sql`;
      - `packages/cloud/src/{projects,tasks,types}.ts`;
      - `packages/core/src/{management-actions,i18n-codes}.ts`;
      - `apps/api/src/management/management-prompt.ts`;

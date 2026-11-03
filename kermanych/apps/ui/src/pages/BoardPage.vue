@@ -155,6 +155,7 @@
           :assignee="resolveAssignee(task.assigneeId, membersOf(task.projectId))"
           :assignee-loading="!!task.assigneeId && rosterPending(task.projectId)"
           :deep-analysis="task.deepAnalysis"
+          :design="task.design"
           :auto-run="task.autoRun"
           :needs-decision="cardDecisionReason(t, task)"
           :not-needed="cardNotNeededReason(t, task)"
@@ -191,29 +192,59 @@
           :placeholder="t('board.editor.projectPlaceholder')"
         />
         <KField v-model="draftTitle" :label="t('board.editor.title')" :placeholder="t('board.editor.titlePlaceholder')" />
-        <KField
-          v-model="draftDescription"
-          :label="t('board.editor.description')"
-          :placeholder="t('board.editor.descriptionPlaceholder')"
-          multiline
-          :rows="6"
-          @paste="editingId ? undefined : onDraftPaste($event)"
-          @drop.prevent="editingId ? undefined : onDraftDrop($event)"
-          @dragover.prevent
-        />
-        <div v-if="!editingId" class="board__attach">
-          <button type="button" class="board__attach-btn mono" @click="draftFileInput?.click()">
-            {{ t('board.editor.image') }}
-          </button>
-          <input
-            ref="draftFileInput"
-            type="file"
-            accept="image/png,image/jpeg,image/gif,image/webp"
-            multiple
-            class="board__file"
-            @change="onDraftFilePick"
+        <!-- Хелпери, the same panel as the chat composer's: `/` on an empty description or the
+             «/ Хелпери» button below prepends a helper, and the launch expands it. Файли (`@` at
+             a word start or «@ Файл») name a file of the project's local checkout as `@path`. -->
+        <div class="board__desc">
+          <KHelperPicker :open="helperOpen" placement="below" @select="onDraftHelper" @close="closeDraftHelper" />
+          <KFilePicker
+            :open="draftMention.open.value"
+            :source="draftFiles"
+            placement="below"
+            @select="draftMention.select"
+            @close="draftMention.close"
           />
-          <span class="board__attach-note mono">{{ t('board.editor.dragHint') }}</span>
+          <KField
+            ref="descriptionField"
+            v-model="draftDescription"
+            :label="t('board.editor.description')"
+            :placeholder="t('board.editor.descriptionPlaceholder')"
+            multiline
+            :rows="6"
+            @keydown="onDescriptionKeydown"
+            @paste="editingId ? undefined : onDraftPaste($event)"
+            @drop.prevent="editingId ? undefined : onDraftDrop($event)"
+            @dragover.prevent
+          />
+        </div>
+        <div class="board__attach">
+          <button
+            type="button"
+            class="board__attach-btn mono"
+            v-tip="t('board.editor.helpersTip')"
+            @click="helperOpen = !helperOpen"
+          >{{ t('board.editor.helpers') }}</button>
+          <button
+            type="button"
+            class="board__attach-btn mono"
+            v-tip="draftFiles ? t('board.editor.filesTip') : t('board.editor.filesUnbound')"
+            :disabled="!draftFiles"
+            @click="draftMention.toggle"
+          >{{ t('board.editor.files') }}</button>
+          <template v-if="!editingId">
+            <button type="button" class="board__attach-btn mono" @click="draftFileInput?.click()">
+              {{ t('board.editor.image') }}
+            </button>
+            <input
+              ref="draftFileInput"
+              type="file"
+              accept="image/png,image/jpeg,image/gif,image/webp"
+              multiple
+              class="board__file"
+              @change="onDraftFilePick"
+            />
+            <span class="board__attach-note mono">{{ t('board.editor.dragHint') }}</span>
+          </template>
         </div>
         <KAttachStrip v-if="!editingId && draftImages.length" :images="draftImages" @remove="removeDraftImage" />
         <p v-if="!editingId && draftImageError" class="board__error" role="alert">{{ draftImageError }}</p>
@@ -302,7 +333,7 @@
       </div>
 
       <template #controls>
-        <KBtn v-if="editingTask" variant="ghost" :disabled="editorBusy" @click="onDelete(editingTask); editorOpen = false">{{ t('board.editor.delete') }}</KBtn>
+        <KBtn v-if="editingTask" variant="ghost" :disabled="editorBusy" @click="onDelete(editingTask)">{{ t('board.editor.delete') }}</KBtn>
         <KBtn
           v-if="editingTask && canForceStop(editingTask)"
           variant="ghost"
@@ -370,7 +401,8 @@
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
 import { useRouter } from 'vue-router';
 import { useI18n } from 'vue-i18n';
-import type { Project, ThinkingLevel } from '@kermanych/core';
+import { confirmAction } from '../lib/confirm';
+import { BRANCH_PREFIXES, prependHelper, type Project, type ThinkingLevel } from '@kermanych/core';
 import type { Task, TaskStatus, WorkspaceMember } from '@kermanych/cloud';
 import { ACTIVE_STATUSES } from '@kermanych/core/status';
 import { useAuth } from 'stores/auth';
@@ -388,10 +420,13 @@ import { useLoadPhase } from '../composables/useLoadPhase';
 import KKanbanColumn from 'components/kit/KKanbanColumn.vue';
 import KAvatar from 'components/kit/KAvatar.vue';
 import KAttachStrip from 'components/kit/KAttachStrip.vue';
+import KHelperPicker from 'components/kit/KHelperPicker.vue';
+import KFilePicker from 'components/kit/KFilePicker.vue';
 import KDirPicker from 'components/kit/KDirPicker.vue';
 import { useNow } from '../composables/useNow';
 import { useDelayedTrue } from '../composables/useDelayedTrue';
 import { useImageAttach } from '../composables/useImageAttach';
+import { useFileMention } from '../composables/useFileMention';
 import { imageToFile } from '../lib/images';
 import { relativeTime, renderTime } from '../lib/time';
 import { EFFORT_OPTIONS } from '../lib/effort';
@@ -1168,7 +1203,9 @@ const effortPickOptions = computed(() => {
   const allowed = effortOptions(local.models, draftModel.value || undefined);
   return EFFORT_OPTIONS.filter((o) => allowed.includes(o.value)).map((o) => ({ value: o.value, label: t(o.labelKey) }));
 });
-const PREFIX_OPTIONS = ['feature', 'fix', 'refactoring', 'chore'];
+// Core's prefixes, less `design`: a design card comes only from «+ Новий дизайн», which also marks
+// it `design`. A stored design card still shows its prefix — KSelect lists a held value it lacks.
+const PREFIX_OPTIONS = BRANCH_PREFIXES.filter((p) => p !== 'design');
 
 const editorOpen = ref(false);
 const editingId = ref<string | null>(null);
@@ -1230,6 +1267,48 @@ function onDraftFilePick(e: Event): void {
   if (input.files) void addDraftFiles(input.files);
   input.value = '';
 }
+
+// Хелпери in the description: `/` on an EMPTY description opens the picker instead of typing
+// the slash, exactly as in KComposer — mid-text a slash is a path. A pick lands at the front of
+// the description (prependHelper says why), which is the text the launch expands.
+const descriptionField = ref<InstanceType<typeof KField> | null>(null);
+const helperOpen = ref(false);
+// An editor reopened on a panel left open would hide the description it opens for.
+watch(editorOpen, (open) => {
+  if (!open) {
+    helperOpen.value = false;
+    draftMention.open.value = false;
+  }
+});
+function closeDraftHelper(): void {
+  helperOpen.value = false;
+  descriptionField.value?.focus();
+}
+function onDraftHelper(name: string): void {
+  draftDescription.value = prependHelper(draftDescription.value, name);
+}
+function onDescriptionKeydown(e: KeyboardEvent): void {
+  if (e.key === '/' && draftDescription.value === '') {
+    e.preventDefault();
+    helperOpen.value = true;
+    return;
+  }
+  draftMention.onKeydown(e);
+}
+
+// Файли: the card's project as checked out on THIS machine — the tree its session will run
+// in. A project not bound here has nothing to read, so the button stays inert.
+const draftFiles = computed(() =>
+  draftProject.value && local.projects.some((p) => p.id === draftProject.value && p.localRepoPath)
+    ? { kind: 'project' as const, id: draftProject.value }
+    : null,
+);
+const draftMention = useFileMention({
+  el: () => descriptionField.value?.el(),
+  value: () => draftDescription.value,
+  set: (v) => (draftDescription.value = v),
+  enabled: () => !!draftFiles.value,
+});
 
 // The editor's assignee picker reads the roster of the picker's OWN project, which is not
 // necessarily the scoped one: an unscoped board shows cards from every workspace, and
@@ -1352,7 +1431,15 @@ async function submitEditor(): Promise<void> {
   }
 }
 
-function onDelete(task: Task): void {
+// Asks first, like the same delete on the Агенти board; the editor closes only on «yes».
+async function onDelete(task: Task): Promise<void> {
+  const ok = await confirmAction({
+    title: t('confirmations.deleteCard'),
+    message: t('agents.notify.deleteCard', { title: task.title }),
+    confirmLabel: t('confirmations.label.delete'),
+  });
+  if (!ok) return;
+  editorOpen.value = false;
   void board.deleteTask(task.id);
 }
 </script>
@@ -1611,6 +1698,10 @@ function onDelete(task: Task): void {
   gap: 8px;
 }
 
+// The anchor the Хелпери panel hangs from.
+.board__desc {
+  position: relative;
+}
 .board__attach {
   display: flex;
   flex-wrap: wrap;
@@ -1629,9 +1720,14 @@ function onDelete(task: Task): void {
   font-size: 12px;
   cursor: pointer;
 }
-.board__attach-btn:hover {
+.board__attach-btn:hover:not(:disabled) {
   border-color: var(--k-accent);
   color: var(--k-text);
+}
+// «@ Файл» for a project not bound on this machine: shown, so it is findable, but inert.
+.board__attach-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
 }
 .board__attach-note {
   font-size: 11.5px;

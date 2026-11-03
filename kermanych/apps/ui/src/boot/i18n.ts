@@ -5,6 +5,7 @@ import { en } from '../i18n/en';
 import type { MessageSchema } from '../i18n/schema';
 import { initLocale, readLocale } from '../lib/locale';
 import type { Translator } from '../lib/i18n-coded';
+import { dropIntlifyMeasures } from '../lib/dev-perf';
 
 // Ukrainian three-form messages are `one | few | many`: 1, 21, 31… take the first form;
 // 2–4, 22–24… (not 12–14) the second; 0, 5–20, 25–30… the third. vue-i18n's built-in rule
@@ -38,6 +39,8 @@ export const globalTr: Translator = {
 };
 
 export default boot(({ app }) => {
+  // vue-i18n's dev build leaks a performance measure per `t()`; see lib/dev-perf.ts.
+  if (import.meta.env.DEV && typeof performance !== 'undefined') dropIntlifyMeasures(performance);
   app.use(i18n);
   // Keep localStorage and the active vue-i18n locale in step with the `locale`
   // ref (see lib/locale.ts). `immediate` also applies the stored locale on boot.

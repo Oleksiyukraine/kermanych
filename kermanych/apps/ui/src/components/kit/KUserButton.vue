@@ -2,10 +2,10 @@
 import { computed, ref, watch } from 'vue';
 import { initialsOf } from '../../lib/initials';
 
-// The account tile at the foot of the left rail (design-system section 07): the signed-in
-// user's GitHub picture, or their initials when there is none. 34×34 — the size of the
-// rail's other control (KBtn variant="icon"), deliberately smaller than a 44px project
-// tile so «you» never reads as one more project. Square, radius 0, 1px frame: this system
+// The account tile at the left edge of the footer status bar: the signed-in user's GitHub
+// picture, or their initials when there is none. 34×34 — the size of KBtn variant="icon",
+// deliberately smaller than a 44px project tile so «you» never reads as one more project.
+// Square, radius 0, 1px frame: this system
 // has no circles, and the member list in the project modal already renders avatars this way.
 //
 // Glyph-only control, so `title` feeds BOTH the app tooltip (v-tip) and the aria-label —

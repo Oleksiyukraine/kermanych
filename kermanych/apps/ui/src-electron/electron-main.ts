@@ -1,4 +1,5 @@
-import { app, BrowserWindow, ipcMain, dialog, nativeImage, powerSaveBlocker, shell } from 'electron';
+import { app, BrowserWindow, ipcMain, dialog, nativeImage, powerSaveBlocker, shell, systemPreferences } from 'electron';
+import { execFile } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { writeFile } from 'node:fs/promises';
@@ -10,11 +11,15 @@ import type { INestApplication } from '@nestjs/common';
 import { closeLoopback, startLoopbackOAuth } from './oauth-loopback';
 import { routeLinksToDefaultBrowser } from './external-links';
 import { htmlToPdf } from './print-pdf';
+import { readWindowState, trackWindowState } from './window-state';
 import { SessionBrowsers } from './session-browser';
 
 const currentDir = fileURLToPath(new URL('.', import.meta.url));
 
 let mainWindow: BrowserWindow | undefined;
+// Set at the window's first `ready-to-show`. Until then the window stays hidden behind its splash,
+// and nothing may show it early (bringBack).
+let windowShown = false;
 let nest: INestApplication | undefined;
 // The session browser: its IPC is registered now, its views live in the window once attached,
 // and the api reaches it as the BrowserHost behind the agents' browser_* MCP tools.
@@ -93,6 +98,8 @@ async function startBackend(port: number): Promise<void> {
 // Stored in userData rather than read from the renderer's localStorage, which main cannot
 // reach before the page loads.
 const themeFile = path.join(app.getPath('userData'), 'window-theme.json');
+// Size, place, maximized / full screen, restored on the next launch (window-state.ts).
+const windowStateFile = path.join(app.getPath('userData'), 'window-state.json');
 // `--k-canvas` of the dark set in @kermanych/tokens: dark is the app's default theme regardless
 // of the OS preference (lib/theme.ts DEFAULT_THEME), so a first launch paints dark too.
 const DEFAULT_BACKGROUND = '#050505';
@@ -117,11 +124,10 @@ ipcMain.on('kermanych:theme', (_event, background: unknown) => {
 });
 
 async function createWindow(apiBase: string) {
+  const saved = readWindowState(windowStateFile);
   mainWindow = new BrowserWindow({
     icon: path.resolve(currentDir, 'icons/icon.png'), // tray icon
-    width: 1400,
-    height: 900,
-    useContentSize: true,
+    ...saved.bounds,
     // Shown on ready-to-show, i.e. once the splash in index.html has painted, over a
     // background of the operator's theme — never a white or wrong-theme frame.
     show: false,
@@ -138,10 +144,30 @@ async function createWindow(apiBase: string) {
       additionalArguments: [`--api-base=${apiBase}`, `--ui-key=${uiKey}`],
     },
   });
-  mainWindow.once('ready-to-show', () => mainWindow?.show());
+  // Maximized / full screen are applied at the first show, so the window appears in its last
+  // state instead of opening normal and then jumping — and not before ready-to-show:
+  // maximize() shows a hidden window itself, ahead of the splash's first paint.
+  trackWindowState(mainWindow, windowStateFile);
+  mainWindow.once('ready-to-show', () => {
+    if (!mainWindow) return;
+    if (saved.maximized) mainWindow.maximize();
+    if (saved.fullScreen) mainWindow.setFullScreen(true);
+    mainWindow.show();
+    windowShown = true;
+  });
   mainWindow.webContents.on('dom-ready', () => mainWindow?.webContents.send('kermanych:boot-status', bootStatus));
   routeLinksToDefaultBrowser(mainWindow, (url) => shell.openExternal(url));
   browsers.attach(mainWindow);
+  // The voice conversation's microphone (docs/specs/2026-11-02-voice-conversation.md): audio only,
+  // and only for this window — not a hidden helper window of the same session. Every other
+  // permission keeps Electron's default grant, which is what the window had before this handler.
+  // The session browser's pages live in their own partitions with their own handler.
+  const ownContents = mainWindow.webContents;
+  ownContents.session.setPermissionRequestHandler((contents, permission, callback, details) => {
+    if (permission !== 'media') return callback(true);
+    const types = 'mediaTypes' in details ? (details.mediaTypes ?? []) : [];
+    callback(contents === ownContents && types.length > 0 && types.every((t) => t === 'audio'));
+  });
 
   if (process.env.DEV) {
     // Vite serves optimized deps as `immutable` under a `?v=<browserHash>` query that does NOT
@@ -170,12 +196,64 @@ async function createWindow(apiBase: string) {
   });
 }
 
-ipcMain.on('kermanych:focus', () => {
-  if (mainWindow) {
-    mainWindow.show();
-    mainWindow.focus();
-  }
+// macOS's own microphone permission for the voice conversation. Asked on first use (the system
+// prompt reads NSMicrophoneUsageDescription, quasar.config.ts); once refused, only System Settings
+// can give it back, and the renderer says so. Elsewhere the browser's own prompt is the only one.
+ipcMain.handle('kermanych:mic-access', async () => {
+  if (process.platform !== 'darwin') return true;
+  const status = systemPreferences.getMediaAccessStatus('microphone');
+  if (status === 'granted') return true;
+  if (status === 'not-determined') return systemPreferences.askForMediaAccess('microphone');
+  return false;
 });
+
+// Back on screen from wherever the window was left: a click on the Dock icon (`activate`) and a
+// click on a pop-up notification (`kermanych:focus`). A minimised window is restored first:
+// Electron answers macOS's «reopen» with `hasVisibleWindows`, so while the only window was
+// minimised a Dock click did nothing (docs/specs/2026-11-01-dock-attention.md, decision 6).
+// `activate` also fires at launch, before the splash has painted, hence `windowShown`.
+function bringBack(): void {
+  if (!mainWindow || !windowShown) return;
+  if (mainWindow.isMinimized()) mainWindow.restore();
+  mainWindow.show();
+  mainWindow.focus();
+}
+ipcMain.on('kermanych:focus', bringBack);
+app.on('activate', bringBack);
+
+// The Dock icon (docs/specs/2026-11-01-dock-attention.md): the renderer counts the agents whose
+// turn it is and spots the moment another one's turn comes; main only draws. Unlike a pop-up, the
+// badge and the bounce need no signed app (probed on Electron 43 / macOS 27). 0 hides the badge.
+ipcMain.on('kermanych:dock:badge', (_event, count: unknown) => {
+  app.setBadgeCount(typeof count === 'number' && Number.isSafeInteger(count) && count > 0 ? count : 0);
+});
+// One `informational` bounce: about a second, and only while Kermanych is not the active app
+// (`bounce` returns -1 then). The previous request is cancelled first, so a burst of events reads
+// as one bounce and at most one request waits for the operator to come back.
+let bounceRequest = -1;
+ipcMain.on('kermanych:dock:bounce', () => {
+  if (!app.dock) return;
+  if (bounceRequest >= 0) app.dock.cancelBounce(bounceRequest);
+  bounceRequest = app.dock.bounce('informational');
+});
+
+// Whether macOS refuses this app's pop-up notifications, for «Налаштування → Сповіщення». Since
+// Electron 42 they go through UNNotification, which posts only for an app signed by an Apple team:
+// the dev `Electron.app` (linker-signed), the `identity: null` dmg and an ad-hoc re-sign are all
+// refused (probed on macOS 27). Read once per launch from the signature of the running executable;
+// `codesign` prints it to stderr and exits non-zero for unsigned code.
+function readNotificationsBlocked(): Promise<boolean> {
+  const { promise, resolve } = Promise.withResolvers<boolean>();
+  if (process.platform !== 'darwin') resolve(false);
+  else {
+    execFile('/usr/bin/codesign', ['--display', '--verbose=2', process.execPath], (err, _stdout, stderr) => {
+      resolve(err !== null || !/^TeamIdentifier=(?!not set$)\S+$/m.test(stderr));
+    });
+  }
+  return promise;
+}
+let notificationsBlocked: Promise<boolean> | undefined;
+ipcMain.handle('kermanych:notifications-blocked', () => (notificationsBlocked ??= readNotificationsBlocked()));
 
 // The renderer builds the authorize URL (the PKCE verifier must stay in its own
 // storage) and we run the round trip: open the system browser, catch the

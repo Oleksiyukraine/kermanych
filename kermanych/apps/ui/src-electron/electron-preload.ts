@@ -43,6 +43,19 @@ contextBridge.exposeInMainWorld('kermanych', {
     ipcRenderer.invoke('kermanych:oauth', authorizeUrl),
   // Resolves with the PDF bytes of a standalone HTML document (a register export).
   printToPdf: (html: string): Promise<Uint8Array> => ipcRenderer.invoke('kermanych:print-pdf', html),
+  // The Dock icon (docs/specs/2026-11-01-dock-attention.md): the number of agents whose turn it
+  // is, and one bounce when another one's turn comes. The renderer decides both; main draws.
+  dock: {
+    setBadge: (count: number) => ipcRenderer.send('kermanych:dock:badge', count),
+    bounce: () => ipcRenderer.send('kermanych:dock:bounce'),
+  },
+  // True while macOS refuses this app's pop-up notifications (no Apple team signature).
+  notificationsBlocked: (): Promise<boolean> => ipcRenderer.invoke('kermanych:notifications-blocked'),
+  // The voice conversation (docs/specs/2026-11-02-voice-conversation.md): macOS's own microphone
+  // permission, asked once; false when the operator refused it in System Settings.
+  voice: {
+    requestMic: (): Promise<boolean> => ipcRenderer.invoke('kermanych:mic-access'),
+  },
   // The session browser: main owns one WebContentsView per session and lays it over the
   // placeholder whose bounds the Браузер tab reports.
   browser: {

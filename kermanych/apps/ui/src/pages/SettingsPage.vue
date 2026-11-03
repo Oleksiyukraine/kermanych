@@ -113,7 +113,7 @@
 
           <!-- DOCUMENTATION POLICY. A framed subsection of its own: the master switch
                (`docsRequired`, off by default — the operator's choice, never a migration's)
-               and, while it is on, one rule per document kind in three groups. Each kind
+               and, while it is on, one rule per document kind in four groups. Each kind
                offers exactly DOCS_RULES[key]; the note under it explains the selected rule.
                The rules keep their values while the switch is off, so turning it back on
                restores them. `required` makes the api refuse «Створити ПР», «Закоміти» and
@@ -437,7 +437,7 @@
                 :title="t('settings.members.remove')"
                 :loading="removeAction.busyFor(m.userId)"
                 :disabled="roleControl(m).pending"
-                @click="removeAction.run(m.userId, m)"
+                @click="askRemoveMember(m)"
               >✕</KIconButton>
             </div>
             <div v-if="!membersLoading && !members.length" class="set__empty">
@@ -497,6 +497,36 @@
                  account settings, and both apply on click with no save bar. -->
             <KLangToggle />
           </div>
+          <!-- The app's version. It used to sit beside the logo; the header gave that room to
+               the project switcher, and «what am I running» is a settings-page question. -->
+          <div class="set__group">
+            <span class="set__label">{{ t('settings.appGeneral.version') }}</span>
+            <span class="set__note mono">{{ APP_VERSION }}</span>
+          </div>
+        </div>
+
+        <!-- ── APP · СПОВІЩЕННЯ ─────────────────────────────────────────────── -->
+        <!-- docs/specs/2026-11-01-dock-attention.md. The switches apply on click, with no save
+             bar, like the theme: both are this machine's screen preferences. -->
+        <div v-else-if="section.key === 'app-notifications'" class="set__form">
+          <template v-if="hasDock">
+            <div class="set__group">
+              <KCheckbox v-model="badgeOn" :label="t('settings.notifications.badge')" />
+              <p class="set__note">{{ t('settings.notifications.badgeNote') }}</p>
+            </div>
+            <div class="set__group">
+              <KCheckbox v-model="bounceOn" :label="t('settings.notifications.bounce')" />
+              <p class="set__note">{{ t('settings.notifications.bounceNote') }}</p>
+            </div>
+            <div class="set__group">
+              <span class="set__label">{{ t('settings.notifications.popups') }}</span>
+              <KSkeleton v-if="popupsPhase === 'skeleton'" variant="line" width="60%" />
+              <p v-else-if="popupsPhase === 'ready'" class="set__note">
+                {{ popupsBlocked ? t('settings.notifications.popupsBlocked') : t('settings.notifications.popupsAllowed') }}
+              </p>
+            </div>
+          </template>
+          <p v-else class="set__note">{{ t('settings.notifications.desktopOnly') }}</p>
         </div>
 
         <!-- ── APP · ГАРЯЧІ КЛАВІШІ ─────────────────────────────────────────── -->
@@ -550,6 +580,65 @@
           <!-- What the «English — ASD-STE100» entries mean. Always visible: the table is needed
                BEFORE a level is picked, not only after. -->
           <SteGuide />
+        </div>
+
+        <!-- ── APP · ГОЛОС ──────────────────────────────────────────────────── -->
+        <!-- docs/specs/2026-11-02-voice-conversation.md, decisions 3 and 11. The key lives in the
+             api on this machine; the window only learns its source and last four characters. -->
+        <div v-else-if="section.key === 'app-voice'" class="set__form">
+          <div class="set__group">
+            <span class="set__label">{{ t('settings.voice.key') }}</span>
+            <KSkeleton v-if="voiceKeyPhase === 'skeleton'" variant="line" width="60%" />
+            <template v-else-if="voiceKeyPhase === 'ready' && voiceKey">
+              <p class="set__note">
+                {{ voiceKey.source === 'env' ? t('settings.voice.keyEnv', { hint: voiceKey.hint })
+                  : voiceKey.source === 'stored' ? t('settings.voice.keyStored', { hint: voiceKey.hint })
+                  : t('settings.voice.keyNone') }}
+              </p>
+              <KField
+                v-if="voiceKey.source !== 'env'"
+                v-model="voiceKeyInput"
+                type="password"
+                placeholder="sk-…"
+                :label="voiceKey.source === 'stored' ? t('settings.voice.keyReplace') : t('settings.voice.keyField')"
+                @keydown.enter="saveVoiceKey.run()"
+              />
+              <div class="set__row">
+                <KBtn
+                  v-if="voiceKey.source !== 'env'"
+                  variant="secondary"
+                  :loading="saveVoiceKey.busy.value"
+                  :disabled="!voiceKeyInput.trim()"
+                  @click="saveVoiceKey.run()"
+                >{{ t('settings.voice.save') }}</KBtn>
+                <KBtn v-if="voiceKey.source" variant="ghost" :loading="checkVoiceKey.busy.value" @click="checkVoiceKey.run()">
+                  {{ t('settings.voice.check') }}
+                </KBtn>
+                <KBtn v-if="voiceKey.source === 'stored'" variant="ghost" :loading="removeVoiceKey.busy.value" @click="removeVoiceKey.run()">
+                  {{ t('settings.voice.remove') }}
+                </KBtn>
+              </div>
+              <p v-if="voiceCheck" class="set__note" role="status">{{ voiceCheck }}</p>
+            </template>
+            <p v-else-if="voiceKeyPhase === 'blank'" class="set__note">{{ t('settings.voice.keyUnknown') }}</p>
+            <p class="set__note">{{ t('settings.voice.keyNote') }}</p>
+          </div>
+
+          <div class="set__rule"></div>
+
+          <div class="set__group">
+            <span class="set__label">{{ t('settings.voice.voice') }}</span>
+            <!-- Applies on selection, to the next conversation: GPT-Live fixes the voice at start. -->
+            <KSelect v-model="voiceChoice" :options="VOICE_OPTIONS" searchable />
+            <p class="set__note">{{ t('settings.voice.voiceNote') }}</p>
+          </div>
+
+          <div class="set__rule"></div>
+
+          <div class="set__group">
+            <span class="set__label">{{ t('settings.voice.language') }}</span>
+            <p class="set__note">{{ t('settings.voice.languageNote', { language: voiceLanguageLabel }) }}</p>
+          </div>
         </div>
 
         <!-- ── APP · АКАУНТ ─────────────────────────────────────────────────── -->
@@ -735,7 +824,7 @@
         <span class="set__bar-text">
           {{ dirtyCount === 1 ? t('settings.bar.oneField') : t('settings.bar.manyFields', { count: dirtyCount }) }}
         </span>
-        <KBtn variant="ghost" :disabled="saving" @click="discard">{{ t('settings.bar.discard') }}</KBtn>
+        <KBtn variant="ghost" :disabled="saving" @click="askDiscard">{{ t('settings.bar.discard') }}</KBtn>
         <KBtn variant="primary" :loading="saving" @click="save">
           {{ saving ? t('settings.bar.saving') : t('settings.bar.save') }}
         </KBtn>
@@ -820,8 +909,9 @@
 import { computed, effectScope, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue';
 import { onBeforeRouteLeave, useRoute, useRouter } from 'vue-router';
 import { useI18n } from 'vue-i18n';
+import { confirmAction } from '../lib/confirm';
 import type { EnvFileView, ThinkingLevel, AgentLanguage, DocsPolicyKey, DocsRule, MachineResources, Platform } from '@kermanych/core';
-import { AGENT_LANGUAGES, AGENT_LANGUAGE_LABELS, DEFAULT_DOCS_POLICY, DOCS_LAYOUT, DOCS_RULES } from '@kermanych/core';
+import { AGENT_LANGUAGES, AGENT_LANGUAGE_LABELS, DEFAULT_DOCS_POLICY, DOCS_LAYOUT, DOCS_RULES, VOICE_IDS } from '@kermanych/core';
 import type { AssignableRole, WorkspaceMember, WorkspaceRole } from '@kermanych/cloud';
 import type { KTheme } from '@kermanych/tokens';
 import { useOrchestrator } from 'stores/orchestrator';
@@ -829,7 +919,7 @@ import { useProjects } from 'stores/projects';
 import { modelOptions, effortOptions } from '../lib/models';
 import { EFFORT_OPTIONS } from '../lib/effort';
 import { useAuth } from 'stores/auth';
-import { api } from '../lib/api';
+import { api, type VoiceKeyStatus } from '../lib/api';
 import { theme, setTheme } from '../lib/theme';
 import { percent, planWindow, renderWindow } from '../lib/format';
 import { until, renderTime } from '../lib/time';
@@ -839,6 +929,9 @@ import { hardwareLine, useResourcesConsent } from '../composables/useResourcesCo
 import { errorText, useAsyncAction, useKeyedAction } from '../composables/useAsyncAction';
 import { useOptimisticValue } from '../composables/useOptimisticValue';
 import { useLoadPhase } from '../composables/useLoadPhase';
+import { dockBadgeOn, dockBounceOn } from '../lib/dock';
+import { voicePick } from '../lib/voice';
+import { locale } from '../lib/locale';
 import { isMoveRefusal, memberErrorText, moveRefusalText, NO_ROWS } from '../lib/cloud-errors';
 import {
   buildEnvRows,
@@ -1007,17 +1100,19 @@ interface ProjectDraft {
   docsSchemas: DocsRule;
   docsHandoff: DocsRule;
   docsApiRequest: DocsRule;
+  docsDesign: DocsRule;
 }
 
-// The policy rows of the «Документація» subsection: three groups, the draft field each
+// The policy rows of the «Документація» subsection: four groups, the draft field each
 // kind edits, and the folder shown beside its label.
-type DocsDraftField = 'docsSpec' | 'docsPlan' | 'docsSchemas' | 'docsHandoff' | 'docsApiRequest';
+type DocsDraftField = 'docsSpec' | 'docsPlan' | 'docsSchemas' | 'docsHandoff' | 'docsApiRequest' | 'docsDesign';
 const DOCS_DRAFT_FIELD: Record<DocsPolicyKey, DocsDraftField> = {
   spec: 'docsSpec',
   plan: 'docsPlan',
   schemas: 'docsSchemas',
   handoff: 'docsHandoff',
   apiRequest: 'docsApiRequest',
+  design: 'docsDesign',
 };
 const DOCS_KIND_PATH: Record<DocsPolicyKey, string> = {
   spec: `${DOCS_LAYOUT.specs}/`,
@@ -1025,11 +1120,15 @@ const DOCS_KIND_PATH: Record<DocsPolicyKey, string> = {
   schemas: `${DOCS_LAYOUT.schemas}/`,
   handoff: `${DOCS_LAYOUT.handoffs}/`,
   apiRequest: `${DOCS_LAYOUT.apiRequests}/`,
+  design: `${DOCS_LAYOUT.design}/`,
 };
-const DOCS_GROUPS: { key: 'task' | 'living' | 'frontBack'; kinds: DocsPolicyKey[] }[] = [
+const DOCS_GROUPS: { key: 'task' | 'living' | 'frontBack' | 'screens'; kinds: DocsPolicyKey[] }[] = [
   { key: 'task', kinds: ['spec', 'plan'] },
   { key: 'living', kinds: ['schemas'] },
   { key: 'frontBack', kinds: ['handoff', 'apiRequest'] },
+  // «Дизайн» sessions write their folder whatever the rule; it only decides whether every other
+  // session of the project is told that designs live there (policyLine).
+  { key: 'screens', kinds: ['design'] },
 ];
 
 const draft = ref<ProjectDraft | null>(null);
@@ -1065,6 +1164,7 @@ function seedProject(): void {
     docsSchemas: policy.schemas,
     docsHandoff: policy.handoff,
     docsApiRequest: policy.apiRequest,
+    docsDesign: policy.design,
   };
   draft.value = { ...next, carryFiles: [...next.carryFiles], docFolders: [...next.docFolders] };
   base.value = next;
@@ -1304,6 +1404,20 @@ async function invite(): Promise<void> {
   }
 }
 
+// The ✕ asks first, naming who and where; only a «yes» starts the (spinning) removal.
+async function askRemoveMember(m: WorkspaceMember): Promise<void> {
+  if (removeAction.busyFor(m.userId)) return;
+  const ok = await confirmAction({
+    title: t('confirmations.removeMember.title'),
+    message: t('confirmations.removeMember.message', {
+      who: m.profile?.githubUsername ?? m.userId,
+      workspace: workspaceName.value,
+    }),
+    confirmLabel: t('confirmations.label.remove'),
+  });
+  if (ok) void removeAction.run(m.userId, m);
+}
+
 // Per member: ✕ on one row neither blocks nor spins the others.
 const removeAction = useKeyedAction(
   async (_userId: string, m: WorkspaceMember) => {
@@ -1369,6 +1483,16 @@ const dirtyCount = computed(() => {
   return resDirty.value.length;
 });
 
+// The save bar's «Відкинути» — unsaved edits are lost, so it asks first.
+async function askDiscard(): Promise<void> {
+  const ok = await confirmAction({
+    title: t('confirmations.discardEdits.title'),
+    message: t('confirmations.discardEdits.message'),
+    confirmLabel: t('confirmations.label.discard'),
+  });
+  if (ok) discard();
+}
+
 function discard(): void {
   paneError.value = null;
   if (section.value.scope === 'project') {
@@ -1431,6 +1555,7 @@ async function saveProject(): Promise<void> {
         schemas: d.docsSchemas,
         handoff: d.docsHandoff,
         apiRequest: d.docsApiRequest,
+        design: d.docsDesign,
       },
       ...(envKeys ? { envKeys } : {}),
       ...(moved ? { workspaceId: d.workspaceId } : {}),
@@ -1684,6 +1809,10 @@ const languagePick = reactive(
   ),
 );
 
+// The app version shown under «Загальне». The one place it is written: a release bumps it
+// here (it used to be the header's label, beside the logo).
+const APP_VERSION = 'v1.1.2';
+
 // Every binding the app actually listens to, and the file that owns it. A
 // read-only sheet is the honest shape: none of these is stored anywhere, so there
 // is nothing a remap could write to.
@@ -1696,6 +1825,7 @@ const KEYMAP: readonly { act: string; keys: string; where: string }[] = [
   { act: 'settings.keymap.acts.switchNav', keys: '← → ⇱ ⇲', where: 'settings.keymap.where.navBars' },
   { act: 'settings.keymap.acts.openRow', keys: '⏎', where: 'settings.keymap.where.tables' },
   { act: 'settings.keymap.acts.toggleFiles', keys: '⌘B', where: 'settings.keymap.where.everywhere' },
+  { act: 'settings.keymap.acts.focusMode', keys: '⌘\\', where: 'settings.keymap.where.everywhere' },
   { act: 'settings.keymap.acts.saveSettings', keys: '⌘S', where: 'settings.keymap.where.thisScreen' },
   { act: 'settings.keymap.acts.closeWindow', keys: '⎋', where: 'settings.keymap.where.everywhere' },
 ];
@@ -1746,6 +1876,72 @@ watch(
     }
   },
   { immediate: true },
+);
+
+// ── NOTIFICATIONS ───────────────────────────────────────────────────────────
+// The Dock icon's two switches are device-local refs (lib/dock.ts) that apply on click. Pop-ups
+// are only reported: macOS shows them for an app signed by an Apple team alone, and main reads
+// the signature once per launch. The web build has neither, and says so.
+const hasDock = typeof window !== 'undefined' && !!window.kermanych?.dock;
+const badgeOn = dockBadgeOn;
+const bounceOn = dockBounceOn;
+// `undefined` until main answers: a skeleton, not a guess.
+const popupsBlocked = ref<boolean | undefined>(undefined);
+const popupsPhase = useLoadPhase(() => popupsBlocked.value === undefined);
+watch(
+  () => section.value.key,
+  async (key) => {
+    const read = window.kermanych?.notificationsBlocked;
+    if (key !== 'app-notifications' || !read || popupsBlocked.value !== undefined) return;
+    popupsBlocked.value = await read();
+  },
+  { immediate: true },
+);
+
+// ── VOICE ───────────────────────────────────────────────────────────────────
+// docs/specs/2026-11-02-voice-conversation.md. The OpenAI key is written to the api (this machine
+// only) and never read back; `undefined` until the api answers, `null` when it did not.
+const voiceKey = ref<VoiceKeyStatus | null | undefined>(undefined);
+const voiceKeyPhase = useLoadPhase(() => voiceKey.value === undefined);
+const voiceKeyInput = ref('');
+// The last «Перевірити» verdict, cleared whenever the key changes.
+const voiceCheck = ref('');
+watch(
+  () => section.value.key,
+  async (key) => {
+    if (key !== 'app-voice' || voiceKey.value) return;
+    try {
+      voiceKey.value = await api.voiceKey();
+    } catch {
+      voiceKey.value = null;
+    }
+  },
+  { immediate: true },
+);
+const saveVoiceKey = useAsyncAction(async () => {
+  if (!voiceKeyInput.value.trim()) return;
+  voiceKey.value = await api.setVoiceKey(voiceKeyInput.value);
+  voiceKeyInput.value = '';
+  voiceCheck.value = '';
+});
+const removeVoiceKey = useAsyncAction(async () => {
+  voiceKey.value = await api.setVoiceKey('');
+  voiceCheck.value = '';
+});
+const checkVoiceKey = useAsyncAction(async () => {
+  voiceCheck.value = '';
+  try {
+    await api.checkVoiceKey();
+    voiceCheck.value = t('settings.voice.checkOk');
+  } catch (e) {
+    voiceCheck.value = errorText(e);
+  }
+});
+const voiceChoice = voicePick;
+const VOICE_OPTIONS: readonly KSelectOption[] = VOICE_IDS.map((id) => ({ value: id, label: id }));
+// The conversation speaks the agent's language, or the screen's when none is set (decision 11).
+const voiceLanguageLabel = computed(() =>
+  auth.language ? AGENT_LANGUAGE_LABELS[auth.language] : locale.value === 'en' ? 'English' : 'Українська',
 );
 
 // ── RESOURCES ───────────────────────────────────────────────────────────────
@@ -1853,6 +2049,12 @@ async function redetectResources(): Promise<void> {
 
 // Not a draft edit: it clears every override on the server at once, like the spec's button.
 async function resetResources(): Promise<void> {
+  const ok = await confirmAction({
+    title: t('confirmations.resetResources.title'),
+    message: t('confirmations.resetResources.message'),
+    confirmLabel: t('confirmations.label.reset'),
+  });
+  if (!ok) return;
   resBusy.value = true;
   try {
     takeResources(await api.updateMachineResources({ overrides: null }), true);

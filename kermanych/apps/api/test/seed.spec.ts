@@ -18,7 +18,9 @@ test("seedDemo populates an empty registry across every status, both modes, and 
   expect(ids.size).toBe(2);
   expect(reg.listSessions().every((s) => ids.has(s.projectId))).toBe(true);
   const sessions = reg.listSessions();
-  expect(sessions.length).toBe(16);
+  expect(sessions.length).toBe(17);
+  // The «Дизайн» page lists design sessions only; one is seeded so it has an entry.
+  expect(sessions.some((s) => s.kind === "agent" && s.designDir && s.branch.startsWith("design/"))).toBe(true);
 
   // Every SessionStatus the board can render is present, so no status dot is left untested.
   const ALL: SessionStatus[] = [

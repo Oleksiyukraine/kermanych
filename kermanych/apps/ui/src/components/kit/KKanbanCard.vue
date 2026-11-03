@@ -27,6 +27,8 @@
     <div class="k-kanban-card__meta">
       <!-- A teammate's ▶ on this card launches the deep analysis too, so the board says so. -->
       <KAnalysisMark v-if="deepAnalysis" />
+      <!-- A «+ Новий дизайн» card: its run drafts screens, not code. -->
+      <KDesignMark v-if="design" />
       <!-- «Посіпака» on the author's machine may take it; when its run stopped on a choice, the
            card says so «На ревʼю», where cards wait on a person; when it found nothing to change,
            «Завершені» says so, muted. The predicates exclude each other: one mark at most. -->
@@ -48,6 +50,7 @@ import type { SessionStatus } from '@kermanych/core';
 import KStatusDot from './KStatusDot.vue';
 import KAvatar from './KAvatar.vue';
 import KAnalysisMark from './KAnalysisMark.vue';
+import KDesignMark from './KDesignMark.vue';
 import KMinionMark from './KMinionMark.vue';
 import KDecisionMark from './KDecisionMark.vue';
 import KNotNeededMark from './KNotNeededMark.vue';
@@ -65,6 +68,8 @@ const props = defineProps<{
   assignee?: { name: string; avatarUrl?: string | undefined } | null;
   // A «Глибокий аналіз» card (KAnalysisMark): whoever launches it gets the interview first.
   deepAnalysis?: boolean | undefined;
+  // A «Дизайн» card (KDesignMark), created by «+ Новий дизайн».
+  design?: boolean | undefined;
   // «Дозволити автовиконання» (KMinionMark).
   autoRun?: boolean | undefined;
   // «Потрібне рішення», worded (lib/minion.ts minionReasonText); absent when nothing waits.

@@ -14,8 +14,7 @@ import {
 } from '@kermanych/cloud';
 // Import from core's status module directly (not the barrel): @kermanych/core is a CJS
 // workspace dep whose named exports vite/rollup only sees once its dist is commonjs-
-// transformed (see quasar.config commonjsOptions.include) — same reason as
-// stores/orchestrator.ts:16-19.
+// transformed (see quasar.config commonjsOptions.include); status.js has a direct export.
 import { ACTIVE_STATUSES } from '@kermanych/core/status';
 import { useAuth } from './auth';
 import { useProjects } from './projects';

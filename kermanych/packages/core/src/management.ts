@@ -48,6 +48,10 @@ export interface ManagementSection {
   // invented — that the chat shows when it refuses. Requirement: a refusal must state a
   // reason the product can stand behind.
   limitation?: string;
+  // Only the workspace owner and members seated 'manager' may open the section; a
+  // 'developer' does not see it in the rail, cannot reach its route, and does not get its
+  // tile on Home. Presentation only — the section's own RLS is the real gate.
+  managersOnly?: true;
 }
 
 export const MANAGEMENT_SECTIONS: readonly ManagementSection[] = [
@@ -114,6 +118,9 @@ export const MANAGEMENT_SECTIONS: readonly ManagementSection[] = [
     label: "Risk Registry",
     hint: "ризики й мітигації",
     capability: "read_write",
+    // The register is the management team's working document: exposure, money, people.
+    // RLS agrees (20261103090000_workspace_risks_managers.sql).
+    managersOnly: true,
   },
   // The second writable section, and the one whose write is not a plain row insert:
   // generating a note reads git history on THIS machine, spends its own one-shot omp child

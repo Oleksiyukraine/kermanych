@@ -130,6 +130,44 @@ const MINION = [
   "## Card\n{{task}}",
 ].join("");
 
+// «Дизайнер» (docs/specs/2026-10-29-design-tab.md): a design session's opening prompt. The
+// operator watches the preview on the «Дизайн» page and points at elements, so this agent talks
+// to a person turn by turn. The `design-spec` skill (assigned by the launch) holds the method and
+// the README template; this text is the complete ask when that skill cannot be resolved.
+const DESIGNER = [
+  "You are «Дизайнер» (Designer). Design the screen below with the operator, who watches the preview ",
+  "next to this conversation and points at its elements.\n\n",
+  "- A design is a prototype in this project's own app, built on its real UI kit with fixtures, not a ",
+  "drawing. First read the project's conventions, UI kit and routing. Use kit components only. When ",
+  "the kit lacks a component, record it in the README as a kit gap instead of inventing one inline.\n",
+  "- Build each screen on a dev-only route `/__design/<design>/<screen>` in the project's app, so it ",
+  "runs in the preview. Keep the prototype's files together and its fixtures beside it.\n",
+  "- Build every state the screen has: data, empty, loading, error, long content, and narrow width.\n",
+  "- After each change, check the result with `browser_screenshot` at widths 390 and 1280 before you ",
+  "answer.\n",
+  "- Keep `{{designDir}}/README.md` current: purpose, screens, states, decisions, open questions, ",
+  "acceptance criteria, the prototype's files and routes, and kit gaps. That README is this branch's ",
+  "task document: the documentation policy's task document, plan and docs-impact rules do not apply ",
+  "to this session.\n",
+  "- Screenshots go to `{{designDir}}/screens/<screen>-<state>@<width>.png`: pass that path to ",
+  "`browser_screenshot`. Kermanych asks for them all when the operator saves the design.\n",
+  "- Commit on this branch as you go. Do not push and do not open a pull request yourself.\n\n",
+  "## Design\n{{topic}}\n\n{{description}}",
+].join("");
+
+// «Зберегти дизайн»: the procedure the button sends into a running Дизайнер.
+const DESIGN_SAVE = [
+  "Save this design now.\n\n",
+  "1. Read `{{designDir}}/README.md` and list every screen and state it names.\n",
+  "2. Open each screen in every state at widths 390 and 1280, and write each screenshot with ",
+  "`browser_screenshot` and `path` set to `{{designDir}}/screens/<screen>-<state>@<width>.png`.\n",
+  "3. Delete the screenshots in `{{designDir}}/screens/` whose screen or state is gone.\n",
+  "4. Make the README match the prototype as it is now.\n",
+  "5. Commit the design folder and the prototype on branch `{{branch}}` with the message `{{message}}`. ",
+  "Do not push.\n\n",
+  "Do only this. When it is done, list the screenshots you wrote.",
+].join("");
+
 // The auth block is the load-bearing part: `gh pr create` and `git push` otherwise pick up
 // whatever ambient credential the machine has (a stored `gh` login, an ssh key, a credential
 // helper), which is often the wrong account. Kermanych copies the project's configured Git
@@ -231,6 +269,10 @@ export function baseSyncBlock(base: string): string {
 // it is the one agent a trigger cannot run (it needs a card, not a message).
 export const MINION_AGENT_ID = "minion";
 
+// «Дизайн» (docs/specs/2026-10-29-design-tab.md): the Дизайнер session and «Зберегти дизайн».
+export const DESIGNER_AGENT_ID = "designer";
+export const DESIGN_SAVE_AGENT_ID = "design-save";
+
 export const AGENTS: readonly AgentDef[] = [
   { id: "review", labelKey: "agents.role.review", kind: "session", instruction: REVIEW, holes: ["task", "base", "branch", "diff"] },
   { id: "promote", labelKey: "agents.role.promote", kind: "session", instruction: PROMOTE, holes: ["branch"] },
@@ -238,6 +280,8 @@ export const AGENTS: readonly AgentDef[] = [
   { id: "commit", labelKey: "agents.role.commit", kind: "procedure", instruction: COMMIT, holes: ["branch", "conventions"] },
   { id: "resolve-conflict", labelKey: "agents.role.resolve-conflict", kind: "procedure", instruction: RESOLVE_CONFLICT, holes: ["files"] },
   { id: MINION_AGENT_ID, labelKey: "agents.role.minion", kind: "session", instruction: MINION, holes: ["task"] },
+  { id: DESIGNER_AGENT_ID, labelKey: "agents.role.designer", kind: "session", instruction: DESIGNER, holes: ["designDir", "topic", "description"] },
+  { id: DESIGN_SAVE_AGENT_ID, labelKey: "agents.role.design-save", kind: "procedure", instruction: DESIGN_SAVE, holes: ["designDir", "branch", "message"] },
   { id: "finish", labelKey: "agents.role.finish", kind: "automation" },
   { id: "summary", labelKey: "agents.role.summary", kind: "automation" },
 ];

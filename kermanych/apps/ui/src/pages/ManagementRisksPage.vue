@@ -260,6 +260,7 @@
 // write goes through stores/risks.ts.
 import { computed, reactive, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
+import { confirmAction } from '../lib/confirm';
 import type { RiskCategory, WorkspaceRisk } from '@kermanych/cloud';
 import KSkeleton from 'components/kit/KSkeleton.vue';
 import { useKeyedAction, errorText } from '../composables/useAsyncAction';
@@ -520,17 +521,20 @@ const canDelete = computed(() => projects.isWorkspaceOwner(props.workspaceId));
 
 // The confirm is the whole safety mechanism on this path, so it quotes the code AND the
 // statement rather than asking «are you sure?»: the operator is agreeing to lose a specific
-// row, and a generic prompt is one people learn to click through. `window.confirm` is the
-// app's established pattern for destructive acts (AgentsPage, SettingsPage).
+// row, and a generic prompt is one people learn to click through. `confirmAction`
+// (lib/confirm.ts) is the app's one confirm for destructive acts.
 //
 // This is also the one place the deletion's real cost is stated in the operator's own
 // language — that the event history goes with the row — because after this click there is
 // nothing left to read it from.
-function remove(risk: WorkspaceRisk): void {
+async function remove(risk: WorkspaceRisk): Promise<void> {
   const statement = risk.event.trim() || risk.code;
-  if (!window.confirm(t('management.risks.deleteConfirm', { code: risk.code, event: statement })))
-    return;
-  void deleteAction.run(risk.id, risk.code);
+  const ok = await confirmAction({
+    title: t('confirmations.deleteRisk'),
+    message: t('management.risks.deleteConfirm', { code: risk.code, event: statement }),
+    confirmLabel: t('confirmations.label.delete'),
+  });
+  if (ok) void deleteAction.run(risk.id, risk.code);
 }
 
 // Two row states worth seeing without reading a cell: over the tolerance line, and overdue

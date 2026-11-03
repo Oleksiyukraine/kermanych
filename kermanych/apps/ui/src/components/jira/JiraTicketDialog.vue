@@ -8,10 +8,12 @@
     <template #head-meta>
       <span class="jtd__headside">
         <span class="jtd__headmeta mono">{{ issue.statusName }}</span>
-        <KIconButton
-          :title="expanded ? t('jira.ticketDialog.collapse') : t('jira.ticketDialog.expand')"
+        <KFullscreenButton
+          :on="expanded"
+          :enter-title="t('jira.ticketDialog.expand')"
+          :exit-title="t('jira.ticketDialog.collapse')"
           @click="expanded = !expanded"
-        >{{ expanded ? '⤡' : '⤢' }}</KIconButton>
+        />
       </span>
     </template>
 
@@ -385,7 +387,7 @@ import type { JiraAttachment, JiraIssue, JiraWorklog } from '@kermanych/cloud';
 import KAvatar from 'components/kit/KAvatar.vue';
 import KBtn from 'components/kit/KBtn.vue';
 import KModal from 'components/kit/KModal.vue';
-import KIconButton from 'components/kit/KIconButton.vue';
+import KFullscreenButton from 'components/kit/KFullscreenButton.vue';
 import KSelect, { type KSelectOption } from 'components/kit/KSelect.vue';
 import KSkeleton from 'components/kit/KSkeleton.vue';
 import KSpinner from 'components/kit/KSpinner.vue';

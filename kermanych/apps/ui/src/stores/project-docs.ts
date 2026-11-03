@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia';
 import { ref } from 'vue';
-import { isDocImagePath, type DocLinkEmbedCheck, type FileContent, type TreeEntry } from '@kermanych/core';
+import { type DocLinkEmbedCheck, type FileContent, type TreeEntry } from '@kermanych/core';
 import {
   createWorkspaceDocLink,
   deleteWorkspaceDocLink,
@@ -19,9 +19,7 @@ import { useAuth } from './auth';
 //
 //   * repository files — PROJECT level: fetched live from the selected project's bound local
 //     checkout through the api on every navigation (decision A — nothing is cached in the
-//     cloud); raw image bytes are turned into object URLs (the raw route needs the auth
-//     bearer, which an <img src> cannot carry, so the bytes are fetched by the authed api
-//     client and handed to the DOM as a blob);
+//     cloud). The screen's viewer (KFileView) reads raw bytes for previews itself;
 //   * documentation links — WORKSPACE level: rows of `workspace_doc_links`, read from the
 //     cloud under the operator's own JWT. A link is not tied to any project, so switching the
 //     project leaves the list and the open link alone. Only the pointer is stored; the page
@@ -42,13 +40,10 @@ export const useProjectDocs = defineStore('project-docs', () => {
   const openFolder = ref('');
   const openPath = ref('');
   const file = ref<FileContent | null>(null);
-  // Object URL of the open file when it is an image (SVG included): images are shown as the
-  // picture they draw, so their bytes come from the raw route and never through `file`.
-  const imageUrl = ref<string | null>(null);
   const loadingFile = ref(false);
   const fileError = ref<string | null>(null);
-  // Guards openFile against an out-of-order answer: an image and a text file load through
-  // different routes, so a slow earlier click must not overwrite a later one.
+  // Guards openFile against an out-of-order answer: a slow earlier click must not overwrite a
+  // later one.
   let openSeq = 0;
   // Bumped by refreshIfActive so the docs screen re-fetches the currently-expanded tree
   // level after a pull (files added/removed under an open folder must appear).
@@ -70,20 +65,20 @@ export const useProjectDocs = defineStore('project-docs', () => {
   const embedChecks = ref<Record<string, DocLinkEmbedCheck>>({});
   const embedInFlight = new Set<string>();
 
-  const urlCache = new Map<string, string>();
-
   function setActive(projectId: string): void {
     if (projectId === activeProjectId.value) return;
-    // Free the object URLs of the project we are leaving before its state is dropped, and
-    // orphan any open still in flight so it cannot land in the new project's preview.
-    releaseUrls();
-    openSeq += 1;
+    // Orphan any open still in flight so it cannot land in the new project's preview.
     activeProjectId.value = projectId;
+    closeFile();
+  }
+
+  function closeFile(): void {
+    openSeq += 1;
     openFolder.value = '';
     openPath.value = '';
     file.value = null;
-    setImage(null);
     fileError.value = null;
+    loadingFile.value = false;
   }
 
   // The links belong to the workspace, so only a workspace switch resets them.
@@ -98,13 +93,6 @@ export const useProjectDocs = defineStore('project-docs', () => {
     void loadLinks(workspaceId);
   }
 
-  // The open image's URL is owned here, not by urlCache: the screen releases the cache when it
-  // unmounts, and an image still selected on return must not point at a revoked URL.
-  function setImage(url: string | null): void {
-    if (imageUrl.value) URL.revokeObjectURL(imageUrl.value);
-    imageUrl.value = url;
-  }
-
   async function treeOf(projectId: string, folder: string, path: string): Promise<TreeEntry[]> {
     return api.projectDocsTree(projectId, folder, path);
   }
@@ -117,16 +105,9 @@ export const useProjectDocs = defineStore('project-docs', () => {
     loadingFile.value = true;
     fileError.value = null;
     file.value = null;
-    setImage(null);
     try {
-      if (isDocImagePath(path)) {
-        const url = URL.createObjectURL(await api.projectDocsRaw(projectId, folder, path));
-        if (seq === openSeq) setImage(url);
-        else URL.revokeObjectURL(url);
-      } else {
-        const fc = await api.projectDocsFile(projectId, folder, path);
-        if (seq === openSeq) file.value = fc;
-      }
+      const fc = await api.projectDocsFile(projectId, folder, path);
+      if (seq === openSeq) file.value = fc;
     } catch (e) {
       if (seq === openSeq) fileError.value = e instanceof Error ? e.message : String(e);
     } finally {
@@ -134,30 +115,13 @@ export const useProjectDocs = defineStore('project-docs', () => {
     }
   }
 
-  async function rawUrl(projectId: string, folder: string, path: string): Promise<string> {
-    const key = `${projectId}\u0000${folder}\u0000${path}`;
-    const hit = urlCache.get(key);
-    if (hit) return hit;
-    const blob = await api.projectDocsRaw(projectId, folder, path);
-    const url = URL.createObjectURL(blob);
-    urlCache.set(key, url);
-    return url;
-  }
-
   function refreshIfActive(projectId: string): void {
     if (projectId !== activeProjectId.value) return;
-    // A pull may have changed the tree and images too: bump the nonce so the screen re-fetches
-    // its open tree level, and drop the object-URL cache so images refetch (the open file,
-    // image or not, is re-read below).
+    // A pull may have changed the tree too: bump the nonce so the screen re-fetches its open
+    // folders (the open file is re-read below).
     refreshNonce.value += 1;
-    releaseUrls();
     if (!openFolder.value || !openPath.value) return;
     void openFile(projectId, openFolder.value, openPath.value);
-  }
-
-  function releaseUrls(): void {
-    for (const url of urlCache.values()) URL.revokeObjectURL(url);
-    urlCache.clear();
   }
 
   async function loadLinks(workspaceId: string): Promise<void> {
@@ -228,9 +192,9 @@ export const useProjectDocs = defineStore('project-docs', () => {
   }
 
   return {
-    source, activeProjectId, activeWorkspaceId, openFolder, openPath, file, imageUrl, loadingFile, fileError, refreshNonce,
+    source, activeProjectId, activeWorkspaceId, openFolder, openPath, file, loadingFile, fileError, refreshNonce,
     links, linksLoading, linksLoadedFor, linksError, openLinkId, embedChecks,
-    setActive, setWorkspace, treeOf, openFile, rawUrl, refreshIfActive, releaseUrls,
+    setActive, setWorkspace, treeOf, openFile, closeFile, refreshIfActive,
     loadLinks, openLink, addLink, saveLink, removeLink, checkEmbed,
   };
 });

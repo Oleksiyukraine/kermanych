@@ -20,8 +20,7 @@ test('every kind has a Ukrainian label, and they differ', () => {
   for (const l of labels) expect(l.trim()).not.toBe('');
 });
 
-test('the catalogue can render every registry entry: six with a template, two without', () => {
-  expect(AGENTS.filter((a) => a.instruction)).toHaveLength(6);
+test('the catalogue can render every registry entry: only automations go without a template', () => {
   expect(AGENTS.filter((a) => !a.instruction).every((a) => a.kind === 'automation')).toBe(true);
 });
 

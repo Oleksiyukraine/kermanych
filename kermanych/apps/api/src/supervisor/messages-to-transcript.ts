@@ -1,4 +1,4 @@
-import type { ToolLine, TranscriptEntry } from "@kermanych/core";
+import { unwrapVoiceMessage, type ToolLine, type TranscriptEntry } from "@kermanych/core";
 import { applyToolResult, hasTurnMeta, joinResultText, pendingToolEntry, toolRowMatches, turnEntry, type SkillSource, type TurnMeta } from "./transcript-reducer";
 
 // Shape of omp's converted history messages (get_messages / get_messages_page) we map from.
@@ -58,7 +58,15 @@ export function messagesToTranscript(messages: unknown[], opts?: { skillSource?:
       const images = parts
         .filter((p) => p.type === "image" && p.data)
         .map((p) => `data:${p.mimeType ?? "image/png"};base64,${p.data}`);
-      if (text.trim() || images.length) entries.push({ kind: "user_text", id: `h${++seq}`, at, text, ...(images.length ? { images } : {}) });
+      // A voice message reads as the operator said it, with its mark, not under the voice note
+      // the child received (docs/specs/2026-11-02-voice-conversation.md, decision 6).
+      const spoken = unwrapVoiceMessage(text);
+      if (text.trim() || images.length)
+        entries.push({
+          kind: "user_text", id: `h${++seq}`, at, text: spoken ?? text,
+          ...(images.length ? { images } : {}),
+          ...(spoken !== null ? { via: "voice" as const } : {}),
+        });
     } else if (m.role === "assistant") {
       for (const p of parts) {
         if (p.type === "thinking" && p.thinking?.trim())

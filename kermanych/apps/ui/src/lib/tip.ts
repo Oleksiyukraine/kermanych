@@ -76,11 +76,27 @@ function place(el: HTMLElement, tip: HTMLElement): void {
   tip.style.top = `${Math.round(top)}px`;
 }
 
+// `v-tip.overflow`: the bubble repeats a label the layout cut short (a file name ending in
+// «…»), so it shows only while that label is actually clipped — a name that fits needs no
+// bubble. The clipped element is the one marked `data-tip-clip` inside the control, or the
+// control itself. Judged at show time, so a resize between hovers is taken into account.
+function clipped(el: HTMLElement): boolean {
+  const target = el.querySelector<HTMLElement>('[data-tip-clip]') ?? el;
+  return target.scrollWidth > target.clientWidth + 1;
+}
+
 function show(el: HTMLElement): void {
   const text = el.dataset.tip;
   if (!text) return;
+  if (el.dataset.tipOverflow && !clipped(el)) return;
 
   const tip = ensureBubble();
+  // A full-screen viewer is a popover in the top layer (useFullscreenPopover), which paints
+  // over any z-index: a bubble under <body> would sit behind it. So the bubble goes into the
+  // open popover holding the control, and back to <body> otherwise. Still `position: fixed`
+  // against the window — none of those layers is a containing block.
+  const layer = el.closest<HTMLElement>(':popover-open') ?? document.body;
+  if (tip.parentElement !== layer) layer.appendChild(tip);
   host = el;
   tip.textContent = text;
   // Measured before it is shown: the resting style is `visibility: hidden`, not
@@ -128,6 +144,7 @@ const EVENTS: Array<[string, EventListener]> = [
 export const tip: Directive<HTMLElement, string | undefined> = {
   mounted(el, binding) {
     setText(el, binding.value);
+    if (binding.modifiers.overflow) el.dataset.tipOverflow = '1';
     for (const [name, fn] of EVENTS) el.addEventListener(name, fn);
   },
 

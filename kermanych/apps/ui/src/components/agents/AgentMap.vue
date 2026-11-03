@@ -70,6 +70,7 @@
             <span class="agent-map__meta mono">
               <KHarnessMark v-if="data.node.session.kind !== 'task'" :harness="sessionLaunchMode(data.node.session)" />
               <KAnalysisMark v-if="data.node.session.deepAnalysis" />
+              <KDesignMark v-if="data.node.session.designDir" />
               <KMinionMark v-if="data.node.session.minion" kind="running" />
               <KDecisionMark v-if="sessionDecisionReason(t, data.node.session)" :reason="sessionDecisionReason(t, data.node.session)!" />
               <KNotNeededMark v-else-if="sessionNotNeededReason(t, data.node.session)" :reason="sessionNotNeededReason(t, data.node.session)!" />
@@ -103,7 +104,7 @@
       </VueFlow>
 
       <div class="agent-map__overlay">
-        <!-- The chips: which buckets are on the map. Same words and counts as the sidebar. -->
+        <!-- The chips: which buckets are on the map. Same words as the «Агенти» tabs. -->
         <div class="agent-map__chips" role="group" :aria-label="t('agents.map.filter')">
           <button
             v-for="b in MAP_BUCKETS"
@@ -207,6 +208,7 @@ import { useLoadPhase } from '../../composables/useLoadPhase';
 import KStatusDot from 'components/kit/KStatusDot.vue';
 import KHarnessMark from 'components/kit/KHarnessMark.vue';
 import KAnalysisMark from 'components/kit/KAnalysisMark.vue';
+import KDesignMark from 'components/kit/KDesignMark.vue';
 import KMinionMark from 'components/kit/KMinionMark.vue';
 import KDecisionMark from 'components/kit/KDecisionMark.vue';
 import KNotNeededMark from 'components/kit/KNotNeededMark.vue';
@@ -255,7 +257,7 @@ const minionStrip = computed(() =>
 // ⏸ pauses as the operator, ▶ resumes (and clears the failure count); the echo is the new state.
 const { run: toggleMinion, busy: minionToggling } = useAsyncAction((paused: boolean) => minion.setPaused(paused));
 const bucketCounts = computed(() => {
-  const counts: Record<MapBucket, number> = { active: 0, waiting: 0, errors: 0, completed: 0 };
+  const counts: Record<MapBucket, number> = { agents: 0, completed: 0 };
   const byId = new Map(store.sessions.map((s) => [s.id, s]));
   for (const s of store.sessions) {
     if (s.kind === 'chat' || s.status === 'backlog') continue;

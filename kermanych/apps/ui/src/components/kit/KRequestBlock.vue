@@ -9,6 +9,10 @@
       @click="onHead"
     >
       <span class="k-rb__bar" aria-hidden="true"></span>
+      <!-- Said in a voice conversation: the text is a speech transcript, with its slips. -->
+      <span v-if="block.request.via === 'voice'" class="k-rb__voice" role="img" :aria-label="t('kit.requestBlock.voice')" v-tip="t('kit.requestBlock.voice')">
+        <KIcon name="mic" />
+      </span>
       <!-- `.trim()`: a whitespace-only request is as empty as a missing one, and would
            otherwise render a blank header line instead of the attachment placeholder. -->
       <span class="k-rb__tx" :class="{ 'k-rb__tx--full': shown }">{{ block.request.text.trim() || t('kit.requestBlock.attachment') }}</span>
@@ -55,6 +59,7 @@ import { useI18n } from 'vue-i18n';
 import type { ChatBlock, GroupStat, ToolEntry } from '@kermanych/core';
 import KLogBlock from './KLogBlock.vue';
 import KToolRow from './KToolRow.vue';
+import KIcon from './KIcon.vue';
 import type { ExpandAllCommand } from '../../lib/expand-all';
 import { dur, renderTime } from '../../lib/time';
 import { usd } from '../../lib/format';
@@ -179,6 +184,7 @@ const summary = computed(() => {
 }
 .k-rb__head:focus-visible { outline: 1px solid var(--k-accent); outline-offset: 2px; }
 .k-rb__bar { flex: none; width: 2px; align-self: stretch; background: var(--k-accent); }
+.k-rb__voice { flex: none; align-self: center; color: var(--k-muted); --k-icon-size: var(--k-icon-sm); }
 .k-rb__tx {
   flex: 1; font-family: var(--k-font-ui); font-size: 14px; line-height: 1.5; color: var(--k-text);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;

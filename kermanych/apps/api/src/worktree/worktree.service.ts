@@ -2,7 +2,7 @@
 import { Injectable } from "@nestjs/common";
 import { spawn } from "node:child_process";
 import { readdir, readFile, rm, stat } from "node:fs/promises";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { addedFileDiff, splitDiff, type SplitDiff } from "./split-diff";
 import { isGitBranchName, type TreeEntry, type FileContent, type ReleaseCommit } from "@kermanych/core";
 
@@ -166,6 +166,21 @@ export class WorktreeService {
   async currentBranch(repoDir: string): Promise<string> {
     const r = await git(repoDir, ["symbolic-ref", "--short", "HEAD"]);
     return r.ok ? r.out.trim() : "";
+  }
+
+  // The branch a worktree is working on: HEAD's, or — while a rebase holds HEAD detached —
+  // the one the rebase is rewriting, which git keeps in `rebase-merge/head-name` (or
+  // `rebase-apply/` for `git am`-style rebases). Empty for a plain detached checkout.
+  async workingBranch(dir: string): Promise<string> {
+    const head = await this.currentBranch(dir);
+    if (head) return head;
+    for (const state of ["rebase-merge", "rebase-apply"]) {
+      const p = await gitStdout(dir, ["rev-parse", "--git-path", `${state}/head-name`]);
+      if (!p.ok) continue;
+      const ref = (await readFile(resolve(dir, p.out.trim()), "utf8").catch(() => "")).trim();
+      if (ref.startsWith("refs/heads/")) return ref.slice("refs/heads/".length);
+    }
+    return "";
   }
 
   // The commits a release note is generated from: one branch, an inclusive date range,

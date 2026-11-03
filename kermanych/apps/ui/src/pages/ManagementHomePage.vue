@@ -11,7 +11,7 @@
          grid is always the model rendered and never a second copy that can drift. -->
     <div ref="gridEl" class="home__grid" :style="gridStyle">
       <HomeTile
-        v-for="tile in layout"
+        v-for="tile in tiles"
         :id="tile.id"
         :key="tile.id"
         :title="t(`management.home.${tile.id}.title`)"
@@ -47,8 +47,10 @@
 // later.
 import { computed, markRaw, onMounted, onUnmounted, ref, watch, type Component } from 'vue';
 import { useI18n } from 'vue-i18n';
+import { confirmAction } from '../lib/confirm';
 import KBtn from 'components/kit/KBtn.vue';
 import { useJira } from 'stores/jira';
+import { useProjects } from 'stores/projects';
 import HomeTile from 'components/home/HomeTile.vue';
 import HomeCapacityWidget from 'components/home/HomeCapacityWidget.vue';
 import HomeTasksWidget from 'components/home/HomeTasksWidget.vue';
@@ -61,6 +63,7 @@ import {
   readLayout,
   reorder,
   resizeTile,
+  visibleTiles,
   writeLayout,
   type TileLayout,
   type WidgetId,
@@ -70,6 +73,7 @@ const props = defineProps<{ workspaceId: string; workspaceName: string }>();
 
 const { t } = useI18n();
 const jira = useJira();
+const projects = useProjects();
 
 const WIDGETS: Record<WidgetId, Component> = {
   capacity: markRaw(HomeCapacityWidget),
@@ -88,11 +92,24 @@ watch(
   },
 );
 
+// What renders: the saved layout minus the tiles of sections the caller may not open (the
+// Risk Registry is the owner's and managers'). Hidden only until the role is known to allow
+// it — a developer must not see the register's tile flash in while the roster loads (the
+// roster is read by ManagementPage). The gestures below still edit `layout`, so a hidden
+// tile keeps its place for whoever may see it.
+const tiles = computed(() => visibleTiles(layout.value, projects.canManageWorkspace(props.workspaceId)));
+
 function persist(): void {
   writeLayout(props.workspaceId, layout.value);
 }
 
-function resetLayout(): void {
+async function resetLayout(): Promise<void> {
+  const ok = await confirmAction({
+    title: t('confirmations.resetLayout.title'),
+    message: t('confirmations.resetLayout.message'),
+    confirmLabel: t('confirmations.label.reset'),
+  });
+  if (!ok) return;
   layout.value = mergeLayout(null);
   persist();
 }
@@ -137,10 +154,11 @@ function onDragStart(id: WidgetId, ev: PointerEvent): void {
 }
 
 // The grip's arrow keys: one place earlier or later in the reading order, persisted at once —
-// there is no pointerup to ride.
+// there is no pointerup to ride. The neighbour is the one ON SCREEN: stepping past a hidden
+// tile would swap with it and nothing would visibly move.
 function onMove(id: WidgetId, dir: -1 | 1): void {
-  const i = layout.value.findIndex((tl) => tl.id === id);
-  const target = layout.value[i + dir];
+  const i = tiles.value.findIndex((tl) => tl.id === id);
+  const target = tiles.value[i + dir];
   if (!target) return;
   layout.value = reorder(layout.value, id, target.id);
   persist();

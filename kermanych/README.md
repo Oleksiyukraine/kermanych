@@ -260,6 +260,24 @@ arrives with the «Проєкти» filter already set to that project. The boar
 filter, «Виконавці», narrows by assignee and offers «Не призначено» for unclaimed
 cards.
 
+**The header switcher sets the same scope.** Right after «Керманич» the header names where
+you are — the project with its workspace's marker, «FS · усі проєкти» for a workspace, or
+«Вибрати проєкт» — and a click opens the sidebar's tree as a list: a workspace row scopes to
+the workspace, a project row to the project, each with the sidebar's mark and «Посіпака»
+icon. It only selects; creating, moving and folding stay in the sidebar. Beside the name
+sits one still (never pulsing) mark summed over every project **outside** the current
+scope, so an agent asking a question in another project shows even when the sidebar is
+hidden. The app version moved from the header to Settings → «Загальне».
+
+**Focus mode hides the sidebar.** The ⛶ button between «Керманич» and the switcher, or
+<kbd>Ctrl</kbd>/<kbd>⌘</kbd>+<kbd>\</kbd> anywhere (also while typing in the composer;
+matched by the physical key, so the Ukrainian layout works), slides the left sidebar off
+screen on every page and gives its width to the work area; the footer stays. Press it again
+to bring back the sidebar at the width it had — full or the collapsed rail. The choice is
+kept per machine. Inside the integrated terminal <kbd>Ctrl</kbd>+<kbd>\</kbd> stays the
+shell's (SIGQUIT); <kbd>⌘</kbd>+<kbd>\</kbd> still works there.
+(Spec: `docs/specs/2026-10-29-agents-tab-and-focus-mode.md`.)
+
 **The mark at the end of a sidebar row says whether the project needs you.** Only the
 most urgent state shows, and hovering the row lists all of them:
 
@@ -277,8 +295,10 @@ the red dot sits on the pill's corner instead.
 A workspace row wears the same mark summed over its projects, so a folded workspace still
 shows that something inside it is waiting. Chats, archived and merged agents, and agents
 you stopped yourself never mark a row. A result counts as read once you open the agent in
-«Агенти» while the window is visible. Read state is kept per machine, in the browser's
-local storage; finished agents from before this feature shipped count as read.
+«Агенти» (a design: in «Дизайн») while the window is visible. Read state is kept per machine, in
+the browser's local storage; finished agents from before this feature shipped count as read.
+The desktop app's Dock icon counts the same agents, except the running ones (see
+[Desktop app](#desktop-app-macos)).
 
 **The collapsed sidebar shows workspaces only.** Collapse it with « at the bottom and
 the tree shrinks to one mark per workspace; its projects stay hidden until you click that
@@ -286,6 +306,34 @@ workspace's mark, which scopes to the workspace and opens its project icons bene
 Click the mark again to close it. Every workspace starts closed each time the sidebar is
 collapsed, and a project selected from outside the sidebar (a notification, say) opens its
 own workspace so the selection stays visible.
+
+**«Агенти» has three tabs: «Агенти», «Завершені», «Задачі».** They sit on top of the list
+they filter, not in the sidebar:
+
+- «Агенти» — every agent that exists and is not closed out: working, asking you, finished
+  but not merged or retired, stopped, crashed or in conflict. The ones that need you
+  (`waiting_input`, `error`, `conflict`) come first, then the rest; both parts in launch
+  order, so agents working at the same time never trade places. A discussion or review
+  branch stays under its parent and lifts it to the top when it is the one asking. Under a
+  workspace scope a project with such an agent leads.
+- «Завершені» — merged and set-aside agents, the history; no count on the tab.
+- «Задачі» — your backlog inbox (below).
+
+A branch is always in its parent's tab, right under its parent, and its card is drawn as the
+parent's fork: indented, tied to the parent by a line (lit while the branch is open), with
+several branches of one agent sharing one bracket. A branch whose parent is not in the list
+(another tab, or filtered out) is a plain card. The count on «Агенти» and «Задачі» is exactly the
+list under it. The magnifier at the end of the row drops a search field under the tabs; it
+stays open while it holds text, folds when you leave it empty, and <kbd>Esc</kbd> or the
+magnifier again clears it. A tab or scope change clears it too.
+
+A card is the name and time, the branch, and one row: the status on a single line (hover it for
+the full text when it is cut short), the harness and the «аналіз» / «Посіпака» marks, and a
+coins icon whose tooltip gives the model, tokens and cost. The card keeps its height while the
+agent works. Every agent that is thinking or running a tool has light running around its card's
+frame, in step with the others; the open agent's ring is the brightest. An agent queued for a
+slot, waiting for you or finished has no ring. In «Задачі» the row shows the description as one
+line of plain text, without its markdown.
 
 **«Задачі» in «Агенти» is your inbox, not a local list.** It shows the cloud cards in
 `backlog` assigned to you within the current scope — including the ones a colleague
@@ -299,7 +347,7 @@ the list under the note «Лише на цій машині: проєкт цих
 launcher's checkbox, off by default, marks the card as yours alone to look at: it
 never reaches the kanban columns, and neither does its status while it runs. It is
 still an ordinary task in every other respect — it sits in your «Задачі» inbox and
-in the sidebar's count, it launches a session the usual way, it pushes status back,
+in the «Задачі» tab's count, it launches a session the usual way, it pushes status back,
 and every member of the workspace can still read the row. Hiding is a view, never a
 permission. Un-hiding is the same checkbox: open the card from «Задачі», clear it,
 «Зберегти». That is the only way back, because a hidden card has no card on the
@@ -695,6 +743,21 @@ last theme you used (`window-theme.json` in Electron's `userData`), so a light-t
 does not get a dark frame first. The `backend` boot file holds every request until the API
 is listening; the web build shows the same splash with «Входжу…» only.
 
+**The Dock icon calls you when an agent needs you** (spec:
+`docs/specs/2026-11-01-dock-attention.md`). Its number counts the agents whose turn it is, over
+every project: waiting for an answer, failed or stopped on a merge conflict, or finished with a
+result you have not opened yet — the sidebar marks without «працює». A result leaves the number
+once you open the agent (a design: in «Дизайн»); a failure stays until the agent is restarted,
+archived or deleted. When another agent's turn comes while you are in another app, the icon
+bounces once, and it bounces for a memory warning and a «Посіпака» pause too. A click on the icon
+brings the window back, also when it was minimised. **Налаштування → Застосунок → Сповіщення**
+switches the number and the bounce («Число на іконці», «Підстрибувати»), per machine.
+
+Pop-up notifications (an agent's turn, a memory warning, a «Посіпака» pause, while the window is
+not focused) need an app signed by an Apple team: since Electron 42 macOS refuses them otherwise.
+Neither `pnpm dev:app` (the stock `Electron.app` from `node_modules`) nor the unsigned dmg shows
+them; the «Сповіщення» settings page says whether the running build can.
+
 Links never open inside the desktop window: every `http(s)`/`mailto` link — Jira
 and Linear tickets, attachments, storage downloads and markdown links — opens in your
 default browser (Chrome, Arc, Safari, …). The session live preview opens in the session's
@@ -767,7 +830,7 @@ ChatGPT app is not used. A missing binary shows `command not found` in the «Л�
 - **Nothing of Kermanych enters the agent's context**: no project skills, triggers,
   language or documentation directives, co-author trailer, model or effort flags. Your own
   `~/.claude` / `~/.omp` / `~/.codex` configuration applies unchanged; switch model with the harness's
-  own `/model`. Model, effort and images are hidden in the launcher for this mode. The
+  own `/model`. Model, effort, images and Хелпери are hidden in the launcher for this mode. The
   exceptions are the [session browser](#session-browser)'s tools, passed on the launch in the
   desktop app, and a «Глибокий аналіз» card's opening prompt: the TUI receives the task
   wrapped in the deep-analysis instructions, because that is the task you chose.
@@ -828,20 +891,60 @@ each turn the first message becomes the thread's name, as for a managed chat.
   conversation into a worktree, and a native conversation cannot be forked. «В беклог» (⊕)
   works.
 
+## Voice conversation («Голосова розмова»)
+
+Talk to a session's agent by voice, the way ChatGPT's voice mode works (spec:
+`docs/specs/2026-11-02-voice-conversation.md`). OpenAI's GPT-Live (`gpt-live-1`) listens and
+speaks full duplex — interrupt it at any time — and hands everything about the task to the
+session's own agent (omp / claude, with the repository and its tools). GPT-Live is only the agent's
+voice: it never answers about the code itself, and asks back only when it did not hear you.
+
+- **Where.** 🎤 in the composer of every managed conversation: «Агенти» (agents, «Глибокий
+  аналіз», discussions, reviews), «Чат» and «Дизайн». Not native sessions, not «Менеджмент».
+- **The key.** Settings → Застосунок → «Голос»: your own OpenAI API key, stored in this machine's
+  SQLite (`voice_keys`) like the Jira/Linear tokens — never in the cloud, never in the window;
+  the local api exchanges the window's WebRTC offer with OpenAI (`POST /api/voice/session`).
+  `OPENAI_API_KEY` in the api's environment wins over the stored key. «Перевірити» proves the key
+  can use `gpt-live-1`. The same pane picks the voice (default `marin`); the conversation speaks
+  the agent's language («Мова спілкування агента», an ASD-STE100 level is English), or the UI
+  language when none is set.
+- **What the agent gets.** Your words since the previous hand-off, sent in the same mode typed
+  text takes — so speaking during a running turn steers it — under a short voice note (a speech
+  transcript, answer briefly, no tables). The log shows your own words with a 🎤 mark, after a
+  restart too. When the turn ends GPT-Live retells the last reply (code blocks and tables become
+  «shown in the chat»); while the agent works it gets silent progress, so «що він зараз робить?»
+  has an answer.
+- **Its questions.** A «Потрібне рішення» block is read aloud with numbered options. Answer with
+  a number («другий», «варіант три»), «так» / «ні», or free text for an input; an unclear answer
+  is asked again rather than guessed. The buttons keep working.
+- **One conversation per app**, bound to the session it started in: switch pages or agents and
+  it keeps talking to that session; a pill beside the settings gear shows it with 🔇 and ✕.
+  Starting one elsewhere asks first. It ends on «Завершити», when the session is archived,
+  removed or errors, when the window closes, and after **3 minutes of silence** (no speech either
+  way and no running turn). Ending it never stops the agent. A dropped connection is not
+  re-established.
+- **Cost.** $0.05 per minute of conversation, billed per second to your key, plus 15 s at each
+  connection start; the agent runs on your usual Claude / omp plan.
+- **macOS microphone.** The first conversation triggers the system prompt
+  (`NSMicrophoneUsageDescription`). The `.dmg` is unsigned, so macOS may ask again after
+  installing a new build. Refused once: System Settings → Privacy & Security → Microphone. The
+  embedded session browser never gets the microphone.
+
 ## Agent map («Карта агентів»)
 
 Every agent on this machine as one tree (spec: `docs/specs/2026-10-22-agent-map.md`):
 workspace → project → session → its discussion / review branches and the subagents it
 spawned → their nested subagents.
 
-- **Opening it.** The «◈ Карта агентів» button under the search on «Агенти» (its right side
-  counts the agents active on the whole machine) swaps the chat pane for the map, pressed
-  while open; press it again to go back. It opens fitted to the project or workspace selected
-  in the sidebar. ◈ in a session's header (shown once it has subagents) opens it on that
-  session, unfolded.
-- **What is on it.** Chips choose the buckets: «Активні», «Очікують», «Помилки» by default,
-  «Завершені» on demand; the choice is remembered. A fork follows its parent's bucket, as in
-  the sidebar. Chats and backlog cards are never on the map. A project with nothing under the
+- **Opening it.** The «◈ Карта агентів» button at the top of the «Агенти» list, beside «Нова
+  задача» (its right side counts the agents active on the whole machine), swaps the chat pane
+  for the map, pressed while open; press it again to go back. It opens fitted to the project
+  or workspace currently selected. ◈ in a session's header (shown once it has subagents)
+  opens it on that session, unfolded.
+- **What is on it.** Chips choose the buckets, the same as the «Агенти» tabs: «Агенти» by
+  default, «Завершені» on demand; the choice is remembered (a choice saved before the three
+  agent buckets merged reads as «Агенти»). A fork follows its parent's bucket, as in the
+  tabs. Chats and backlog cards are never on the map. A project with nothing under the
   chips is not drawn; projects outside any workspace you can see hang under «Без
   воркспейсу».
 - **Reading it.** Dashed lines mean «belongs to», solid ones «spawned». A working agent has a
@@ -906,7 +1009,9 @@ closes its pages.
   `browser_click` (refuses, naming the cover, when another element covers the target),
   `browser_type`, `browser_press`, `browser_hover`, `browser_select` (native `<select>`),
   `browser_history` (back / forward / reload), `browser_wait_for`, `browser_resize`,
-  `browser_screenshot` (viewport, full page or one element), `browser_upload`,
+  `browser_screenshot` (viewport, full page or one element; with `path` — a worktree-relative
+  `.png` under `docs/` — it writes the image into the worktree and answers with the path
+  instead of the image), `browser_upload`,
   `browser_dialog`, `browser_console` (console, failed / 4xx / 5xx requests, downloads,
   popups, blocked links), `browser_network` (the request log) and `browser_evaluate`. Agent
   sessions also get the preview tools (see [Live preview](#live-preview)).
@@ -994,6 +1099,48 @@ their ports, ▶ / ◼, ↻ (restart), **Логи** and, while the config is mis
   `GET /api/sessions/:id/preview/logs?step=&since=`, `POST /api/sessions/:id/preview/configure`;
   the state is pushed on the socket (`preview_update`, and `previews` in the snapshot).
 
+## Designs («Дизайн»)
+
+The «Дизайн» tab, right after «Чат», is where a screen is designed with an agent (spec:
+`docs/specs/2026-10-29-design-tab.md`). A design is a **prototype built on the project's own UI
+kit with fixtures**, not a drawing, so it cannot drift from the code; what lands in the
+repository is a folder that people and implementing agents read.
+
+- **The page.** Left: the selected project's designs and «+ Новий дизайн». Centre: the
+  design's session browser on the running preview, with the width presets, «◎ Вказати» and the
+  picks tray (picks go to the agent, as on «Агенти»). Right: the agent's log and composer.
+  The web build has no canvas (the session browser needs the desktop app): it shows the
+  design's saved folder instead — the screenshots and the rendered README. A project without a
+  preview command says so on the canvas, with a link to its settings. The page opens a design
+  from a desktop notification or «Карта агентів» too.
+- **A design is an agent session.** «+ Новий дизайн» asks for a topic, an optional description
+  and base branch, files a card on the board (`tasks.design`, migration
+  `20261029090000_task_design.sql`) assigned to you, and launches it. The session runs on a
+  `design/<slug>` branch in its own worktree, stamped with its folder
+  `docs/design/YYYY-MM-DD-<slug>/`. Commit, PR, finish and resume work as for any agent.
+  Designs are hidden from «Агенти» but stay on «Карта агентів», and their card on the board
+  carries the design mark. «Посіпака» never takes a design card.
+- **«Дизайнер»** (`designer` in «ШІ-команда → Агенти», editable) opens the session: reuse kit
+  components only (a missing one is a kit gap in the README), one dev-only route per screen
+  (`/__design/<design>/<screen>`), every state (data, empty, loading, error, long content,
+  narrow), and a `browser_screenshot` check at 390 and 1280 after each change. Its method and
+  README template are the default skill `design-spec`.
+- **The folder.** `README.md` (purpose, screens, states, decisions, open questions,
+  acceptance criteria, prototype files and routes, kit gaps) and
+  `screens/<screen>-<state>@<width>.png`. The prototype code stays in the app's source and is
+  merged with the design; the task that implements the screen turns it into the real one and
+  deletes it.
+- **«Зберегти дизайн»** sends the procedure `design-save` (editable too): screenshot every
+  screen and state at 390 and 1280 into `screens/`, delete stale ones, make the README match
+  the prototype, commit as `design: <topic>`. The design reaches the default branch through
+  «Створити ПР» and review, like code.
+- **From design to implementation.** «Задача →» on a design's README (on the page and in the
+  session's «Документація» tab) creates a card in the same project by default, platform
+  `web`, with the README as the description and the screenshots attached as card images. An
+  agent working from such a card follows the default skill `implement-from-design`: read the
+  README and screenshots, reuse the prototype, build every state, compare its own screenshots,
+  delete the prototype.
+
 ## Monorepo layout
 
 pnpm workspaces (`packages/*`, `apps/*`):
@@ -1021,6 +1168,9 @@ The visual source of truth lives in [`design/`](./design/):
   chevron plus an input cursor. Regenerate the whole favicon/Electron icon
   set from it with `python3 scripts/gen-icons.py` (stdlib only; the macOS
   `.icns` step needs `iconutil`).
+
+These HTML files are historical. New screens are designed on the «Дизайн» tab (see
+«Designs» above) and land in `docs/design/`.
 
 Custom `K*` components implement this look; Quasar is used only for the
 framework, layout, build, and state plumbing.
@@ -1077,7 +1227,18 @@ developer's machine. The direction is always task → session.
    unassigned unless its author picks someone; a card filed from «Агенти» or «Чат» is
    assigned to its author, because that is the machine about to run it. Either way it is a
    row in the cloud `tasks` — there is no local-only task — so the whole workspace sees it.
-   It starts in `backlog`, which exists only in the cloud.
+   It starts in `backlog`, which exists only in the cloud. The task text (the description)
+   takes Хелпери as a chat message does: <kbd>/</kbd> on an empty field or the «/ Хелпери»
+   button opens the picker, the pick lands at the front of the text, and the launch expands it
+   into the agent's opening prompt (the «Лог» keeps the slash plus a notice naming the helper).
+   A native launch sends the text as it is.
+   A project file is named the same way: <kbd>@</kbd> at the start of a word or the «@ Файл»
+   button opens the project's tree (one folder at a time, its filter narrows the open folder),
+   and the pick lands at the caret as `@path/from/repo/root` — plain text the agent reads as
+   «this file», native launches included. It reads this machine's checkout of the project, so
+   a project not bound here has the button disabled. The agent chat's composer does the same
+   with the session's own tree (the worktree, or the checkout an in-place session runs in):
+   <kbd>@</kbd> at a word start or the **@** button.
 2. **Assign** — the assignee may hand a card over or release it, and the workspace owner
    may take one back from someone who is gone. Anyone may claim an UNASSIGNED card, and
    pressing «Запустити» on one self-assigns it atomically — in the same write that moves it
@@ -1162,7 +1323,7 @@ developer's machine. The direction is always task → session.
    - the finish sheet says how many commits of `origin/<base>` the branch still lacks
      (against the last fetch, no network);
    - a turn that ends with the worktree mid-merge settles the card at `conflict` (the red dot,
-     «Помилки», the finish sheet's conflict view with «Вирішити автоматично»). It clears when
+     top of «Агенти», the finish sheet's conflict view with «Вирішити автоматично»). It clears when
      a later turn ends without unmerged files, or when the finish sheet or «Зміни» finds the
      merge resolved;
    - after the turn that lands on «На ревʼю», the API fetches `origin/<base>` and the pushed
@@ -1187,9 +1348,11 @@ through the `report_finding` tool of its `kermanych` MCP server (spec:
 reproduction commands), acceptance criteria and an optional suggested fix. It reports at once,
 without asking you first, including in the middle of a «Глибокий аналіз» interview; it asks you
 only about a part of the problem that overlaps its own task. Then it continues its task.
-`list_findings` shows it what it already reported, so it does not repeat itself. The
-tool descriptions are the agent's whole instruction, so every runtime gets the same rules,
-native sessions included. Discussion and review branches have no such tools.
+`list_findings` shows it what it already reported, so it does not repeat itself. It writes
+the finding in the agent communication language («Мова спілкування агента»; English while none
+is chosen, and for an ASD-STE100 level). The tool descriptions are the agent's whole
+instruction, so every runtime gets the same rules, native sessions included. Discussion and
+review branches have no such tools.
 
 **Nothing is filed without you.** Findings are kept only on this machine (SQLite
 `session_findings`) and are deleted with their session and with their project. A session holds
@@ -1353,6 +1516,7 @@ default, superpowers' `docs/superpowers/specs|plans` included. Each kind has its
 | Жива документація | how the service works | `docs/schemas/` (or the project's own docs) | off · optional · required | required |
 | Фронтенд ↔ бекенд | frontend handoff | `docs/handoffs/YYYY-MM-DD-<topic>.md` | off · optional · required | optional |
 | | API extension request | `docs/api-requests/YYYY-MM-DD-<topic>.md` | off · optional | off |
+| Екрани | design folder | `docs/design/YYYY-MM-DD-<topic>/` | off · optional | optional |
 
 - **off** — the agent is not told about the kind; nothing is checked.
 - **optional** («За потреби») — the agent writes it where it applies; nothing blocks.
@@ -1378,11 +1542,18 @@ every required document is on the branch:
   document has a `## Documentation impact` section whose first line starts with `None`,
   followed by the reason. The reviewer sees that reason in the diff.
 
+A design session's branch is judged by its own folder only: it needs
+`docs/design/<date>-<slug>/README.md`, and the task-document, plan and living-documentation
+rules do not apply to it. The design rule itself never blocks: `optional` tells every other
+session where designs live and that a task naming one is implemented with
+`implement-from-design`; `off` keeps them from being told.
+
 The finish sheet («Завершити сесію») lists whatever is still missing in plain language; it has
 no documentation checkboxes. «Доповнити документацію» sends the agent one prompt naming
 exactly the missing documents and closes the sheet. You watch the agent write and commit them
 in the transcript, and it pushes them if the PR is already open. Changed documents appear in
-the session's «Документація» tab tagged специфікація / план / схема / хендоф / запит API.
+the session's «Документація» tab tagged специфікація / план / схема / хендоф / запит API /
+дизайн.
 
 The tab survives an API restart and «Завершити». The documents a session read, the documents
 it changed and the skills on «Сесія» are kept on its card (`tasks.docs_report`,
@@ -1713,6 +1884,23 @@ That field is a real assistant, and it is deliberately narrow:
   cannot make that sentence disappear — and a refusal aimed at a section that IS writable
   is reported as the prompt malfunction it is, not dressed in a limitation the table does
   not have.
+
+### Who sees the risk register
+
+The Risk Registry belongs to the workspace owner and its managers. A member with the
+**developer** role does not get the section in the Менеджмент rail, a link to
+`/management/risk-registry` sends them to Home, and Home has no Risk Registry tile for them.
+The Менеджмент chat does not show them the register either: their turns carry no risks, and a
+risk action the assistant emits anyway (file, edit, delete, export) is refused with «The risk
+register is open to the workspace owner and managers only». The owner changes a member's
+role in Settings → Members.
+
+The database enforces the same rule: `workspace_risks` and `workspace_risk_events` are read
+and written only by the owner or a manager (`can_access_workspace_risks`); deleting a risk
+stays owner-only. A developer who queries the tables directly gets no rows and cannot insert
+or update one. This needs migration `20261103090000_workspace_risks_managers.sql` — push it
+before shipping this UI ([Applying a migration](#applying-a-migration-to-the-teams-project)).
+Spec: `docs/specs/2026-11-03-risk-registry-managers-only.md`.
 
 ### Exporting the risk register
 

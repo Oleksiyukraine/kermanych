@@ -20,6 +20,7 @@ import { SupervisorService } from "../src/supervisor/supervisor.service";
 import { RegistryService } from "../src/registry/registry.service";
 import { offlineAuth } from "./offline-auth";
 import { stubSkills } from "./skills-stub";
+import { DISCUSSION_NO_TOOLS_APPEND } from "../src/supervisor/chat-tools";
 
 function make() {
   const registry = new RegistryService(":memory:");
@@ -48,8 +49,10 @@ describe("branchSession", () => {
     expect(child.kind).toBe("discussion");
     expect(child.parentSessionId).toBe(parent.id);
     expect(child.worktree).toBe(false);
-    // Forked from the parent file, no tools, parent's cwd.
+    // Forked from the parent file, no tools, parent's cwd — and told it has none, or it keeps
+    // "starting" tool calls that never run and the branch looks frozen.
     expect(started.at(-1)).toMatchObject({ fork: "/tmp/aaa.jsonl", noTools: true, cwd: "/tmp/wt" });
+    expect(started.at(-1).appendSystemPrompt).toContain(DISCUSSION_NO_TOOLS_APPEND);
   });
 
   it("rejects branching when the parent has no omp session file", async () => {

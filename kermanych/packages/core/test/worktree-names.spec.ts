@@ -27,8 +27,8 @@ test("branchName defaults to the feature prefix", () => {
 test("branchName uses the given prefix", () => {
   expect(branchName("fix-login", "fix")).toBe("fix/fix-login");
 });
-test("BRANCH_PREFIXES lists the four allowed prefixes", () => {
-  expect([...BRANCH_PREFIXES]).toEqual(["feature", "fix", "refactoring", "chore"]);
+test("BRANCH_PREFIXES lists the allowed prefixes", () => {
+  expect([...BRANCH_PREFIXES]).toEqual(["feature", "fix", "refactoring", "chore", "design"]);
 });
 test("uniqueSlug suffixes on collision", () => {
   expect(uniqueSlug("fix", new Set(["fix", "fix-2"]))).toBe("fix-3");
@@ -47,6 +47,11 @@ test("taskNameFromText caps the name at 60 characters", () => {
 });
 test("taskNameFromText returns empty for blank text so callers can fall back", () => {
   expect(taskNameFromText("   \n\n ")).toBe("");
+});
+test("taskNameFromText leaves a leading helper run out of the name", () => {
+  expect(taskNameFromText("/el10 /deep Полагодити логін")).toBe("Полагодити логін");
+  // Only a known helper is dropped: a path or an unknown command is part of the ask.
+  expect(taskNameFromText("/usr/bin/env падає")).toBe("/usr/bin/env падає");
 });
 // A base branch reaches `git fetch origin <base>` and the agent's own commands; a project's
 // default branch is typed by a person and shared through the cloud.

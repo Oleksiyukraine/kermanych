@@ -7,6 +7,7 @@ import { ref } from 'vue';
 import type { MinionPause, MinionState } from '@kermanych/core';
 import { api } from '../lib/api';
 import { minionPauseText } from '../lib/minion';
+import { bounceDock } from '../lib/dock';
 import { globalTr } from '../boot/i18n';
 import { useOrchestrator } from './orchestrator';
 
@@ -29,11 +30,13 @@ export const useMinion = defineStore('minion', () => {
   }
 
   // Decision 12: a pause is a toast and, while the window is unfocused, a native notification —
-  // the same pair the watchdog's alerts use (orchestrator onMachineAlert). A pause stops the
-  // queue on an unattended machine, so it is worth reaching the operator wherever they are.
+  // the same pair the watchdog's alerts use (orchestrator onMachineAlert), with the Dock bounce
+  // they get too (docs/specs/2026-11-01-dock-attention.md, decision 7). A pause stops the queue
+  // on an unattended machine, so it is worth reaching the operator wherever they are.
   function announce(pause: MinionPause): void {
     const message = globalTr.t('minion.notify.paused', { reason: minionPauseText((k, named) => globalTr.t(k, named ?? {}), pause) });
     local.notify(message, pause.code === 'operator' ? 'info' : 'error', 15_000);
+    bounceDock();
     if (typeof document !== 'undefined' && !document.hasFocus() && typeof Notification !== 'undefined') {
       const n = new Notification(globalTr.t('minion.notify.title'), { body: message });
       n.onclick = () => window.kermanych?.focus();

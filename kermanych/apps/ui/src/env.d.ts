@@ -7,6 +7,8 @@ declare namespace NodeJS {
 }
 
 interface ImportMetaEnv {
+  // Vite's own: true under `quasar dev`, false in every build.
+  readonly DEV: boolean;
   readonly VITE_API_BASE?: string;
   // Set by PreviewService on a preview web server (src/lib/preview.ts): the api it is
   // wired to needs no session, so the app adopts a demo user instead of showing /login.

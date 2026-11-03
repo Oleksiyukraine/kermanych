@@ -16,12 +16,15 @@ import { useManagementChat, type MgmtChatEntry } from '../src/stores/management-
 //   * the transcript line has to carry what the risk WAS, because after the call there is no
 //     register row left to read it from;
 //   * a refusal — and the likely one here is the owner-only RLS policy, since every other
-//     write on this table is member-level — must surface verbatim, not as «не вдалося».
+//     write on this table is owner-or-manager — must surface verbatim, not as «не вдалося».
 const managementChat = vi.fn();
 const riskRemove = vi.fn();
 const riskSave = vi.fn();
 const riskCreate = vi.fn();
 const saveRegister = vi.fn();
+// The caller's management role in w1 (projects.canManageWorkspace). The register is the
+// owner's and managers'; most tests here run as one, the developer block flips it.
+let canManage = true;
 
 function risk(code: string, event: string): WorkspaceRisk {
   return {
@@ -61,6 +64,7 @@ vi.mock('../src/stores/projects', () => ({
     members: { w1: [] },
     workspaceById: new Map([['w1', { id: 'w1', name: 'Acme' }]]),
     loadMembers: vi.fn(),
+    canManageWorkspace: () => canManage,
   }),
 }));
 vi.mock('../src/stores/board', () => ({ useBoard: () => ({ createTask: vi.fn() }) }));
@@ -99,6 +103,7 @@ function results(entries: readonly MgmtChatEntry[]): string[] {
 beforeEach(() => {
   setActivePinia(createPinia());
   for (const m of [managementChat, riskRemove, riskSave, riskCreate, saveRegister]) m.mockReset();
+  canManage = true;
 });
 
 describe('risk.delete', () => {
@@ -132,8 +137,8 @@ describe('risk.delete', () => {
     expect(results(store.entries)[0]).toContain('нічого не змінено');
   });
 
-  // Delete is owner-only while select/insert/update on this table are member-level, so this
-  // is the refusal a legitimate member actually hits. It has to arrive as the reason, because
+  // Delete is owner-only while select/insert/update on this table are owner-or-manager, so
+  // this is the refusal a manager actually hits. It has to arrive as the reason, because
   // «ask the owner» and «try again» are different next actions.
   it('reports the refusal verbatim and leaves the register alone', async () => {
     managementChat.mockResolvedValue(reply([{ kind: 'risk.delete', code: 'R-012' }]));
@@ -209,5 +214,34 @@ describe('risk.export', () => {
     expect(rows).toHaveLength(register.length);
     expect(ctx.scope).toBe('all');
     expect(results(store.entries)[0]).toContain('Зберегти як PDF');
+  });
+});
+
+// The register is the owner's and managers'. A developer's turn must neither carry it to the
+// model nor let a risk action through: the model has seen nothing, so whatever it emits is
+// invented, and the line must say why nothing happened rather than relay an RLS error.
+describe('a developer', () => {
+  it('sends no register and refuses every risk action with the reason', async () => {
+    canManage = false;
+    managementChat.mockResolvedValue(
+      reply([
+        { kind: 'risk.delete', code: 'R-001' },
+        { kind: 'risk.update', code: 'R-012', patch: { probability: 2 } },
+        { kind: 'risk.export', format: 'pdf' },
+      ]),
+    );
+
+    const store = useManagementChat();
+    await store.send('що в реєстрі ризиків?', 'management-home');
+
+    const [ask] = managementChat.mock.calls[0] as [{ context: { risks: unknown[]; home: { tiles: { id: string }[] } } }];
+    expect(ask.context.risks).toEqual([]);
+    expect(ask.context.home.tiles.map((t) => t.id)).not.toContain('risks');
+    expect(riskRemove).not.toHaveBeenCalled();
+    expect(riskSave).not.toHaveBeenCalled();
+    expect(saveRegister).not.toHaveBeenCalled();
+    const lines = results(store.entries);
+    expect(lines).toHaveLength(3);
+    for (const line of lines) expect(line).toContain('менеджерам');
   });
 });
