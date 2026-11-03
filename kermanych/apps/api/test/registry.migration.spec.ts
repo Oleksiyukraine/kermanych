@@ -98,6 +98,26 @@ test("a fresh DB gets the v1 shape, task_id and the project index without any re
   db.close();
 });
 
+// docs/specs/2026-11-03-session-browser-preview.md, decision 10: `projects.platform` is added
+// additively and reads as «Не визначено»; a DB that still carries the old preview commands and
+// `sessions.platform` keeps working with them unread and unwritten.
+test("a legacy DB gains projects.platform and works around its unused preview and session platform columns", () => {
+  seedLegacyDb(file);
+  const legacy = new Database(file);
+  legacy.exec(`UPDATE groups SET preview_command = 'pnpm dev', api_command = 'pnpm api'`);
+  legacy.exec(`UPDATE sessions SET platform = 'web'`);
+  legacy.close();
+
+  const r = new RegistryService(file);
+  expect(r.listProjects()[0]).not.toHaveProperty("platform");
+  expect(r.listProjects()[0]).not.toHaveProperty("previewCommand");
+  expect(r.listSessions()[0]).not.toHaveProperty("platform");
+  r.patchProject("g-legacy", { platform: "mobile" });
+  r.updateSession("s-legacy", { name: "renamed" });
+  r.createSession({ projectId: "g-legacy", name: "n", task: "t", worktreePath: "", branch: "b" });
+  expect(new RegistryService(file).listProjects()[0]!.platform).toBe("mobile");
+});
+
 test("a legacy row gains the usage column, and a session's spend survives reopen and patches", () => {
   seedLegacyDb(file);
 

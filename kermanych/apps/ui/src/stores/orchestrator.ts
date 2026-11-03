@@ -15,6 +15,7 @@ import type {
   ModelOption,
   DocsWriteKind,
   MachineAlert,
+  PreviewState,
 } from '@kermanych/core';
 import { connectSocket } from '../lib/socket';
 import { api, type MessageMode } from '../lib/api';
@@ -106,7 +107,10 @@ export const useOrchestrator = defineStore('orchestrator', () => {
   // registry sync — so the map travels one way, downwards.
   const projectWorkspace = ref<Record<string, string>>({});
   const selectedSessionId = ref<string | undefined>(savedSelection.session);
-  const previews = ref<Record<string, string>>({});
+  // Every session's live-preview state, owned by the api (docs/specs/2026-11-03-session-browser-
+  // preview.md, decision 7): the snapshot carries it and `preview_update` keeps it fresh, so a
+  // reloaded window shows what runs. No entry = not started since the api started.
+  const previews = ref<Record<string, PreviewState>>({});
   const toasts = ref<Toast[]>([]);
   // The omp model catalog for THIS machine (see loadModels). Empty until it lands — and empty
   // for good if omp cannot be read — so every picker built on it degrades to «за замовчуванням».
@@ -173,6 +177,7 @@ export const useOrchestrator = defineStore('orchestrator', () => {
         selectedSessionId.value = undefined;
       }
       snapshotReceived.value = true;
+      previews.value = e.previews;
     } else if (e.type === 'project_update') {
       projects.value = [
         ...projects.value.filter((p) => p.id !== e.project.id),
@@ -225,14 +230,10 @@ export const useOrchestrator = defineStore('orchestrator', () => {
       }
     } else if (e.type === 'session_removed') {
       sessions.value = sessions.value.filter((x) => x.id !== e.sessionId);
-      if (previews.value[e.sessionId]) {
-        const next = { ...previews.value };
-        delete next[e.sessionId];
-        previews.value = next;
-      }
-      // Free the removed session's transcript too — previews above already do this. Left
-      // behind, the map kept every deleted/merged session's entries for the window's whole
-      // life, and a long-running board only ever added to it.
+      if (previews.value[e.sessionId]) previews.value = withoutKey(previews.value, e.sessionId);
+      // Free the removed session's transcript too. Left behind, the map kept every
+      // deleted/merged session's entries for the window's whole life, and a long-running board
+      // only ever added to it.
       if (transcripts.value[e.sessionId]) {
         const next = { ...transcripts.value };
         delete next[e.sessionId];
@@ -263,7 +264,15 @@ export const useOrchestrator = defineStore('orchestrator', () => {
       subagents.value = { ...subagents.value, [e.sessionId]: e.subagents };
     } else if (e.type === 'machine_alert') {
       onMachineAlert(e.alert);
+    } else if (e.type === 'preview_update') {
+      previews.value = e.state ? { ...previews.value, [e.sessionId]: e.state } : withoutKey(previews.value, e.sessionId);
     }
+  }
+
+  function withoutKey<T>(map: Record<string, T>, key: string): Record<string, T> {
+    const next = { ...map };
+    delete next[key];
+    return next;
   }
 
   // A watchdog finding (spec decision 7): an in-app toast, plus a Dock bounce and a native
@@ -359,13 +368,6 @@ export const useOrchestrator = defineStore('orchestrator', () => {
 
   function selectSession(id?: string): void {
     selectedSessionId.value = id;
-  }
-
-  // Actions delegating to the REST api. There is deliberately no createProject/
-  // deleteProject: projects are born and die in the cloud (stores/projects.ts), and the
-  // local rows follow through syncProjects.
-  function patchProject(id: string, body: { name?: string; color?: string; previewCommand?: string; apiCommand?: string; carryFiles?: string[]; docFolders?: string[]; docsRequired?: boolean; defaultBranch?: string; conventions?: string }) {
-    return api.patchProject(id, body);
   }
 
   function setProjectBinding(id: string, localRepoPath: string) {
@@ -505,17 +507,48 @@ export const useOrchestrator = defineStore('orchestrator', () => {
     sessions.value = [...sessions.value.filter((x) => x.id !== s.id), s];
   }
 
-  async function startPreview(id: string) {
-    const res = await api.startPreview(id);
-    if (res.url) previews.value = { ...previews.value, [id]: res.url };
-    return res;
+  // The answer of a start/stop comes first; the state change it causes arrives as
+  // `preview_update`. Each resolves once the store shows that change (or after the pending
+  // cap), so the ▶ / ◼ keeps spinning until the row can show the result.
+  function untilPreview(id: string, done: (s: PreviewState | undefined) => boolean): Promise<void> {
+    if (done(previews.value[id])) return Promise.resolve();
+    return new Promise((resolve) => {
+      const finish = (): void => {
+        stop();
+        clearTimeout(timer);
+        resolve();
+      };
+      const stop = watch(() => previews.value[id], (s) => {
+        if (done(s)) finish();
+      });
+      const timer = setTimeout(finish, PENDING_TIMEOUT_MS);
+    });
+  }
+  const previewLive = (s: PreviewState | undefined): boolean => s?.phase === 'starting' || s?.phase === 'running';
+
+  // `restart`: stop first (↻). An already starting/running preview answers with its state.
+  async function startPreview(id: string, restart = false) {
+    const before = previews.value[id];
+    const state = await api.startPreview(id, { restart });
+    if (restart || !previewLive(before)) await untilPreview(id, (s) => s !== before && s !== undefined);
+    return state;
   }
 
   async function stopPreview(id: string) {
     await api.stopPreview(id);
-    const next = { ...previews.value };
-    delete next[id];
-    previews.value = next;
+    await untilPreview(id, (s) => !previewLive(s));
+  }
+
+  function previewInfo(id: string) {
+    return api.previewInfo(id);
+  }
+
+  function previewLogs(id: string, step: string, since: number) {
+    return api.previewLogs(id, step, since);
+  }
+
+  function configurePreview(id: string) {
+    return api.configurePreview(id);
   }
 
   function listBranches(id: string) {
@@ -570,26 +603,13 @@ export const useOrchestrator = defineStore('orchestrator', () => {
     return api.projectRaw(id, path);
   }
 
-  async function finishSession(id: string) {
-    const res = await api.finish(id);
-    // preview is stopped server-side on finish; drop its local url too.
-    if (previews.value[id]) {
-      const next = { ...previews.value };
-      delete next[id];
-      previews.value = next;
-    }
-    return res;
+  // The api stops the preview on finish and on close; `preview_update` reports it.
+  function finishSession(id: string) {
+    return api.finish(id);
   }
 
-  async function closeMerged(id: string) {
-    const res = await api.closeMerged(id);
-    // Same retirement as finishSession: the preview is stopped server-side; drop its url too.
-    if (previews.value[id]) {
-      const next = { ...previews.value };
-      delete next[id];
-      previews.value = next;
-    }
-    return res;
+  function closeMerged(id: string) {
+    return api.closeMerged(id);
   }
 
   function createPr(id: string) {
@@ -682,7 +702,9 @@ export const useOrchestrator = defineStore('orchestrator', () => {
     previews,
     startPreview,
     stopPreview,
-    patchProject,
+    previewInfo,
+    previewLogs,
+    configurePreview,
     setProjectBinding,
     syncProjects,
     listBranches,

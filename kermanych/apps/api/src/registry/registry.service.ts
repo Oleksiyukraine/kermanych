@@ -6,8 +6,8 @@ import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { mkdirSync } from "node:fs";
 import { Subject } from "rxjs";
-import { isThinkingLevel, isAgentRuntime, isNativeHarness, isAgentLanguage, isFindingKind, parseFindingTarget, docsPolicy, combineReportWrites, readMinionResult, isMinionPauseCode, clampMinionCap, MINION_CAP_DEFAULT } from "@kermanych/core";
-import type { AgentFinding, DocsPolicy, FindingReport, FindingTarget, MinionPause, MinionResult, Project, ResourceDecision, Session, SessionStatus, ThinkingLevel, Usage, AgentRuntimeKind, AgentLanguage, TaskReportsWrite } from "@kermanych/core";
+import { isThinkingLevel, isAgentRuntime, isNativeHarness, isAgentLanguage, isFindingKind, isPlatform, parseFindingTarget, docsPolicy, combineReportWrites, readMinionResult, isMinionPauseCode, clampMinionCap, MINION_CAP_DEFAULT } from "@kermanych/core";
+import type { AgentFinding, DocsPolicy, FindingReport, FindingTarget, MinionPause, MinionResult, Platform, Project, ResourceDecision, Session, SessionStatus, ThinkingLevel, Usage, AgentRuntimeKind, AgentLanguage, TaskReportsWrite } from "@kermanych/core";
 
 // The cached Supabase session. Lives in SQLite so a restarted api still knows who
 // its user is without a cloud round trip.
@@ -218,9 +218,12 @@ export class RegistryService {
     this.db.exec(
       `CREATE TABLE IF NOT EXISTS auth_session (id INTEGER PRIMARY KEY CHECK (id = 1), user_id TEXT NOT NULL, access_token TEXT NOT NULL, expires_at TEXT, github_username TEXT)`,
     );
-    // Additive migration: preview commands, then the cloud workspace id (for the «ШІ-команда»
-    // workspace scope), all arrived after the initial schema.
-    for (const col of ["preview_command", "api_command", "workspace_id"]) {
+    // Additive migration: the cloud workspace id (for the «ШІ-команда» workspace scope), then the
+    // project platform (docs/specs/2026-11-03-session-browser-preview.md, decision 9; NULL = «Не
+    // визначено»), arrived after the initial schema. An older DB also carries `preview_command` /
+    // `api_command`: unused since the preview config moved into the repository (decision 10), and
+    // left in place — the registry has no DROP precedent.
+    for (const col of ["workspace_id", "platform"]) {
       try {
         this.db.exec(`ALTER TABLE projects ADD COLUMN ${col} TEXT`);
       } catch {
@@ -325,8 +328,9 @@ export class RegistryService {
     // 20261005100000. Policy values are the only strings that can read `"ask"`.
     this.db.exec(`UPDATE projects SET docs_policy = replace(docs_policy, '"ask"', '"optional"') WHERE docs_policy LIKE '%"ask"%'`);
     // Additive migration: backlog tasks persist their launch config (branch prefix + model)
-    // so "Start" can spawn them later with the same settings the operator chose.
-    for (const col of ["model", "prefix", "platform"]) {
+    // so "Start" can spawn them later with the same settings the operator chose. An older DB
+    // also has `sessions.platform`, unused since the platform moved to the project.
+    for (const col of ["model", "prefix"]) {
       try {
         this.db.exec(`ALTER TABLE sessions ADD COLUMN ${col} TEXT`);
       } catch {
@@ -545,12 +549,13 @@ export class RegistryService {
   listProjects(): Project[] {
     const rows = this.db
       .prepare(
-        `SELECT id, name, local_repo_path as localRepoPath, workspace_id as workspaceId, color, preview_command as previewCommand, api_command as apiCommand, carry_files as carryFiles, doc_folders as docFolders, docs_required as docsRequired, docs_policy as docsPolicy, default_branch as defaultBranch, default_model as defaultModel, default_effort as defaultEffort, conventions, created_at as createdAt FROM projects ORDER BY created_at`,
+        `SELECT id, name, local_repo_path as localRepoPath, workspace_id as workspaceId, color, platform, carry_files as carryFiles, doc_folders as docFolders, docs_required as docsRequired, docs_policy as docsPolicy, default_branch as defaultBranch, default_model as defaultModel, default_effort as defaultEffort, conventions, created_at as createdAt FROM projects ORDER BY created_at`,
       )
-      .all() as (Omit<Project, "carryFiles" | "docFolders" | "docsRequired" | "docsPolicy"> & { carryFiles: string; docFolders: string; docsRequired: number; docsPolicy: string })[];
+      .all() as (Omit<Project, "carryFiles" | "docFolders" | "docsRequired" | "docsPolicy" | "platform"> & { carryFiles: string; docFolders: string; docsRequired: number; docsPolicy: string; platform: string | null })[];
     // An unbound project stores NULL/"" for its path; hand callers a plain "" so a
-    // `!project.localRepoPath` check is all the launch path ever needs.
-    return rows.map((r) => ({ ...r, localRepoPath: r.localRepoPath ?? "", workspaceId: r.workspaceId ?? undefined, carryFiles: JSON.parse(r.carryFiles) as string[], docFolders: JSON.parse(r.docFolders) as string[], docsRequired: r.docsRequired === 1, docsPolicy: docsPolicy(JSON.parse(r.docsPolicy)), color: r.color ?? undefined, defaultBranch: r.defaultBranch ?? undefined, defaultModel: r.defaultModel ?? undefined, defaultEffort: r.defaultEffort ?? undefined, conventions: r.conventions ?? undefined }));
+    // `!project.localRepoPath` check is all the launch path ever needs. An unknown platform (a
+    // newer build's value) reads as «Не визначено», like NULL.
+    return rows.map(({ platform, ...r }) => ({ ...r, ...(isPlatform(platform) ? { platform } : {}), localRepoPath: r.localRepoPath ?? "", workspaceId: r.workspaceId ?? undefined, carryFiles: JSON.parse(r.carryFiles) as string[], docFolders: JSON.parse(r.docFolders) as string[], docsRequired: r.docsRequired === 1, docsPolicy: docsPolicy(JSON.parse(r.docsPolicy)), color: r.color ?? undefined, defaultBranch: r.defaultBranch ?? undefined, defaultModel: r.defaultModel ?? undefined, defaultEffort: r.defaultEffort ?? undefined, conventions: r.conventions ?? undefined }));
   }
 
   // Local project rows MIRROR cloud projects, so the id always comes from the caller —
@@ -568,15 +573,14 @@ export class RegistryService {
     };
     this.db
       .prepare(
-        `INSERT INTO projects (id, name, local_repo_path, workspace_id, color, preview_command, api_command, carry_files, doc_folders, docs_required, docs_policy, default_branch, default_model, default_effort, conventions, created_at)
-         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+        `INSERT INTO projects (id, name, local_repo_path, workspace_id, color, platform, carry_files, doc_folders, docs_required, docs_policy, default_branch, default_model, default_effort, conventions, created_at)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
          ON CONFLICT(id) DO UPDATE SET
            name = excluded.name,
            local_repo_path = CASE WHEN excluded.local_repo_path = '' THEN projects.local_repo_path ELSE excluded.local_repo_path END,
            workspace_id = CASE WHEN excluded.workspace_id IS NULL THEN projects.workspace_id ELSE excluded.workspace_id END,
            color = excluded.color,
-           preview_command = excluded.preview_command,
-           api_command = excluded.api_command,
+           platform = excluded.platform,
            carry_files = excluded.carry_files,
            doc_folders = excluded.doc_folders,
            docs_required = excluded.docs_required,
@@ -586,19 +590,20 @@ export class RegistryService {
            default_effort = excluded.default_effort,
            conventions = excluded.conventions`,
       )
-      .run(row.id, row.name, row.localRepoPath, row.workspaceId || null, row.color || null, row.previewCommand ?? null, row.apiCommand ?? null, JSON.stringify(row.carryFiles), JSON.stringify(row.docFolders), row.docsRequired ? 1 : 0, JSON.stringify(row.docsPolicy), row.defaultBranch || null, row.defaultModel || null, row.defaultEffort || null, row.conventions || null, row.createdAt);
+      .run(row.id, row.name, row.localRepoPath, row.workspaceId || null, row.color || null, row.platform ?? null, JSON.stringify(row.carryFiles), JSON.stringify(row.docFolders), row.docsRequired ? 1 : 0, JSON.stringify(row.docsPolicy), row.defaultBranch || null, row.defaultModel || null, row.defaultEffort || null, row.conventions || null, row.createdAt);
     // Re-read: the CASE may have kept a binding (and the original created_at) the caller
     // never sent, so the in-memory `row` is not the truth.
     return this.listProjects().find((x) => x.id === row.id)!;
   }
 
-  patchProject(id: string, patch: { name?: string; localRepoPath?: string; color?: string; previewCommand?: string; apiCommand?: string; carryFiles?: string[]; docFolders?: string[]; docsRequired?: boolean; docsPolicy?: DocsPolicy; defaultBranch?: string; defaultModel?: string; defaultEffort?: ThinkingLevel | ""; conventions?: string }): Project {
+  // `platform: null` clears it (the cloud row has none); absent keeps it.
+  patchProject(id: string, patch: { name?: string; localRepoPath?: string; color?: string; platform?: Platform | null; carryFiles?: string[]; docFolders?: string[]; docsRequired?: boolean; docsPolicy?: DocsPolicy; defaultBranch?: string; defaultModel?: string; defaultEffort?: ThinkingLevel | ""; conventions?: string }): Project {
     const cur = this.listProjects().find((p) => p.id === id);
     if (!cur) throw new Error("project not found");
-    const next = { ...cur, ...patch, color: (patch.color ?? cur.color) || undefined, docsRequired: patch.docsRequired ?? cur.docsRequired, docsPolicy: docsPolicy(patch.docsPolicy ?? cur.docsPolicy), defaultBranch: (patch.defaultBranch ?? cur.defaultBranch) || undefined, defaultModel: (patch.defaultModel ?? cur.defaultModel) || undefined, defaultEffort: (patch.defaultEffort ?? cur.defaultEffort) || undefined, conventions: (patch.conventions ?? cur.conventions) || undefined };
+    const next: Project = { ...cur, ...patch, platform: patch.platform === undefined ? cur.platform : (patch.platform ?? undefined), color: (patch.color ?? cur.color) || undefined, docsRequired: patch.docsRequired ?? cur.docsRequired, docsPolicy: docsPolicy(patch.docsPolicy ?? cur.docsPolicy), defaultBranch: (patch.defaultBranch ?? cur.defaultBranch) || undefined, defaultModel: (patch.defaultModel ?? cur.defaultModel) || undefined, defaultEffort: (patch.defaultEffort ?? cur.defaultEffort) || undefined, conventions: (patch.conventions ?? cur.conventions) || undefined };
     this.db
-      .prepare(`UPDATE projects SET name=?, local_repo_path=?, color=?, preview_command=?, api_command=?, carry_files=?, doc_folders=?, docs_required=?, docs_policy=?, default_branch=?, default_model=?, default_effort=?, conventions=? WHERE id=?`)
-      .run(next.name, next.localRepoPath, next.color || null, next.previewCommand ?? null, next.apiCommand ?? null, JSON.stringify(next.carryFiles ?? [".env"]), JSON.stringify(next.docFolders ?? []), next.docsRequired ? 1 : 0, JSON.stringify(next.docsPolicy), next.defaultBranch || null, next.defaultModel || null, next.defaultEffort || null, next.conventions || null, id);
+      .prepare(`UPDATE projects SET name=?, local_repo_path=?, color=?, platform=?, carry_files=?, doc_folders=?, docs_required=?, docs_policy=?, default_branch=?, default_model=?, default_effort=?, conventions=? WHERE id=?`)
+      .run(next.name, next.localRepoPath, next.color || null, next.platform ?? null, JSON.stringify(next.carryFiles ?? [".env"]), JSON.stringify(next.docFolders ?? []), next.docsRequired ? 1 : 0, JSON.stringify(next.docsPolicy), next.defaultBranch || null, next.defaultModel || null, next.defaultEffort || null, next.conventions || null, id);
     return next;
   }
 
@@ -766,7 +771,7 @@ export class RegistryService {
   }
 
   listSessions(projectId?: string): Session[] {
-    const sql = `SELECT id, project_id as projectId, task_id as taskId, name, task, worktree_path as worktreePath, branch, worktree, base_branch as baseBranch, omp_session_id as ompSessionId, omp_session_file as ompSessionFile, parent_session_id as parentSessionId, kind, model, prefix, platform, runtime, native, deep_analysis, design_dir, minion, minion_result, finding_kind, effort, status, pr_opened as prOpened, pr_url, archived, usage, pending_prompt, created_at as createdAt, last_activity_at as lastActivityAt, (SELECT COUNT(*) FROM session_findings f WHERE f.session_id = sessions.id AND f.status = 'open') as open_findings FROM sessions`;
+    const sql = `SELECT id, project_id as projectId, task_id as taskId, name, task, worktree_path as worktreePath, branch, worktree, base_branch as baseBranch, omp_session_id as ompSessionId, omp_session_file as ompSessionFile, parent_session_id as parentSessionId, kind, model, prefix, runtime, native, deep_analysis, design_dir, minion, minion_result, finding_kind, effort, status, pr_opened as prOpened, pr_url, archived, usage, pending_prompt, created_at as createdAt, last_activity_at as lastActivityAt, (SELECT COUNT(*) FROM session_findings f WHERE f.session_id = sessions.id AND f.status = 'open') as open_findings FROM sessions`;
     const rows = (
       projectId
         ? this.db.prepare(sql + ` WHERE project_id = ? ORDER BY created_at`).all(projectId)
@@ -786,7 +791,7 @@ export class RegistryService {
     // `design_dir` likewise appears only on a design session.
     return rows.map(({ native, deep_analysis, design_dir, minion, minion_result, finding_kind, open_findings, pending_prompt, pr_url, ...r }) => {
       const minionResult = readMinionColumn(minion_result);
-      return { ...r, ...(native ? { native: true } : {}), ...(deep_analysis ? { deepAnalysis: true } : {}), ...(design_dir ? { designDir: design_dir } : {}), ...(minion ? { minion: true } : {}), ...(minionResult ? { minionResult } : {}), ...(isFindingKind(finding_kind) ? { findingKind: finding_kind } : {}), ...(open_findings ? { openFindings: open_findings } : {}), ...(pending_prompt !== null ? { pendingPrompt: pending_prompt } : {}), ...(pr_url ? { prUrl: pr_url } : {}), archived: r.archived !== 0, worktree: r.worktree !== 0, prOpened: r.prOpened !== 0, taskId: r.taskId ?? undefined, model: r.model ?? undefined, prefix: r.prefix ?? undefined, platform: r.platform ?? undefined, runtime: isNativeHarness(r.runtime) ? r.runtime : undefined, effort: isThinkingLevel(r.effort) ? r.effort : undefined, usage: readUsage(r.usage) };
+      return { ...r, ...(native ? { native: true } : {}), ...(deep_analysis ? { deepAnalysis: true } : {}), ...(design_dir ? { designDir: design_dir } : {}), ...(minion ? { minion: true } : {}), ...(minionResult ? { minionResult } : {}), ...(isFindingKind(finding_kind) ? { findingKind: finding_kind } : {}), ...(open_findings ? { openFindings: open_findings } : {}), ...(pending_prompt !== null ? { pendingPrompt: pending_prompt } : {}), ...(pr_url ? { prUrl: pr_url } : {}), archived: r.archived !== 0, worktree: r.worktree !== 0, prOpened: r.prOpened !== 0, taskId: r.taskId ?? undefined, model: r.model ?? undefined, prefix: r.prefix ?? undefined, runtime: isNativeHarness(r.runtime) ? r.runtime : undefined, effort: isThinkingLevel(r.effort) ? r.effort : undefined, usage: readUsage(r.usage) };
     });
   }
 
@@ -810,7 +815,7 @@ export class RegistryService {
     };
     this.db
       .prepare(
-        `INSERT INTO sessions (id, project_id, task_id, name, task, worktree_path, branch, worktree, base_branch, omp_session_id, omp_session_file, parent_session_id, kind, model, prefix, platform, runtime, native, deep_analysis, design_dir, minion, finding_kind, effort, status, created_at, last_activity_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+        `INSERT INTO sessions (id, project_id, task_id, name, task, worktree_path, branch, worktree, base_branch, omp_session_id, omp_session_file, parent_session_id, kind, model, prefix, runtime, native, deep_analysis, design_dir, minion, finding_kind, effort, status, created_at, last_activity_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
       )
       .run(
         row.id,
@@ -828,7 +833,6 @@ export class RegistryService {
         row.kind,
         row.model ?? null,
         row.prefix ?? null,
-        row.platform ?? null,
         row.runtime ?? null,
         row.native ? 1 : 0,
         row.deepAnalysis ? 1 : 0,
@@ -851,7 +855,7 @@ export class RegistryService {
     const next = { ...cur, ...patch };
     this.db
       .prepare(
-        `UPDATE sessions SET project_id=?, task_id=?, name=?, task=?, worktree_path=?, branch=?, worktree=?, base_branch=?, omp_session_id=?, omp_session_file=?, kind=?, model=?, prefix=?, platform=?, runtime=?, effort=?, status=?, pr_opened=?, pr_url=?, archived=?, minion_result=? WHERE id=?`,
+        `UPDATE sessions SET project_id=?, task_id=?, name=?, task=?, worktree_path=?, branch=?, worktree=?, base_branch=?, omp_session_id=?, omp_session_file=?, kind=?, model=?, prefix=?, runtime=?, effort=?, status=?, pr_opened=?, pr_url=?, archived=?, minion_result=? WHERE id=?`,
       )
       .run(
         next.projectId,
@@ -867,7 +871,6 @@ export class RegistryService {
         next.kind,
         next.model ?? null,
         next.prefix ?? null,
-        next.platform ?? null,
         next.runtime ?? null,
         next.effort ?? null,
         next.status,

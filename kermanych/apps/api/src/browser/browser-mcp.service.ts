@@ -15,7 +15,10 @@
 // docs/specs/2026-10-13-agent-findings.md), because a child gets exactly one MCP server. Those
 // need no desktop app, so the server is handed out without one, and the browser tools are
 // listed only while a browser host exists. A «Посіпака» run gets one more, `report_outcome`
-// (minion/outcome-tool.ts, docs/specs/2026-10-23-minion-auto-run.md), listed only for it.
+// (minion/outcome-tool.ts, docs/specs/2026-10-23-minion-auto-run.md), listed only for it. An
+// agent session also gets the live-preview tools (docs/specs/2026-11-03-session-browser-preview.md),
+// which need no host either. A back-end or mobile project has neither browser nor preview
+// (decision 9): the gate is here, in tools/list and in every call, not in bindingFor.
 import { Injectable, Optional } from "@nestjs/common";
 import { HttpAdapterHost } from "@nestjs/core";
 import { randomBytes } from "node:crypto";
@@ -24,9 +27,10 @@ import { mkdirSync, realpathSync, lstatSync, writeFileSync } from "node:fs";
 import { basename, dirname, isAbsolute, join, relative, sep } from "node:path";
 import { RegistryService } from "../registry/registry.service";
 import { PreviewService } from "../preview/preview.service";
-import { FINDING_TOOLS, FINDING_TOOL_NAMES, callFindingTool } from "../findings/findings-tools";
+import { FINDING_TOOL_NAMES, callFindingTool, findingTools } from "../findings/findings-tools";
+import { resolveLanguage } from "../runtime/resolve-language";
 import { OUTCOME_TOOL, callOutcomeTool } from "../minion/outcome-tool";
-import type { MinionVerdictReport } from "@kermanych/core";
+import { PREVIEW_CONFIG_PATH, platformHasBrowser, type MinionVerdictReport, type PreviewState } from "@kermanych/core";
 import {
   browserHost,
   type BrowserActionResult,
@@ -54,12 +58,12 @@ const TOOLS = [
   {
     name: "browser_navigate",
     description:
-      `${SHARED} Load a URL in it and wait for the page to settle. Without \`url\` it opens this session's running live preview (the app built from this session's worktree). ` +
+      `${SHARED} Load a URL in it and wait for the page to settle. Without \`url\` it opens this session's running live preview (see preview_start). ` +
       "Answers with where the page ended up; follow with browser_snapshot to read it. A page that asks for HTTP sign-in (a browser login prompt) or opens a popup window " +
       "(e.g. an OAuth sign-in) needs the operator: ask them to complete it in the pane.",
     inputSchema: {
       type: "object",
-      properties: { url: { type: "string", description: "An http(s) URL or about:blank. Omit to open the session's live preview." } },
+      properties: { url: { type: "string", description: "An http(s) URL or about:blank. Omit to open the session's running live preview." } },
       additionalProperties: false,
     },
   },
@@ -243,11 +247,66 @@ const TOOLS = [
   },
 ];
 
+// The live preview of this session (docs/specs/2026-11-03-session-browser-preview.md, «Agent
+// tools»). The descriptions are the agent's only guidance (decision 11): no prompt line tells it
+// to use them.
+const PREVIEW_SHARED =
+  "The live preview runs THIS session's app from its worktree, as the repository's `.kermanych/preview.json` says (an optional `setup` command, then services started in order on free ports), and the operator watches it in the session browser's «Браузер» tab.";
+
+const PREVIEW_TOOLS = [
+  {
+    name: "preview_start",
+    description:
+      `${PREVIEW_SHARED} Start it: the file is read and validated first, then \`setup\` and each service run until ready. Answers with the URL and the service ports once it runs (the session browser then opens the page; check your work there with the browser tools), ` +
+      "or after 60 s with the step it is still waiting for — follow it with preview_status. A failure answers with the failed step and the last lines of its log. Already running → the running state; pass `restart: true` to stop and start again (after you changed the code a running dev server does not reload, or the file). " +
+      "A missing or invalid file is refused with the reason: write or fix `.kermanych/preview.json` by the preview-config skill.",
+    inputSchema: {
+      type: "object",
+      properties: { restart: { type: "boolean", description: "Stop the running preview first and start it again (default false).", default: false } },
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "preview_status",
+    description: `${PREVIEW_SHARED} Its current state: starting (and the step it waits for), running (URL and ports), stopped, crashed (which service, its exit code) or failed (which step, why).`,
+    inputSchema: {
+      type: "object",
+      properties: { wait: { type: "number", description: "While it is starting, wait up to this many seconds (0–60) for it to run or fail (default 0).", minimum: 0, maximum: 60 } },
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "preview_stop",
+    description: `${PREVIEW_SHARED} Stop every process of it. The page stays open in the session browser, on a dead address.`,
+    inputSchema: { type: "object", properties: {}, additionalProperties: false },
+  },
+  {
+    name: "preview_logs",
+    description: `${PREVIEW_SHARED} The output (stdout and stderr) of one step of the latest start: \`setup\` or a service name. Read it when a start fails or a service crashes.`,
+    inputSchema: {
+      type: "object",
+      properties: {
+        step: { type: "string", description: "`setup` or a service name from the file." },
+        lines: { type: "integer", description: "How many of the last lines (1–1000, default 100).", minimum: 1, maximum: 1000, default: 100 },
+      },
+      required: ["step"],
+      additionalProperties: false,
+    },
+  },
+];
+const PREVIEW_TOOL_NAMES = new Set(PREVIEW_TOOLS.map((t) => t.name));
+
+// How long preview_start waits for running before it hands over to preview_status.
+const PREVIEW_START_WAIT_MS = 60_000;
+// The log lines a failed preview_start ends with.
+const PREVIEW_FAILURE_LINES = 50;
+
 // Tools that skip the session's queue. browser_dialog must reach a page whose queued action is
 // itself blocked on that very dialog (actions return early when they open one, but a dialog the
 // page opens on its own — a timer, a late handler — can still catch an action mid-flight), and
 // browser_console / browser_network only read buffers the main process collects, which is how
-// the agent finds out why an action hangs.
+// the agent finds out why an action hangs. The preview tools skip it too (routed apart, below):
+// they never touch the page, and a start can take minutes.
 const UNQUEUED = new Set(["browser_dialog", "browser_console", "browser_network"]);
 
 // browser_network's answer is capped so a chatty page cannot flood the agent's context; the
@@ -271,6 +330,24 @@ function acted(r: BrowserActionResult, extra = ""): string {
   }
   if (r.popup) lines.push(`A popup window opened at ${r.popup}; it belongs to the operator (agent tools cannot drive it).`);
   return lines.join("\n");
+}
+
+// A preview state in the agent's words, with what to do next.
+function describePreview(state: PreviewState | null): string {
+  const ports = (services: { name: string; port: number }[]) => services.map((s) => `${s.name} :${s.port}`).join(", ");
+  if (!state) return "The preview has not been started since Kermanych started. Call preview_start.";
+  switch (state.phase) {
+    case "starting":
+      return `Starting: waiting for ${state.step}${state.services.length ? ` (ports: ${ports(state.services)})` : ""}. Call preview_status with \`wait\` to follow it.`;
+    case "running":
+      return `Running at ${state.url} (${ports(state.services)}). The session browser opens it; browser_navigate without a url returns to it.`;
+    case "stopped":
+      return "The preview is stopped. Call preview_start to run it.";
+    case "crashed":
+      return `Crashed: ${state.step} ${state.code !== null ? `exited with code ${state.code}` : `was killed by ${state.signal}`} while the preview was running, and the other services were stopped. Read preview_logs for \`${state.step}\`, then call preview_start.`;
+    case "failed":
+      return `Failed at ${state.step}: ${state.error}\nRead preview_logs for \`${state.step}\`, fix the cause, then call preview_start.`;
+  }
 }
 
 function networkLine(e: BrowserNetworkEntry): string {
@@ -444,9 +521,16 @@ export class BrowserMcpService {
       case "ping":
         return result({});
       case "tools/list": {
-        const minion = this.registry.listSessions().find((s) => s.id === sessionId)?.minion === true;
-        const tools = browserHost() ? [...TOOLS, ...FINDING_TOOLS] : FINDING_TOOLS;
-        return result({ tools: minion ? [...tools, OUTCOME_TOOL] : tools });
+        const session = this.registry.listSessions().find((s) => s.id === sessionId);
+        const browserOk = platformHasBrowser(this.registry.listProjects().find((p) => p.id === session?.projectId)?.platform);
+        const findings = findingTools(resolveLanguage(process.env.KERMANYCH_LANGUAGE, this.registry.getAuthSession()?.agentLanguage));
+        const tools = [
+          ...(browserHost() && browserOk ? TOOLS : []),
+          ...(session?.kind === "agent" && browserOk ? PREVIEW_TOOLS : []),
+          ...findings,
+          ...(session?.minion === true ? [OUTCOME_TOOL] : []),
+        ];
+        return result({ tools });
       }
       case "tools/call": {
         const name = typeof params.name === "string" ? params.name : "";
@@ -456,6 +540,7 @@ export class BrowserMcpService {
           run = Promise.resolve().then(() => this.callFinding(sessionId, name, args));
         else if (name === OUTCOME_TOOL.name)
           run = Promise.resolve().then(() => callOutcomeTool(this.registry, sessionId, args, (report) => this.outcomeReported$.next({ sessionId, report })));
+        else if (PREVIEW_TOOL_NAMES.has(name)) run = this.callPreview(sessionId, name, args);
         else if (UNQUEUED.has(name)) run = this.call(sessionId, name, args);
         else {
           run = (this.queues.get(sessionId) ?? Promise.resolve()).then(() => this.call(sessionId, name, args));
@@ -487,13 +572,16 @@ export class BrowserMcpService {
     if (!host) throw new Error("The session browser is not available: Kermanych is running without its desktop app.");
     const session = this.registry.listSessions().find((s) => s.id === sessionId);
     if (!session) throw new Error("This session no longer exists.");
+    // Tools listed before the project became back-end or mobile stay in the agent's list.
+    const platform = this.registry.listProjects().find((p) => p.id === session.projectId)?.platform;
+    if (!platformHasBrowser(platform)) throw new Error(`The session browser is off: this is a ${platform} project.`);
     const target: BrowserTarget = { sessionId, projectId: session.projectId };
     switch (name) {
       case "browser_navigate": {
         const url = typeof args.url === "string" && args.url ? args.url : this.preview.urlOf(sessionId);
         if (!url)
           throw new Error(
-            "No url given and this session's live preview is not running. Pass a url, or ask the operator to start the preview with the ▶ button.",
+            "No url given and this session's live preview is not running. Pass a url, or start the preview with preview_start.",
           );
         const page = await host.navigate(target, url);
         return text(`${at(page)}${page.status && page.status >= 400 ? ` — HTTP ${page.status}` : ""}`);
@@ -579,6 +667,56 @@ export class BrowserMcpService {
       }
       case "browser_evaluate":
         return text(await host.evaluate(target, str(args, "expression")));
+      default:
+        throw new Error(`unknown tool: ${name}`);
+    }
+  }
+
+  // No queue and no host: the preview runs in the api (decision 8 — agent sessions of a project
+  // with a browser only).
+  private async callPreview(sessionId: string, name: string, args: Record<string, unknown>): Promise<ToolResult> {
+    const session = this.registry.listSessions().find((s) => s.id === sessionId);
+    if (!session) throw new Error("This session no longer exists.");
+    if (session.kind !== "agent") throw new Error(`The live preview is only for agent sessions (this is a ${session.kind}).`);
+    const platform = this.registry.listProjects().find((p) => p.id === session.projectId)?.platform;
+    if (!platformHasBrowser(platform)) throw new Error(`The live preview is off: this is a ${platform} project.`);
+    // The operator's «Агент» pause covers starting and stopping, not reading.
+    const paused = (name === "preview_start" || name === "preview_stop") && browserHost()?.isPaused(sessionId) === true;
+    if (paused) throw new Error("The operator paused your control of this session's browser and preview. Ask them to resume it, or wait.");
+    switch (name) {
+      case "preview_start": {
+        try {
+          this.preview.start(sessionId, { restart: bool(args, "restart", false) });
+        } catch (err) {
+          const message = (err as Error).message;
+          throw new Error(message.includes(PREVIEW_CONFIG_PATH) ? `${message}. Write or fix the file by the preview-config skill, then call preview_start again.` : message);
+        }
+        const state = await this.preview.settled(sessionId, PREVIEW_START_WAIT_MS);
+        if (state?.phase !== "failed") return text(describePreview(state));
+        const lines = this.preview.tail(sessionId, state.step, PREVIEW_FAILURE_LINES);
+        const reason = state.error.split("\n")[0];
+        return {
+          content: [{ type: "text", text: `Failed at ${state.step}: ${reason}\n\nLast ${lines.length} lines of ${state.step}:\n${lines.join("\n") || "(no output)"}` }],
+          isError: true,
+        };
+      }
+      case "preview_status": {
+        const wait = args.wait === undefined || args.wait === null ? 0 : args.wait;
+        if (typeof wait !== "number" || !(wait >= 0 && wait <= 60)) throw new Error("`wait` must be a number of seconds from 0 to 60");
+        return text(describePreview(await this.preview.settled(sessionId, Math.round(wait * 1000))));
+      }
+      case "preview_stop":
+        await this.preview.stop(sessionId);
+        return text("The preview is stopped. The page stays as it is in the session browser.");
+      case "preview_logs": {
+        const step = str(args, "step");
+        const n = int(args, "lines", 1, 1000) ?? 100;
+        const steps = this.preview.steps(sessionId);
+        if (!steps.length) throw new Error("The preview has not been started since Kermanych started: there are no logs. Call preview_start.");
+        if (!steps.includes(step)) throw new Error(`No log for \`${step}\` in the latest start. Its steps: ${steps.join(", ")}.`);
+        const lines = this.preview.tail(sessionId, step, n);
+        return text(lines.length ? lines.join("\n") : "(no output yet)");
+      }
       default:
         throw new Error(`unknown tool: ${name}`);
     }

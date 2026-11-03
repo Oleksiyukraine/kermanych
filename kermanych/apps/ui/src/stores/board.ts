@@ -190,7 +190,6 @@ export const useBoard = defineStore('board', () => {
     }
     if (patch.model !== undefined) next.model = patch.model;
     if (patch.prefix !== undefined) next.prefix = patch.prefix;
-    if (patch.platform !== undefined) next.platform = patch.platform;
     if (patch.kind !== undefined) next.kind = patch.kind;
     if (patch.branch !== undefined) next.branch = patch.branch;
     // The booleans, which have no "clear it" spelling: `false` is a value. They were

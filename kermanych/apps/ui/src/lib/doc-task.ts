@@ -1,4 +1,4 @@
-import { DESIGN_SCREENS_DIR, designDirOf, designReadmePath, docsLayoutKind, type Platform } from '@kermanych/core';
+import { DESIGN_SCREENS_DIR, designDirOf, designReadmePath, docsLayoutKind } from '@kermanych/core';
 
 // «Задача з документа» (components/docs/DocTaskDialog.vue): a document of a running session
 // becomes a card. The rules that decide WHICH documents, WHERE the card goes and WHAT it carries
@@ -17,14 +17,6 @@ export function isDesignReadme(path: string): boolean {
 export function canTaskFromDoc(path: string): boolean {
   const kind = docsLayoutKind(path);
   return kind === 'api-request' || kind === 'handoff' || isDesignReadme(path);
-}
-
-// The card's platform, when the document decides it: an API request is backend work by
-// definition, a design is a screen of the web app.
-export function docTaskPlatform(path: string): Platform | undefined {
-  if (docsLayoutKind(path) === 'api-request') return 'backend';
-  if (isDesignReadme(path)) return 'web';
-  return undefined;
 }
 
 // The title the dialog proposes: the document's first heading, else its file name without the

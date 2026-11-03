@@ -4,9 +4,9 @@ import type { RegistryService } from "../registry/registry.service";
 import type { SessionStatus, Usage } from "@kermanych/core";
 
 // Demo data for a Kermanych-on-Kermanych preview. The previewed api boots on a fresh,
-// isolated DB (KERMANYCH_DB in preview.service.ts), so without this the board comes up
-// empty and there's nothing to eyeball. seedDemo fills the registry with INERT rows —
-// no git, no omp, no cloud: projects carry no previewCommand, point at an unreachable
+// isolated DB (KERMANYCH_DB in the repository's .kermanych/preview.json), so without this the
+// board comes up empty and there's nothing to eyeball. seedDemo fills the registry with INERT
+// rows — no git, no omp, no cloud: projects point at an unreachable
 // localRepoPath and use synthetic UUIDs that exist on no Supabase project — covering
 // every status, the archived filter and the discussion/review branches that hang off an
 // agent, so the board, status dots, branch tags, fork elbows and the project switcher all

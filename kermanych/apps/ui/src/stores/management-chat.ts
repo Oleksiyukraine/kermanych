@@ -482,7 +482,6 @@ export const useManagementChat = defineStore('management-chat', () => {
       description: renderTicketDescription(action.ticket),
       ...(assignee ? { assigneeId: assignee } : {}),
       ...(action.prefix ? { prefix: action.prefix } : {}),
-      ...(action.platform ? { platform: action.platform } : {}),
     });
     if (!created) {
       result(workspaceId, 'error', globalTr.t('management.chat.ticketCreateFailed', { title: action.ticket.title }));

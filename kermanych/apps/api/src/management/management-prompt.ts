@@ -14,7 +14,6 @@ import {
   MANAGEMENT_ACTION_FENCE,
   MANAGEMENT_SECTIONS,
   managementSection,
-  PLATFORMS,
   RISK_CATEGORY_VALUES,
   RISK_KIND_VALUES,
   RISK_RESPONSES_BY_KIND,
@@ -140,7 +139,7 @@ function contract(locale: Locale | undefined): string {
     '  { "kind": "risk.delete", "code": "R-003" }',
     '  { "kind": "risk.export", "format": "pdf" | "xlsx", "codes": ["R-001", "…"] }',
     '  { "kind": "release.notes", "project": "…", "branch": "…", "rangeFrom": "РРРР-ММ-ДД", "rangeTo": "РРРР-ММ-ДД" }',
-    '  { "kind": "ticket.create", "project": "…", "ticket": { … }, "assignee": "…", "prefix": "…", "platform": "…" }',
+    '  { "kind": "ticket.create", "project": "…", "ticket": { … }, "assignee": "…", "prefix": "…" }',
     '  { "kind": "ticket.questions", "forTicket": "…", "questions": ["…", "…"] }',
     // Listed HERE and not only in homeProtocol() below — the risk.delete lesson: the menu
     // declares itself exhaustive, and a verb it does not carry is one the model will refuse
@@ -337,7 +336,6 @@ function ticketProtocol(): string {
     "  project — назва проєкту РІВНО так, як вона стоїть у списку репозиторіїв контексту (не id і не шлях).",
     "    Кілька проєктів і користувач не сказав, до якого належить робота — спитай, не вгадуй.",
     `  prefix — тип роботи: ${BRANCH_PREFIXES.join(" | ")} (необовʼязково).`,
-    `  platform — ${PLATFORMS.join(" | ")} (необовʼязково).`,
     "  Модель, рівень роздумів, базову гілку й окреме робоче дерево не задавай — це параметри запуску агента,",
     "  тобто саме ті технічні рішення, яких у тікеті бути не повинно.",
     "  Вкладень у власної дошки НЕМАЄ: файл до картки «Задачі» прикріпити нікуди. Просили тікет із файлом на власній",

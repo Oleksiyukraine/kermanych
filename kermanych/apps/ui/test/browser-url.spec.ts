@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { addressToUrl, isExternalScheme, navigationAllowed, normalizeUrl } from '../src/lib/browser-url';
+import { addressToUrl, httpOrigin, isExternalScheme, navigationAllowed, normalizeUrl, previewDestination } from '../src/lib/browser-url';
 
 describe('normalizeUrl', () => {
   it('gives a bare local host http:// and any other bare host https://', () => {
@@ -70,5 +70,31 @@ describe('isExternalScheme', () => {
     expect(isExternalScheme('callto:x')).toBe(true);
     expect(isExternalScheme('https://example.com')).toBe(false);
     expect(isExternalScheme('javascript:void 0')).toBe(false);
+  });
+});
+
+describe('httpOrigin', () => {
+  it('reads the origin of http(s) URLs only', () => {
+    expect(httpOrigin('http://localhost:5173/settings?a=1')).toBe('http://localhost:5173');
+    expect(httpOrigin('https://example.com')).toBe('https://example.com');
+    expect(httpOrigin('about:blank')).toBeUndefined();
+    expect(httpOrigin('data:text/html,hi')).toBeUndefined();
+    expect(httpOrigin('not a url')).toBeUndefined();
+    expect(httpOrigin(undefined)).toBeUndefined();
+  });
+});
+
+describe('previewDestination', () => {
+  it('keeps path, query and hash when the page is on the previous preview origin', () => {
+    expect(previewDestination('http://localhost:51235/settings?tab=a#x', 'http://localhost:51235', 'http://localhost:52000/')).toBe(
+      'http://localhost:52000/settings?tab=a#x',
+    );
+  });
+
+  it('opens the url itself for an unrelated page, no page or no previous preview', () => {
+    expect(previewDestination('https://example.com/docs', 'http://localhost:51235', 'http://localhost:52000/')).toBe('http://localhost:52000/');
+    expect(previewDestination(undefined, 'http://localhost:51235', 'http://localhost:52000/')).toBe('http://localhost:52000/');
+    expect(previewDestination('about:blank', 'http://localhost:51235', 'http://localhost:52000/')).toBe('http://localhost:52000/');
+    expect(previewDestination('http://localhost:51235/settings', undefined, 'http://localhost:52000/')).toBe('http://localhost:52000/');
   });
 });

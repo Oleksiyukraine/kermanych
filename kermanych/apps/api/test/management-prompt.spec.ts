@@ -3,7 +3,6 @@ import { homedir } from "node:os";
 import {
   BRANCH_PREFIXES,
   MANAGEMENT_SECTIONS,
-  PLATFORMS,
   RISK_CATEGORY_VALUES,
   RISK_EXPORT_FORMATS,
   RISK_RESPONSES_BY_KIND,
@@ -260,7 +259,7 @@ describe("buildManagementTurn", () => {
     // The launch vocabulary is printed from the core constants, never hand-copied — the same
     // rule the risk vocabulary follows.
     expect(out).toContain(`prefix — тип роботи: ${BRANCH_PREFIXES.join(" | ")}`);
-    expect(out).toContain(`platform — ${PLATFORMS.join(" | ")}`);
+    expect(out).not.toContain("platform");
   });
 
   // The reported failures, stated where the model decides. A create without an issue type was

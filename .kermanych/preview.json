@@ -1,11 +1,11 @@
 {
-  "setup": "cd kermanych && pnpm install --frozen-lockfile && pnpm --filter '@kermanych/ui^...' build",
+  "setup": "cd kermanych && pnpm install && pnpm --filter '@kermanych/ui^...' build",
   "services": [
     {
       "name": "api",
-      "command": "cd kermanych/apps/api && node dist/main.js",
+      "command": "cd kermanych && pnpm --filter @kermanych/api start",
       "env": {
-        "KERMANYCH_DB": "${PREVIEW_DIR}/registry.sqlite",
+        "KERMANYCH_DB": "${PREVIEW_DIR}/kermanych.sqlite",
         "KERMANYCH_SEED": "1",
         "KERMANYCH_PREVIEW": "1"
       }
@@ -13,7 +13,7 @@
     {
       "name": "web",
       "open": true,
-      "command": "cd kermanych/apps/ui && pnpm exec quasar dev",
+      "command": "cd kermanych && pnpm --filter @kermanych/ui exec quasar dev",
       "env": {
         "VITE_API_BASE": "http://localhost:${PORT_API}/api",
         "VITE_KERMANYCH_PREVIEW": "1"

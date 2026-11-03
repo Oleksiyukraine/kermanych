@@ -341,7 +341,6 @@ function shadowTaskRow() {
     model: null,
     effort: null,
     prefix: null,
-    platform: null,
     worktree: true,
     kind: null,
     branch: null,
