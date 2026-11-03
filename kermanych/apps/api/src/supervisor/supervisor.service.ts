@@ -356,6 +356,8 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
         this.onNativeChange(e.sessionId);
         this.pushUpdate(e.sessionId);
         this.drainSlots();
+        // A native turn's tool calls surface only as these changes.
+        void this.syncBranch(e.sessionId).catch(() => {});
         return;
       }
       if (e.type === "settled") {
@@ -1883,6 +1885,7 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
       this.mergeTaskDetails(l, (e as Extract<RpcEvent, { type: "tool_execution_end" }>).result?.details);
       this.emitSubagents(id, l);
     }
+    if (e.type === "tool_execution_end") void this.syncBranch(id).catch(() => {});
     // Progress heartbeat (in-memory) — distinct from last_activity_at, which user sends also
     // bump. The UI uses this to spot a wedged turn. `response` frames are replies to the
     // supervisor's OWN commands (chiefly the 2s get_state poll below), not agent progress:
@@ -2049,6 +2052,8 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
   // — the pushed branch, freshly fetched — has origin's base. A failed fetch leaves the refs the
   // agent's own fetch wrote, so the check still compares against something recent.
   private async checkTurnEnd(id: string, settled: Session["status"], review: boolean): Promise<void> {
+    // Best effort: a branch it could not read must not cost the conflict check below.
+    await this.syncBranch(id).catch(() => {});
     const s = this.registry.listSessions().find((x) => x.id === id);
     const g = s && this.registry.listProjects().find((p) => p.id === s.projectId);
     if (!s || !g || s.kind !== "agent") return;
@@ -2085,6 +2090,22 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
           "warn",
         ),
       );
+  }
+
+  // The agent may rename its branch (`git branch -m`, asked to match the ticket). Its own
+  // worktree is the truth, so the record follows it — the panels show it, and merge, PR and
+  // delete name it. Run after every tool call (a rename is one) and at turn end, so a long
+  // turn does not leave the panels stale. Only a session's own worktree: an agent on the
+  // project checkout has no worktreePath, and a branch there may be the operator's own switch.
+  private async syncBranch(id: string): Promise<void> {
+    const path = this.registry.listSessions().find((x) => x.id === id)?.worktreePath;
+    if (!path) return;
+    const head = await this.worktree.workingBranch(path);
+    // Re-read: the row may have moved (finished, merged) while git ran.
+    const s = this.registry.listSessions().find((x) => x.id === id);
+    if (!head || !s || s.worktreePath !== path || head === s.branch) return;
+    this.registry.updateSession(id, { branch: head });
+    this.pushUpdate(id);
   }
 
   private stopPoll(l: Live) {
