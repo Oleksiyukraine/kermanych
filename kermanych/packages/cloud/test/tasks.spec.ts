@@ -9,12 +9,15 @@ import {
   getTask,
   listMinionCandidates,
   listTasks,
+  listTasksByIds,
+  listTaskVersions,
   patchTask,
   pushTaskStatus,
   REALTIME_IN_FILTER_MAX,
   releaseLaunchClaim,
   subscribeTasks,
   tasksFilter,
+  toTask,
 } from "../src/tasks";
 
 type Op = [string, ...unknown[]];
@@ -116,6 +119,47 @@ describe("listTasks", () => {
   it("throws the postgrest message so the UI can toast an RLS refusal", async () => {
     const { client } = fakeClient({ data: null, error: { message: "permission denied for table tasks" } });
     await expect(listTasks(client, ["p1"])).rejects.toThrow(/permission denied/);
+  });
+});
+
+describe("listTaskVersions", () => {
+  it("reads only id and updated_at of the project set", async () => {
+    const { client, queries } = fakeClient({ data: [{ id: "t1", updated_at: "2026-08-21T00:10:00.000Z" }], error: null });
+    await expect(listTaskVersions(client, ["p1", "p2"])).resolves.toEqual([{ id: "t1", updatedAt: "2026-08-21T00:10:00.000Z" }]);
+    expect(queries[0]!.ops).toEqual([
+      ["select", "id, updated_at"],
+      ["in", "project_id", ["p1", "p2"]],
+    ]);
+  });
+
+  it("asks nothing for an empty project set", async () => {
+    const { client, queries } = fakeClient();
+    await expect(listTaskVersions(client, [])).resolves.toEqual([]);
+    expect(queries).toHaveLength(0);
+  });
+});
+
+describe("listTasksByIds", () => {
+  it("splits the ids into requests of at most 100 and returns every row", async () => {
+    const ids = Array.from({ length: 201 }, (_, i) => `t${i}`);
+    const { client, queries } = fakeClient(
+      { data: [taskRow], error: null },
+      { data: [{ ...taskRow, id: "t100" }], error: null },
+      { data: [{ ...taskRow, id: "t200" }], error: null },
+    );
+    const rows = await listTasksByIds(client, ids);
+    expect(rows.map((t) => t.id)).toEqual(["t1", "t100", "t200"]);
+    const asked = queries.map((q) => (q.ops.find((o) => o[0] === "in") as [string, string, string[]])[2]);
+    expect(asked.map((a) => a.length)).toEqual([100, 100, 1]);
+    expect(asked.flat()).toEqual(ids);
+  });
+
+  it("asks nothing for no ids, and throws the postgrest message", async () => {
+    const none = fakeClient();
+    await expect(listTasksByIds(none.client, [])).resolves.toEqual([]);
+    expect(none.queries).toHaveLength(0);
+    const refused = fakeClient({ data: null, error: { message: "permission denied for table tasks" } });
+    await expect(listTasksByIds(refused.client, ["t1"])).rejects.toThrow(/permission denied/);
   });
 });
 
@@ -305,18 +349,25 @@ describe("session reports on a task", () => {
   const docs = { sessionId: "s1", generatedAt: "2026-10-12T10:00:00.000Z", read: ["README.md"], changed: [{ path: "docs/a.md", added: 3, removed: 1 }] };
   const session = { sessionId: "s1", generatedAt: "2026-10-12T10:00:00.000Z", runtime: "omp", native: false, branch: "feature/x", worktree: true, skills: ["task-spec"] };
 
-  it("is selected", async () => {
-    const { client, queries } = fakeClient({ data: [taskRow], error: null });
-    await listTasks(client, ["p1"]);
-    const [, columns] = queries[0]!.ops[0] as [string, string];
-    expect(columns.split(", ")).toEqual(expect.arrayContaining(["docs_report", "session_report"]));
+  it("the list leaves the two report blobs to getTask and keeps session_report", async () => {
+    const list = fakeClient({ data: [taskRow], error: null });
+    await listTasks(list.client, ["p1"]);
+    const [, listed] = list.queries[0]!.ops[0] as [string, string];
+    expect(listed.split(", ")).toContain("session_report");
+    expect(listed.split(", ")).not.toContain("qa_checklist");
+    expect(listed.split(", ")).not.toContain("docs_report");
+
+    const one = fakeClient({ data: taskRow, error: null });
+    await getTask(one.client, "t1");
+    const [, full] = one.queries[0]!.ops[0] as [string, string];
+    expect(full.split(", ")).toEqual(expect.arrayContaining(["qa_checklist", "docs_report", "session_report"]));
   });
 
-  it("maps stored reports and leaves the empty default absent", async () => {
-    const { client } = fakeClient({ data: [{ ...taskRow, docs_report: docs, session_report: session }, { ...taskRow, id: "t2", docs_report: {}, session_report: {} }], error: null });
-    const [t, t2] = await listTasks(client, ["p1"]);
-    expect(t!.docsReport).toEqual(docs);
-    expect(t!.sessionReport).toEqual(session);
+  it("maps stored reports and leaves the empty default absent", () => {
+    const t = toTask({ ...taskRow, docs_report: docs, session_report: session } as Parameters<typeof toTask>[0]);
+    const t2 = toTask({ ...taskRow, id: "t2", docs_report: {}, session_report: {} } as Parameters<typeof toTask>[0]);
+    expect(t.docsReport).toEqual(docs);
+    expect(t.sessionReport).toEqual(session);
     expect(t2).not.toHaveProperty("docsReport");
     expect(t2).not.toHaveProperty("sessionReport");
   });
@@ -542,7 +593,7 @@ type Binding = { event: string; config: Record<string, unknown> };
 // .on() throws after subscribe(), and removeChannel is the only teardown.
 function fakeRealtime() {
   const bindings: Binding[] = [];
-  const handlers: ((payload: unknown) => void)[] = [];
+  const handlers: { event: string; cb: (payload: unknown) => void }[] = [];
   const states: string[] = [];
   const removed: unknown[] = [];
   const channels: string[] = [];
@@ -553,7 +604,7 @@ function fakeRealtime() {
     on(event: string, config: Record<string, unknown>, cb: (payload: unknown) => void) {
       if (subscribed) throw new Error("cannot .on() after subscribe()");
       bindings.push({ event, config });
-      handlers.push(cb);
+      handlers.push({ event, cb });
       return channel;
     },
     subscribe(cb?: (s: string) => void) {
@@ -580,7 +631,8 @@ function fakeRealtime() {
     channels,
     removed,
     states,
-    emit: (payload: unknown) => handlers.forEach((h) => h(payload)),
+    emit: (payload: unknown) => handlers.filter((h) => h.event === "postgres_changes").forEach((h) => h.cb(payload)),
+    emitSystem: (payload: unknown) => handlers.filter((h) => h.event === "system").forEach((h) => h.cb(payload)),
     setState: (s: string) => stateCb?.(s),
   };
 }
@@ -599,20 +651,25 @@ describe("tasksFilter", () => {
 });
 
 describe("subscribeTasks", () => {
-  it("registers exactly one filtered postgres_changes binding before subscribing", () => {
+  it("registers exactly one filtered postgres_changes binding, light columns only, before subscribing", () => {
     const rt = fakeRealtime();
 
     subscribeTasks(rt.client, ["p1", "p2"], () => {});
 
     expect(rt.channels).toHaveLength(1);
-    expect(rt.bindings).toHaveLength(1);
-    expect(rt.bindings[0]!.event).toBe("postgres_changes");
-    expect(rt.bindings[0]!.config).toEqual({
+    const changes = rt.bindings.filter((b) => b.event === "postgres_changes");
+    expect(changes).toHaveLength(1);
+    const { select, ...config } = changes[0]!.config as { select: string[] };
+    expect(config).toEqual({
       event: "*",
       schema: "public",
       table: "tasks",
       filter: "project_id=in.(p1,p2)",
     });
+    // The payload is the list's row: the same columns listTasks reads, never the two blobs.
+    expect(select).toEqual(expect.arrayContaining(["id", "status", "updated_at", "session_report"]));
+    expect(select).not.toContain("qa_checklist");
+    expect(select).not.toContain("docs_report");
   });
 
   it("omits the filter key entirely past the 100-project cap", () => {
@@ -621,7 +678,22 @@ describe("subscribeTasks", () => {
 
     subscribeTasks(rt.client, many, () => {});
 
-    expect(rt.bindings[0]!.config).toEqual({ event: "*", schema: "public", table: "tasks" });
+    expect(rt.bindings.find((b) => b.event === "postgres_changes")!.config).not.toHaveProperty("filter");
+  });
+
+  it("reports a binding the server refused after SUBSCRIBED as CHANNEL_ERROR", () => {
+    // The server answers the join first and refuses the postgres_changes binding in a system
+    // message; the channel then delivers nothing. A board that believed SUBSCRIBED would go
+    // quietly stale.
+    const rt = fakeRealtime();
+    const states: string[] = [];
+    subscribeTasks(rt.client, ["p1"], () => {}, (s) => states.push(s));
+
+    rt.setState("SUBSCRIBED");
+    rt.emitSystem({ extension: "postgres_changes", status: "ok", message: "Subscribed to PostgreSQL" });
+    rt.emitSystem({ extension: "postgres_changes", status: "error", message: "invalid column for select id" });
+
+    expect(states).toEqual(["SUBSCRIBED", "CHANNEL_ERROR"]);
   });
 
   it("opens no channel for an empty project set and returns a usable no-op", () => {

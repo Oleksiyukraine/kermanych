@@ -45,6 +45,9 @@ const current = computed(() => queue.value[0]);
 
 // Edge detection over the shared board store: prior status per task id, the
 // CloudSyncService.lastPushed idiom — act on transitions, never on repeats.
+// Shallow on purpose: every board write replaces the `tasks` array, so this fires on each
+// change. A deep watch walked every field of every card (QA checklists, reports) on each
+// Realtime event — ~50 ms of main thread per status push on a 600-card board.
 const prior = new Map<string, string>();
 
 watch(
@@ -59,7 +62,6 @@ watch(
       queue.value = [...queue.value, t];
     }
   },
-  { deep: true },
 );
 
 // Transitions are fetched when a prompt surfaces — they are per-issue per-moment.

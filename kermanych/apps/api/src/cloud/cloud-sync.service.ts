@@ -6,7 +6,15 @@
 // the registry, and every push it owes goes through a SQLite outbox first.
 import { Injectable, type OnModuleDestroy, type OnModuleInit } from "@nestjs/common";
 import { ACTIVE_STATUSES, mergeTaskReports, type Session } from "@kermanych/core";
-import { getTask, patchTask, pushTaskStatus, taskStatusFromSession, type TaskStatus } from "@kermanych/cloud";
+import {
+  getTask,
+  patchTask,
+  pushTaskStatus,
+  SELF_DRIVING_TASK_STATUSES,
+  TASK_STATUS_KEEPALIVE_MS,
+  taskStatusFromSession,
+  type TaskStatus,
+} from "@kermanych/cloud";
 import { RegistryService } from "../registry/registry.service";
 import { SupervisorService } from "../supervisor/supervisor.service";
 import { AuthService } from "../auth/auth.service";
@@ -17,9 +25,10 @@ const MAX_DELAY_MS = 60_000;
 
 @Injectable()
 export class CloudSyncService implements OnModuleInit, OnModuleDestroy {
-  // Last status actually enqueued per TASK — the edge filter. Mirrors the `shouldNotify`
-  // idiom in core/status.ts: act on transitions, not on repeats.
-  private lastPushed = new Map<string, TaskStatus>();
+  // Last status actually enqueued per TASK, and when — the edge filter. Mirrors the
+  // `shouldNotify` idiom in core/status.ts: act on transitions, not on repeats. The one repeat
+  // that leaves is the keepalive (see onSession).
+  private lastPushed = new Map<string, { status: TaskStatus; at: number }>();
   // sessionId → taskId. `session_removed` carries only the id and the row is already gone
   // from SQLite by then (supervisor.service.ts:817-818), so the binding must be remembered.
   private taskOf = new Map<string, string>();
@@ -59,9 +68,9 @@ export class CloudSyncService implements OnModuleInit, OnModuleDestroy {
     // never leaves the board on thinking"). Enqueue only — the write is synchronous and
     // durable, whereas an awaited HTTP push would race the process exit.
     for (const taskId of new Set(this.taskOf.values())) {
-      const last = this.lastPushed.get(taskId);
+      const last = this.lastPushed.get(taskId)?.status;
       if (last && ACTIVE_STATUSES.includes(last)) {
-        this.lastPushed.set(taskId, "stopped");
+        this.lastPushed.set(taskId, { status: "stopped", at: Date.now() });
         this.registry.enqueueTaskStatus(taskId, "stopped", new Date().toISOString());
       }
     }
@@ -71,11 +80,22 @@ export class CloudSyncService implements OnModuleInit, OnModuleDestroy {
     if (!s.taskId) return;
     this.taskOf.set(s.id, s.taskId);
     const status = taskStatusFromSession(s);
+    const last = this.lastPushed.get(s.taskId);
+    const now = Date.now();
     // `pushUpdate` also fires for contextPercent/todoPhases/task edits — those must cost
-    // nothing (Requirement 6: only coarse status changes leave the machine).
-    if (this.lastPushed.get(s.taskId) === status) return;
-    this.lastPushed.set(s.taskId, status);
-    this.registry.enqueueTaskStatus(s.taskId, status, new Date().toISOString());
+    // nothing (Requirement 6: only coarse status changes leave the machine). Except the
+    // keepalive: a self-driving card is re-pushed once TASK_STATUS_KEEPALIVE_MS have passed,
+    // because the board's stale hint reads `updated_at` and the coarse status no longer moves
+    // on every tool call. The supervisor polls a running child every 2 s and emits an update
+    // each time, so a live turn — a minutes-long tool call included — keeps its card fresh,
+    // and a machine that died stops pushing and goes stale.
+    if (
+      last?.status === status &&
+      !(SELF_DRIVING_TASK_STATUSES.includes(status) && now - last.at >= TASK_STATUS_KEEPALIVE_MS)
+    )
+      return;
+    this.lastPushed.set(s.taskId, { status, at: now });
+    this.registry.enqueueTaskStatus(s.taskId, status, new Date(now).toISOString());
     void this.drain();
   }
 
@@ -83,7 +103,7 @@ export class CloudSyncService implements OnModuleInit, OnModuleDestroy {
     const taskId = this.taskOf.get(sessionId);
     if (!taskId) return;
     this.taskOf.delete(sessionId);
-    const last = this.lastPushed.get(taskId);
+    const last = this.lastPushed.get(taskId)?.status;
     // The session is gone, so its edge-filter entry is dead weight — drop it either way. Left
     // behind, `lastPushed` grew by one entry per task for the process's whole life; a later
     // session that reuses this taskId (a relaunch) re-seeds it on its first status.

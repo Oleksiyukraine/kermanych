@@ -7,9 +7,9 @@ const ALL: TaskStatus[] = [
   "done", "in_review", "error", "stopped", "merged", "conflict",
 ];
 
-test("taskStatusFromSession is the identity map today", () => {
+test("taskStatusFromSession folds `tool` into `thinking` and passes every other status through", () => {
   for (const status of ALL) {
-    expect(taskStatusFromSession({ status })).toBe(status);
+    expect(taskStatusFromSession({ status })).toBe(status === "tool" ? "thinking" : status);
   }
 });
 
