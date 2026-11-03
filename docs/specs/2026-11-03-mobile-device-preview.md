@@ -184,8 +184,11 @@ Rejected:
 
   The row shows what was picked, and it can be changed.
 - `preview_start` takes an optional `platform: "ios" | "android"` when the file configures both.
-- **Changing the base device or the platform** of a session whose clone exists acts as ↻ with a
-  re-clone: the old clone is deleted and a new one is made from the new base.
+- **The project's choice is the default for a session that has no clone yet.** A session with a
+  clone keeps its base: changing the project's choice does not touch the other sessions' devices.
+- **Changing the base device or the platform in a session's row** acts as ↻ with a re-clone for
+  that session: the old clone is deleted and a new one is made from the new base. The new choice
+  also becomes the project's default.
 
 Rejected:
 - device names in the file (AVD names and runtimes differ per machine);
@@ -316,8 +319,9 @@ Rejected:
 
 - The device is driven from the api, not Electron main, so the web build shows the screen, takes
   input and supports picks the same way.
-- The stream and input go over a WebSocket on the api, behind the same access check as the rest of
-  `/api`. The api listens on `127.0.0.1` only, so the device is reachable from this machine only.
+- The stream and input go over the `/device` socket.io namespace of the api, behind the same
+  bearer check as `/terminal`. The api listens on `127.0.0.1` only, so the device is reachable from
+  this machine only.
 
 Rejected: the web build without the screen (B), no device in the web build (C).
 
@@ -344,8 +348,9 @@ Rejected: a throw-away Expo app in `/tmp` instead of the real project; the fixtu
   - `openUrl`, `launch`, `terminate`, `appRunning`, `logs`.
 
   `PreviewService` gains the `device` step and calls it. No `DeviceHost` in Electron main.
-- **Stream format.** `GET /api/sessions/:id/device/stream` is a WebSocket with binary frames
-  (`{kind:"jpeg"|"rgb888", w, h}` header + payload).
+- **Stream format.** The `/device` socket.io namespace: `watch {sessionId, width, height}` /
+  `unwatch` / `input`, with binary `frame` events (`{kind:"jpeg"|"rgb888", width, height, data}`).
+  The contract is in `packages/core/src/device.ts`.
   - iOS: serve-sim's MJPEG frames are passed through.
   - Android: gRPC `streamScreenshot` in RGB888, at the size the client asks for (the pane's pixel
     size).
@@ -383,7 +388,9 @@ Rejected: a throw-away Expo app in `/tmp` instead of the real project; the fixtu
     app-exit state, the device log step, the platform rule, re-clone on a base change;
   - `browser/browser-mcp.service.ts`: the `device_*` tools, `platform` on `preview_start`, gates by
     `platformHasPreview` / `platformHasDevice`, the device pause;
-  - `http/sessions.controller.ts`: device list, choice, pause, stream WebSocket;
+  - `http/device.controller.ts` and `ws/device.gateway.ts`: device info, choice, pause, pick,
+    screenshot, and the `/device` stream namespace;
+  - `http/sessions.controller.ts`: `platform` and `base` on the preview start, `POST …/preview/app`;
   - `supervisor.service.ts`: clone deletion on finish/delete, shutdown on archive/quit, the
     platform-switch stop through `platformHasPreview`;
   - `registry.service.ts`: the two local columns;

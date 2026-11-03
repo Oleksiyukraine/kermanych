@@ -51,15 +51,20 @@ export {
   BRANCH_PREFIXES,
   type BranchPrefix,
 } from "./worktree-names";
-export { PLATFORMS, isPlatform, platformHasBrowser, type Platform } from "./platform";
+export { PLATFORMS, isPlatform, platformHasBrowser, platformHasDevice, platformHasPreview, type Platform } from "./platform";
 export {
   PREVIEW_CONFIG_PATH,
   PREVIEW_SETUP_STEP,
+  PREVIEW_DEVICE_STEP,
+  PREVIEW_INSTALL_STEP,
   PREVIEW_DIR_VAR,
+  PREVIEW_DEVICE_VARS,
   previewPortVar,
+  previewPlatforms,
   parsePreviewConfig,
   expandPreviewEnv,
   type PreviewServiceDef,
+  type PreviewDeviceTarget,
   type PreviewConfig,
   type PreviewConfigRead,
   type PreviewPort,
@@ -69,6 +74,28 @@ export {
   type PreviewLogLine,
   type PreviewLogs,
 } from "./preview";
+export {
+  DEVICE_PLATFORMS,
+  DEVICE_CLONE_PREFIX,
+  DEVICE_BUTTONS,
+  DEVICE_PLATFORM_BUTTONS,
+  isDevicePlatform,
+  type DevicePlatform,
+  type DeviceBase,
+  type DeviceToolStatus,
+  type DeviceChoice,
+  type SessionDevice,
+  type DeviceRuntime,
+  type DeviceInfo,
+  type DeviceButton,
+  type DeviceOrientation,
+  type DeviceRect,
+  type DeviceElement,
+  type DeviceInput,
+  type DeviceWatchReply,
+  type DeviceFrame,
+  type DevicePick,
+} from "./device";
 export { TERMINAL_SCROLLBACK } from "./terminal";
 export {
   isReleaseDate,
