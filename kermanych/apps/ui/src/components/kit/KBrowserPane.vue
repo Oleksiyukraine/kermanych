@@ -609,6 +609,8 @@ async function openUrl(url: string, asPreview = false): Promise<void> {
 // Ukrainian layout works too. Esc with focus in the app (not in the page, where the picker
 // handles it) cancels picking.
 function runShortcut(shortcut: KermanychBrowserShortcut): void {
+  // ⌘K is the shell's (components/assistant/AssistantLauncher.vue listens for it itself).
+  if (shortcut === 'assistant') return;
   if (shortcut === 'find') {
     if (state.value) void openFind();
     return;

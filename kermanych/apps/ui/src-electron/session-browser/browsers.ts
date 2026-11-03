@@ -78,11 +78,13 @@ const PAUSED_MESSAGE =
 // Shortcuts with Cmd (macOS) / Ctrl (elsewhere) held, by KeyboardEvent.code. Zoom keys and
 // Cmd+W are swallowed: zoom is shared by every view of the origin in the project's partition
 // (it would rescale the same site in the other sessions and the agent's coordinates), and the
-// default app menu's Cmd+W would close the Kermanych window itself.
-const MOD_SHORTCUTS: Record<string, 'reload' | 'focus-address' | 'find' | 'swallow'> = {
+// default app menu's Cmd+W would close the Kermanych window itself. Cmd+K is the app's — it
+// summons the Менеджмент assistant from anywhere (docs/specs/2026-11-03-assistant-overlay.md).
+const MOD_SHORTCUTS: Record<string, 'reload' | 'focus-address' | 'find' | 'assistant' | 'swallow'> = {
   KeyR: 'reload',
   KeyL: 'focus-address',
   KeyF: 'find',
+  KeyK: 'assistant',
   KeyW: 'swallow',
   Equal: 'swallow',
   Minus: 'swallow',
@@ -946,7 +948,7 @@ export class SessionBrowsers implements BrowserHost {
     if (action === 'reload') {
       if (input.shift) v.wc.reloadIgnoringCache();
       else v.wc.reload();
-    } else if (action === 'focus-address' || action === 'find') {
+    } else if (action === 'focus-address' || action === 'find' || action === 'assistant') {
       // The keyboard is in the view; the renderer can focus its input only once its own
       // webContents has focus back.
       this.win?.webContents.focus();

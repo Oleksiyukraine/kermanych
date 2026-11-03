@@ -1,10 +1,7 @@
 <template>
   <section class="ts">
     <div class="ts__row">
-      <div class="ts__head">
-        <span class="ts__name">{{ t('agents.role.tester') }}</span>
-        <span class="ts__id mono">{{ TESTER_AGENT_ID }}</span>
-      </div>
+      <p class="ts__title">{{ t('tester.panel.title') }}</p>
       <p class="ts__lead">{{ t('tester.panel.lead') }}</p>
 
       <p v-if="loadError" class="ts__error mono">{{ t('tester.panel.loadFailed', { error: loadError }) }}</p>
@@ -60,10 +57,11 @@
 // decisions 4, 5 and 14). Machine-local settings of THIS project — accounts the tester logs in
 // with, the sign-in path and free notes — read from and saved to the local api (SQLite), never
 // the cloud. An explicit Save/Cancel form: a half-typed account must not be written as it is typed.
-// The instruction and skills are the workspace's, edited in AiAgentsPanel like every agent.
+// The instruction and skills are the workspace's, edited on the same agent page at the workspace
+// scope like every agent's. This block sits on the «Тестувальник» page at the project scope.
 import { computed, reactive, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
-import { TESTER_AGENT_ID, type TesterAccount, type TesterSettings } from '@kermanych/core';
+import type { TesterAccount, TesterSettings } from '@kermanych/core';
 import { useOrchestrator } from 'stores/orchestrator';
 import { errorText, useAsyncAction } from '../../composables/useAsyncAction';
 import { useLoadPhase } from '../../composables/useLoadPhase';
@@ -170,9 +168,7 @@ const save = useAsyncAction(
 <style scoped lang="scss">
 .ts { display: grid; gap: 10px; }
 .ts__row { padding: 10px 12px; background: var(--k-surface); border: 1px solid var(--k-line); border-radius: var(--k-r); }
-.ts__head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-.ts__name { font-size: 12.5px; }
-.ts__id { font-size: 11px; color: var(--k-faint); }
+.ts__title { margin: 0; font-size: 12.5px; }
 .ts__lead { margin: 8px 0 0; font-size: 13px; color: var(--k-muted); }
 .ts__form { display: grid; gap: 12px; margin-top: 12px; }
 .ts__caption { margin: 0; font-size: 11.5px; color: var(--k-muted); }

@@ -371,6 +371,10 @@ Details settled while building, within the decisions above:
   restarts it after an api restart.
 - A tester that ended in `error` / `stopped` still counts as «running» for its doer until it is
   handed over or discarded: one run per doer at a time.
+- Decision 14's place moved with `docs/specs/2026-11-03-ai-team-agent-pages.md` (merged from `dev`):
+  the settings block (`TesterPanel.vue`) sits on the agent's own page `/ai-team/agents/tester` at the
+  project scope, like «Посіпака»'s machine block; the tester is listed under «Перевірка і здача» with
+  Lucide `flask-conical` (`agentTester`) and its «Як працює» texts in `i18n/<locale>/agent-about.ts`.
 
 ## Verification
 

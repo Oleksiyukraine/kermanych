@@ -859,6 +859,14 @@
                 @dragover.prevent
               />
             </div>
+            <!-- Диктування (docs/specs/2026-11-03-voice-dictation.md): ⌥D in the task does the same. -->
+            <KDictation
+              class="agents-launcher__dictate"
+              :state="launchDictation.state.value"
+              :caption="launchDictation.caption.value"
+              :level="launchDictation.level.value"
+              @toggle="launchDictation.toggle"
+            />
           </div>
 
           <div class="agents-launcher__attach">
@@ -1257,12 +1265,14 @@ import KModal from 'components/kit/KModal.vue';
 import KAttachStrip from 'components/kit/KAttachStrip.vue';
 import KHelperPicker from 'components/kit/KHelperPicker.vue';
 import KFilePicker from 'components/kit/KFilePicker.vue';
+import KDictation from 'components/kit/KDictation.vue';
 import KCheckbox from 'components/kit/KCheckbox.vue';
 import KField from 'components/kit/KField.vue';
 import KSelect from 'components/kit/KSelect.vue';
 import { BRANCH_PREFIXES, platformHasBrowser, prependHelper, type BranchPrefix } from '@kermanych/core';
 import { useImageAttach } from '../composables/useImageAttach';
 import { useFileMention } from '../composables/useFileMention';
+import { useDictationField } from '../composables/useDictationField';
 import { useNow } from '../composables/useNow';
 import { useMarkSeen } from '../composables/useMarkSeen';
 import { relativeTime, renderTime } from '../lib/time';
@@ -2850,6 +2860,8 @@ function onLaunchHelper(name: string): void {
   draftTask.value = prependHelper(draftTask.value, name);
 }
 function onTaskKeydown(e: KeyboardEvent): void {
+  launchDictation.onKeydown(e);
+  if (e.defaultPrevented) return;
   if (e.key === '/' && draftTask.value === '' && !launchNative.value) {
     e.preventDefault();
     launchHelperOpen.value = true;
@@ -2857,6 +2869,12 @@ function onTaskKeydown(e: KeyboardEvent): void {
   }
   launchMention.onKeydown(e);
 }
+
+// Диктування: the task is said rather than typed; phrases land at the caret.
+const launchDictation = useDictationField({ el: () => taskInput.value, value: draftTask });
+watch(launcherOpen, (open) => {
+  if (!open) launchDictation.cancel();
+});
 
 // Файли: the launch project's checkout — the tree a worktree is cut from, so a repo-relative
 // path names the same file in the session. An unbound project has no checkout to read here.
@@ -2971,6 +2989,16 @@ function openTaskFromText(text: string): void {
 // path — the card is already mine, so `claimed` stays false there.)
 async function submitLauncher(asTask: boolean): Promise<void> {
   if (launchBusy.value) return;
+  // The phrase being spoken belongs to the task: it lands before the draft is read, under the
+  // button's spinner.
+  if (launchDictation.state.value !== 'idle') {
+    launchBusy.value = asTask ? 'task' : 'launch';
+    try {
+      await launchDictation.beforeSubmit();
+    } finally {
+      launchBusy.value = null;
+    }
+  }
   const projectId = launchProjectId.value;
   const userId = auth.user?.id;
   if (!projectId || !canLaunch.value) return;
@@ -4546,6 +4574,9 @@ function openDocTask(path: string): void {
 // The anchor the Хелпери panel hangs from.
 .agents-launcher__task-wrap {
   position: relative;
+}
+.agents-launcher__dictate {
+  margin-top: 6px;
 }
 
 .agents-launcher__attach {

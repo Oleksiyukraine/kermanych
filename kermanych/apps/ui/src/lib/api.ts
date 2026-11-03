@@ -883,6 +883,9 @@ export const api = {
   checkVoiceKey: (): Promise<{ ok: true }> => post<{ ok: true }>('/voice/check', {}),
   voiceSession: (body: { sdp: string; voice: string; language: string }): Promise<{ id: string; sdp: string }> =>
     post<{ id: string; sdp: string }>('/voice/session', body),
+  // Voice dictation (docs/specs/2026-11-03-voice-dictation.md): a transcription session's answer.
+  voiceDictation: (body: { sdp: string; languages: string[] }): Promise<{ sdp: string }> =>
+    post<{ sdp: string }>('/voice/dictation', body),
 };
 
 export type VoiceKeyStatus = { source: 'env' | 'stored' | null; hint?: string };

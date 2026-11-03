@@ -1,9 +1,15 @@
 import { describe, expect, it } from 'vitest';
+import { AGENTS } from '@kermanych/core';
+import type { AiAgent, AiAgentSkill, AiOwner } from '@kermanych/cloud';
 import {
+  AGENT_ICONS,
+  AI_TEAM_AGENT_GROUPS,
   AI_TEAM_DEFAULT_SECTION,
   AI_TEAM_SECTIONS,
+  aiTeamAgent,
   aiTeamSection,
   importNameProblem,
+  resolveAgent,
 } from '../src/lib/ai-team';
 
 // The pure half of the «ШІ-команда» screen: the rail registry. The page cannot restate any of
@@ -86,5 +92,92 @@ describe('importNameProblem', () => {
   // `constructor` is a legal skill name and an Object.prototype member: a bare `in` would find it.
   it('does not mistake an inherited property for a repository skill', () => {
     expect(importNameProblem('constructor', base)).toEqual({});
+  });
+});
+
+// «Агенти» as a list and a page per agent (docs/specs/2026-11-03-ai-team-agent-pages.md). The
+// list is built from the group table, so an agent missing from it is an agent the operator can
+// never open.
+describe('AI_TEAM_AGENT_GROUPS and AGENT_ICONS', () => {
+  it('list every agent exactly once, each with a mark', () => {
+    const listed = AI_TEAM_AGENT_GROUPS.flatMap((g) => g.agents);
+    expect([...listed].sort()).toEqual(AGENTS.map((a) => a.id).sort());
+    expect(AGENTS.filter((a) => !AGENT_ICONS[a.id]).map((a) => a.id)).toEqual([]);
+  });
+});
+
+describe('aiTeamAgent', () => {
+  it('resolves an agent id and nothing else', () => {
+    expect(aiTeamAgent('review')?.id).toBe('review');
+    for (const bad of [undefined, '', 'nope', ['review'], 42]) expect(aiTeamAgent(bad)).toBeUndefined();
+  });
+});
+
+// What a project's read-only agent page shows must be what the launch gives the agent
+// (SkillsService.instructionFor / assignedFor): the most specific scope wins, and only it.
+describe('resolveAgent', () => {
+  const review = AGENTS.find((a) => a.id === 'review')!;
+  const finish = AGENTS.find((a) => a.id === 'finish')!;
+  const ws = { scope: 'workspace' as const, id: 'w' };
+  const pr = { scope: 'project' as const, id: 'p' };
+  const row = (owner: AiOwner, instruction: string, agentId = 'review'): AiAgent => ({
+    id: owner.id + agentId,
+    owner,
+    agentId,
+    instruction,
+    createdAt: '',
+    updatedAt: '',
+  });
+  const valid = (tag: string) => `${tag} {{task}} {{base}} {{branch}} {{diff}}`;
+  const skill = (owner: AiOwner, skillName: string, position: number, agentId = 'review'): AiAgentSkill => ({
+    owner,
+    agentId,
+    skillName,
+    position,
+  });
+
+  it('falls back to the default with no rows', () => {
+    expect(resolveAgent(review, [], [])).toEqual({
+      instruction: review.instruction,
+      instructionFrom: 'default',
+      skills: [],
+      skillsFrom: 'default',
+    });
+  });
+
+  it('takes the project row over the workspace row', () => {
+    const r = resolveAgent(review, [row(ws, valid('W')), row(pr, valid('P'))], []);
+    expect(r.instruction).toBe(valid('P'));
+    expect(r.instructionFrom).toBe('project');
+    expect(resolveAgent(review, [row(ws, valid('W'))], []).instructionFrom).toBe('workspace');
+  });
+
+  // instructionFor reads the top row alone: a broken or blank one means the default, it does not
+  // hand over to the workspace's text.
+  it('treats a broken or blank top row as the default, not as the next scope', () => {
+    for (const bad of ['missing holes', '   ', valid('P') + ' {{nope}}']) {
+      const r = resolveAgent(review, [row(ws, valid('W')), row(pr, bad)], []);
+      expect(r).toMatchObject({ instruction: review.instruction, instructionFrom: 'default' });
+    }
+  });
+
+  it('ignores rows of other agents', () => {
+    expect(resolveAgent(review, [row(ws, 'x', 'promote')], [skill(ws, 's', 0, 'promote')])).toMatchObject({
+      instructionFrom: 'default',
+      skills: [],
+    });
+  });
+
+  it('takes the sequence whole from the most specific scope, in order with the name as tiebreak', () => {
+    const r = resolveAgent(review, [], [skill(ws, 'w1', 0), skill(pr, 'b', 1), skill(pr, 'z', 0), skill(pr, 'a', 1)]);
+    expect(r.skills).toEqual(['z', 'a', 'b']);
+    expect(r.skillsFrom).toBe('project');
+  });
+
+  it('has no instruction for an automation, whatever the rows say', () => {
+    expect(resolveAgent(finish, [row(ws, 'text', 'finish')], [])).toMatchObject({
+      instruction: undefined,
+      instructionFrom: 'default',
+    });
   });
 });

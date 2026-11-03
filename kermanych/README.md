@@ -930,6 +930,30 @@ voice: it never answers about the code itself, and asks back only when it did no
   installing a new build. Refused once: System Settings → Privacy & Security → Microphone. The
   embedded session browser never gets the microphone.
 
+### Voice dictation («Диктування»)
+
+Speak a task description instead of typing it (spec: `docs/specs/2026-11-03-voice-dictation.md`).
+OpenAI's streaming transcription (`gpt-live-transcribe`) turns speech into text as you talk.
+
+- **Where.** «Диктувати» under the description of every popup that creates or edits a task:
+  «Нова задача» on «Агенти» (incl. «Глибокий аналіз»), the card editor on «Дошка», «Новий
+  дизайн», a task from a document, a finding → task, and the Jira / Linear issue editors. **⌥D**
+  in the description toggles it.
+- **How text lands.** The phrase being spoken shows as a grey draft under the field; when you
+  pause (~0.8 s) its final text is inserted at the caret. The field stays editable meanwhile.
+  Hints: the agent's language («Мова спілкування агента», else the UI language) plus English for
+  technical terms. No clean-up — the text is what the model heard.
+- **Stopping.** «Зупинити» or ⌥D waits up to 5 s for the last phrase. Submitting the popup while
+  dictating lets the last phrase land first. Closing the popup drops an unfinished phrase. A
+  minute of silence stops it. A dropped connection stops it; what was inserted stays. One
+  dictation per app: starting another field stops the current one.
+- **Key, cost.** The same OpenAI key as the voice conversation (`POST /api/voice/dictation`
+  exchanges the offer with `/v1/realtime/calls`); $0.017 per minute. With no key the notice links
+  to Settings → «Голос».
+- **With a voice conversation.** Dictation mutes the conversation's microphone while it runs and
+  unmutes it afterwards (a conversation you muted stays muted), so the agent never gets the
+  description as a message.
+
 ## Agent map («Карта агентів»)
 
 Every agent on this machine as one tree (spec: `docs/specs/2026-10-22-agent-map.md`):
@@ -1415,12 +1439,13 @@ request with nobody watching.
   `.env` and your `GIT_TOKEN`: the database keeps a card's author as created, lets only the
   author switch automatic execution on, and switches it off when anyone else edits what the
   card asks for.
-- **Activation.** «ШІ-команда» → project → «Агенти» → «Посіпака» → «Активувати на цій машині».
+- **Activation.** «ШІ-команда» → project → «Агенти» → «Посіпака» (its page,
+  `/ai-team/agents/minion`) → «Активувати на цій машині».
   It is stored on this machine only (SQLite `minion_projects`), for any number of projects, and
   needs the project bound to a local repository. Deactivating stops taking new cards; a run in
   progress goes on.
 - **How many at once.** One cap for the whole machine, across its projects: 1 by default, up
-  to 8, set on the same card. A minion run starts only on a free agent slot and only while none
+  to 8, set on the same page. A minion run starts only on a free agent slot and only while none
   of your own sessions waits for one («Ресурси машини»), so your launches never queue behind it.
 - **A run.** An ordinary agent session of the card's project in a fresh worktree, on your
   runtime, with the card's model and effort and every rule of the repository and the project
@@ -1504,7 +1529,8 @@ and records a verdict for each (spec: `docs/specs/2026-11-04-qa-tester-agent.md`
   item, its note and screenshot, then closes the run; when everything passed it just closes it.
   «Відкинути» closes it without a message. Screenshots are not committed by the tester. «Завершити» on
   the doer stops a running tester first.
-- **Settings.** «ШІ-команда» → project → «Агенти» → «Тестувальник»: test accounts (name or role,
+- **Settings.** The «Тестувальник» page in «ШІ-команда» → «Агенти», project scope
+  (`/ai-team/agents/tester`): test accounts (name or role,
   login, password, note), the sign-in page path and notes for the tester (test data, what never to
   press). They are stored on this machine only (SQLite `tester_accounts`, `tester_settings`). The agent
   sees account names, logins and notes, never a password: the `browser_type_credential` tool types it
@@ -1516,6 +1542,26 @@ and records a verdict for each (spec: `docs/specs/2026-11-04-qa-tester-agent.md`
   `20261104090000_qa_checklist_item_functions.sql`).
 - **Routes.** `POST /api/sessions/:id/qa-run` (`{ scope?: "all" | "open" }`),
   `GET` / `PUT /api/tester/projects/:id`; the socket event `qa_checklist_update`.
+
+### Agents («ШІ-команда → Агенти»)
+
+A short list of Kermanych's own agents (spec: `docs/specs/2026-11-03-ai-team-agent-pages.md`),
+grouped by stage of work: «Виконання», «Дизайн», «Перевірка і здача», and the two with no
+instruction of their own. Each row has the agent's icon, one line on what it does, «переписано»
+when its instruction is not Kermanych's default, and the number of assigned skills. A row opens
+the agent's page, `/ai-team/agents/<id>` (deep-linkable; an unknown id lands on the list). The
+page explains how the agent works: when it runs, what it does, what it gets (each `{{hole}}`),
+what Kermanych appends that no override changes, and how it ends.
+
+- **Workspace scope:** the page edits the agent's instruction and its skill sequence. Leaving the
+  page with an unsaved instruction asks first; switching the project or workspace in the
+  sidebar drops the draft.
+- **Project scope:** the same list, and the page is read-only. It shows what this project's
+  launch gets — the project's own row, else the workspace's, else the default (the source is
+  named) — and links to the workspace scope. «Посіпака»'s page also has its machine block
+  (activation, cap, pause); «Тестувальник»'s page has this machine's test accounts, sign-in page
+  and notes for the project.
+- **User scope:** no agent layer.
 
 ### Skills («ШІ-команда → Навички»)
 
@@ -1715,7 +1761,24 @@ it will simply push its real status again.
 (`packages/core/src/management.ts` is the one table that names them) plus a chat
 field docked to the foot of the page.
 
-That field is a real assistant, and it is deliberately narrow:
+**The same chat, from any tab.** A small character — the logo's `›_` as a face — peeks out of
+the window's left edge everywhere except the Менеджмент tab. Click it, press
+<kbd>Ctrl</kbd>/<kbd>⌘</kbd>+<kbd>K</kbd> (matched by the physical key, so the Ukrainian layout
+works; also inside a session's browser page), or draw a counter-clockwise circle with the mouse,
+no button held, and the chat opens as an overlay in the middle of the screen. It is the same
+conversation as the tab's, with the same composer — helpers, attachments, the plan chip, «Новий
+чат». Every turn sent from the overlay is asked as the «Огляд» section, so documentation search
+stays on the Документація section. Esc, a click outside, <kbd>⌘K</kbd>, the character or another
+circle closes it; a question in flight keeps running, the character shows it is thinking, then
+wears a dot until you look at the answer. A half-written question and its attachments wait for
+the next opening. On the Менеджмент tab the same keys and gesture put the cursor in the tab's own
+field instead. The circle can be switched off in Settings → «Загальне» if it fires by accident;
+it does not work over a session's browser page, which the app cannot see the mouse over. The
+character itself is yours to pick in the same pane, under «Персонаж асистента»: seven drawings,
+from the terminal bot (the default) to the original glossy drop; the choice is kept on this
+computer. (docs/specs/2026-11-03-assistant-overlay.md, docs/specs/2026-11-03-assistant-mascot-choice.md)
+
+Wherever it is opened, that chat is a real assistant, and it is deliberately narrow:
 
 - **It only reads code, and it writes in exactly five places.** Its file tools are the
   read-only subset (`read`, `grep`, `glob`) — it can look at your repositories but it cannot
