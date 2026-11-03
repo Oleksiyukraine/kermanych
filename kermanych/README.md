@@ -1273,9 +1273,17 @@ developer's machine. The direction is always task → session.
    asked, the same pick is made over the last fetched `origin/<base>` and the transcript says
    the base may not be the latest. (Spec: `docs/specs/2026-10-14-create-pr-base-sync.md`.)
 5. **Status flows back** — the local API mirrors the session's coarse status
-   (`queued → thinking → tool → waiting_input → done | in_review | error | stopped |
+   (`queued → thinking → waiting_input → done | in_review | error | stopped |
    merged | conflict`) to the task, and everyone's board updates live over Supabase
-   Realtime. `in_review` is the pull-request outcome: «Завершити» → «Створити ПР» has the
+   Realtime. A session running a tool is `thinking` on the card: the switch between the two
+   happens on every tool call and stays local. While a turn runs, the machine re-pushes
+   the unchanged status every 45 s (`TASK_STATUS_KEEPALIVE_MS`), so the card's
+   `updated_at` stays fresh. Realtime and the board's list carry a card without its QA
+   checklist and «Документація» report; the card dialog and «Агенти» read those for the card
+   they show. Once a minute while the window is visible, and when it returns after a long
+   hide, the board asks only for `id, updated_at` and re-reads the cards that changed. The
+   full list is read once, at sign-in. (Spec: `docs/specs/2026-11-03-board-egress-and-lag.md`.)
+   `in_review` is the pull-request outcome: «Завершити» → «Створити ПР» has the
    agent commit, bring the latest `origin/<base>` in, push and open the PR, and when that
    turn ends the card lands in the
    board's «На ревʼю» column — settled, but waiting on a human reviewer rather than
@@ -1652,7 +1660,7 @@ Local work never waits for the cloud:
   pushed. The pusher retries with exponential backoff (~2 s, doubling to a 60 s cap) and
   also retries immediately after a re-login, so a queue parked on an expired token
   resumes at sign-in.
-- The outbox keeps ONE row per task: an offline burst of `thinking → tool → thinking`
+- The outbox keeps ONE row per task: an offline burst of `thinking → waiting_input → thinking`
   collapses into the newest status, because the board has no use for the ones in between.
   A delivered push retires only the exact version it sent, so a status that arrives while
   that push is in flight survives and goes out on the next pass.
@@ -1660,13 +1668,14 @@ Local work never waits for the cloud:
   `thinking` after you quit Kermanych.
 - On the board, a grey banner means THIS BROWSER lost the cloud; an accent pill
   («Статуси цієї машини ще не відправлені: N») means this machine still owes the cloud
-  pushes; «⚠ давно без змін» on a card means the assignee's machine has gone quiet
-  (there is no heartbeat — it is the age of the task's `updated_at`).
+  pushes; «⚠ давно без змін» on a card means the assignee's machine has gone quiet: a
+  running card older than 90 s by its `updated_at`, while a live machine re-pushes it every
+  45 s.
 
 ### A task stuck «in progress»
 
-A task's status is written only by the machine running it, and there is no heartbeat by
-design — so a machine that crashes (rather than quitting cleanly) leaves its card active
+A task's status is written only by the machine running it, and only a live session keeps it
+fresh — so a machine that crashes (rather than quitting cleanly) leaves its card active
 forever, and an active task cannot be reassigned or deleted. Two people can free it with
 «Позначити зупиненою» on the card: the **assignee**, from any machine, and the
 **workspace owner**, for when the assignee is gone for good; the database refuses

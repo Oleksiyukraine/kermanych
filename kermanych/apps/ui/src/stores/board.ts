@@ -6,7 +6,10 @@ import {
   createTask as cloudCreateTask,
   deleteTask as cloudDeleteTask,
   forceStopTask as cloudForceStopTask,
+  getTask as cloudGetTask,
   listTasks as cloudListTasks,
+  listTasksByIds as cloudListTasksByIds,
+  listTaskVersions as cloudListTaskVersions,
   patchTask as cloudPatchTask,
   subscribeTasks as cloudSubscribeTasks,
   uploadTaskImages as cloudUploadTaskImages,
@@ -76,17 +79,104 @@ export const useBoard = defineStore('board', () => {
   // tear down.
   let generation = 0;
 
-  // Sorted by createdAt so a Realtime insert lands in a stable place instead of appending
-  // to whichever column happened to render last. Replace-or-append keyed by id, so the
-  // optimistic row, the awaited response and the Realtime echo all collapse into one.
-  function upsert(task: Task): void {
-    tasks.value = [...tasks.value.filter((t) => t.id !== task.id), task].sort((a, b) =>
-      a.createdAt.localeCompare(b.createdAt),
-    );
+  // The report blobs the list shape leaves out (cloud TASK_LIST_COLUMNS), per card a screen
+  // holds: how many holders, and the `updated_at` the held blobs were read at. The count is
+  // store-local; `detailsAt` is reactive because a screen shows «not read yet» from it.
+  const holds = new Map<string, number>();
+  const detailsAt = ref<Record<string, number>>({});
+  const detailsInFlight = new Set<string>();
+
+  // When a row was written. `updated_at` is server-owned (tasks_guard sets now()); parsed
+  // rather than compared as text because PostgREST and Realtime are two printers of one
+  // timestamptz.
+  function versionOf(t: Pick<Task, 'updatedAt'>): number {
+    return Date.parse(t.updatedAt);
   }
 
-  function drop(taskId: string): void {
-    tasks.value = tasks.value.filter((t) => t.id !== taskId);
+  // The one rule every write goes through. A held row is never replaced by an older version
+  // of itself: a reconcile read can land after a Realtime event that was newer. A LIGHT row
+  // (`full` false — the list, the reconcile, Realtime, an optimistic edit) keeps the blobs the
+  // store already holds, so an open card does not lose its checklist to a status push; a FULL
+  // row (getTask, a write's answer) is the whole truth and records that its blobs are current.
+  function merge(prev: Task | undefined, next: Task, full: boolean): Task {
+    if (prev && versionOf(next) < versionOf(prev)) return prev;
+    if (full) {
+      detailsAt.value[next.id] = versionOf(next);
+      return next;
+    }
+    if (!prev || (!prev.qaChecklist && !prev.docsReport)) return next;
+    return {
+      ...next,
+      ...(next.qaChecklist === undefined && prev.qaChecklist ? { qaChecklist: prev.qaChecklist } : {}),
+      ...(next.docsReport === undefined && prev.docsReport ? { docsReport: prev.docsReport } : {}),
+    };
+  }
+
+  // One array write per batch, sorted by createdAt so a Realtime insert lands in a stable
+  // place instead of appending to whichever column happened to render last. Keyed by id, so
+  // the optimistic row, the awaited response and the Realtime echo all collapse into one.
+  function apply(rows: readonly Task[], gone: readonly string[] = [], full = false): void {
+    const byId = new Map(tasks.value.map((t) => [t.id, t]));
+    for (const id of gone) byId.delete(id);
+    for (const row of rows) byId.set(row.id, merge(byId.get(row.id), row, full));
+    tasks.value = [...byId.values()].sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+    for (const id of holds.keys()) if (needsDetails(id)) void loadDetails(id);
+  }
+
+  function upsert(task: Task): void {
+    apply([task]);
+  }
+
+  function upsertFull(task: Task): void {
+    apply([task], [], true);
+  }
+
+  function needsDetails(id: string): boolean {
+    if (!holds.has(id)) return false;
+    const t = tasks.value.find((x) => x.id === id);
+    return !!t && detailsAt.value[id] !== versionOf(t);
+  }
+
+  // Reads the held card's full row. Only for a card the board holds: the board's project set
+  // decides what is on it, and a full row must not smuggle in a card the next reconcile drops.
+  // One read per card at a time; a change that lands mid-read gets one more.
+  async function loadDetails(id: string, again = true): Promise<void> {
+    if (detailsInFlight.has(id) || !auth.user) return;
+    detailsInFlight.add(id);
+    let read = false;
+    try {
+      const full = await cloudGetTask(auth.client, id);
+      read = true;
+      if (full && tasks.value.some((t) => t.id === id)) upsertFull(full);
+    } catch {
+      // The card keeps what it shows; the row's next change asks again.
+    } finally {
+      detailsInFlight.delete(id);
+    }
+    if (read && again && needsDetails(id)) await loadDetails(id, false);
+  }
+
+  // A screen that shows a card's QA checklist or «Документація» report holds the card while it
+  // is on screen (composables/useTaskDetails.ts). The store reads the full row now if it holds
+  // no current blobs, and again whenever a lighter row with a newer `updated_at` arrives.
+  // Returns the release; calling it twice is a no-op.
+  function holdDetails(id: string): () => void {
+    holds.set(id, (holds.get(id) ?? 0) + 1);
+    if (needsDetails(id)) void loadDetails(id);
+    let released = false;
+    return () => {
+      if (released) return;
+      released = true;
+      const left = (holds.get(id) ?? 1) - 1;
+      if (left > 0) holds.set(id, left);
+      else holds.delete(id);
+    };
+  }
+
+  // The card's blobs have been read at least once. A later refresh keeps showing the previous
+  // ones until it lands, so this never flips back while the card is open.
+  function detailsLoaded(id: string): boolean {
+    return id in detailsAt.value;
   }
 
   // TaskStatus === SessionStatus, so core's constant applies verbatim. Active = the omp
@@ -102,6 +192,23 @@ export const useBoard = defineStore('board', () => {
     local.notify(assignmentRefusalText(raw) ?? raw, 'error');
   }
 
+  // Everything after the first read: which cards exist and when each changed (`id,
+  // updated_at`, a few dozen kB), then only the rows that moved or are new. The board used to
+  // re-read every row every minute — about 1 MB per workspace, the bulk of the project's
+  // egress — and replaced every card object, which re-ran every watcher and re-rendered
+  // every card. Now a quiet board costs one small read and no array write at all.
+  async function catchUp(ids: string[]): Promise<void> {
+    // The drop set comes from what was held BEFORE the versions read: a card inserted after
+    // that read reaches the board through Realtime and must not be dropped for missing from it.
+    const before = new Map(tasks.value.map((t) => [t.id, versionOf(t)]));
+    const versions = await cloudListTaskVersions(auth.client, ids);
+    const live = new Set(versions.map((v) => v.id));
+    const moved = versions.filter((v) => before.get(v.id) !== Date.parse(v.updatedAt)).map((v) => v.id);
+    const gone = [...before.keys()].filter((id) => !live.has(id));
+    const rows = moved.length ? await cloudListTasksByIds(auth.client, moved) : [];
+    if (rows.length || gone.length) apply(rows, gone);
+  }
+
   // The task query is scoped by project, so the cloud project list is a hard prerequisite.
   // Loading it here keeps every caller a one-liner instead of sequencing two stores.
   async function load(): Promise<void> {
@@ -114,27 +221,34 @@ export const useBoard = defineStore('board', () => {
       if (IS_PREVIEW) loaded.value = true;
       return;
     }
-    loading.value = true;
+    // Only the first read of this user's board is a full list (`loaded` resets on sign-out);
+    // only it shows as loading, so a reconcile never flashes a hint.
+    const first = !loaded.value;
+    if (first) loading.value = true;
     loadError.value = null;
     try {
       if (!cloud.projects.length) await cloud.load();
-      tasks.value = await cloudListTasks(auth.client, projectIds.value);
+      if (first) {
+        const rows = await cloudListTasks(auth.client, projectIds.value);
+        const held = new Set(rows.map((t) => t.id));
+        apply(rows, tasks.value.filter((t) => !held.has(t.id)).map((t) => t.id));
+      } else await catchUp(projectIds.value);
     } catch (e) {
       // Deliberately NOT a toast: an unreachable Supabase must not greet the user with a
       // popup on a screen they may have opened only to read the columns. BoardPage renders
       // loadError inline instead.
       loadError.value = e instanceof Error ? e.message : String(e);
     } finally {
-      loading.value = false;
+      if (first) loading.value = false;
       loaded.value = true;
     }
   }
 
-  // A full refetch on every (re)subscribe is the whole staleness story: events that fired
-  // while the channel was down are gone forever, so the snapshot has to be re-read rather
-  // than patched. Idempotent — calling it twice rebuilds one channel, never two.
+  // A reconcile on every (re)subscribe is the whole staleness story: events that fired while
+  // the channel was down are gone forever, so the snapshot has to be re-checked rather than
+  // patched. Idempotent — calling it twice rebuilds one channel, never two.
   //
-  // The same refetch also runs on a schedule, because Realtime cannot deliver every change:
+  // The same reconcile also runs on a schedule, because Realtime cannot deliver every change:
   // a filtered postgres_changes binding never carries DELETE (see lib/reconcile.ts for the
   // replica-identity reason and why `replica identity full` was rejected). Without that
   // reconcile a card someone else deleted would sit on this board forever.
@@ -152,7 +266,7 @@ export const useBoard = defineStore('board', () => {
       auth.client,
       projectIds.value,
       (change: TaskChange) => {
-        if (change.kind === 'delete') drop(change.taskId);
+        if (change.kind === 'delete') apply([], [change.taskId]);
         else upsert(change.task);
       },
       (state) => {
@@ -236,13 +350,13 @@ export const useBoard = defineStore('board', () => {
     }
     try {
       // No optimistic row here: the id is minted by Postgres. Realtime delivers the same
-      // task moments later and upsert() dedupes it by id.
+      // task moments later and the store dedupes it by id.
       const created = await cloudCreateTask(auth.client, {
         ...input,
         ...(imagePaths.length ? { imagePaths } : {}),
         createdBy: userId,
       });
-      upsert(created);
+      upsertFull(created);
       return created;
     } catch (e) {
       // The row never landed, so the objects it would have named are orphans — remove them
@@ -267,7 +381,7 @@ export const useBoard = defineStore('board', () => {
     }
     upsert(applyPatch(before, patch));
     try {
-      upsert(await cloudPatchTask(auth.client, id, patch));
+      upsertFull(await cloudPatchTask(auth.client, id, patch));
       return true;
     } catch (e) {
       // The cloud refused — an RLS policy or tasks_guard(). Put the row back exactly as it
@@ -315,7 +429,7 @@ export const useBoard = defineStore('board', () => {
       local.notify(globalTr.t('board.notify.cannotDeleteActive'), 'error');
       return false;
     }
-    drop(id);
+    apply([], [id]);
     try {
       await cloudDeleteTask(auth.client, id);
       return true;
@@ -339,7 +453,7 @@ export const useBoard = defineStore('board', () => {
     if (!before) return false;
     upsert({ ...before, status: 'stopped' });
     try {
-      upsert(await cloudForceStopTask(auth.client, id));
+      upsertFull(await cloudForceStopTask(auth.client, id));
       return true;
     } catch (e) {
       upsert(before);
@@ -373,6 +487,7 @@ export const useBoard = defineStore('board', () => {
       if (u) return;
       unsubscribe();
       tasks.value = [];
+      detailsAt.value = {};
       loadError.value = null;
       loaded.value = false;
     },
@@ -414,5 +529,7 @@ export const useBoard = defineStore('board', () => {
     deleteTask,
     forceStop,
     setQaItemChecked,
+    holdDetails,
+    detailsLoaded,
   };
 });

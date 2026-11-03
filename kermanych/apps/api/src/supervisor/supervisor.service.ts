@@ -2432,11 +2432,12 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
   // forwards the operator's text rather than swallowing it.
   private async runTriggerAgent(id: string, trigger: AiTrigger): Promise<boolean> {
     try {
-      // The four agents a trigger can run. `finish` and `summary` are automations with no
+      // The five agents a trigger can run. `finish` and `summary` are automations with no
       // model and no session of their own, so they are not reachable from here.
       if (trigger.agentId === "review") await this.reviewSession(id);
       else if (trigger.agentId === "promote") await this.promoteChatToAgent(id, await this.promotionCard(id));
       else if (trigger.agentId === "pull-request") await this.createPullRequest(id);
+      else if (trigger.agentId === "commit") await this.commitChanges(id);
       else if (trigger.agentId === "resolve-conflict") await this.resolveConflict(id);
       // «Посіпака» (MINION_AGENT_ID) is not runnable from here: it needs a card, not a message,
       // so a trigger naming it is refused like an unknown agent.
