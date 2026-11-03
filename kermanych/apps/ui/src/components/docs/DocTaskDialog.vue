@@ -27,7 +27,17 @@
         :loading="membersLoading"
       />
       <KSkeleton v-if="readPhase === 'skeleton'" variant="lines" :rows="8" :label="t('agents.docTask.description')" />
-      <KField v-else v-model="description" :label="t('agents.docTask.description')" multiline :rows="12" />
+      <div v-else>
+        <KField ref="descriptionField" v-model="description" :label="t('agents.docTask.description')" multiline :rows="12" @keydown="dictation.onKeydown" />
+        <!-- Диктування (docs/specs/2026-11-03-voice-dictation.md). -->
+        <KDictation
+          class="doc-task__dictate"
+          :state="dictation.state.value"
+          :caption="dictation.caption.value"
+          :level="dictation.level.value"
+          @toggle="dictation.toggle"
+        />
+      </div>
       <!-- A design card carries the folder's screenshots, so the implementing agent sees the
            target as images and not only as text. -->
       <div v-if="screensDir" class="doc-task__screens">
@@ -81,10 +91,12 @@ import { handleOf } from '../../lib/members';
 import { docTaskScreensDir, docTaskTargets, docTaskTitle } from '../../lib/doc-task';
 import { readDesignScreens } from '../../lib/design-screens';
 import { errorText } from '../../composables/useAsyncAction';
+import { useDictationField } from '../../composables/useDictationField';
 import { useLoadPhase } from '../../composables/useLoadPhase';
 import KModal from 'components/kit/KModal.vue';
 import KSelect, { type KSelectOption } from 'components/kit/KSelect.vue';
 import KField from 'components/kit/KField.vue';
+import KDictation from 'components/kit/KDictation.vue';
 import KBtn from 'components/kit/KBtn.vue';
 import KSkeleton from 'components/kit/KSkeleton.vue';
 
@@ -102,6 +114,15 @@ const assignee = ref('');
 const description = ref('');
 const error = ref<string | null>(null);
 const busy = ref(false);
+const descriptionField = ref<InstanceType<typeof KField> | null>(null);
+// Диктування: the description is said rather than typed; closing the dialog drops the phrase.
+const dictation = useDictationField({ el: () => descriptionField.value?.el(), value: description });
+watch(
+  () => props.modelValue,
+  (open) => {
+    if (!open) dictation.cancel();
+  },
+);
 // The document text, the workspace's members and a design's screenshots are read after the
 // dialog opens; until they answer the title/description are skeletons, the assignee picker
 // spins and the screenshot strip is a skeleton. `screens` stays undefined until the listing
@@ -222,6 +243,8 @@ async function submit(): Promise<void> {
   busy.value = true;
   error.value = null;
   try {
+    // The phrase being spoken belongs to the description: it lands before the card is written.
+    await dictation.beforeSubmit();
     const card = await board.createTask(
       {
         projectId: target.id,
@@ -249,6 +272,9 @@ async function submit(): Promise<void> {
   display: flex;
   flex-direction: column;
   gap: 16px;
+}
+.doc-task__dictate {
+  margin-top: 6px;
 }
 
 .doc-task__hint {

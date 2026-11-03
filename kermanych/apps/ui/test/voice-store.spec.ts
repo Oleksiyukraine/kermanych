@@ -35,6 +35,7 @@ vi.mock('../src/lib/voice-connection', () => ({
     handlers = h;
     return { send: (e: Record<string, unknown>) => sent.push(e), setMicEnabled: () => {}, micLevel: () => 0, close };
   },
+  micErrorWords: (e: unknown) => e,
 }));
 
 import { useOrchestrator } from '../src/stores/orchestrator';

@@ -2503,6 +2503,17 @@ export const en: MessageSchema = {
       unmute: 'Turn the microphone on',
       end: 'End',
     },
+    dictate: {
+      start: 'Dictate',
+      stop: 'Stop',
+      startTip: 'Dictate the description by voice (⌥D)',
+      stopTip: 'Stop dictating (⌥D)',
+      state: {
+        connecting: 'connecting…',
+        live: 'listening',
+        stopping: 'finishing…',
+      },
+    },
     skeleton: {
       loading: 'Loading…',
     },
@@ -3176,12 +3187,13 @@ export const en: MessageSchema = {
       'The project repository is on a detached HEAD — check out a branch, or turn “Isolate in a worktree” back on.',
     voice_key_missing: 'No OpenAI key: Settings → App → “Voice”.',
     voice_key_invalid: 'OpenAI refused the key — check it in Settings → “Voice”.',
-    voice_no_access: 'This OpenAI key has no access to GPT-Live.',
+    voice_no_access: 'This OpenAI key has no access to {model}.',
     voice_quota: 'OpenAI: the key’s rate limit or quota is exceeded.',
     voice_network: 'OpenAI is unreachable — check the connection.',
     voice_upstream: 'OpenAI refused (HTTP {status}).',
     voice_offer_invalid: 'Could not prepare the voice connection.',
     voice_voice_invalid: 'Unknown voice — pick another in Settings → “Voice”.',
+    voice_language_invalid: 'Unknown dictation language.',
     image: {
       unsupported: 'unsupported type: {mime} (need PNG/JPEG/GIF/WebP)',
       unknownMime: 'unknown',
@@ -3207,6 +3219,13 @@ export const en: MessageSchema = {
       message: 'The voice conversation is with “{name}” now. It will end, and a new one starts with this session.',
       confirm: 'Move',
     },
+  },
+  dictation: {
+    dropped: 'Dictation was cut off: the connection was lost. What was dictated stays in the field.',
+    idleStopped: 'Dictation stopped: a minute of silence.',
+    phraseFailed: 'A phrase could not be recognised — say it again.',
+    error: 'Dictation: {error}',
+    openSettings: 'Open “Voice”',
   },
   notices: {
     slot_wait: 'sent, waiting for a slot · {running} of {limit} running',

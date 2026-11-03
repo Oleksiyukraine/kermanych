@@ -2,7 +2,25 @@
   <KModal :model-value="modelValue" :title="title" width="560px" :persistent="busy" @update:model-value="onToggle">
     <div class="lie">
       <KField v-model="titleField" :label="t('linear.issueEditor.summaryLabel')" :placeholder="t('linear.issueEditor.summaryPlaceholder')" />
-      <KField v-model="description" :label="t('linear.issueEditor.descLabel')" multiline :rows="5" :placeholder="t('linear.issueEditor.descPlaceholder')" />
+      <div>
+        <KField
+          ref="descriptionField"
+          v-model="description"
+          :label="t('linear.issueEditor.descLabel')"
+          multiline
+          :rows="5"
+          :placeholder="t('linear.issueEditor.descPlaceholder')"
+          @keydown="dictation.onKeydown"
+        />
+        <!-- Диктування (docs/specs/2026-11-03-voice-dictation.md). -->
+        <KDictation
+          class="lie__dictate"
+          :state="dictation.state.value"
+          :caption="dictation.caption.value"
+          :level="dictation.level.value"
+          @toggle="dictation.toggle"
+        />
+      </div>
       <div class="lie__row">
         <KSelect v-model="priorityPick" :label="t('linear.issueEditor.priorityLabel')" :options="priorityOptions" />
         <KField v-model="estimateInput" :label="t('linear.issueEditor.estimateLabel')" type="number" :placeholder="t('linear.issueEditor.estimatePlaceholder')" />
@@ -41,10 +59,12 @@ import { computed, ref, watch } from 'vue';
 import type { LinearIssue } from '@kermanych/cloud';
 import KBtn from 'components/kit/KBtn.vue';
 import KField from 'components/kit/KField.vue';
+import KDictation from 'components/kit/KDictation.vue';
 import KModal from 'components/kit/KModal.vue';
 import KSelect, { type KSelectOption } from 'components/kit/KSelect.vue';
 import { api, type LinearAssignableUser, type LinearIssueDraftWire } from '../../lib/api';
 import { errorText, useAsyncAction } from '../../composables/useAsyncAction';
+import { useDictationField } from '../../composables/useDictationField';
 import { useI18n } from 'vue-i18n';
 
 const props = defineProps<{
@@ -60,6 +80,9 @@ const emit = defineEmits<{ 'update:modelValue': [value: boolean]; saved: [issue:
 
 const titleField = ref('');
 const description = ref('');
+const descriptionField = ref<InstanceType<typeof KField> | null>(null);
+// Диктування: the description is said rather than typed; closing the editor drops the phrase.
+const dictation = useDictationField({ el: () => descriptionField.value?.el(), value: description });
 const priorityPick = ref('0');
 const assigneePick = ref('');
 const labelsInput = ref('');
@@ -102,7 +125,7 @@ const assigneeOptions = computed<KSelectOption[]>(() =>
 watch(
   () => props.modelValue,
   async (open) => {
-    if (!open) return;
+    if (!open) return dictation.cancel();
     const mine = ++openRun;
     error.value = '';
     loading.value = true;
@@ -131,6 +154,8 @@ watch(
 // refusal is shown inside it.
 const { run: save, busy } = useAsyncAction(
   async () => {
+    // The phrase being spoken belongs to the description: it lands before the ticket is read.
+    await dictation.beforeSubmit();
     if (loading.value || !titleField.value.trim()) return;
     error.value = '';
     const labels = labelsInput.value
@@ -172,6 +197,9 @@ function onToggle(open: boolean): void {
   display: flex;
   flex-direction: column;
   gap: var(--k-sp-3);
+}
+.lie__dictate {
+  margin-top: 6px;
 }
 
 .lie__row {

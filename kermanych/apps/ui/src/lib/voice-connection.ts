@@ -32,6 +32,16 @@ export type SdpExchange = (offer: string) => Promise<{ sdp: string }>;
 
 export type ConnectVoice = (exchange: SdpExchange, handlers: VoiceConnectionHandlers) => Promise<VoiceConnection>;
 
+/**
+ * The browser's own words for a refused or missing microphone are English and technical: the
+ * operator gets ours. Anything else is returned unchanged.
+ */
+export function micErrorWords(e: unknown, words: { denied: string; missing: string }): unknown {
+  if (e instanceof DOMException && e.name === 'NotAllowedError') return new Error(words.denied);
+  if (e instanceof DOMException && e.name === 'NotFoundError') return new Error(words.missing);
+  return e;
+}
+
 const ICE_TIMEOUT_MS = 10_000;
 
 export const connectVoice: ConnectVoice = async (exchange, handlers) => {
