@@ -247,6 +247,7 @@ export const uk = {
       findings: 'Знахідки',
       qa: 'QA',
       browser: 'Браузер',
+      device: 'Пристрій',
     },
     actions: {
       mergeTip: 'Влити висновок у батьківського агента',
@@ -520,14 +521,18 @@ export const uk = {
       emptyHint: 'Введіть адресу вгорі.',
       downloaded: 'Завантажено: {name}',
     },
-    // The live preview in the «Браузер» tab: its row, the logs panel, the empty pane's offers.
+    // The live preview in the «Браузер» and «Пристрій» tabs: its row, the logs panel, the empty
+    // pane's offers.
     preview: {
       status: {
         missing: 'Превʼю не налаштоване',
         invalid: 'Файл превʼю з помилкою: {error}',
         setup: 'Виконується setup…',
+        device: 'Завантажується пристрій…',
+        install: 'Встановлюється застосунок…',
         starting: 'Запускається {service}…',
         running: 'Працює',
+        appExited: 'Застосунок впав',
         crashed: 'Впало ({service}, код {code})',
         crashedSignal: 'Впало ({service}, сигнал {signal})',
         failed: 'Не вдалося запустити ({step}): {error}',
@@ -539,6 +544,7 @@ export const uk = {
       start: 'Запустити превʼю',
       stop: 'Зупинити превʼю',
       restart: 'Перезапустити превʼю',
+      launchApp: 'Запустити застосунок',
       open: 'Відкрити превʼю',
       logs: 'Логи',
       configure: 'Доручити агенту',
@@ -552,6 +558,35 @@ export const uk = {
       logsResize: 'Змінити висоту логів',
       logsEmpty: 'Логів ще немає.',
       logsFailed: 'Не вдалося прочитати логи: {error}',
+    },
+    // The «Пристрій» tab of a Mobile project's agent session: the device picker, the toolbar,
+    // the screen and its empty states.
+    device: {
+      baseTitle: 'Пристрій, з якого зроблено копію для сесії',
+      buttons: {
+        home: 'Додому',
+        back: 'Назад',
+        recents: 'Недавні застосунки',
+      },
+      rotate: 'Повернути екран',
+      screenshot: 'Зберегти знімок екрана (PNG)',
+      pickTitle: 'Вказати елемент на екрані — агент отримає його тип, підпис, id і знімок. Shift+клік — вказати ще один',
+      pickNoElement: 'Точка {point}: елемента немає',
+      agentIdleTip: 'Поставити агента на паузу: його інструменти device_* і запуск чи зупинка превʼю відмовлятимуть, доки ви не повернете керування',
+      agentPausedTip: 'Повернути агентові керування пристроєм',
+      screenAria: 'Екран пристрою {name}',
+      waitingFrame: 'Чекаю на зображення…',
+      streamFailed: 'Екран недоступний: {error}',
+      booting: 'Завантажується пристрій…',
+      starting: 'Превʼю запускається…',
+      empty: 'Пристрій цієї сесії не запущений.',
+      notConfigured: 'Пристрій зʼявиться, коли превʼю буде налаштоване й запущене.',
+      toolsTitle: 'На цьому компʼютері немає інструментів для пристрою',
+      infoFailed: 'Не вдалося прочитати пристрій: {error}',
+      retry: 'Спробувати ще',
+      recreateTitle: 'Створити копію пристрою заново?',
+      recreateMessage: 'Копію пристрою цієї сесії ({from}) буде видалено, а нову зроблено з «{to}». Дані застосунку на ній — входи, налаштування, файли — буде втрачено.',
+      recreateConfirm: 'Створити заново',
     },
     // The PR «Створити ПР» opened: the «PR» row in «Сесія» and the merged-PR popup.
     pr: {
@@ -1234,7 +1269,7 @@ export const uk = {
       color: 'Колір проєкту',
       workspace: 'Воркспейс',
       platform: 'Платформа',
-      platformNote: 'Back-end і Mobile не мають вкладки «Браузер» і живого превʼю.',
+      platformNote: 'Web має вкладку «Браузер», Mobile — вкладку «Пристрій»; обидві з живим превʼю. Back-end не має ні того, ні іншого.',
       platformChoice: {
         web: 'Web',
         backend: 'Back-end',
@@ -3054,7 +3089,7 @@ export const uk = {
     },
     canvas: {
       desktopOnly: 'Полотно є лише в застосунку для комп’ютера: у вебверсії немає браузера сесії. Нижче — збережена тека дизайну; лог і композер праворуч працюють і тут.',
-      noBrowser: 'Проєкт позначено як Back-end або Mobile: у нього немає браузера й превʼю, тож полотну нічого показати. Платформу можна змінити в налаштуваннях проєкту.',
+      noBrowser: 'Проєкт позначено як Back-end або Mobile: у нього немає браузера сесії, тож полотну нічого показати. Превʼю Mobile-проєкту — на вкладці «Пристрій» сесії агента. Платформу можна змінити в налаштуваннях проєкту.',
       retired: 'Робочу копію цього дизайну вже прибрано, тож полотну нічого показати.',
     },
     folder: {

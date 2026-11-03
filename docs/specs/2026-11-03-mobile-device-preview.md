@@ -162,8 +162,12 @@ preview.
   - `ANDROID_SERIAL` (Android only), which `adb`, Gradle and Flutter read by themselves.
 - **Hot reload** of `flutter run` is the agent's own `kill -USR1` / `-USR2` on that process. The
   `preview-config` skill documents it, and there is no tool for it.
-- A `device` block in a project whose platform is not Mobile gives the preview row the error
-  «блок `device` працює лише для проєкту з платформою Mobile».
+- The platform and the file must agree. Like every other validation error, these are shown in
+  English with the exact field:
+  - a `device` block in a project whose platform is not Mobile gives
+    `device: works only in a project whose platform is Mobile`;
+  - a Mobile project's file without a `device` block gives
+    `device: a Mobile project needs a "device" block naming its app`.
 
 Rejected:
 - a separate `.kermanych/device.json` (two files cross-referencing ports, two validators);

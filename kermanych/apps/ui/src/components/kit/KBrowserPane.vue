@@ -119,66 +119,7 @@
       </div>
     </div>
 
-    <!-- The tray sits between the toolbar and the page, so a pick never covers what it was
-         taken from; it scrolls on its own past a few entries, and folds to one row. -->
-    <section v-if="picks.length" class="k-browser__tray" :class="{ 'k-browser__tray--folded': trayFolded }">
-      <button
-        type="button"
-        class="k-browser__tray-head"
-        :aria-expanded="!trayFolded"
-        v-tip="trayFolded ? t('agents.browser.tray.expand') : t('agents.browser.tray.collapse')"
-        @click="trayFolded = !trayFolded"
-      >
-        <span class="k-browser__tray-caret" aria-hidden="true">{{ trayFolded ? '▸' : '▾' }}</span>
-        {{ t('agents.browser.tray.title', { n: picks.length }) }}
-      </button>
-      <template v-if="!trayFolded">
-        <div class="k-browser__tray-list">
-          <div v-for="p in picks" :key="p.id" class="k-browser__pick">
-            <img
-              v-if="p.pick.screenshot?.data"
-              class="k-browser__thumb"
-              :src="`data:${p.pick.screenshot.mimeType};base64,${p.pick.screenshot.data}`"
-              alt=""
-            />
-            <div v-else class="k-browser__thumb k-browser__thumb--none mono">&lt;{{ p.pick.tag.toLowerCase() }}&gt;</div>
-            <div class="k-browser__pick-body">
-              <span class="k-browser__pick-sel mono" v-tip="p.pick.selector">{{ p.pick.selector }}</span>
-              <span v-if="p.pick.source" class="k-browser__pick-src mono">
-                {{ p.pick.source.line != null ? `${p.pick.source.file}:${p.pick.source.line}` : p.pick.source.file }}
-              </span>
-              <input
-                class="k-browser__comment"
-                type="text"
-                :value="p.comment"
-                :placeholder="t('agents.browser.commentPlaceholder')"
-                @input="browser.setComment(session.id, p.id, ($event.target as HTMLInputElement).value)"
-                @keydown.enter="sendOnModEnter"
-              />
-            </div>
-            <button
-              type="button"
-              class="k-browser__pick-x"
-              :title="t('agents.browser.removePick')"
-              :aria-label="t('agents.browser.removePick')"
-              @click="browser.removePick(session.id, p.id)"
-            >✕</button>
-          </div>
-        </div>
-        <input
-          class="k-browser__comment k-browser__note"
-          type="text"
-          :value="browser.notes[session.id] ?? ''"
-          :placeholder="t('agents.browser.tray.notePlaceholder')"
-          @input="browser.setNote(session.id, ($event.target as HTMLInputElement).value)"
-          @keydown.enter="sendOnModEnter"
-        />
-      </template>
-      <div class="k-browser__tray-actions">
-        <KBtn variant="primary" :loading="sending" @click="emit('send')">{{ t('agents.browser.send') }}</KBtn>
-        <KBtn variant="ghost" :disabled="sending" @click="browser.clearPicks(session.id)">{{ t('agents.browser.clear') }}</KBtn>
-      </div>
-    </section>
+    <KPicksTray :session-id="session.id" :sending="sending" @send="emit('send')" />
 
     <!-- The native view is laid over this box by Electron main. The box shows something of its
          own only while the view is parked: a still frame of the page while an overlay is open,
@@ -281,6 +222,7 @@ import type { Session } from '@kermanych/core';
 import KBtn from './KBtn.vue';
 import KSkeleton from './KSkeleton.vue';
 import KPreviewLogs from './KPreviewLogs.vue';
+import KPicksTray from './KPicksTray.vue';
 import KPreviewRow from './KPreviewRow.vue';
 import KChipSelect from './KChipSelect.vue';
 import KField from './KField.vue';
@@ -313,7 +255,6 @@ const store = useOrchestrator();
 const bridge = window.kermanych!.browser!;
 
 const state = computed(() => browser.states[props.session.id]);
-const picks = computed(() => browser.picks[props.session.id] ?? []);
 // Only `agent` sessions have a preview (spec decision 8). The pane is keyed by the session, so
 // its kind never changes under it.
 const preview = props.session.kind === 'agent' ? useSessionPreview(() => props.session) : null;
@@ -452,14 +393,6 @@ async function togglePick(): Promise<void> {
   } finally {
     picking.value = false;
   }
-}
-
-// ── Tray ─────────────────────────────────────────────────────────────────
-const trayFolded = ref(false);
-function sendOnModEnter(e: KeyboardEvent): void {
-  if (!(e.metaKey || e.ctrlKey) || props.sending) return;
-  e.preventDefault();
-  emit('send');
 }
 
 // ── Find in page ─────────────────────────────────────────────────────────
@@ -970,134 +903,6 @@ onBeforeUnmount(() => {
   color: var(--k-faint);
 }
 .k-browser__dialog-actions {
-  display: flex;
-  gap: 8px;
-  flex: none;
-}
-
-.k-browser__tray {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  padding: 8px 12px;
-  border-bottom: 1px solid var(--k-line);
-  flex: none;
-  max-height: 40%;
-}
-// Folded: the header and the actions share one row.
-.k-browser__tray--folded {
-  flex-direction: row;
-  align-items: center;
-  justify-content: space-between;
-}
-
-.k-browser__tray-head {
-  align-self: flex-start;
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 0;
-  font-family: var(--k-font-ui);
-  font-size: var(--k-fs-xs);
-  font-weight: var(--k-fw-medium);
-  color: var(--k-muted);
-  background: transparent;
-  border: none;
-  cursor: pointer;
-
-  &:hover {
-    color: var(--k-text);
-  }
-}
-.k-browser__tray--folded .k-browser__tray-head {
-  align-self: center;
-}
-.k-browser__tray-caret {
-  width: 10px;
-}
-
-.k-browser__tray-list {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  overflow-y: auto;
-  min-height: 0;
-}
-
-.k-browser__pick {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-}
-
-.k-browser__thumb {
-  flex: none;
-  width: 64px;
-  height: 40px;
-  object-fit: contain;
-  background: var(--k-surface);
-  border: 1px solid var(--k-line);
-  border-radius: var(--k-r-sm);
-}
-.k-browser__thumb--none {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: var(--k-fs-xs);
-  color: var(--k-faint);
-}
-
-.k-browser__pick-body {
-  flex: 1;
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-
-.k-browser__pick-sel,
-.k-browser__pick-src {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: var(--k-fs-xs);
-}
-.k-browser__pick-sel { color: var(--k-text); }
-.k-browser__pick-src { color: var(--k-muted); }
-
-.k-browser__comment {
-  height: 24px;
-  padding: 0 6px;
-  font-family: var(--k-font-ui);
-  font-size: var(--k-fs-sm);
-  color: var(--k-text);
-  background: transparent;
-  border: 1px solid var(--k-line);
-  border-radius: var(--k-r-sm);
-  outline: none;
-
-  &:focus {
-    border-color: var(--k-accent);
-  }
-}
-.k-browser__note {
-  flex: none;
-  height: 28px;
-}
-
-.k-browser__pick-x {
-  flex: none;
-  border: none;
-  background: transparent;
-  color: var(--k-faint);
-  cursor: pointer;
-
-  &:hover {
-    color: var(--k-danger);
-  }
-}
-
-.k-browser__tray-actions {
   display: flex;
   gap: 8px;
   flex: none;

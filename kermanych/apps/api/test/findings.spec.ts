@@ -9,6 +9,7 @@ import { RegistryService } from "../src/registry/registry.service";
 import type { PreviewService } from "../src/preview/preview.service";
 import type { ModelsService } from "../src/models/models.service";
 import { BrowserMcpService } from "../src/browser/browser-mcp.service";
+import type { DeviceApi } from "../src/device/device.contract";
 import { SupervisorService } from "../src/supervisor/supervisor.service";
 import { WorktreeService } from "../src/worktree/worktree.service";
 import { SessionsController } from "../src/http/sessions.controller";
@@ -31,7 +32,8 @@ function make() {
   registry.upsertProject({ id: "p1", name: "p", localRepoPath: "/tmp/p1" });
   const s = registry.createSession({ projectId: "p1", name: "n", task: "t", worktreePath: "", branch: "b" });
   const other = registry.createSession({ projectId: "p1", name: "o", task: "t", worktreePath: "", branch: "o" });
-  const mcp = new BrowserMcpService(registry, { urlOf: () => undefined } as unknown as PreviewService, http);
+  // The findings tools never reach the device.
+  const mcp = new BrowserMcpService(registry, { urlOf: () => undefined } as unknown as PreviewService, {} as DeviceApi, http);
   const sup = new SupervisorService(registry, new WorktreeService(), offlineAuth(), stubSkills(), undefined as unknown as ModelsService, undefined, mcp);
   const events: ServerEvent[] = [];
   sup.events$.subscribe((e) => events.push(e));

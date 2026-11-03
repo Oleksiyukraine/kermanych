@@ -1,8 +1,17 @@
-// How the live preview of a session reads in the «Браузер» tab
-// (docs/specs/2026-11-03-session-browser-preview.md, decision 6): the status line of the
-// preview row, the tab's status mark, and the logs panel's per-step buffer. Pure: no Vue, no i18n
+// How the live preview of a session reads in the «Браузер» and «Пристрій» tabs
+// (docs/specs/2026-11-03-session-browser-preview.md, decision 6;
+// docs/specs/2026-11-03-mobile-device-preview.md, decision 11): the status line of the preview
+// row, the tab's status mark, and the logs panel's per-step buffer. Pure: no Vue, no i18n
 // instance — the row resolves `key` under `agents.preview.status`.
-import { PREVIEW_SETUP_STEP, type PreviewConfigStatus, type PreviewLogLine, type PreviewLogs, type PreviewState } from '@kermanych/core';
+import {
+  PREVIEW_DEVICE_STEP,
+  PREVIEW_INSTALL_STEP,
+  PREVIEW_SETUP_STEP,
+  type PreviewConfigStatus,
+  type PreviewLogLine,
+  type PreviewLogs,
+  type PreviewState,
+} from '@kermanych/core';
 
 export type PreviewTone = 'idle' | 'busy' | 'ok' | 'error';
 export type PreviewStatusView = { key: string; params: Record<string, string | number>; tone: PreviewTone };
@@ -13,11 +22,19 @@ export type PreviewStatusView = { key: string; params: Record<string, string | n
 // has been read (the row shows a skeleton, not a guess).
 export function previewStatusView(state: PreviewState | null, config: PreviewConfigStatus | undefined): PreviewStatusView | null {
   if (state?.phase === 'starting') {
-    return state.step === PREVIEW_SETUP_STEP
-      ? { key: 'setup', params: {}, tone: 'busy' }
-      : { key: 'starting', params: { service: state.step }, tone: 'busy' };
+    if (state.step === PREVIEW_SETUP_STEP) return { key: 'setup', params: {}, tone: 'busy' };
+    // Clone + boot (up to 3 min), and the platform's build-and-install command (up to 20 min):
+    // the two long waits of a Mobile start, each named for what it is rather than as a service.
+    if (state.step === PREVIEW_DEVICE_STEP) return { key: 'device', params: {}, tone: 'busy' };
+    if (state.step === PREVIEW_INSTALL_STEP) return { key: 'install', params: {}, tone: 'busy' };
+    return { key: 'starting', params: { service: state.step }, tone: 'busy' };
   }
-  if (state?.phase === 'running') return { key: 'running', params: {}, tone: 'ok' };
+  if (state?.phase === 'running') {
+    // The app exited while the device and services keep running (decision 11): not a crash of
+    // the preview, but the operator has to act on it, so it reads red.
+    if (state.app === 'exited') return { key: 'appExited', params: {}, tone: 'error' };
+    return { key: 'running', params: {}, tone: 'ok' };
+  }
   if (!config) return null;
   if (config.kind === 'missing') return { key: 'missing', params: {}, tone: 'idle' };
   if (config.kind === 'invalid') return { key: 'invalid', params: { error: config.error }, tone: 'error' };
@@ -31,11 +48,12 @@ export function previewStatusView(state: PreviewState | null, config: PreviewCon
   return { key: 'idle', params: {}, tone: 'idle' };
 }
 
-// The «Браузер» tab's mark: a spinner while starting, green while running, red after a crash or
-// a failed start; nothing when stopped or never started.
+// The tab's mark: a spinner while starting, green while running, red after a crash, a failed
+// start, or an app that exited under a running Mobile preview; nothing when stopped or never
+// started.
 export function previewTabStatus(state: PreviewState | null | undefined): 'busy' | 'ok' | 'error' | undefined {
   if (state?.phase === 'starting') return 'busy';
-  if (state?.phase === 'running') return 'ok';
+  if (state?.phase === 'running') return state.app === 'exited' ? 'error' : 'ok';
   if (state?.phase === 'crashed' || state?.phase === 'failed') return 'error';
   return undefined;
 }

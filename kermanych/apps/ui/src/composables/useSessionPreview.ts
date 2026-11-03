@@ -1,13 +1,14 @@
 // apps/ui/src/composables/useSessionPreview.ts
-// The live preview of one `agent` session as the «Браузер» tab shows it
-// (docs/specs/2026-11-03-session-browser-preview.md, decisions 4, 6, 7). The state is the api's
+// The live preview of one `agent` session as the «Браузер» and «Пристрій» tabs show it
+// (docs/specs/2026-11-03-session-browser-preview.md, decisions 4, 6, 7;
+// docs/specs/2026-11-03-mobile-device-preview.md, decisions 6, 11). The state is the api's
 // (stores/orchestrator.ts `previews`); the config status is read here, from the session
 // directory, whenever it may have changed: on mount, when the agent's turn ends (it may have
 // written `.kermanych/preview.json`), and after every state change. The preview row
 // (KPreviewRow), the logs panel (KPreviewLogs) and the pane around them share one instance.
 import { computed, ref, watch, type Ref } from 'vue';
 import { useI18n } from 'vue-i18n';
-import type { PreviewConfigStatus, PreviewState, Session } from '@kermanych/core';
+import { PREVIEW_DEVICE_STEP, type PreviewConfigStatus, type PreviewState, type Session } from '@kermanych/core';
 import { useOrchestrator } from '../stores/orchestrator';
 import { errorText, useAsyncAction } from './useAsyncAction';
 import { useLoadPhase } from './useLoadPhase';
@@ -15,14 +16,25 @@ import { previewStatusView } from '../lib/preview-view';
 
 const BUSY_STATUSES: Session['status'][] = ['thinking', 'tool'];
 
-export function useSessionPreview(session: () => Session) {
+// `device` (the «Пристрій» tab): the preview has no page, so ▶ opens no placeholder tab in the
+// web build. ▶ / ↻ name no device either way: the api starts on the session's clone, else the
+// project's choice or the default (docs/specs/2026-11-03-mobile-device-preview.md, decisions
+// 4, 6) — so a clone whose base was deleted since still starts. Only the device picker
+// (KDevicePane) sends an explicit platform and base.
+export type SessionPreviewOptions = { device?: boolean };
+
+export function useSessionPreview(session: () => Session, opts: SessionPreviewOptions = {}) {
   const { t } = useI18n();
   const store = useOrchestrator();
   const sessionId = () => session().id;
 
   const state = computed<PreviewState | null>(() => store.previews[sessionId()] ?? null);
   const live = computed(() => state.value?.phase === 'starting' || state.value?.phase === 'running');
+  // Null on a Mobile preview too: it has no page.
   const url = computed(() => (state.value?.phase === 'running' ? state.value.url : null));
+  // The booted device, from the moment it has booted (the screen shows while `install` runs).
+  const device = computed(() => (state.value?.phase === 'starting' || state.value?.phase === 'running' ? state.value.device ?? null : null));
+  const appExited = computed(() => state.value?.phase === 'running' && state.value.app === 'exited');
 
   // undefined = not read yet (the row shows a skeleton), apart from a read that failed.
   const config = ref<PreviewConfigStatus | undefined>(undefined);
@@ -60,13 +72,17 @@ export function useSessionPreview(session: () => Session) {
 
   // ── Logs panel ───────────────────────────────────────────────────────────
   // Open on demand, and by itself on the failed step when a run crashes or fails while the tab
-  // is mounted (a crash the operator was not here for still shows in the row, red).
+  // is mounted (a crash the operator was not here for still shows in the row, red) — and on the
+  // `device` step, which carries the app's log, when a Mobile app exits.
   const logsOpen = ref(false);
   const logsStep: Ref<string | null> = ref(null);
   watch(state, (s, before) => {
     if (s === before || !s) return;
     if (s.phase === 'crashed' || s.phase === 'failed') {
       logsStep.value = s.step;
+      logsOpen.value = true;
+    } else if (s.phase === 'running' && s.app === 'exited' && !(before?.phase === 'running' && before.app === 'exited')) {
+      logsStep.value = PREVIEW_DEVICE_STEP;
       logsOpen.value = true;
     }
   });
@@ -81,7 +97,7 @@ export function useSessionPreview(session: () => Session) {
   // keeps waiting for its URL when the operator moves on to another session meanwhile.
   const bridge = window.kermanych?.browser;
   function placeholder(restart: boolean): ((ok: boolean) => void) | null {
-    if (bridge) return null;
+    if (bridge || opts.device) return null;
     const win = window.open('', '_blank');
     if (!win) return null;
     win.document.write(`<p style="font:14px system-ui;padding:24px;color:#888">${t('agents.preview.loadingText')}</p>`);
@@ -91,7 +107,10 @@ export function useSessionPreview(session: () => Session) {
     const point = (s: PreviewState | null): void => {
       if (win.closed) return stop();
       if (s?.phase === 'running' && (s !== before || !restart)) {
-        win.location.href = s.url;
+        // A preview without a page (the file gained a `device` block meanwhile) has nothing to
+        // point the tab at.
+        if (s.url) win.location.href = s.url;
+        else win.close();
         return stop();
       }
       if (s === before) return;
@@ -120,6 +139,8 @@ export function useSessionPreview(session: () => Session) {
     await store.startPreview(sessionId(), true);
     return true;
   });
+  // «Запустити застосунок»: the app exited under a running Mobile preview (decision 11).
+  const launchAppAction = useAsyncAction(() => store.launchPreviewApp(sessionId()));
   const stopAction = useAsyncAction(() => store.stopPreview(sessionId()));
   async function start(restart = false): Promise<void> {
     const action = restart ? restartAction : startAction;
@@ -148,6 +169,8 @@ export function useSessionPreview(session: () => Session) {
     state,
     live,
     url,
+    device,
+    appExited,
     config,
     configError,
     configPhase,
@@ -160,6 +183,7 @@ export function useSessionPreview(session: () => Session) {
     startAction,
     restartAction,
     stopAction,
+    launchAppAction,
     configureAction,
     configureError,
   };

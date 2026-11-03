@@ -60,7 +60,7 @@ import {
   deepAnalysisPrompt,
   DEEP_ANALYSIS_SKILL,
   BRANCH_PREFIXES,
-  platformHasBrowser,
+  platformHasDevice,
   type BranchPrefix,
   type StatusState,
   type Project,
@@ -946,8 +946,9 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
         conventions: c.conventions,
       });
       this.events.next({ type: "project_update", project });
-      // Back-end and mobile have no preview (decision 9): what runs stops.
-      if (!platformHasBrowser(project.platform)) await this.preview?.stopProject(project.id);
+      // A platform switch stops the previews whose kind no longer fits (decision 9; mobile
+      // decision 8): a web preview on a back-end or Mobile project, a device on any other.
+      await this.preview?.stopUnfit(project.id, project.platform);
     }
     if (prune) {
       const known = new Set(cloud.map((c) => c.id));
@@ -1108,8 +1109,8 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
           conventions: cloudProject.conventions,
         })
       : local;
-    // The refresh may be the first to see a switch to back-end or mobile (decision 9).
-    if (!platformHasBrowser(project.platform)) await this.preview?.stopProject(project.id);
+    // The refresh may be the first to see a platform switch (decision 9; mobile decision 8).
+    await this.preview?.stopUnfit(project.id, project.platform);
 
     // The board stores launch params as free text; validate them against the local
     // vocabularies instead of casting, so a bad card cannot produce a bogus branch prefix.
@@ -2751,7 +2752,8 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     // Off the slot queue first, so nothing starts it while it is being torn down.
     this.unpark(id);
     await this.endMinionRun(id);
-    // Before the worktree goes: the preview runs in it. PREVIEW_DIR goes too (decision 3).
+    // Before the worktree goes: the preview runs in it. PREVIEW_DIR goes too (decision 3), and
+    // the device's clone (mobile decision 4).
     await this.preview?.forget(id);
     const s = this.registry.listSessions().find((x) => x.id === id);
     if (s?.native) await this.native?.stop(id);
@@ -2802,7 +2804,8 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
       throw new Error("cannot archive an active agent");
     }
     if (archived && s.native && s.kind === "chat") await this.native?.stop(id);
-    // An archived session leaves the board, and its preview with it (decision 7).
+    // An archived session leaves the board, and its preview with it (decision 7): the device
+    // shuts down and keeps its clone (mobile decision 11).
     if (archived) await this.preview?.stop(id);
     this.registry.updateSession(id, { archived });
     this.pushUpdate(id);
@@ -2989,7 +2992,8 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     } catch (err) {
       console.warn(`[supervisor] no preview-config skill for ${id}: ${(err as Error).message}`);
     }
-    await this.sendAsKermanych(id, previewConfigPrompt(config?.kind === "invalid" ? config.error : undefined) + block, "prompt");
+    const mobile = platformHasDevice(this.registry.listProjects().find((p) => p.id === s.projectId)?.platform);
+    await this.sendAsKermanych(id, previewConfigPrompt(config?.kind === "invalid" ? config.error : undefined, mobile) + block, "prompt");
     return { sent: true };
   }
 
@@ -3122,7 +3126,8 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
 
     // A finished session waits for nothing: its parked calls and pending message go.
     this.unpark(id);
-    // Before the worktree goes: the preview runs in it (decision 7).
+    // Before the worktree goes: the preview runs in it (decision 7). The device's clone goes
+    // with it (mobile decision 4).
     await this.preview?.retire(id);
     if (s.native) await this.native?.stop(id);
     const l = this.map.get(id);

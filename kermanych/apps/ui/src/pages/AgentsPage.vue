@@ -397,7 +397,7 @@
           v-show="detailTab === 'log'"
           ref="splitEl"
           class="agents__tabpane agents__tabpane--log"
-          :class="{ 'agents__tabpane--split': browserSplit }"
+          :class="{ 'agents__tabpane--split': paneSplit }"
         >
           <div class="agents__log-main">
             <!-- A native session's Лог is the harness's own TUI; Kermanych only hosts its pty. -->
@@ -477,7 +477,7 @@
               </template>
             </KPanel>
           </div>
-          <template v-if="browserSplit && detailTab === 'log'">
+          <template v-if="paneSplit && detailTab === 'log'">
             <div
               class="agents__resizer"
               role="separator"
@@ -491,7 +491,15 @@
               @keydown="onSplitResizeKeydown"
             ></div>
             <div class="agents__split-browser" :style="{ width: splitWidth + 'px' }">
+              <KDevicePane
+                v-if="deviceTab"
+                :key="selectedSession.id"
+                :session="selectedSession"
+                :sending="sendingPicks"
+                @send="onSendPicks(selectedSession)"
+              />
               <KBrowserPane
+                v-else
                 :key="selectedSession.id"
                 :session="selectedSession"
                 :sending="sendingPicks"
@@ -504,7 +512,7 @@
         <!-- Desktop: mounted only while this tab is open — the pane parks the native view when it
              unmounts, so every other tab, a deselect and leaving Агенти hide the page. The web
              build has no page to embed: an `agent` session's tab is the preview row and logs. -->
-        <div v-if="detailTab === 'browser' && browserTab && !browserSplit" class="agents__tabpane">
+        <div v-if="detailTab === 'browser' && browserTab && !paneSplit" class="agents__tabpane">
           <KBrowserPane
             v-if="sessionBrowser.available"
             :key="selectedSession.id"
@@ -514,6 +522,16 @@
             @send="onSendPicks(selectedSession)"
           />
           <KPreviewWebPane v-else :key="selectedSession.id" :session="selectedSession" />
+        </div>
+        <!-- A Mobile project's agent session, both builds: mounted only while shown, so the
+             device's screen is watched (and streamed by the api) only then. -->
+        <div v-if="detailTab === 'device' && deviceTab && !paneSplit" class="agents__tabpane">
+          <KDevicePane
+            :key="selectedSession.id"
+            :session="selectedSession"
+            :sending="sendingPicks"
+            @send="onSendPicks(selectedSession)"
+          />
         </div>
         <div v-if="detailTab === 'changes'" class="agents__tabpane agents__changes">
           <div v-if="worktreeGone" class="agents__pane-blank">
@@ -1243,7 +1261,7 @@ import KFilePicker from 'components/kit/KFilePicker.vue';
 import KCheckbox from 'components/kit/KCheckbox.vue';
 import KField from 'components/kit/KField.vue';
 import KSelect from 'components/kit/KSelect.vue';
-import { BRANCH_PREFIXES, platformHasBrowser, prependHelper, type BranchPrefix } from '@kermanych/core';
+import { BRANCH_PREFIXES, platformHasBrowser, platformHasDevice, prependHelper, type BranchPrefix } from '@kermanych/core';
 import { useImageAttach } from '../composables/useImageAttach';
 import { useFileMention } from '../composables/useFileMention';
 import { useNow } from '../composables/useNow';
@@ -1258,6 +1276,7 @@ import { nativeHarnessName, nativeRuntimeFor, sessionCostKnown, sessionLaunchMod
 import KTerminalView from 'components/kit/KTerminalView.vue';
 import KBrowserPane from 'components/kit/KBrowserPane.vue';
 import KPreviewWebPane from 'components/kit/KPreviewWebPane.vue';
+import KDevicePane from 'components/kit/KDevicePane.vue';
 import { previewTabStatus } from '../lib/preview-view';
 import FinishSheet from 'components/agents/FinishSheet.vue';
 import { useSessionBrowser } from 'stores/browser';
@@ -1950,11 +1969,15 @@ function onQaToggle(itemId: string, checked: boolean): void {
   if (task) void board.setQaItemChecked(task.id, itemId, checked);
 }
 
-// ── Detail tabs (Лог / Зміни / Сесія / Документація / QA / Браузер) ─────────
+// ── Detail tabs (Лог / Зміни / Сесія / Документація / QA / Браузер or Пристрій) ─────────
 // The right panel splits the session into these views. The choice is persisted
 // per session (localStorage `kermanych.agents.tab.<id>`) so reopening an agent lands where the
 // operator left it; a fresh session defaults to the log.
 const sessionBrowser = useSessionBrowser();
+const selectedPlatform = computed(() => {
+  const s = selectedSession.value;
+  return s ? store.projects.find((p) => p.id === s.projectId)?.platform : undefined;
+});
 // Whether the selected session has a Браузер tab (docs/specs/2026-11-03-session-browser-
 // preview.md, decisions 8–9): never in a back-end or mobile project; in the desktop app for
 // every session here (a discussion or review fork gets the plain browser, no preview); in the
@@ -1963,11 +1986,18 @@ const sessionBrowser = useSessionBrowser();
 const browserTab = computed(() => {
   const s = selectedSession.value;
   if (!s) return false;
-  const project = store.projects.find((p) => p.id === s.projectId);
-  return platformHasBrowser(project?.platform) && (sessionBrowser.available || s.kind === 'agent');
+  return platformHasBrowser(selectedPlatform.value) && (sessionBrowser.available || s.kind === 'agent');
 });
-// Beside the Лог instead of its own tab (desktop only) — see «Session browser beside the Лог» below.
-const browserSplit = computed(() => browserTab.value && sessionBrowser.available && sessionBrowser.split);
+// A Mobile project's `agent` session has a Пристрій tab in its place, in both builds
+// (docs/specs/2026-11-03-mobile-device-preview.md, decision 8): forks and chats have no device.
+const deviceTab = computed(() => selectedSession.value?.kind === 'agent' && platformHasDevice(selectedPlatform.value));
+// The tab of the pane that can go beside the Лог: the browser's in the desktop app only (the
+// web build's is a note and a link), the device's in both.
+const paneTab = computed<'browser' | 'device' | null>(() =>
+  deviceTab.value ? 'device' : browserTab.value && sessionBrowser.available ? 'browser' : null,
+);
+// Beside the Лог instead of its own tab — see «Session browser beside the Лог» below.
+const paneSplit = computed(() => paneTab.value !== null && sessionBrowser.split);
 const detailTabs = computed(() => {
   const tabs: { value: string; label: string; count?: number; live?: boolean; status?: 'busy' | 'ok' | 'error'; closeLabel?: string }[] = [
     { value: 'log', label: t('agents.tabs.log') },
@@ -1991,7 +2021,7 @@ const detailTabs = computed(() => {
     const live = sessionBrowser.agentLive.has(s.id);
     const status = s.kind === 'agent' ? previewTabStatus(store.previews[s.id]) : undefined;
     const marks = { live, ...(status ? { status } : {}) };
-    if (browserSplit.value) Object.assign(tabs[0]!, marks);
+    if (paneSplit.value) Object.assign(tabs[0]!, marks);
     else
       tabs.push({
         value: 'browser',
@@ -1999,6 +2029,14 @@ const detailTabs = computed(() => {
         ...marks,
         ...(sessionBrowser.states[s.id] ? { closeLabel: t('agents.browser.close') } : {}),
       });
+  }
+  // The Пристрій tab's mark is the preview's too, an app that exited counting as red. It has no
+  // ✕: the device belongs to the preview, which ◼ stops.
+  if (deviceTab.value && s) {
+    const status = previewTabStatus(store.previews[s.id]);
+    const marks = status ? { status } : {};
+    if (paneSplit.value) Object.assign(tabs[0]!, marks);
+    else tabs.push({ value: 'device', label: t('agents.tabs.device'), ...marks });
   }
   return tabs;
 });
@@ -2009,7 +2047,8 @@ watch(
     const saved = id ? localStorage.getItem(`kermanych.agents.tab.${id}`) : null;
     detailTab.value =
       saved === 'changes' || saved === 'session' || saved === 'docs' || saved === 'findings' || saved === 'qa' ||
-      (saved === 'browser' && browserTab.value && !browserSplit.value)
+      (saved === 'browser' && browserTab.value && !paneSplit.value) ||
+      (saved === 'device' && deviceTab.value && !paneSplit.value)
         ? saved
         : 'log';
   },
@@ -2025,22 +2064,27 @@ function onDetailTabClose(tab: string): void {
   if (tab === 'browser' && id) sessionBrowser.close(id);
 }
 
-// ── Session browser beside the Лог («Поруч із логом») ────────────────────────
-// One app-wide preference, toggled from the browser's own toolbar — so the operator is looking
-// at the browser when it flips, and the detail follows it: on, the Браузер tab folds into Лог;
-// off, the page gets its tab back and stays on screen. The seam between log and browser works
-// like the board's (drag or arrow keys), and both halves keep a usable minimum.
+// ── Session browser / device beside the Лог («Поруч із логом») ───────────────
+// One app-wide preference, toggled from the pane's own toolbar — so the operator is looking
+// at the pane when it flips, and the detail follows it: on, the Браузер / Пристрій tab folds
+// into Лог; off, the pane gets its tab back and stays on screen. The seam between log and pane
+// works like the board's (drag or arrow keys), and both halves keep a usable minimum.
 watch(
   () => sessionBrowser.split,
   (on) => {
-    if (!browserTab.value || !sessionBrowser.available) return;
-    if (on && detailTab.value === 'browser') detailTab.value = 'log';
-    else if (!on && detailTab.value === 'log') detailTab.value = 'browser';
+    const tab = paneTab.value;
+    if (!tab) return;
+    if (on && detailTab.value === tab) detailTab.value = 'log';
+    else if (!on && detailTab.value === 'log') detailTab.value = tab;
   },
 );
-// The project switched to back-end or mobile under the open tab: the tab is gone (spec decision 9).
+// The project switched platform under the open tab: the tab is gone (spec decision 9 of the
+// browser preview; decision 8 of the device preview).
 watch(browserTab, (on) => {
   if (!on && detailTab.value === 'browser') detailTab.value = 'log';
+});
+watch(deviceTab, (on) => {
+  if (!on && detailTab.value === 'device') detailTab.value = 'log';
 });
 const MIN_SPLIT_LOG = 360;
 const MIN_SPLIT_BROWSER = 320;
@@ -2066,9 +2110,9 @@ const {
 // Re-clamp whenever the split becomes measurable or its container changes width: the board
 // seam narrows the detail column without a window resize.
 watch(
-  [browserSplit, () => detailTab.value === 'log', () => !!selectedSession.value, detailWidth],
+  [paneSplit, () => detailTab.value === 'log', () => !!selectedSession.value, detailWidth],
   () => {
-    if (browserSplit.value) void nextTick(refreshSplitWidth);
+    if (paneSplit.value) void nextTick(refreshSplitWidth);
   },
 );
 
@@ -3186,7 +3230,7 @@ async function onSend(text: string, images: ImageInput[]): Promise<void> {
 const { send: onSendPicks, sending: sendingPicks } = useSendPicks({
   mode: nextMode,
   onSent: (s) => {
-    if (store.selectedSessionId === s.id && !browserSplit.value) detailTab.value = 'log';
+    if (store.selectedSessionId === s.id && !paneSplit.value) detailTab.value = 'log';
   },
 });
 

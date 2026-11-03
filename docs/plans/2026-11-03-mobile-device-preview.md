@@ -36,7 +36,7 @@ Task document: `docs/specs/2026-11-03-mobile-device-preview.md`. Paths below are
 2. **Device slice.** `DeviceService` (implements `DeviceApi`), the iOS driver (`simctl` +
    serve-sim), the Android driver (`emulator` gRPC + `adb`), clones and the orphan sweep, the local
    registry columns, `http/device.controller.ts`, `ws/device.gateway.ts`, the dependencies, and
-   `asarUnpack`. [ ]
+   `asarUnpack`. [x]
    - Files:
      - `apps/api/src/device/*`, `apps/api/src/http/device.controller.ts`,
        `apps/api/src/ws/device.gateway.ts`;
@@ -50,7 +50,7 @@ Task document: `docs/specs/2026-11-03-mobile-device-preview.md`. Paths below are
    `platform` / `base` on start, `…/preview/app`, the gates through
    `platformHasPreview` / `platformHasDevice`, the `device_*` tools, the pause, the supervisor's
    lifecycle (remove on finish and delete, shutdown on archive, the platform switch), and the
-   `preview-config` skill. [ ]
+   `preview-config` skill. [x]
    - Files:
      - `apps/api/src/preview/*`, `apps/api/src/browser/browser-mcp.service.ts`,
        `apps/api/src/http/sessions.controller.ts`, `apps/api/src/supervisor/supervisor.service.ts`;
@@ -59,7 +59,7 @@ Task document: `docs/specs/2026-11-03-mobile-device-preview.md`. Paths below are
    - Check: api `tsc --noEmit`, `vitest run`.
 4. **UI slice.** The «Пристрій» tab, `KDevicePane` (canvas, input, toolbar, picker, picks),
    `useDeviceStream`, the preview row's device states, device picks in the tray, the platform
-   note, and i18n. [ ]
+   note, and i18n. [x]
    - Files: `apps/ui/src/{components/kit,composables,lib,pages,stores}/…`, i18n,
      `apps/ui/test/*`.
    - Check: ui `vue-tsc`, `vitest run`.

@@ -6,8 +6,8 @@ import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { mkdirSync } from "node:fs";
 import { Subject } from "rxjs";
-import { isThinkingLevel, isAgentRuntime, isNativeHarness, isAgentLanguage, isFindingKind, isPlatform, parseFindingTarget, docsPolicy, combineReportWrites, readMinionResult, isMinionPauseCode, clampMinionCap, MINION_CAP_DEFAULT } from "@kermanych/core";
-import type { AgentFinding, DocsPolicy, FindingReport, FindingTarget, MinionPause, MinionResult, Platform, Project, ResourceDecision, Session, SessionStatus, ThinkingLevel, Usage, AgentRuntimeKind, AgentLanguage, TaskReportsWrite } from "@kermanych/core";
+import { isThinkingLevel, isAgentRuntime, isNativeHarness, isAgentLanguage, isFindingKind, isPlatform, parseFindingTarget, docsPolicy, combineReportWrites, readMinionResult, isMinionPauseCode, clampMinionCap, MINION_CAP_DEFAULT, isDevicePlatform } from "@kermanych/core";
+import type { AgentFinding, DeviceChoice, DocsPolicy, FindingReport, FindingTarget, MinionPause, MinionResult, Platform, Project, ResourceDecision, Session, SessionDevice, SessionStatus, ThinkingLevel, Usage, AgentRuntimeKind, AgentLanguage, TaskReportsWrite } from "@kermanych/core";
 
 // The cached Supabase session. Lives in SQLite so a restarted api still knows who
 // its user is without a cloud round trip.
@@ -110,6 +110,35 @@ function readMinionPause(raw: string | null): MinionPause | undefined {
     return { code: p.code, at: p.at, ...(typeof p.detail === "string" && p.detail ? { detail: p.detail } : {}) };
   } catch {
     return undefined;
+  }
+}
+
+// The `projects.device_choice` column: only the keys of a DeviceChoice with the right types, so a
+// row another version wrote reads as the defaults rather than as a bad choice.
+function readDeviceChoice(raw: string | null): DeviceChoice {
+  if (!raw) return {};
+  try {
+    const c = JSON.parse(raw) as Record<string, unknown> | null;
+    if (!c || typeof c !== "object") return {};
+    return {
+      ...(isDevicePlatform(c.platform) ? { platform: c.platform } : {}),
+      ...(typeof c.ios === "string" && c.ios ? { ios: c.ios } : {}),
+      ...(typeof c.android === "string" && c.android ? { android: c.android } : {}),
+    };
+  } catch {
+    return {};
+  }
+}
+
+// The `sessions.device` column: a SessionDevice, or null for none or a malformed blob.
+function readSessionDevice(raw: string | null): SessionDevice | null {
+  if (!raw) return null;
+  try {
+    const d = JSON.parse(raw) as Record<string, unknown> | null;
+    if (!d || !isDevicePlatform(d.platform) || typeof d.base !== "string" || typeof d.id !== "string" || !d.id) return null;
+    return { platform: d.platform, base: d.base, baseName: typeof d.baseName === "string" ? d.baseName : d.base, id: d.id };
+  } catch {
+    return null;
   }
 }
 
@@ -438,6 +467,21 @@ export class RegistryService {
       } catch {
         /* column already exists */
       }
+    }
+    // Additive migration: the mobile device preview (docs/specs/2026-11-03-mobile-device-preview.md,
+    // decisions 4 and 6). `projects.device_choice` is this machine's JSON DeviceChoice (base device
+    // and platform), `sessions.device` the JSON SessionDevice of the session's clone. Both are local
+    // only: device ids mean nothing on another machine, so no cloud path reads or writes them, and
+    // upsertProject's ON CONFLICT list leaves `device_choice` alone.
+    try {
+      this.db.exec(`ALTER TABLE projects ADD COLUMN device_choice TEXT`);
+    } catch {
+      /* column already exists */
+    }
+    try {
+      this.db.exec(`ALTER TABLE sessions ADD COLUMN device TEXT`);
+    } catch {
+      /* column already exists */
     }
     // The first index in this schema: listSessions(projectId) filters on project_id on
     // every board render and every supervisor lookup.
@@ -1171,5 +1215,27 @@ export class RegistryService {
   setMinionProject(projectId: string, active: boolean): void {
     if (active) this.db.prepare(`INSERT OR IGNORE INTO minion_projects (project_id, activated_at) VALUES (?,?)`).run(projectId, new Date().toISOString());
     else this.db.prepare(`DELETE FROM minion_projects WHERE project_id = ?`).run(projectId);
+  }
+
+  // ── The mobile device preview (local only, decisions 4 and 6) ────────────────
+
+  // An unknown project or a row without a choice reads as {} (the defaults).
+  getDeviceChoice(projectId: string): DeviceChoice {
+    const row = this.db.prepare(`SELECT device_choice FROM projects WHERE id = ?`).get(projectId) as { device_choice: string | null } | undefined;
+    return readDeviceChoice(row?.device_choice ?? null);
+  }
+
+  setDeviceChoice(projectId: string, choice: DeviceChoice): void {
+    this.db.prepare(`UPDATE projects SET device_choice = ? WHERE id = ?`).run(JSON.stringify(choice), projectId);
+  }
+
+  getSessionDevice(sessionId: string): SessionDevice | null {
+    const row = this.db.prepare(`SELECT device FROM sessions WHERE id = ?`).get(sessionId) as { device: string | null } | undefined;
+    return readSessionDevice(row?.device ?? null);
+  }
+
+  // `null` forgets the clone (it was deleted).
+  setSessionDevice(sessionId: string, device: SessionDevice | null): void {
+    this.db.prepare(`UPDATE sessions SET device = ? WHERE id = ?`).run(device ? JSON.stringify(device) : null, sessionId);
   }
 }

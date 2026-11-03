@@ -207,9 +207,9 @@ workspace ──► project ──► task ──► session
   `mobile` — and holds its team. Membership lives here and nowhere else.
 - A **project** is one git repository. It belongs to exactly one workspace and
   has no owner of its own. Its **platform** — Web, Back-end, Mobile or «Не визначено»,
-  picked in «Новий проєкт» and changed in its settings → «Основне» — decides whether its
-  sessions get the [session browser and the live preview](#session-browser): Back-end and
-  Mobile projects have neither.
+  picked in «Новий проєкт» and changed in its settings → «Основне» — decides what its sessions
+  get: Web and «Не визначено» the [session browser and the live preview](#session-browser),
+  Mobile the [device and the live preview](#mobile-device-preview), Back-end neither.
 - A **task** is a card on the shared board. Running one creates a **session** —
   a git worktree plus one `omp` child — on the machine of whoever runs it; see
   [Cloud tasks and local sessions](#cloud-tasks-and-local-sessions).
@@ -970,9 +970,9 @@ In the desktop app every session on «Агенти» has its own browser (specs:
 `docs/specs/2026-11-03-session-browser-preview.md`). It is a real Chromium page. The agent of
 that session drives the same page, and you watch it live. The branch's
 [live preview](#live-preview) runs from the same tab. Only projects whose platform is Web or
-«Не визначено» have it: a Back-end or Mobile project shows no Браузер tab, runs no preview and
-gives its agents no browser tools, and switching a project to one of them stops its previews and
-closes its pages.
+«Не визначено» have it: a Back-end project shows no Браузер tab, runs no preview and gives its
+agents no browser tools; a Mobile project gets the [«Пристрій» tab](#mobile-device-preview)
+instead. Switching a project away from Web stops its web previews and closes its pages.
 
 - **Where it is.** The **Браузер** tab of the session, or — with ◫ **Поруч із логом** in its
   toolbar — beside the Лог behind a draggable seam (the Браузер tab then disappears; ◫ again
@@ -1020,9 +1020,10 @@ closes its pages.
   second `omp --hook`. The endpoint is `POST /api/browser/mcp` on the local API with a
   per-session bearer; a session's calls run one at a time (dialog, console, network and the
   preview tools answer at once). The same server also carries the findings tools
-  `report_finding` and `list_findings` (see «Agent findings» below); a Back-end or Mobile
-  project's sessions get only those. An API started without the desktop app still hands the
-  server out, but it lists only the findings tools and, for agent sessions, the preview tools.
+  `report_finding` and `list_findings` (see «Agent findings» below); a Back-end project's
+  sessions get only those, a Mobile project's get the preview and device tools instead of the
+  browser ones. An API started without the desktop app still hands the server out, but it lists
+  no browser tools.
 - **Cookies** are kept per project (Electron partition `persist:kermanych-browser-<projectId>`):
   sessions of one project share logins, projects do not. The page's user agent carries no
   `Electron/` token. `target=_blank` links load in the same page; a `window.open` popup (an
@@ -1045,7 +1046,8 @@ closes its pages.
 The branch's own app, run from the session directory (the worktree, or the main checkout of an
 in-place session) on free ports, so you see the work in progress without touching your own dev
 servers (spec: `docs/specs/2026-11-03-session-browser-preview.md`). Agent sessions of Web and
-«Не визначено» projects have it, in the **Браузер** tab: a row under the toolbar shows its state
+«Не визначено» projects have it in the **Браузер** tab, Mobile projects in the
+[**Пристрій**](#mobile-device-preview) tab: a row under the toolbar shows its state
 (не налаштоване / setup… / запускається `web`… / працює / впало / зупинене), the services and
 their ports, ▶ / ◼, ↻ (restart), **Логи** and, while the config is missing or broken,
 **Доручити агенту**. A finished session has no worktree, so it has no preview.
@@ -1083,7 +1085,8 @@ their ports, ▶ / ◼, ↻ (restart), **Логи** and, while the config is mis
   port, so `/settings` stays `/settings`. **Логи** opens a panel under the page with one tab per
   step (the last 2 000 lines each); after a failure it opens by itself on the failed step.
 - **Stopping.** ◼, the agent's `preview_stop`, or by itself on «Завершити», closing a merged
-  session, deleting or archiving the session, a switch of the project to Back-end or Mobile, and
+  session, deleting or archiving the session, a switch of the project to a platform the preview
+  does not fit (a web preview on Back-end or Mobile, a device preview off Mobile), and
   quitting the app. Stopping the agent and closing the page (✕) do not stop it. A step that exits
   while the preview runs stops the rest and the row shows «Впало» with its exit code; nothing
   restarts by itself, and the page stays where it was. After an app restart the empty page
@@ -1095,9 +1098,79 @@ their ports, ▶ / ◼, ↻ (restart), **Логи** and, while the config is mis
 - **Not limited.** Previews have no cap: each one runs until it is stopped.
 - **The web build** has no embedded page. Its Браузер tab keeps the row and the logs, ▶ opens
   the preview in a new tab, and ⤤ opens it again.
-- **API.** `GET` / `POST` (`{ restart? }`) / `DELETE /api/sessions/:id/preview`,
-  `GET /api/sessions/:id/preview/logs?step=&since=`, `POST /api/sessions/:id/preview/configure`;
+- **API.** `GET` / `POST` (`{ restart?, platform?, base? }`) / `DELETE /api/sessions/:id/preview`,
+  `GET /api/sessions/:id/preview/logs?step=&since=`, `POST /api/sessions/:id/preview/configure`,
+  `POST /api/sessions/:id/preview/app` (`{ action: "launch" | "terminate" | "restart" }`, Mobile);
   the state is pushed on the socket (`preview_update`, and `previews` in the snapshot).
+
+### Mobile device preview
+
+A Mobile project's agent sessions get a **Пристрій** tab in place of «Браузер» (spec:
+`docs/specs/2026-11-03-mobile-device-preview.md`): the live preview boots the session's own copy
+of an iOS Simulator or an Android Virtual Device without a window, installs the branch's app on
+it and shows the screen live in the tab, in the desktop app and the web build alike.
+
+- **Prerequisites.** Kermanych finds, and never installs: Xcode (`xcode-select -p`) for iOS, the
+  Android SDK (`ANDROID_HOME`, then `ANDROID_SDK_ROOT`, then `~/Library/Android/sdk`) with the
+  emulator and `adb` for Android. A missing one shows in the tab with what to install. iOS runs on
+  Apple Silicon only: the screen and input go through [serve-sim](https://github.com/EvanBacon/serve-sim),
+  pinned in the api's dependencies; `KERMANYCH_SERVE_SIM=/path/to/serve-sim` uses another copy
+  (for an Xcode update that breaks the pinned one). Android uses the emulator's own gRPC API.
+- **The config** is a `device` block in `.kermanych/preview.json`:
+
+  ```json
+  {
+    "setup": "flutter pub get",
+    "services": [{ "name": "app", "device": true, "command": "flutter run -d $DEVICE_ID" }],
+    "device": { "ios": { "app": "com.acme.app" }, "android": { "app": "com.acme.app" } }
+  }
+  ```
+
+  - `device.ios` / `device.android`: `app` is the bundle id or package; `install` (optional) is a
+    command that builds and installs it and must exit 0 within 20 minutes, after which Kermanych
+    launches `app`.
+  - A service with `"device": true` installs and launches the app itself and keeps running
+    (`flutter run`); it is ready once the app's process runs (20 minutes). It and `install` are
+    mutually exclusive. With a `device` block `services` may be empty, and no service may have
+    `"open": true`.
+  - Every step also gets `DEVICE_ID` (the simulator UDID or `emulator-<port>`),
+    `DEVICE_PLATFORM` (`ios` / `android`) and, on Android, `ANDROID_SERIAL`.
+  - A Mobile project's file without a `device` block, or a `device` block in any other project,
+    is shown as invalid. The `preview-config` skill behind **Доручити агенту** covers Flutter,
+    Expo / React Native and native builds, and hot reload (`kill -USR1` of `flutter run`).
+- **Steps:** `device` (copy and boot) → `setup` → services → `install` → launch → **Працює**. The
+  screen shows as soon as the device has booted, so the build and install are visible.
+- **The session's device.** The first start copies the base device (APFS copy-on-write:
+  `simctl clone`, or a clone of the `.avd` directory) into `kermanych-<sessionId>`; the copy keeps
+  the base's sign-ins and apps and lives until «Завершити» or delete (archive keeps it). ◼ shuts
+  it down and keeps its data; ↻ keeps it running and re-runs `setup`, the services, `install` and
+  the launch. Kermanych shuts every device down when it quits; orphan copies are deleted at api
+  start.
+- **Choosing the device.** The toolbar's picker lists this machine's simulators and AVDs; the
+  choice is kept per project on this machine only. Without one, iOS takes the first iPhone of
+  the newest runtime and Android the first AVD by name. A session with a copy keeps its base;
+  choosing another base or platform in its picker asks first, then deletes the copy and makes a
+  new one. A booted base simulator or a running base AVD (Android Studio) cannot be copied: the
+  start says which to close.
+- **Using it.** Click = tap, drag = a live touch, wheel = scroll, typing while the screen has
+  focus (non-ASCII goes through the device clipboard and a paste). The toolbar has Home, Back and
+  Recents (Android), rotate, a PNG screenshot, **◎ Вказати** (the accessibility element under the
+  click with a crop, into the same picks tray as the browser) and **Агент** (pause the agent's
+  device and preview tools).
+- **The app exits** (a crash, or closed): the row turns red with «Застосунок впав» and
+  **Запустити застосунок**; the services and the device keep running. The device's own exit, or a
+  crashed service, stops everything.
+- **Agent tools** (agent sessions of Mobile projects, in both builds): `device_snapshot` (the
+  accessibility tree with `e1`… refs, in points on iOS and pixels on Android), `device_screenshot`
+  (`path` as for `browser_screenshot`), `device_tap` (ref, label / id or `x,y`; a stale ref is
+  refused), `device_swipe`, `device_type`, `device_press`, `device_wait_for`, `device_open_url`,
+  `device_app` (launch / terminate / restart) and `device_rotate`; `preview_start` takes
+  `platform`, and `preview_logs` has the step `device` (the app's log).
+- **Not limited.** Devices have no cap; each costs about 2–3 GB of RAM while booted.
+- **API.** `GET /api/sessions/:id/device`, `PUT /api/projects/:id/device-choice`,
+  `PUT /api/sessions/:id/device/pause`, `POST /api/sessions/:id/device/pick`,
+  `GET /api/sessions/:id/device/screenshot`, and the `/device` socket.io namespace (`watch`,
+  `unwatch`, `input`, `frame`), authenticated like `/terminal`.
 
 ## Designs («Дизайн»)
 
