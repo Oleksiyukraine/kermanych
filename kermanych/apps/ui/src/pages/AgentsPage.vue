@@ -1271,6 +1271,7 @@ import { useVoicePanel } from '../composables/useVoicePanel';
 import { nextMode as modeFor } from '../lib/message-mode';
 import { useOptimisticValue } from '../composables/useOptimisticValue';
 import { useLoadPhase } from '../composables/useLoadPhase';
+import { useTaskDetails } from '../composables/useTaskDetails';
 import { usePending } from 'stores/pending';
 import { needsSignIn } from '../lib/session-auth';
 
@@ -1752,6 +1753,9 @@ const entries = computed<TranscriptEntry[]>(() =>
 const linkedTask = computed(() =>
   selectedSession.value?.taskId ? board.tasks.find((t) => t.id === selectedSession.value!.taskId) : undefined,
 );
+// The board's list carries no QA checklist or «Документація» report; the selected session
+// holds its card so the store reads them.
+useTaskDetails(() => selectedSession.value?.taskId);
 // The card's «Документація» / «Сесія» reports, only when they describe THIS session — a
 // relaunch of the card overwrites them with the newer run's.
 const cardReports = computed(() => ownReports(linkedTask.value, selectedSession.value?.id));
@@ -1926,9 +1930,14 @@ const docsUsedHint = computed(() => t('agents.docs.usedHint'));
 // board dialog uses.
 const qaChecklist = computed(() => linkedTask.value?.qaChecklist);
 const qaDone = computed(() => qaChecklist.value?.items.filter((i) => i.checked).length ?? 0);
-// Not loaded: the session has a card the board has not read yet. A session without a card is
-// «loaded» at once — its empty state is the true answer.
-const qaNotLoaded = computed(() => !!selectedSession.value?.taskId && !linkedTask.value && board.loading);
+// Not loaded: the session has a card the board has not read yet, or whose checklist and
+// reports the store has not read yet. A session without a card is «loaded» at once — its empty
+// state is the true answer.
+const qaNotLoaded = computed(() => {
+  const taskId = selectedSession.value?.taskId;
+  if (!taskId) return false;
+  return linkedTask.value ? !board.detailsLoaded(taskId) : board.loading;
+});
 const qaPhase = useLoadPhase(() => qaNotLoaded.value);
 // «Документація» joins the transcript, the Зміни listing and the card; until the first two
 // have answered its lists are incomplete, so it is a skeleton rather than «немає документів».

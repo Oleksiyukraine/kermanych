@@ -6,8 +6,16 @@ import type { RealtimeChannel, SupabaseClient } from "@supabase/supabase-js";
 import type { Task, TaskInsert, TaskPatch, TaskStatus } from "./types";
 import { isFindingKind, readDocsReport, readSessionReport, type QaChecklist } from "@kermanych/core";
 
-const TASK_COLUMNS =
-  "id, project_id, title, description, status, assignee_id, created_by, model, effort, prefix, kind, branch, worktree, hidden, deep_analysis, auto_run, design, finding_kind, image_paths, jira_key, linear_key, qa_checklist, docs_report, session_report, created_at, updated_at";
+// The board's list shape: every column except the two report blobs. `qa_checklist` and
+// `docs_report` are most of a row's bytes (hundreds of kB per workspace) and only an opened
+// card shows them, so the list, the reconcile and the Realtime binding leave them out and a
+// screen that shows them reads the full row (getTask). `session_report` stays: the minion marks
+// on every card read it. Literal strings, so supabase-js can type the selects; Realtime's
+// `select` takes the same list as an array.
+const TASK_LIST_COLUMNS =
+  "id, project_id, title, description, status, assignee_id, created_by, model, effort, prefix, kind, branch, worktree, hidden, deep_analysis, auto_run, design, finding_kind, image_paths, jira_key, linear_key, session_report, created_at, updated_at";
+const TASK_COLUMNS = `${TASK_LIST_COLUMNS}, qa_checklist, docs_report` as const;
+const TASK_LIST_COLUMN_NAMES = TASK_LIST_COLUMNS.split(", ");
 
 type TaskRow = {
   id: string;
@@ -125,17 +133,50 @@ export function toTaskRow(patch: TaskPatch): Record<string, unknown> {
   return row;
 }
 
+// The board's list: LIGHT rows (TASK_LIST_COLUMNS), so a task here never carries
+// `qaChecklist` or `docsReport` — read those with getTask.
 export async function listTasks(client: SupabaseClient, projectIds: string[]): Promise<Task[]> {
   // `in.()` with an empty list is not valid postgrest syntax, and there is nothing to ask
   // for anyway: a member of no project sees no tasks.
   if (projectIds.length === 0) return [];
   const { data, error } = await client
     .from("tasks")
-    .select(TASK_COLUMNS)
+    .select(TASK_LIST_COLUMNS)
     .in("project_id", projectIds)
     .order("created_at", { ascending: true });
   if (error) throw new Error(error.message);
   return (data as TaskRow[]).map(toTask);
+}
+
+export type TaskVersion = { id: string; updatedAt: string };
+
+// The reconcile's question: which cards exist and when each last changed. ~60 bytes a row
+// instead of a whole row, and `updated_at` is server-owned (tasks_guard sets now() on every
+// update), so a changed card always shows a changed value whatever its writer's clock says.
+export async function listTaskVersions(client: SupabaseClient, projectIds: string[]): Promise<TaskVersion[]> {
+  if (projectIds.length === 0) return [];
+  const { data, error } = await client.from("tasks").select("id, updated_at").in("project_id", projectIds);
+  if (error) throw new Error(error.message);
+  return (data as { id: string; updated_at: string }[]).map((r) => ({ id: r.id, updatedAt: r.updated_at }));
+}
+
+// Ids ride the query string (`id=in.(…)`), 37 characters each; this keeps a request well
+// under the gateway's URL limit when a long sleep left many cards to catch up on.
+const BY_ID_CHUNK = 100;
+
+// LIGHT rows by id, for the reconcile's changed and new cards. Order is not kept: the store
+// sorts. An id this caller can no longer see is simply absent.
+export async function listTasksByIds(client: SupabaseClient, ids: readonly string[]): Promise<Task[]> {
+  const out: Task[] = [];
+  for (let i = 0; i < ids.length; i += BY_ID_CHUNK) {
+    const { data, error } = await client
+      .from("tasks")
+      .select(TASK_LIST_COLUMNS)
+      .in("id", ids.slice(i, i + BY_ID_CHUNK));
+    if (error) throw new Error(error.message);
+    out.push(...(data as TaskRow[]).map(toTask));
+  }
+  return out;
 }
 
 // `undefined` means "no row this caller may see" — either the id does not exist or the
@@ -401,8 +442,8 @@ export async function deleteTask(client: SupabaseClient, id: string): Promise<vo
 // replica identity, NOT a bug in this file: do not "fix" it with `replica identity full`,
 // because RLS is not applied to DELETE events and a full old-image would hand the whole
 // deleted row — title and description — to any non-member subscribed without a filter. The
-// board reconciles instead: a full listTasks refetch on (re)subscribe, on visibilitychange,
-// and on a slow timer (see the board store).
+// board reconciles instead: on (re)subscribe, on visibilitychange and on a slow timer it
+// compares listTaskVersions with what it holds (see the board store).
 export type TaskChange = { kind: "upsert"; task: Task } | { kind: "delete"; taskId: string };
 
 // The four states realtime-js hands to a subscribe() callback.
@@ -436,9 +477,12 @@ export function subscribeTasks(
   // subscribed, and a second identical postgres_changes binding on the same channel is
   // silently dropped. Never call realtime.setAuth here — supabase-js refreshes the socket
   // token itself from onAuthStateChange, and pinning it would disable that.
+  //
+  // `select` restricts every payload to the list columns, the same light row listTasks returns:
+  // the report blobs would otherwise ride each status push to every subscriber.
   channel.on(
     "postgres_changes",
-    { event: "*", schema: "public", table: "tasks", ...(filter ? { filter } : {}) },
+    { event: "*", schema: "public", table: "tasks", select: TASK_LIST_COLUMN_NAMES, ...(filter ? { filter } : {}) },
     (payload) => {
       if (payload.eventType === "DELETE") {
         // `old` carries the primary key ONLY (default replica identity), and DELETE events
@@ -451,6 +495,13 @@ export function subscribeTasks(
       onChange({ kind: "upsert", task: toTask(payload.new as TaskRow) });
     },
   );
+  // A binding the server refuses (a `select` column the role cannot read, a table not in the
+  // publication) still answers SUBSCRIBED; the refusal arrives as a system message and the
+  // channel then delivers nothing. Reported as CHANNEL_ERROR so the board says it is offline
+  // instead of going quietly stale.
+  channel.on("system", {}, (p: { extension?: string; status?: string }) => {
+    if (p.extension === "postgres_changes" && p.status === "error") onState?.("CHANNEL_ERROR");
+  });
 
   channel.subscribe((status) => onState?.(status as TaskChannelState));
 
