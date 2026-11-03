@@ -60,7 +60,7 @@ import {
   deepAnalysisPrompt,
   DEEP_ANALYSIS_SKILL,
   BRANCH_PREFIXES,
-  PLATFORMS,
+  platformHasBrowser,
   type BranchPrefix,
   type StatusState,
   type Project,
@@ -118,6 +118,8 @@ import { BranchNameService, type BranchContext } from "./branch-name.service";
 import { noAskOverlay } from "../minion/ask-overlay";
 import { EnvFileService } from "../env/env-file.service";
 import { GithubClient, GithubHttpError, parseGithubPrUrl, parseGithubRemote, type GithubPull } from "../github/github-client";
+import { PreviewService } from "../preview/preview.service";
+import { PREVIEW_CONFIG_SKILL, previewConfigPrompt } from "../preview/preview-prompt";
 
 // A failed merged-PR check, in the words the UI shows (docs/specs/2026-10-26-pr-merged-close-prompt.md,
 // decision 6). A spent rate limit is a 403 too, so it is read first. `fetch` rejects with a
@@ -348,6 +350,10 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     // (docs/specs/2026-10-26-pr-merged-close-prompt.md, decision 5). Optional so specs construct
     // the supervisor without it — then GitHub is asked anonymously.
     @Optional() private envFile?: EnvFileService,
+    // The live preview (docs/specs/2026-11-03-session-browser-preview.md, decision 7): its state
+    // rides the snapshot and `events$`, and the session lifecycle stops it. Optional so specs
+    // construct the supervisor without it — then no session has a preview.
+    @Optional() private preview?: PreviewService,
   ) {
     this.native?.events$.subscribe((e) => {
       if (e.type === "changed") {
@@ -356,6 +362,8 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
         this.onNativeChange(e.sessionId);
         this.pushUpdate(e.sessionId);
         this.drainSlots();
+        // A native turn's tool calls surface only as these changes.
+        void this.syncBranch(e.sessionId).catch(() => {});
         return;
       }
       if (e.type === "settled") {
@@ -382,6 +390,7 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
       if (this.resources?.active()?.lowerPriority) this.watchdog?.reniceTracked();
     });
     this.watchdog?.events$.subscribe((alert) => this.onMachineAlert(alert));
+    this.preview?.changes$.subscribe(({ sessionId, state }) => this.events.next({ type: "preview_update", sessionId, state }));
   }
 
   private requireNative(): NativeSessionService {
@@ -524,6 +533,7 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
       projects: this.registry.listProjects(),
       sessions: this.registry.listSessions().map((s) => this.merge(s)),
       subagents,
+      previews: this.preview?.states() ?? {},
     };
   }
 
@@ -892,7 +902,7 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     this.events.next({ type: "project_removed", projectId: id });
   }
 
-  async updateProject(id: string, patch: { name?: string; color?: string; previewCommand?: string; apiCommand?: string; carryFiles?: string[]; docFolders?: string[]; docsRequired?: boolean; docsPolicy?: DocsPolicy; defaultBranch?: string; defaultModel?: string; defaultEffort?: ThinkingLevel | ""; conventions?: string }): Promise<Project> {
+  async updateProject(id: string, patch: { name?: string; color?: string; carryFiles?: string[]; docFolders?: string[]; docsRequired?: boolean; docsPolicy?: DocsPolicy; defaultBranch?: string; defaultModel?: string; defaultEffort?: ThinkingLevel | ""; conventions?: string }): Promise<Project> {
     if (patch.name !== undefined) {
       const name = patch.name.trim();
       if (!name) throw new Error("project name cannot be empty");
@@ -925,8 +935,7 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
         workspaceId: c.workspaceId,
         name: c.name,
         color: c.color,
-        previewCommand: c.previewCommand,
-        apiCommand: c.apiCommand,
+        platform: c.platform,
         carryFiles: c.carryFiles,
         docFolders: c.docFolders,
         docsRequired: c.docsRequired,
@@ -937,6 +946,8 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
         conventions: c.conventions,
       });
       this.events.next({ type: "project_update", project });
+      // Back-end and mobile have no preview (decision 9): what runs stops.
+      if (!platformHasBrowser(project.platform)) await this.preview?.stopProject(project.id);
     }
     if (prune) {
       const known = new Set(cloud.map((c) => c.id));
@@ -1087,8 +1098,7 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
       ? this.registry.patchProject(local.id, {
           name: cloudProject.name,
           color: cloudProject.color,
-          previewCommand: cloudProject.previewCommand,
-          apiCommand: cloudProject.apiCommand,
+          platform: cloudProject.platform ?? null,
           carryFiles: cloudProject.carryFiles,
           docsRequired: cloudProject.docsRequired,
           docsPolicy: cloudProject.docsPolicy,
@@ -1098,6 +1108,8 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
           conventions: cloudProject.conventions,
         })
       : local;
+    // The refresh may be the first to see a switch to back-end or mobile (decision 9).
+    if (!platformHasBrowser(project.platform)) await this.preview?.stopProject(project.id);
 
     // The board stores launch params as free text; validate them against the local
     // vocabularies instead of casting, so a bad card cannot produce a bogus branch prefix.
@@ -1109,9 +1121,6 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
       : (BRANCH_PREFIXES as readonly string[]).includes(task.prefix ?? "")
         ? (task.prefix as BranchPrefix)
         : "feature";
-    const platform = (PLATFORMS as readonly string[]).includes(task.platform ?? "")
-      ? (task.platform as Session["platform"])
-      : undefined;
 
     // A shared card must never commandeer another developer's checkout, which is what the
     // hardcoded `true` here used to guarantee. The in-place option is personal, so it
@@ -1153,7 +1162,6 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
       // model left selected from a previous session.
       effort: native ? undefined : task.effort,
       prefix,
-      platform,
       runtime,
       ...(native ? { native: true } : {}),
       // A «Глибокий аналіз» card opens with the wrapped prompt (launch → openingPrompt). The
@@ -1883,6 +1891,7 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
       this.mergeTaskDetails(l, (e as Extract<RpcEvent, { type: "tool_execution_end" }>).result?.details);
       this.emitSubagents(id, l);
     }
+    if (e.type === "tool_execution_end") void this.syncBranch(id).catch(() => {});
     // Progress heartbeat (in-memory) — distinct from last_activity_at, which user sends also
     // bump. The UI uses this to spot a wedged turn. `response` frames are replies to the
     // supervisor's OWN commands (chiefly the 2s get_state poll below), not agent progress:
@@ -2049,6 +2058,8 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
   // — the pushed branch, freshly fetched — has origin's base. A failed fetch leaves the refs the
   // agent's own fetch wrote, so the check still compares against something recent.
   private async checkTurnEnd(id: string, settled: Session["status"], review: boolean): Promise<void> {
+    // Best effort: a branch it could not read must not cost the conflict check below.
+    await this.syncBranch(id).catch(() => {});
     const s = this.registry.listSessions().find((x) => x.id === id);
     const g = s && this.registry.listProjects().find((p) => p.id === s.projectId);
     if (!s || !g || s.kind !== "agent") return;
@@ -2085,6 +2096,22 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
           "warn",
         ),
       );
+  }
+
+  // The agent may rename its branch (`git branch -m`, asked to match the ticket). Its own
+  // worktree is the truth, so the record follows it — the panels show it, and merge, PR and
+  // delete name it. Run after every tool call (a rename is one) and at turn end, so a long
+  // turn does not leave the panels stale. Only a session's own worktree: an agent on the
+  // project checkout has no worktreePath, and a branch there may be the operator's own switch.
+  private async syncBranch(id: string): Promise<void> {
+    const path = this.registry.listSessions().find((x) => x.id === id)?.worktreePath;
+    if (!path) return;
+    const head = await this.worktree.workingBranch(path);
+    // Re-read: the row may have moved (finished, merged) while git ran.
+    const s = this.registry.listSessions().find((x) => x.id === id);
+    if (!head || !s || s.worktreePath !== path || head === s.branch) return;
+    this.registry.updateSession(id, { branch: head });
+    this.pushUpdate(id);
   }
 
   private stopPoll(l: Live) {
@@ -2723,6 +2750,8 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     // Off the slot queue first, so nothing starts it while it is being torn down.
     this.unpark(id);
     await this.endMinionRun(id);
+    // Before the worktree goes: the preview runs in it. PREVIEW_DIR goes too (decision 3).
+    await this.preview?.forget(id);
     const s = this.registry.listSessions().find((x) => x.id === id);
     if (s?.native) await this.native?.stop(id);
     const l = this.map.get(id);
@@ -2772,6 +2801,8 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
       throw new Error("cannot archive an active agent");
     }
     if (archived && s.native && s.kind === "chat") await this.native?.stop(id);
+    // An archived session leaves the board, and its preview with it (decision 7).
+    if (archived) await this.preview?.stop(id);
     this.registry.updateSession(id, { archived });
     this.pushUpdate(id);
   }
@@ -2943,6 +2974,24 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     return { sent: true, failures };
   }
 
+  // «Доручити агенту» (docs/specs/2026-11-03-session-browser-preview.md, decision 4): the same
+  // path as writeDoc, for `.kermanych/preview.json`, with the `preview-config` skill inlined and
+  // the file's current validation error, if any, in the prompt.
+  async configurePreview(id: string): Promise<{ sent: true }> {
+    const s = this.registry.listSessions().find((x) => x.id === id);
+    if (!s) throw new Error("session not found");
+    if (s.kind !== "agent") throw new Error(`only agent sessions can configure the live preview (this is a ${s.kind})`);
+    const config = this.preview?.info(id).config;
+    let block = "";
+    try {
+      block = (await this.skills.assignedForNames(this.aiScope(s.projectId), [PREVIEW_CONFIG_SKILL], s.worktreePath || this.project(s.projectId).localRepoPath)).block;
+    } catch (err) {
+      console.warn(`[supervisor] no preview-config skill for ${id}: ${(err as Error).message}`);
+    }
+    await this.sendAsKermanych(id, previewConfigPrompt(config?.kind === "invalid" ? config.error : undefined) + block, "prompt");
+    return { sent: true };
+  }
+
   // «Написати запит на API» / «Написати хендоф» (Документація tab): one Kermanych prompt for
   // that one document, mid-task, with its resolved skill inlined like completeDocs. Not gated
   // on the project's rules — the operator asked for it by name.
@@ -3072,6 +3121,8 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
 
     // A finished session waits for nothing: its parked calls and pending message go.
     this.unpark(id);
+    // Before the worktree goes: the preview runs in it (decision 7).
+    await this.preview?.retire(id);
     if (s.native) await this.native?.stop(id);
     const l = this.map.get(id);
     if (l) { l.live.status = "stopped"; this.stopPoll(l); await l.rpc.stop(); this.map.delete(id); this.toolDetails.dropSession(id); this.skillLabels.delete(id); }

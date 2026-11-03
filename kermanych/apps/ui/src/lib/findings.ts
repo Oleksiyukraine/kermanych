@@ -19,7 +19,7 @@ export function pickFindingIssueType(types: readonly IssueType[], kind: FindingK
 
 /**
  * The board card a finding becomes. Like the board's own «Нова задача»: the target project's
- * default model and effort, a worktree, no platform; a bug or a vulnerability is a fix, the rest
+ * default model and effort, a worktree; a bug or a vulnerability is a fix, the rest
  * is new work. `findingKind` is always set — it is how a finding-born card is counted later
  * (docs/specs/2026-10-23-minion-auto-run.md, decision 4) — and `autoRun` is the dialog's
  * «Дозволити автовиконання», off unless the operator checks it.

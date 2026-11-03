@@ -79,6 +79,9 @@
       <span v-if="state?.loading" class="k-browser__progress" aria-hidden="true"></span>
     </div>
 
+    <!-- The live preview of an `agent` session (forks get the plain browser). -->
+    <KPreviewRow v-if="preview" :preview="preview" />
+
     <div v-if="findOpen" class="k-browser__find">
       <input
         ref="findEl"
@@ -199,36 +202,40 @@
       </div>
       <img v-else-if="frozen" class="k-browser__frozen" :src="frozen" alt="" />
     </div>
-    <!-- ▶ in the header is starting this session's preview: its first load is on the way. -->
-    <div v-else-if="starting" class="k-browser__empty" aria-live="polite">
-      <KSpinner :size="14" />
-      <p class="k-browser__empty-text">{{ t('agents.preview.loadingText') }}</p>
-    </div>
-    <!-- Until main has answered whether a view (and a last address) exists, «ще немає відкритої
-         сторінки» would be a guess. -->
+    <!-- Until main has answered whether a view (and a last address) exists — and, for a session
+         with a preview, whether its config is valid — the empty pane's offer would be a guess. -->
     <div v-else-if="emptyPhase !== 'ready'" class="k-browser__empty">
       <KSkeleton v-if="emptyPhase === 'skeleton'" variant="lines" :rows="3" width="320px" />
     </div>
     <div v-else class="k-browser__empty">
       <p class="k-browser__empty-text">{{ t('agents.browser.empty') }}</p>
-      <template v-if="lastUrl">
-        <KBtn
-          variant="primary"
-          :loading="opening === lastUrl"
-          :disabled="opening !== null"
-          @click="openUrl(lastUrl)"
-        >{{ t('agents.browser.reopen') }}</KBtn>
-        <span class="k-browser__empty-url mono" v-tip="lastUrl">{{ lastUrl }}</span>
-      </template>
       <KBtn
         v-if="previewUrl"
-        :variant="lastUrl ? 'secondary' : 'primary'"
+        variant="primary"
         :loading="opening === previewUrl"
         :disabled="opening !== null"
-        @click="openUrl(previewUrl)"
-      >{{ t('agents.browser.openPreview') }}</KBtn>
-      <p v-if="!lastUrl && !previewUrl" class="k-browser__empty-hint">{{ t('agents.browser.emptyHint') }}</p>
+        @click="openUrl(previewUrl, true)"
+      >{{ t('agents.preview.open') }}</KBtn>
+      <KBtn
+        v-else-if="canStart"
+        variant="primary"
+        :loading="starting"
+        :disabled="opening !== null"
+        @click="preview?.start()"
+      >{{ t('agents.preview.start') }}</KBtn>
+      <template v-if="reopenUrl">
+        <KBtn
+          :variant="previewUrl || canStart ? 'secondary' : 'primary'"
+          :loading="opening === reopenUrl"
+          :disabled="opening !== null"
+          @click="openUrl(reopenUrl)"
+        >{{ t('agents.browser.reopen') }}</KBtn>
+        <span class="k-browser__empty-url mono" v-tip="reopenUrl">{{ reopenUrl }}</span>
+      </template>
+      <p v-if="!previewUrl && !canStart && !reopenUrl" class="k-browser__empty-hint">{{ t('agents.browser.emptyHint') }}</p>
     </div>
+
+    <KPreviewLogs v-if="preview && logsOpen" :session-id="session.id" :preview="preview" @resizing="logsResizing = $event" />
 
     <!-- HTTP sign-in (basic/digest, a proxy). A KModal is role="dialog", so opening it parks
          the view by itself (useOverlayOpen); closing it any way but «Увійти» cancels. -->
@@ -254,24 +261,27 @@
 
 <script setup lang="ts">
 // The session browser of a session (docs/specs/2026-10-05-embedded-browser.md): a toolbar,
-// the find / page-dialog bars, the operator's picks tray, and a placeholder box the session's
-// Electron WebContentsView is laid over. Desktop only — the parent renders it only when
-// `window.kermanych.browser` exists, either as the Браузер tab or beside the Лог («Поруч із
-// логом», stores/browser.ts `split`).
+// the live-preview row and its logs panel (an `agent` session's only;
+// docs/specs/2026-11-03-session-browser-preview.md), the find / page-dialog bars, the
+// operator's picks tray, and a placeholder box the session's Electron WebContentsView is laid
+// over. Desktop only — the parent renders it only when `window.kermanych.browser` exists,
+// either as the Браузер tab or beside the Лог («Поруч із логом», stores/browser.ts `split`).
 //
 // The native view is painted above the whole DOM, so this component owns when it shows: it
 // reports the placeholder's bounds while mounted and nothing covers it, and parks the view
 // (`hide`) when an overlay opens (useOverlayOpen) or the parent holds it (`hold`: a seam
-// drag, whose pointer would otherwise vanish into the page), when the page failed to load,
-// and when the pane unmounts — the parent unmounts it on every other tab, with no session,
-// and when the route leaves Агенти. An overlay or a hold parks it with a still frame of the
-// page in the box, so the pane does not blink empty for every menu; the rest park it plainly.
+// drag, whose pointer would otherwise vanish into the page — the logs panel's seam holds it
+// the same way), when the page failed to load, and when the pane unmounts — the parent
+// unmounts it on every other tab, with no session, and when the route leaves Агенти. An
+// overlay or a hold parks it with a still frame of the page in the box, so the pane does not
+// blink empty for every menu; the rest park it plainly.
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import type { Session } from '@kermanych/core';
 import KBtn from './KBtn.vue';
 import KSkeleton from './KSkeleton.vue';
-import KSpinner from './KSpinner.vue';
+import KPreviewLogs from './KPreviewLogs.vue';
+import KPreviewRow from './KPreviewRow.vue';
 import KChipSelect from './KChipSelect.vue';
 import KField from './KField.vue';
 import KFullscreenButton from './KFullscreenButton.vue';
@@ -283,16 +293,16 @@ import { useOverlayOpen } from '../../composables/useOverlayOpen';
 import { errorText, useAsyncAction } from '../../composables/useAsyncAction';
 import { useOptimisticValue } from '../../composables/useOptimisticValue';
 import { useLoadPhase } from '../../composables/useLoadPhase';
+import { useSessionPreview } from '../../composables/useSessionPreview';
 import { PENDING_TIMEOUT_MS } from 'stores/pending';
 import { addressToUrl } from '../../lib/browser-url';
 
-// `starting`: the parent is starting this session's preview (▶), whose first load lands here —
-// the empty pane says so instead of «ще немає відкритої сторінки». `splittable`: the host page
-// has a Браузер tab that ◫ «Поруч із логом» can move beside the Лог; the «Дизайн» page lays the
-// pane beside its log already and has no such tab, so it hides the toggle.
+// `splittable`: the host page has a Браузер tab that ◫ «Поруч із логом» can move beside the Лог;
+// the «Дизайн» page lays the pane beside its log already and has no such tab, so it hides the
+// toggle.
 const props = withDefaults(
-  defineProps<{ session: Session; sending: boolean; hold?: boolean; starting?: boolean | undefined; splittable?: boolean }>(),
-  { hold: false, starting: false, splittable: true },
+  defineProps<{ session: Session; sending: boolean; hold?: boolean; splittable?: boolean }>(),
+  { hold: false, splittable: true },
 );
 const emit = defineEmits<{ send: [] }>();
 
@@ -304,7 +314,13 @@ const bridge = window.kermanych!.browser!;
 
 const state = computed(() => browser.states[props.session.id]);
 const picks = computed(() => browser.picks[props.session.id] ?? []);
-const previewUrl = computed(() => store.previews[props.session.id]);
+// Only `agent` sessions have a preview (spec decision 8). The pane is keyed by the session, so
+// its kind never changes under it.
+const preview = props.session.kind === 'agent' ? useSessionPreview(() => props.session) : null;
+const previewUrl = computed(() => preview?.url.value ?? null);
+const logsOpen = computed(() => preview?.logsOpen.value ?? false);
+// The logs panel's seam is being dragged: the page is parked like for the parent's `hold`.
+const logsResizing = ref(false);
 const agentLive = computed(() => browser.agentLive.has(props.session.id));
 const externalUrl = computed(() => (state.value && /^https?:/i.test(state.value.url) ? state.value.url : ''));
 
@@ -527,8 +543,9 @@ const retryAction = useAsyncAction(async () => {
 
 // ── Empty state ──────────────────────────────────────────────────────────
 // Where the session's browser was before it closed (an idle close, an app restart): offered
-// as the way back. Asked again whenever the view goes away.
-const lastUrl = ref<string | null>(null);
+// as the way back. Asked again whenever the view goes away. `preview`: it is on the origin of
+// the session's last live preview.
+const lastUrl = ref<{ url: string; preview: boolean } | null>(null);
 // The last address has been asked for and answered since the view last went away.
 const lastUrlKnown = ref(false);
 watch(
@@ -540,8 +557,8 @@ watch(
     lastUrlKnown.value = false;
     void bridge
       .lastUrl(props.session.id)
-      .then((url) => {
-        lastUrl.value = url;
+      .then((last) => {
+        lastUrl.value = last;
       })
       .catch(() => {
         lastUrl.value = null;
@@ -553,18 +570,34 @@ watch(
   { immediate: true },
 );
 // Whether main has answered the mount's state query (`refreshed`) — a view may exist that this
-// window has not heard of yet. Until both answers are in, the empty pane is a skeleton.
+// window has not heard of yet. Until every answer is in (the preview config too, for a session
+// that has one), the empty pane is a skeleton.
 const refreshed = ref(false);
-const emptyPhase = useLoadPhase(() => !refreshed.value || !lastUrlKnown.value);
+const emptyPhase = useLoadPhase(
+  () => !refreshed.value || !lastUrlKnown.value || (!!preview && preview.config.value === undefined && preview.configError.value === null),
+);
+// The empty pane's offers (spec decisions 6–7): «Відкрити превʼю» while it runs; else
+// «Запустити превʼю» when the file is valid (spinning while it starts — by the row's ▶, this
+// button or the agent); «Відкрити знову» for an ordinary last address. A last address on a
+// dead preview origin is not offered: starting the preview brings the page back there, path
+// kept.
+const starting = computed(() => !!preview && (preview.startAction.busy.value || preview.state.value?.phase === 'starting'));
+const canStart = computed(() => !!preview && (preview.configOk.value || starting.value));
+const reopenUrl = computed(() => {
+  const last = lastUrl.value;
+  if (!last) return null;
+  return last.preview && (previewUrl.value || canStart.value) ? null : last.url;
+});
 
 // «Відкрити знову» / «Відкрити превʼю»: the pressed button spins until the first state push
 // (the pane then shows the page) or main refuses the load. One at a time.
 const opening = ref<string | null>(null);
-async function openUrl(url: string): Promise<void> {
+async function openUrl(url: string, asPreview = false): Promise<void> {
   if (opening.value) return;
   opening.value = url;
   try {
-    await Promise.race([navigate(url), nextState()]);
+    const load = asPreview ? browser.openPreview(props.session.id, props.session.projectId, url) : navigate(url);
+    await Promise.race([load, nextState()]);
   } finally {
     opening.value = null;
   }
@@ -660,7 +693,7 @@ function park(freeze: boolean): void {
 function sync(): void {
   const el = viewEl.value;
   if (!el || failed.value) return park(false);
-  if (overlayOpen.value || props.hold) return park(true);
+  if (overlayOpen.value || props.hold || logsResizing.value) return park(true);
   const r = el.getBoundingClientRect();
   const bounds = { x: Math.round(r.left), y: Math.round(r.top), width: Math.round(r.width), height: Math.round(r.height) };
   if (bounds.width < 1 || bounds.height < 1) return park(false);
@@ -679,7 +712,7 @@ watch(viewEl, (el, old) => {
   if (el) resize.observe(el);
   sync();
 }, { flush: 'post' });
-watch([overlayOpen, () => props.hold, failed, fullscreen], () => sync(), { flush: 'post' });
+watch([overlayOpen, () => props.hold, logsResizing, failed, fullscreen], () => sync(), { flush: 'post' });
 
 let offShortcut: (() => void) | undefined;
 onMounted(() => {

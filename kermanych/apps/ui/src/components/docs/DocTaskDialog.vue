@@ -78,7 +78,7 @@ import { useProjects } from 'stores/projects';
 import { useBoard } from 'stores/board';
 import { api } from '../../lib/api';
 import { handleOf } from '../../lib/members';
-import { docTaskPlatform, docTaskScreensDir, docTaskTargets, docTaskTitle } from '../../lib/doc-task';
+import { docTaskScreensDir, docTaskTargets, docTaskTitle } from '../../lib/doc-task';
 import { readDesignScreens } from '../../lib/design-screens';
 import { errorText } from '../../composables/useAsyncAction';
 import { useLoadPhase } from '../../composables/useLoadPhase';
@@ -214,12 +214,11 @@ async function copy(): Promise<void> {
 }
 
 // A card like the board's own «Нова задача»: the target project's default model and effort,
-// unassigned unless picked. The platform comes from the document when it decides one.
+// unassigned unless picked.
 async function submit(): Promise<void> {
   const target = projects.byId.get(project.value);
   const name = title.value.trim();
   if (!target || !name || busy.value) return;
-  const platform = docTaskPlatform(props.path);
   busy.value = true;
   error.value = null;
   try {
@@ -230,7 +229,6 @@ async function submit(): Promise<void> {
         description: description.value,
         prefix: 'feature',
         worktree: true,
-        ...(platform ? { platform } : {}),
         ...(target.defaultModel ? { model: target.defaultModel } : {}),
         ...(target.defaultEffort ? { effort: target.defaultEffort } : {}),
         ...(assignee.value ? { assigneeId: assignee.value } : {}),

@@ -49,8 +49,7 @@ const projectRow = {
   name: "Acme",
   git_remote_url: "git@github.com:acme/web.git",
   conventions: null,
-  preview_command: "pnpm dev",
-  api_command: null,
+  platform: "web",
   default_branch: "main",
   default_model: "claude-opus-4-1",
   default_effort: "high",
@@ -82,7 +81,7 @@ describe("listProjects", () => {
       id: "p1",
       name: "Acme",
       gitRemoteUrl: "git@github.com:acme/web.git",
-      previewCommand: "pnpm dev",
+      platform: "web",
       defaultBranch: "main",
       defaultModel: "claude-opus-4-1",
       defaultEffort: "high",
@@ -106,7 +105,7 @@ describe("listProjects", () => {
     await listProjects(client);
     expect(queries[0]!.ops[0]).toEqual([
       "select",
-      "id, name, workspace_id, git_remote_url, conventions, preview_command, api_command, default_branch, default_model, default_effort, carry_files, env_keys, color, doc_folders, docs_required, docs_policy, created_at",
+      "id, name, workspace_id, git_remote_url, conventions, platform, default_branch, default_model, default_effort, carry_files, env_keys, color, doc_folders, docs_required, docs_policy, created_at",
     ]);
   });
 
@@ -115,6 +114,13 @@ describe("listProjects", () => {
     const [p] = await listProjects(client);
     expect(p!.carryFiles).toEqual([".env"]);
     expect(p!.envKeys).toEqual([]);
+  });
+
+  // No CHECK on the column (20261103090000): a value this build does not know is «Не визначено».
+  it("reads an unknown platform as absent", async () => {
+    const { client } = fakeClient({ data: [{ ...projectRow, platform: "desktop" }], error: null });
+    const [p] = await listProjects(client);
+    expect(p).not.toHaveProperty("platform");
   });
 
   it("throws the postgrest message so the UI can toast an RLS refusal", async () => {
@@ -172,7 +178,7 @@ describe("createProject", () => {
       workspaceId: "w1",
       carryFiles: [".env"],
       color: "#ff563c",
-      previewCommand: "pnpm dev",
+      platform: "backend",
       defaultBranch: "dev",
       conventions: "   ",
       defaultModel: "claude-opus-4-1",
@@ -187,7 +193,7 @@ describe("createProject", () => {
         workspace_id: "w1",
         carry_files: [".env"],
         color: "#ff563c",
-        preview_command: "pnpm dev",
+        platform: "backend",
         default_branch: "dev",
         default_model: "claude-opus-4-1",
         default_effort: "high",
@@ -201,13 +207,19 @@ describe("patchProject", () => {
   it("sends only the provided columns, snake-cased, emptied strings as null", async () => {
     const { client, queries } = fakeClient({ data: projectRow, error: null });
 
-    await patchProject(client, "p1", { name: " New ", conventions: "   ", envKeys: ["A", "B"], previewCommand: "pnpm dev", defaultModel: "  ", defaultEffort: "" });
+    await patchProject(client, "p1", { name: " New ", conventions: "   ", envKeys: ["A", "B"], platform: "mobile", defaultModel: "  ", defaultEffort: "" });
 
     expect(queries[0]!.ops[0]).toEqual([
       "update",
-      { name: "New", conventions: null, env_keys: ["A", "B"], preview_command: "pnpm dev", default_model: null, default_effort: null },
+      { name: "New", conventions: null, env_keys: ["A", "B"], platform: "mobile", default_model: null, default_effort: null },
     ]);
     expect(queries[0]!.ops[1]).toEqual(["eq", "id", "p1"]);
+  });
+
+  it("clears the platform to null with an empty string", async () => {
+    const { client, queries } = fakeClient({ data: projectRow, error: null });
+    await patchProject(client, "p1", { platform: "" });
+    expect(queries[0]!.ops[0]).toEqual(["update", { platform: null }]);
   });
 
   it("moves a project by patching workspace_id", async () => {
@@ -238,7 +250,7 @@ describe("doc_folders mapping", () => {
   it("maps a doc_folders row to docFolders", () => {
     const p = toCloudProject({
       id: "p1", name: "P", workspace_id: "w1", git_remote_url: null,
-      conventions: null, preview_command: null, api_command: null,
+      conventions: null, platform: null,
       default_branch: null, default_model: null, default_effort: null,
       carry_files: [".env"], env_keys: [], color: null,
       doc_folders: ["docs", "packages/core/docs"], docs_required: false, docs_policy: {}, created_at: "t",
@@ -249,7 +261,7 @@ describe("doc_folders mapping", () => {
   it("defaults a null doc_folders to []", () => {
     const p = toCloudProject({
       id: "p1", name: "P", workspace_id: "w1", git_remote_url: null,
-      conventions: null, preview_command: null, api_command: null,
+      conventions: null, platform: null,
       default_branch: null, default_model: null, default_effort: null,
       carry_files: null, env_keys: null, color: null,
       doc_folders: null, docs_required: null, docs_policy: null, created_at: "t",

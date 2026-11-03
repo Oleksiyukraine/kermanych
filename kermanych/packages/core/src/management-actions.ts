@@ -47,7 +47,6 @@ import {
 import { isReleaseDate, RELEASE_GROUPINGS, type ReleaseGrouping } from "./release-notes";
 import type { Usage } from "./types";
 import type { Locale, ManagementRejection, Notice } from "./i18n-codes";
-import { PLATFORMS, type Platform } from "./platform";
 import { BRANCH_PREFIXES, type BranchPrefix } from "./worktree-names";
 
 // The fence info string. Distinct from `json` on purpose: a model quoting example JSON in
@@ -235,17 +234,16 @@ export type ManagementAction =
   // block — `tasks.assignee_id` is a profile uuid, and a guessed one is either a
   // foreign-key error or, worse, somebody else's queue.
   //
-  // `prefix` and `platform` are the two launch hints a manager legitimately knows (this is
-  // a fix, this is mobile). Everything else the board's own form offers — model, effort,
-  // base branch, worktree — is a launch decision, which is exactly the kind of technical
-  // decision a ticket from this surface must not carry.
+  // `prefix` is the one launch hint a manager legitimately knows (this is a fix). Everything
+  // else the board's own form offers — model, effort, base branch, worktree — is a launch
+  // decision, which is exactly the kind of technical decision a ticket from this surface must
+  // not carry. The platform belongs to the project, not to a card.
   | {
       kind: "ticket.create";
       project: string;
       ticket: ManagementTicketFields;
       assignee?: string;
       prefix?: BranchPrefix;
-      platform?: Platform;
       // NAMES of the operator's attached files, accepted here and honoured NOWHERE: `tasks`
       // has no attachment storage, so a card on this board cannot carry a file. It is parsed
       // rather than dropped because dropping it is silent — the operator asked for a ticket
@@ -1199,8 +1197,8 @@ export function validateManagementAction(raw: unknown): ManagementAction | { err
       };
     const a: ManagementTicketCreate = { kind: "ticket.create", project, ticket };
     if (assignee !== undefined) a.assignee = assignee;
-    // The two launch hints a manager legitimately knows. Validated against the same core
-    // constants the board's own form offers, so a value Postgres would happily store but no
+    // The one launch hint a manager legitimately knows. Validated against the same core
+    // constant the board's own form offers, so a value Postgres would happily store but no
     // screen can render is refused here with the list attached.
     if (has(o, "prefix")) {
       if (!BRANCH_PREFIXES.includes(o.prefix as BranchPrefix))
@@ -1212,17 +1210,6 @@ export function validateManagementAction(raw: unknown): ManagementAction | { err
           },
         };
       a.prefix = o.prefix as BranchPrefix;
-    }
-    if (has(o, "platform")) {
-      if (!PLATFORMS.includes(o.platform as Platform))
-        return {
-          error: {
-            text: `невідома платформа ${JSON.stringify(o.platform)} (${PLATFORMS.join(", ")})`,
-            code: "ticket_platform_unknown",
-            params: { value: JSON.stringify(o.platform), allowed: PLATFORMS.join(", ") },
-          },
-        };
-      a.platform = o.platform as Platform;
     }
     if (attached !== undefined) a.attachments = attached;
     return a;

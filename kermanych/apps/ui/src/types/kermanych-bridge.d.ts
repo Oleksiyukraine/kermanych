@@ -78,6 +78,9 @@ declare global {
     hide: (opts?: { freeze?: boolean }) => Promise<string | null>;
     // Rejects with the load error; the pane also gets it as `state.error`.
     navigate: (sessionId: string, projectId: string, url: string) => Promise<void>;
+    // Open the session's live preview at `url` (creating the view on first use). A page on the
+    // previous preview's origin keeps its path on the new one; never takes the keyboard.
+    openPreview: (sessionId: string, projectId: string, url: string) => Promise<void>;
     back: (sessionId: string) => void;
     forward: (sessionId: string) => void;
     reload: (sessionId: string) => void;
@@ -99,7 +102,8 @@ declare global {
     // Current state, or null when the session has no browser yet.
     state: (sessionId: string) => Promise<KermanychBrowserState | null>;
     // The URL the session's browser was last at (kept across restarts and idle closes), or null.
-    lastUrl: (sessionId: string) => Promise<string | null>;
+    // `preview`: it is on the origin of the session's last live preview.
+    lastUrl: (sessionId: string) => Promise<{ url: string; preview: boolean } | null>;
     // Every state change of every session's browser; returns the unsubscribe.
     onState: (cb: (state: KermanychBrowserState) => void) => () => void;
     // A session's browser was closed (deleted session, idle close, the operator's ✕); its state is gone.

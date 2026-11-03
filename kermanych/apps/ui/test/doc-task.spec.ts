@@ -1,12 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import {
-  canTaskFromDoc,
-  docTaskPlatform,
-  docTaskScreensDir,
-  docTaskTargets,
-  docTaskTitle,
-  isDesignReadme,
-} from '../src/lib/doc-task';
+import { canTaskFromDoc, docTaskScreensDir, docTaskTargets, docTaskTitle, isDesignReadme } from '../src/lib/doc-task';
 
 const README = 'docs/design/2026-10-29-orders-list/README.md';
 
@@ -29,14 +22,6 @@ describe('canTaskFromDoc', () => {
     expect(canTaskFromDoc('docs/specs/2026-10-01-orders.md')).toBe(false);
     expect(canTaskFromDoc('docs/design/2026-10-29-orders-list/screens/list-empty@390.png')).toBe(false);
   });
-});
-
-describe('docTaskPlatform', () => {
-  it('is backend for an API request and web for a design', () => {
-    expect(docTaskPlatform('docs/api-requests/2026-10-01-orders.md')).toBe('backend');
-    expect(docTaskPlatform(README)).toBe('web');
-  });
-  it('is left to the operator for a handoff', () => expect(docTaskPlatform('docs/handoffs/x.md')).toBeUndefined());
 });
 
 describe('docTaskTitle', () => {

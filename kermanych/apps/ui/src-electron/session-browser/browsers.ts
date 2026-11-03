@@ -44,7 +44,7 @@ import type {
   BrowserTarget,
   BrowserViewport,
 } from '@kermanych/api';
-import { isExternalScheme, navigationAllowed, normalizeUrl } from '../../src/lib/browser-url';
+import { httpOrigin, isExternalScheme, navigationAllowed, normalizeUrl, previewDestination } from '../../src/lib/browser-url';
 import * as actions from './actions';
 import { cdp, run } from './cdp';
 import { PICKER_SCRIPT, type PickResult } from './scripts';
@@ -136,6 +136,11 @@ export class SessionBrowsers implements BrowserHost {
   // sessionId → the last http(s) URL its browser was at, kept in userData across restarts and
   // idle closes so the pane and the agent can go back there.
   private readonly lastUrls = new Map<string, string>();
+  // sessionId → the origin of the live preview opened last (openPreview), kept in the same file:
+  // the next preview keeps the path of a page on it, and the empty pane offers «Запустити превʼю»
+  // instead of «Відкрити знову» for a last URL on it (docs/specs/2026-11-03-session-browser-
+  // preview.md, decision 7).
+  private readonly previewOrigins = new Map<string, string>();
   private readonly lastUrlsFile = path.join(app.getPath('userData'), 'session-browser.json');
   private readonly lastUrlsLoaded: Promise<void>;
   private lastUrlsTimer: NodeJS.Timeout | undefined;
@@ -256,14 +261,38 @@ export class SessionBrowsers implements BrowserHost {
     return this.agent(target, (v) => actions.evaluate(v, expression));
   }
 
+  // Not an agent tool: the api opens a preview that became running (started by the operator or
+  // the agent), and the renderer's «Відкрити превʼю». So the agent pause does not apply, and the
+  // load never takes the keyboard (the agent-load focus guard). The page — or, with none, the
+  // last address — keeps its path when it is on the previous preview's origin.
+  async openPreview(target: BrowserTarget, url: string): Promise<void> {
+    const href = normalizeUrl(url);
+    await this.lastUrlsLoaded;
+    const { sessionId } = target;
+    const current = this.views.get(sessionId)?.wc.getURL() || this.lastUrls.get(sessionId);
+    const destination = previewDestination(current, this.previewOrigins.get(sessionId), href);
+    const origin = httpOrigin(href);
+    if (origin && this.previewOrigins.get(sessionId) !== origin) {
+      this.previewOrigins.set(sessionId, origin);
+      this.saveLastUrls();
+    }
+    await this.load(this.ensure(sessionId, target.projectId), destination, true);
+  }
+
+  isPaused(sessionId: string): boolean {
+    return this.views.get(sessionId)?.agentPaused ?? false;
+  }
+
   has(sessionId: string): boolean {
     return this.views.has(sessionId);
   }
 
-  // The session was deleted: everything of its browser goes, temp files and last URL included.
+  // The session was deleted: everything of its browser goes, temp files, last URL and preview
+  // origin included.
   close(sessionId: string): void {
     this.teardown(sessionId);
-    if (this.lastUrls.delete(sessionId)) this.saveLastUrls();
+    const forgot = this.lastUrls.delete(sessionId);
+    if (this.previewOrigins.delete(sessionId) || forgot) this.saveLastUrls();
     void rm(tempDir(sessionId), { recursive: true, force: true }).catch(() => {});
   }
 
@@ -480,9 +509,15 @@ export class SessionBrowsers implements BrowserHost {
       const v = this.views.get(sessionId);
       return v ? this.state(v) : null;
     });
-    ipcMain.handle('kermanych:browser:last-url', async (_e, sessionId: string) => {
+    ipcMain.handle('kermanych:browser:open-preview', (_e, sessionId: string, projectId: string, url: string) =>
+      this.openPreview({ sessionId, projectId }, url),
+    );
+    ipcMain.handle('kermanych:browser:last-url', async (_e, sessionId: string): Promise<{ url: string; preview: boolean } | null> => {
       await this.lastUrlsLoaded;
-      return this.lastUrls.get(sessionId) ?? null;
+      const url = this.lastUrls.get(sessionId);
+      if (!url) return null;
+      const origin = this.previewOrigins.get(sessionId);
+      return { url, preview: !!origin && httpOrigin(url) === origin };
     });
   }
 
@@ -1016,17 +1051,24 @@ export class SessionBrowsers implements BrowserHost {
     this.lastUrlsTimer = setTimeout(() => {
       void (async () => {
         await this.lastUrlsLoaded;
-        await writeFile(this.lastUrlsFile, JSON.stringify(Object.fromEntries(this.lastUrls))).catch(() => {});
+        const saved: Record<string, { url?: string; preview?: string }> = {};
+        for (const [sessionId, url] of this.lastUrls) saved[sessionId] = { url };
+        for (const [sessionId, preview] of this.previewOrigins) saved[sessionId] = { ...saved[sessionId], preview };
+        await writeFile(this.lastUrlsFile, JSON.stringify(saved)).catch(() => {});
       })();
     }, LAST_URLS_WRITE_MS);
   }
 
+  // `{ [sessionId]: { url, preview } }`; a bare URL string is the shape before preview origins
+  // were kept.
   private async loadLastUrls(): Promise<void> {
     try {
       const saved = JSON.parse(await readFile(this.lastUrlsFile, 'utf8')) as Record<string, unknown>;
-      for (const [sessionId, url] of Object.entries(saved)) {
-        // A URL recorded since startup is newer than the file's.
+      for (const [sessionId, entry] of Object.entries(saved)) {
+        const { url, preview } = typeof entry === 'string' ? { url: entry, preview: undefined } : ((entry ?? {}) as { url?: unknown; preview?: unknown });
+        // What was recorded since startup is newer than the file's.
         if (typeof url === 'string' && !this.lastUrls.has(sessionId)) this.lastUrls.set(sessionId, url);
+        if (typeof preview === 'string' && !this.previewOrigins.has(sessionId)) this.previewOrigins.set(sessionId, preview);
       }
     } catch {
       // No file yet (first run) or an unreadable one: start empty.

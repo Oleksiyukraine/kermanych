@@ -146,12 +146,14 @@ function bind(registry: RegistryService, localRepoPath = "/tmp/proj"): void {
     name: "stale local name",
     localRepoPath,
     carryFiles: [".env"],
+    platform: "backend",
     createdAt: NOW,
   });
   cloudProjects.push({
     id: PROJECT,
     name: "kermanych",
     carryFiles: [".env", ".env.local"],
+    platform: "web",
     envKeys: ["GITHUB_TOKEN"],
     docFolders: [],
     docsRequired: false,
@@ -303,7 +305,6 @@ describe("createSessionFromTask", () => {
       assigneeId: USER,
       model: "opus-5",
       prefix: "fix",
-      platform: "web",
       branch: "release/2026-08",
     });
 
@@ -313,7 +314,6 @@ describe("createSessionFromTask", () => {
     expect(session.task).toBe("wire GitHub OAuth");
     expect(session.model).toBe("opus-5");
     expect(session.prefix).toBe("fix");
-    expect(session.platform).toBe("web");
     expect(session.kind).toBe("agent");
     expect(session.branch).toBe("fix/add-login");
     expect(session.baseBranch).toBe("release/2026-08");
@@ -326,6 +326,9 @@ describe("createSessionFromTask", () => {
     expect(local.name).toBe("kermanych");
     expect(local.carryFiles).toEqual([".env", ".env.local"]);
     expect(local.localRepoPath).toBe("/tmp/proj");
+    // The platform is the project's (docs/specs/2026-11-03-session-browser-preview.md, decision 9).
+    expect(local.platform).toBe("web");
+    expect(session).not.toHaveProperty("platform");
   });
 
   it("names the branch from the task through the namer, under the card's prefix", async () => {
@@ -353,13 +356,12 @@ describe("createSessionFromTask", () => {
   it("falls back to the task title and safe launch defaults", async () => {
     const { sup, registry } = make();
     bind(registry);
-    task({ assigneeId: USER, description: undefined, prefix: "nonsense", platform: "watch" });
+    task({ assigneeId: USER, description: undefined, prefix: "nonsense" });
 
     const session = await sup.createSessionFromTask("task-1", USER);
 
     expect(session.task).toBe("Add login");
     expect(session.prefix).toBe("feature");
-    expect(session.platform).toBeUndefined();
     // Cloud task carried no branch → the refreshed project default is used.
     expect(session.baseBranch).toBe("main");
   });
