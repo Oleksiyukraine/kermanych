@@ -473,6 +473,13 @@ export class RegistryService {
     this.db.exec(
       `CREATE TABLE IF NOT EXISTS linear_tokens (org_url_key TEXT NOT NULL, user_id TEXT NOT NULL, api_key TEXT NOT NULL, account_id TEXT, PRIMARY KEY (org_url_key, user_id))`,
     );
+    // Per-user Plane API keys, THIS machine only — the Jira/Linear custody rule. Keyed by
+    // (site, Plane workspace, user): some Plane editions scope a key to one workspace, so a
+    // machine whose member works in two Plane workspaces on one site keeps both apart. The
+    // key's own Plane identity (/users/me/) rides along, learned on validation.
+    this.db.exec(
+      `CREATE TABLE IF NOT EXISTS plane_tokens (site_url TEXT NOT NULL, workspace_slug TEXT NOT NULL, user_id TEXT NOT NULL, api_token TEXT NOT NULL, plane_user_id TEXT NOT NULL, display_name TEXT NOT NULL DEFAULT '', PRIMARY KEY (site_url, workspace_slug, user_id))`,
+    );
     // Per-user OpenAI API keys for the voice conversation (docs/specs/2026-11-02-voice-conversation.md),
     // THIS machine only — the Jira/Linear custody rule.
     this.db.exec(`CREATE TABLE IF NOT EXISTS voice_keys (user_id TEXT PRIMARY KEY, api_key TEXT NOT NULL)`);
@@ -681,6 +688,44 @@ export class RegistryService {
 
   deleteLinearToken(orgUrlKey: string, userId: string): void {
     this.db.prepare(`DELETE FROM linear_tokens WHERE org_url_key = ? AND user_id = ?`).run(orgUrlKey, userId);
+  }
+
+  // ── Plane tokens ──────────────────────────────────────────────────────────────
+
+  // The identity is recorded at validation (PlaneService checks /users/me/ before storing),
+  // so unlike Jira/Linear there is no pre-identity row to backfill.
+  getPlaneToken(
+    siteUrl: string,
+    workspaceSlug: string,
+    userId: string,
+  ): { apiToken: string; planeUserId: string; displayName: string } | undefined {
+    return this.db
+      .prepare(
+        `SELECT api_token as apiToken, plane_user_id as planeUserId, display_name as displayName FROM plane_tokens WHERE site_url = ? AND workspace_slug = ? AND user_id = ?`,
+      )
+      .get(siteUrl, workspaceSlug, userId) as { apiToken: string; planeUserId: string; displayName: string } | undefined;
+  }
+
+  setPlaneToken(
+    siteUrl: string,
+    workspaceSlug: string,
+    userId: string,
+    apiToken: string,
+    planeUserId: string,
+    displayName: string,
+  ): void {
+    this.db
+      .prepare(
+        `INSERT INTO plane_tokens (site_url, workspace_slug, user_id, api_token, plane_user_id, display_name) VALUES (?,?,?,?,?,?)
+         ON CONFLICT(site_url, workspace_slug, user_id) DO UPDATE SET api_token = excluded.api_token, plane_user_id = excluded.plane_user_id, display_name = excluded.display_name`,
+      )
+      .run(siteUrl, workspaceSlug, userId, apiToken, planeUserId, displayName);
+  }
+
+  deletePlaneToken(siteUrl: string, workspaceSlug: string, userId: string): void {
+    this.db
+      .prepare(`DELETE FROM plane_tokens WHERE site_url = ? AND workspace_slug = ? AND user_id = ?`)
+      .run(siteUrl, workspaceSlug, userId);
   }
 
   // ── Voice (OpenAI) keys ──────────────────────────────────────────────────────

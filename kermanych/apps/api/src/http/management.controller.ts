@@ -18,6 +18,7 @@ import {
   type ManagementDocFragment,
   type ManagementDocs,
   type ManagementJiraBoard,
+  type ManagementPlaneBoard,
   type ManagementHome,
   type ManagementHomeRelease,
   type ManagementHomeTask,
@@ -173,6 +174,37 @@ function jiraBoard(v: unknown): ManagementJiraBoard | undefined {
     // way round — the assistant says so instead of promising a ticket the api cannot sign.
     // Tickets and assignees are NOT taken from the browser: the assistant reads them live
     // through its Jira tools (jira/jira-tools.service.ts).
+    canWrite: x.canWrite === true,
+  };
+}
+
+// The workspace's Plane projects, by jiraBoards' rules: a row without an identifier names
+// nothing the model could act on and is dropped, the list is capped at the ten the db
+// enforces, and write capability is never assumed.
+function planeBoards(v: unknown): ManagementPlaneBoard[] {
+  if (!Array.isArray(v)) return [];
+  const out: ManagementPlaneBoard[] = [];
+  for (const item of v) {
+    const board = planeBoard(item);
+    if (board) out.push(board);
+    if (out.length >= 10) break;
+  }
+  return out;
+}
+
+function planeBoard(v: unknown): ManagementPlaneBoard | undefined {
+  if (typeof v !== "object" || v === null) return undefined;
+  const x = v as Record<string, unknown>;
+  if (typeof x.projectIdentifier !== "string" || x.projectIdentifier.trim() === "") return undefined;
+  const text = (k: string): string => {
+    const s = x[k];
+    return typeof s === "string" ? s : "";
+  };
+  return {
+    projectIdentifier: x.projectIdentifier.trim(),
+    projectName: text("projectName"),
+    siteUrl: text("siteUrl"),
+    workspaceSlug: text("workspaceSlug"),
     canWrite: x.canWrite === true,
   };
 }
@@ -396,6 +428,7 @@ export class ManagementController {
     // Rebuilt rather than forwarded: `risks` is printed into the prompt as the state the
     // write actions operate on, and the rest of the block is prose the model reads as fact.
     const jira = jiraBoards(b.context.jira);
+    const plane = planeBoards(b.context.plane);
     const capacity = capacityDigest(b.context.capacity);
     const home = homeOverview(b.context.home);
     const docs = docsBlock(b.context.docs);
@@ -405,6 +438,7 @@ export class ManagementController {
       risks: riskRows(b.context.risks),
       members: memberRows(b.context.members),
       ...(jira.length ? { jira } : {}),
+      ...(plane.length ? { plane } : {}),
       ...(capacity ? { capacity } : {}),
       ...(home ? { home } : {}),
       ...(docs ? { docs } : {}),

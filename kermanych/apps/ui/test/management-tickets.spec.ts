@@ -103,7 +103,7 @@ const TICKET = {
 
 // One assistant turn carrying exactly the actions under test.
 function reply(actions: ManagementChatReply['actions']): ManagementChatReply {
-  return { text: 'Готую тікет.', actions, rejected: [], notices: [], jiraChanges: [], ms: 10 };
+  return { text: 'Готую тікет.', actions, rejected: [], notices: [], trackerChanges: [], ms: 10 };
 }
 
 // The result lines the app wrote this turn — never the model's prose. Takes the entries rather
@@ -251,7 +251,7 @@ describe('ticket.questions', () => {
 });
 
 // Jira writes happen server-side, during the turn, through the api's Jira tools; the reply
-// lists them in `jiraChanges`. The browser executes nothing — it owes the operator two things:
+// lists them in `trackerChanges`. The browser executes nothing — it owes the operator two things:
 // each write said in the app's own voice and locale, and a board that shows it.
 describe('Jira writes the assistant made during the turn', () => {
   it('prints each change in the operator\'s locale and reloads the Jira board', async () => {
@@ -260,7 +260,7 @@ describe('Jira writes the assistant made during the turn', () => {
     jiraState.issues = [{ key: 'KRM-9' }];
     managementChat.mockResolvedValue({
       ...reply([]),
-      jiraChanges: [
+      trackerChanges: [
         { text: 'fallback 1', code: 'jira_issue_created', params: { key: 'KRM-12', summary: 'Export invoices' } },
         { text: 'fallback 2', code: 'jira_issue_transitioned', params: { key: 'KRM-9', status: 'Done' } },
       ],

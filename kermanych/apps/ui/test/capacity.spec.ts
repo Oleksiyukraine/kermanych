@@ -110,6 +110,12 @@ describe('remainingSeconds / planIssue', () => {
     expect(remainingSeconds(issue({ originalEstimateSeconds: 2 * H, timeSpentSeconds: 3 * H }))).toBe(0);
   });
 
+  // A Plane row carries no remaining estimate at all (only a `time` estimate as original).
+  it('derives a Plane item\'s remaining from original minus spent', () => {
+    const { remainingEstimateSeconds: _, ...plane } = issue({ originalEstimateSeconds: 8 * H, timeSpentSeconds: 3 * H });
+    expect(remainingSeconds(plane)).toBe(5 * H);
+  });
+
   it('spreads over business days from max(start, today) to due', () => {
     // Fri 04 → Tue 08 = Fri, Mon, Tue.
     const plan = planIssue(issue({ remainingEstimateSeconds: 6 * H, startDate: '2026-09-01', dueDate: '2026-09-08' }), TODAY);

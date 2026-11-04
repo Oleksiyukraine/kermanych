@@ -346,7 +346,7 @@
         />
         <KNavItem
           label="Integrations"
-          hint="Linear, Jira, Slack"
+          hint="Linear, Jira, Plane, Slack"
           :active="navStacked === 'integrations'"
           @click="navStacked = 'integrations'"
         />

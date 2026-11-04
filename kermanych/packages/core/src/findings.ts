@@ -1,8 +1,8 @@
 // «Знахідки» (docs/specs/2026-10-13-agent-findings.md): a problem a session's agent noticed
 // outside its own task, reported through the `report_finding` MCP tool and kept on this machine
-// until the operator files it as a board card or a Jira issue, or dismisses it.
+// until the operator files it as a board card, a Jira issue or a Plane work item, or dismisses it.
 //
-// The agent proposes, the operator files: nothing here writes to the board or to Jira. This
+// The agent proposes, the operator files: nothing here writes to the board, Jira or Plane. This
 // module owns the shape both sides agree on — the tool's arguments, the stored row, and the one
 // description a finding becomes wherever it is filed.
 
@@ -19,7 +19,7 @@ export const FINDING_TITLE_MAX = 120;
 // A runaway agent stops here: report_finding refuses once a session holds this many open
 // findings, and tells the agent to mention it to the operator instead.
 export const OPEN_FINDINGS_LIMIT = 20;
-// Every Jira issue filed from a finding carries this label, plus the finding's kind.
+// Every Jira issue or Plane work item filed from a finding carries this label, plus the finding's kind.
 export const FINDING_JIRA_LABEL = "kermanych-finding";
 
 export function isFindingKind(v: unknown): v is FindingKind {
@@ -40,17 +40,20 @@ export type FindingReport = {
 };
 
 /** Where a filed finding went. */
-export type FindingTarget = { kind: "board"; taskId: string } | { kind: "jira"; key: string; url: string };
+export type FindingTarget =
+  | { kind: "board"; taskId: string }
+  | { kind: "jira"; key: string; url: string }
+  | { kind: "plane"; key: string; url: string };
 
 /**
  * An untrusted value (a request body, a stored JSON blob) → the target it names, or undefined.
- * A Jira target must carry an http(s) URL: the UI opens it as a link.
+ * A Jira or Plane target must carry an http(s) URL: the UI opens it as a link.
  */
 export function parseFindingTarget(v: unknown): FindingTarget | undefined {
   if (typeof v !== "object" || v === null || !("kind" in v)) return undefined;
   if (v.kind === "board" && "taskId" in v && typeof v.taskId === "string" && v.taskId) return { kind: "board", taskId: v.taskId };
-  if (v.kind === "jira" && "key" in v && typeof v.key === "string" && v.key && "url" in v && typeof v.url === "string" && /^https?:\/\//.test(v.url))
-    return { kind: "jira", key: v.key, url: v.url };
+  if ((v.kind === "jira" || v.kind === "plane") && "key" in v && typeof v.key === "string" && v.key && "url" in v && typeof v.url === "string" && /^https?:\/\//.test(v.url))
+    return { kind: v.kind, key: v.key, url: v.url };
   return undefined;
 }
 

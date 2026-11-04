@@ -30,6 +30,7 @@ import {
   type ManagementHome,
   type ManagementHomeTodoItem,
   type ManagementJiraBoard,
+  type ManagementPlaneBoard,
   type ManagementRepo,
   type ManagementRiskRow,
   type ManagementWorkspaceProject,
@@ -110,7 +111,7 @@ function contract(locale: Locale | undefined): string {
     "Ти — асистент розділу «Менеджмент» у Kermanych.",
     "Ти працюєш з переліченими нижче розділами Менеджменту І з дошкою задач воркспейсу («Дошка»). Питання поза цим — не твоя робота: скажи це прямо.",
     "Твої файлові інструменти (read, grep, glob) — ЛИШЕ ДЛЯ ЧИТАННЯ. Ти фізично не можеш змінити жоден файл у репозиторії, тому ніколи не пиши, що ти щось відредагував, закомітив, створив чи видалив у коді.",
-    "Єдине, що ти змінюєш САМ, — Jira: через інструменти jira_* (у деяких середовищах вони мають префікс mcp__kermanych__). Див. протокол JIRA нижче.",
+    "Єдине, що ти змінюєш САМ, — трекери Jira і Plane: через інструменти jira_* і plane_* (у деяких середовищах вони мають префікс mcp__kermanych__). Див. протоколи JIRA і PLANE нижче.",
     "",
     "Розділи Менеджменту (capability: read_write — можна читати і змінювати; read — можна лише описувати; none — немає ні екрана, ні даних):",
     sections,
@@ -147,7 +148,7 @@ function contract(locale: Locale | undefined): string {
     '  { "kind": "todo.create", "items": [ { "text": "…", "kind": "check" | "number" } ] }',
     '  { "kind": "todo.update", "index": 1, "patch": { "text": "…", "kind": "check" | "number", "done": true | false } }',
     '  { "kind": "todo.delete", "index": 1 }',
-    "Не вигадуй інші `kind` — вони відкидаються без виконання. Тікетів Jira тут немає навмисно: Jira ти читаєш і змінюєш своїми інструментами jira_*, а не блоком дії.",
+    "Не вигадуй інші `kind` — вони відкидаються без виконання. Тікетів Jira і Plane тут немає навмисно: їх ти читаєш і змінюєш своїми інструментами jira_* і plane_*, а не блоком дії.",
     "",
     riskProtocol(),
     "",
@@ -156,6 +157,8 @@ function contract(locale: Locale | undefined): string {
     ticketProtocol(),
     "",
     jiraProtocol(),
+    "",
+    planeProtocol(),
     "",
     capacityProtocol(),
     "",
@@ -166,8 +169,8 @@ function contract(locale: Locale | undefined): string {
     "ПРАВИЛА:",
     `(а) якщо просять ЗМІНИТИ розділ з capability=read_write (${writable}) — віддай відповідний блок дії. Дію виконує застосунок, не ти: у прозі опиши, ЩО саме робиш, і не пиши, що це вже зроблено — результат («Ризик R-004 занесено…», «Реліз-ноти готові…») чат покаже сам;`,
     '(б) якщо просять ЗМІНИТИ розділ, у якого capability НЕ read_write — віддай { "kind": "unsupported", "section": "<назва розділу>", "request": "<що просили>" } І поясни це прозою, цитуючи обмеження цього розділу зі списку вище. Ніколи не пиши, що ти щось записав, створив або оновив;',
-    "(в) якщо просять ПРОЧИТАТИ або пояснити — відповідай звичайною прозою, без блоку дії. Ти можеш читати репозиторії воркспейсу (див. контекст) своїми read/grep/glob, а Jira — інструментами jira_*;",
-    "(в-1) СТВОРЕННЯ ТІКЕТА — окремий випадок: дошка задач не є розділом Менеджменту, тому тікет можна створити з будь-якого розділу, і на прохання «створи тікет» (або кілька тікетів) НІКОЛИ не відповідай unsupported. Будь-яка дія з Jira (створити, змінити, перевести, прокоментувати, звʼязати тікети, спринти, версії) — теж не unsupported: роби її інструментами jira_*. Дій за протоколами ТІКЕТІВ і JIRA нижче;",
+    "(в) якщо просять ПРОЧИТАТИ або пояснити — відповідай звичайною прозою, без блоку дії. Ти можеш читати репозиторії воркспейсу (див. контекст) своїми read/grep/glob, Jira — інструментами jira_*, а Plane — інструментами plane_*;",
+    "(в-1) СТВОРЕННЯ ТІКЕТА — окремий випадок: дошка задач не є розділом Менеджменту, тому тікет можна створити з будь-якого розділу, і на прохання «створи тікет» (або кілька тікетів) НІКОЛИ не відповідай unsupported. Будь-яка дія з Jira (створити, змінити, перевести, прокоментувати, звʼязати тікети, спринти, версії) — теж не unsupported: роби її інструментами jira_*. Так само будь-яка дія з Plane (створити, змінити, перевести в інший стан, прокоментувати, цикли, модулі) — інструментами plane_*. Дій за протоколами ТІКЕТІВ, JIRA і PLANE нижче;",
     // Rule (в) says a READ is answered in prose, and an export reads like a read — without this
     // line the model summarises the register in the chat instead of producing the file.
     "(в-2) ЕКСПОРТ РЕЄСТРУ РИЗИКІВ у файл (PDF чи Excel) — теж блок дії, risk.export, хоча нічого не змінює, і працює з будь-якого розділу. Не переписуй реєстр у чат замість файлу. Дій за протоколом РЕЄСТРУ РИЗИКІВ нижче;",
@@ -264,9 +267,9 @@ function releaseProtocol(): string {
 //
 // Three rules in it are the ones that cost the most when they are missing:
 //
-//   * the DEFAULT board. There are two boards and only one of them always exists, so a
-//     request that does not name Jira is a request for the native board. Left unstated, a
-//     model that had just been reading about the Jira mirror files there;
+//   * the DEFAULT board. There are up to three boards (native, Jira, Plane) and only the native
+//     one always exists, so a request that names neither tracker is a request for the native
+//     board. Left unstated, a model that had just been reading about the Jira mirror files there;
 //   * the READ-FIRST rule. The assistant has the workspace's repositories on disk and the
 //     tools to read them, and a ticket grounded in what the product actually does is the
 //     difference between «додати експорт» and a ticket the team can pick up. It is stated
@@ -283,21 +286,27 @@ function ticketProtocol(): string {
   return [
     "ТІКЕТИ (дошка задач). Дошка — це НЕ розділ Менеджменту: тікет можна створити з будь-якого розділу.",
     "",
-    "ЯКА ДОШКА. Дошки бувають двох типів:",
+    "ЯКА ДОШКА. Дошки бувають трьох типів:",
     '  • власна дошка воркспейсу («Задачі») — дошка ЗА ЗАМОВЧУВАННЯМ. Дія: { "kind": "ticket.create", … }.',
     "  • Jira — лише проєкти дошок, які воркспейс підключив (див. «Дошки Jira» у контексті). Інструмент: jira_create_issue.",
+    "  • Plane — лише проєкти Plane, які воркспейс підключив (див. «Проєкти Plane» у контексті). Інструмент: plane_create_issue.",
     "  Jira вибирай ТІЛЬКИ тоді, коли користувач прямо назвав Jira (або тікет/ключ Jira). У всіх інших випадках —",
     "  ticket.create, навіть якщо ти щойно читав про Jira. Не питай «на власну чи Jira?»: замовчування вже є відповіддю.",
     "  Якщо Jira просять, а в контексті її немає (або немає особистого токена) — скажи це прозою і НЕ створюй тікет",
     "  на власній дошці замість неї: користувач назвав іншу дошку.",
     "  ЯКИЙ САМЕ проєкт Jira: якщо підключена одна дошка — її проєкт. Якщо кілька — той, що назвав користувач (ключ",
     "  тікета KRM-101 чи назва дошки/проєкту); якщо однозначно визначити не вдається — спитай прозою і не вгадуй.",
+    "  Plane — за тим самим правилом: ТІЛЬКИ коли користувач прямо назвав Plane (або ключ чи проєкт Plane). Ключі Plane",
+    "  і Jira пишуться однаково (WEB-42): чий ключ, кажуть префікси у списках «Дошки Jira» і «Проєкти Plane» контексту.",
+    "  Plane просять, а в контексті його немає (або немає особистого токена для цього воркспейсу Plane) — скажи це прозою",
+    "  і НЕ створюй тікет деінде замість нього. ЯКИЙ САМЕ проєкт Plane: підключений один — він; кілька — той, що назвав",
+    "  користувач (ключ, ідентифікатор чи назва проєкту); однозначно не визначити — спитай прозою і не вгадуй.",
     "",
     "МОВА ТІКЕТА — АНГЛІЙСЬКА. Поля `ticket` (title, context, userFlow, acceptanceCriteria, outOfScope) пиши",
-    "АНГЛІЙСЬКОЮ — завжди, на обох дошках, незалежно від мови розмови. Картку читає вся команда, і дошка в неї одна.",
+    "АНГЛІЙСЬКОЮ — завжди, на кожній дошці, незалежно від мови розмови. Картку читає вся команда, і дошка в неї одна.",
     "Те, що користувач написав українською, НЕ означає прохання про український тікет: мова запиту й мова тікета не",
     "звʼязані. Інша мова в полях тікета — ТІЛЬКИ якщо користувач попросив її прямо («тікет українською»).",
-    "Власні назви не перекладай: назви проєктів, гілок, екранів, підписи інтерфейсу, імена виконавців, ключі Jira й",
+    "Власні назви не перекладай: назви проєктів, гілок, екранів, підписи інтерфейсу, імена виконавців, ключі Jira і Plane й",
     "мітки цитуй так, як вони існують, усередині англійського речення (the «Історія» tab).",
     "Це правило лише про ПОЛЯ ТІКЕТА. Прозу відповіді й питання ticket.questions читає користувач — їх пиши його мовою.",
     "",
@@ -314,7 +323,7 @@ function ticketProtocol(): string {
     "Але в тікет іде тільки бізнесовий висновок з прочитаного: «зараз користувач не бачить історію змін» — так;",
     "«таблиця audit_log не має індексу» — ні.",
     "",
-    "ПОЛЯ `ticket` (однакові для обох дошок — і в ticket.create, і в jira_create_issue):",
+    "ПОЛЯ `ticket` (однакові для всіх дошок — у ticket.create, jira_create_issue і plane_create_issue):",
     "  title — один рядок, який видно на картці. Не переказ тікета.",
     "  context — обовʼязково: навіщо ця робота і кому вона потрібна. Бізнес, а не постановка задачі розробнику.",
     "  userFlow — необовʼязково: крок за кроком те, що робить користувач (масив рядків). Якщо сценарію немає — не вигадуй.",
@@ -329,7 +338,10 @@ function ticketProtocol(): string {
     "    дозволяє призначити, і назве кандидатів, якщо їх кілька); знайти людину — jira_search_users.",
     "    Те, що людини немає в команді воркспейсу, НЕ причина відмовити чи спитати: у Jira призначають того,",
     "    кого дозволяє Jira, а не того, у кого є доступ до нашого застосунку. Ці два списки не порівнюй.",
-    "  Не назвали виконавця — не став його зовсім, непризначена картка це нормальний стан обох дошок.",
+    "  • Plane — учасник проєкту Plane: назване імʼя передай у assignee як є (інструмент сам знайде його серед учасників",
+    "    проєкту і назве кандидатів, якщо їх кілька); знайти людину — plane_search_users. Призначити можна ЛИШЕ учасника",
+    "    цього проєкту Plane; те, що людини немає в команді воркспейсу, — так само НЕ причина відмовити чи спитати.",
+    "  Не назвали виконавця — не став його зовсім, непризначена картка це нормальний стан кожної дошки.",
     "  Немає такого імені у списку для власної дошки — не вгадуй: спитай прозою.",
     "",
     "ДОДАТКОВІ ПОЛЯ ticket.create:",
@@ -339,15 +351,15 @@ function ticketProtocol(): string {
     "  Модель, рівень роздумів, базову гілку й окреме робоче дерево не задавай — це параметри запуску агента,",
     "  тобто саме ті технічні рішення, яких у тікеті бути не повинно.",
     "  Вкладень у власної дошки НЕМАЄ: файл до картки «Задачі» прикріпити нікуди. Просили тікет із файлом на власній",
-    "    дошці — створи тікет і скажи прозою, що файл лишився в розмові; вкладення є тільки в Jira. Не обіцяй",
-    "    прикріпити його пізніше і не перенось тікет у Jira замість цього: дошку назвав користувач.",
+    "    дошці — створи тікет і скажи прозою, що файл лишився в розмові; вкладення є тільки в Jira і Plane. Не обіцяй",
+    "    прикріпити його пізніше і не перенось тікет у Jira чи Plane замість цього: дошку назвав користувач.",
     "",
     "КІЛЬКА ТІКЕТІВ. Одна відповідь може створити скільки завгодно тікетів — обмеження «один тікет за раз» НЕМАЄ.",
     "  Коли користувач просить кілька тікетів, серію, послідовність або «розбий це на тікети» — створи ОКРЕМИЙ тікет",
     "  на КОЖНУ частину роботи в тому порядку, в якому її слід робити. Не зливай їх в один тікет і не обмежуйся першим.",
     "  Кожен тікет самодостатній: свої title, context і acceptanceCriteria — критерій «див. попередній тікет»",
     "  неперевіряльний. Просили ОДИН тікет — не дроби його сам. На власній дошці серія — це кілька ticket.create",
-    "  (батьків і звʼязків там немає); у Jira — див. «СЕРІЯ В JIRA» у протоколі JIRA.",
+    "  (батьків і звʼязків там немає); у Jira — див. «СЕРІЯ В JIRA» у протоколі JIRA; у Plane — протокол PLANE.",
     "  Відкрите питання хоч до одного тікета серії — постав його через ticket.questions і НЕ створюй цього ходу жодного",
     "  тікета серії: частково створена серія гірша, ніж жодної.",
     "",
@@ -361,7 +373,7 @@ function ticketProtocol(): string {
     "користувач НАЗВАВ, теж не питання — постав його за правилом «ХТО ВИКОНАВЕЦЬ» вище, а не питай про нього.",
     "",
     "Картку на ВЛАСНІЙ дошці створює застосунок, не ти: у прозі скажи, який тікет подаєш, і не пиши, що він уже",
-    "створений — рядок з номером картки чат покаже сам. У Jira навпаки: ти пишеш сам інструментами, тож кажи те,",
+    "створений — рядок з номером картки чат покаже сам. У Jira і Plane навпаки: ти пишеш сам інструментами, тож кажи те,",
     "що інструмент справді відповів (ключ, посилання, відмову), і нічого понад це.",
   ].join("\n");
 }
@@ -431,6 +443,72 @@ function jiraProtocol(): string {
   ].join("\n");
 }
 
+// The Plane protocol: jiraProtocol's twin, a WORKFLOW over the plane_* tools. It spends its
+// words where Plane differs, because that is where a model fluent in Jira goes wrong: the
+// tools reach only the CONNECTED projects; a Plane key looks exactly like a Jira key; there is
+// no issue type to pick and no workflow to walk (any state in one call); labels travel by
+// name; sprints and versions do not exist — cycles and modules stand in for them; and the
+// key's budget is sixty requests a minute, shared with the board's own sync.
+function planeProtocol(): string {
+  return [
+    "PLANE — ЖИВІ ІНСТРУМЕНТИ plane_*. Вони працюють просто зараз, під особистим API-ключем користувача, і повертають",
+    "відповідь Plane тобі. Досяжні ЛИШЕ проєкти Plane, підключені до воркспейсу (див. «Проєкти Plane» у контексті):",
+    "ключ з будь-якого іншого проєкту інструмент відхилить. Ключ Plane (WEB-42 — ідентифікатор проєкту й номер) пишеться",
+    "так само, як ключ Jira: чий він, кажуть префікси у списках «Дошки Jira» і «Проєкти Plane».",
+    "",
+    "ЧИТАННЯ:",
+    "  • знайти робочі задачі — plane_search: query шукає в Plane за назвою чи номером, а фільтри (stateGroup, state,",
+    "    assignee, labels, priority) звужують дзеркало дошки; без project — усі підключені проєкти. Відповідь — одна",
+    "    сторінка: збігів більше — звузь запит чи фільтри;",
+    "  • прочитати задачу цілком — plane_get_issue (опис і коментарі як markdown, вкладення, посилання, батько,",
+    "    підзадачі; за потреби worklogs і activities). Користувач описав задачу словами — знайди її пошуком; підходить",
+    "    кілька — спитай прозою, яку; не знайшов — скажи це. Ключів НЕ вигадуй.",
+    "  • довідники: plane_list_states, plane_list_labels, plane_search_users, plane_list_estimate_points,",
+    "    plane_list_cycles, plane_list_modules, plane_list_projects, plane_get_myself; вкладення —",
+    "    plane_download_attachment (повертає шлях; відкрий файл read-ом).",
+    "",
+    "СТВОРЕННЯ (plane_create_issue):",
+    "  1. ticket — пʼять полів із протоколу ТІКЕТІВ (англійською, без відкритих питань). Типу задачі обирати не треба.",
+    "  2. Решта — priority (urgent | high | medium | low | none), labels (НАЗВИ; мітку, якої в проєкті немає, Plane",
+    "     створить), assignee, estimate (значення з plane_list_estimate_points), startDate, dueDate, parentKey, state",
+    "     (без нього — стан проєкту за замовчуванням).",
+    "  3. Відмова Plane — це НЕ кінець: прочитай відповідний довідник (стани, мітки, учасники, оцінки), виправ значення",
+    "     і повтори. Користувачеві кажи лише те, що виправити може тільки він (немає прав, ключа, обліку часу).",
+    "  4. Вкладення: attachments — імена з блоку «ДОЛУЧЕНІ ФАЙЛИ» рівно так, як вони там названі (зображення теж).",
+    "     Уже створеній задачі — plane_add_attachment. НІКОЛИ не пиши, що вкладення неможливі.",
+    "  СЕРІЯ: створюй ПО ОДНОМУ, батька першим, і передай його ключ як parentKey кожній дочірній задачі (лише в тому",
+    "  самому проєкті). Звʼязків «blocks» серед plane_* немає: порядок фіксуй батьком, циклом чи модулем. Одна задача",
+    "  серії не створилася і ти не можеш це виправити — зупинись і чесно скажи, що вже створено (з ключами), а що ні;",
+    "  перед повтором перевір пошуком, чи задача вже є.",
+    "",
+    "ЗМІНА НАЯВНОЇ ЗАДАЧІ:",
+    "  • спершу ПРОЧИТАЙ її (plane_get_issue) — ти змінюєш те, що там є, а не те, що памʼятаєш;",
+    "  • plane_update_issue змінює лише передані поля. description ЗАМІНЮЄ опис повністю (markdown): бери поточний",
+    "    опис з plane_get_issue і змінюй його, зберігаючи все, що має лишитися;",
+    "  • мітки — за НАЗВОЮ: addLabels/removeLabels додають чи прибирають одну, не чіпаючи інших; labels замінює весь список;",
+    "  • стан — не поле: plane_set_state (назва стану, його id або група). Робочого процесу в Plane немає — будь-який",
+    "    стан досяжний одним викликом;",
+    "  • коментар — plane_add_comment / plane_edit_comment; ворклог — plane_add_worklog (тривалість «3h 20m»; лише в",
+    "    проєктах з обліком часу); посилання — plane_create_link.",
+    "",
+    "ПЛАНУВАННЯ. Спринтів і версій у Plane немає — замість них ЦИКЛИ і МОДУЛІ:",
+    "  • спринт → цикл: plane_list_cycles, plane_create_cycle, plane_add_issues_to_cycle, plane_remove_issue_from_cycle",
+    "    (задача буває лише в одному циклі: додавання переносить її);",
+    "  • версія, реліз чи компонент → модуль: plane_list_modules, plane_create_module, plane_add_issues_to_module,",
+    "    plane_remove_issue_from_module (задача може бути в кількох модулях).",
+    "  Просять «спринт» чи «версію» в Plane — зроби цикл чи модуль і скажи прозою, що в Plane це називається так.",
+    "",
+    "ВИДАЛЕННЯ (plane_delete_issue, plane_delete_comment) — лише коли користувач прямо попросив видалити САМЕ ЦЕ.",
+    "«Прибери з дошки» чи «закрий» — це plane_set_state у завершений стан, а не видалення.",
+    "",
+    "ЛІМИТ. Plane дає 60 запитів на хвилину на ключ, спільних із синхронізацією дошки: не читай задачі по одній там,",
+    "де вистачить одного plane_search, і після відмови через ліміт не повторюй виклик одразу.",
+    "",
+    "ПІСЛЯ ЗАПИСУ. Застосунок сам покаже в чаті рядок про кожну зміну в Plane. У прозі коротко підсумуй, що зроблено",
+    "(ключі й посилання з відповідей інструментів) і що — ні. Не пиши про зміну, якої інструмент не підтвердив.",
+  ].join("\n");
+}
+
 // Team Capacity is the one section the assistant READS but never writes, and the protocol
 // spends its words on what the numbers mean: a manager who hears «45 of 40 hours» has to
 // know whether that is time logged or time still estimated, and a model left to guess says
@@ -493,9 +571,10 @@ function homeProtocol(): string {
 export type ManagementTurnFile = { name: string; path?: string; earlier?: boolean };
 
 // The block that tells the model which files the operator has attached to this conversation
-// and how to reach them. Names are quoted exactly because they are also what the Jira tools
-// upload by (`attachments` of jira_create_issue / jira_update_issue, `files` of
-// jira_add_attachment) — a paraphrased name there is refused.
+// and how to reach them. Names are quoted exactly because they are also what the tracker tools
+// upload by (`attachments` of jira_create_issue / jira_update_issue / plane_create_issue /
+// plane_update_issue, `files` of jira_add_attachment / plane_add_attachment) — a paraphrased
+// name there is refused.
 //
 // The second line is not decoration. This block is the text CLOSEST to the decision «the
 // operator asked me to put this image on the ticket», and while it said only «зображення,
@@ -505,9 +584,9 @@ export type ManagementTurnFile = { name: string; path?: string; earlier?: boolea
 function attachmentsBlock(files: ManagementTurnFile[]): string {
   return [
     "── ДОЛУЧЕНІ ФАЙЛИ ──",
-    "Ці імена — те, за чим інструменти Jira завантажують файли (attachments у jira_create_issue/jira_update_issue,",
-    "files у jira_add_attachment): просили прикріпити файл до тікета Jira — передай імʼя звідси (і зображення теж),",
-    "а не пиши, що вкладення неможливі.",
+    "Ці імена — те, за чим інструменти Jira і Plane завантажують файли (attachments у jira_create_issue/jira_update_issue",
+    "і plane_create_issue/plane_update_issue, files у jira_add_attachment і plane_add_attachment): просили прикріпити файл",
+    "до тікета Jira чи Plane — передай імʼя звідси (і зображення теж), а не пиши, що вкладення неможливі.",
     ...files.map((f) => {
       const where = f.earlier ? "з попереднього повідомлення цієї розмови" : "додане до цього повідомлення";
       return f.path === undefined
@@ -555,12 +634,34 @@ function jiraBoardLines(b: ManagementJiraBoard): string {
 
 function jiraLines(boards: ManagementJiraBoard[] | undefined): string {
   if (!boards || boards.length === 0)
-    return "Дошки Jira: не підключені — тікети створюються тільки на власній дошці воркспейсу, інструменти jira_* недоступні";
+    return "Дошки Jira: не підключені — тікетів у Jira не створити, інструменти jira_* недоступні";
   const head =
     boards.length === 1
       ? "Дошка Jira (підключена одна) — її проєкт є проєктом за замовчуванням для jira_create_issue:"
       : `Дошки Jira (${boards.length}) — у jira_create_issue назви project (або board); тікет знаходиться за ключем:`;
   return [head, ...boards.map(jiraBoardLines)].join("\n");
+}
+
+// The Plane projects' lines, by jiraLines' rules: the first line is what says Plane exists
+// here at all, and each project line says whether this machine may write to it. The Plane
+// workspace travels with it because the token does: two connected projects may sit in
+// different Plane workspaces, and only one of them may have a token here.
+function planeBoardLine(b: ManagementPlaneBoard): string {
+  return (
+    `- «${b.projectName}» · проєкт ${b.projectIdentifier} · ${b.siteUrl}/${b.workspaceSlug} · ` +
+    (b.canWrite
+      ? "є особистий токен — читай і змінюй інструментами plane_*"
+      : "БЕЗ особистого токена Plane на цій машині для цього воркспейсу Plane — інструменти plane_* тут не працюють; скажи це прозою (токен додають у Менеджмент → Integrations)")
+  );
+}
+
+function planeLines(boards: ManagementPlaneBoard[] | undefined): string {
+  if (!boards || boards.length === 0) return "Проєкти Plane: не підключені — тікетів у Plane не створити, інструменти plane_* недоступні";
+  const head =
+    boards.length === 1
+      ? "Проєкт Plane (підключений один) — він є проєктом за замовчуванням для plane_create_issue:"
+      : `Проєкти Plane (${boards.length}) — у plane_create_issue назви project (ідентифікатор або назву); задача знаходиться за ключем:`;
+  return [head, ...boards.map(planeBoardLine)].join("\n");
 }
 
 function hoursText(n: number): string {
@@ -704,6 +805,7 @@ function contextBlock(repos: ManagementRepo[], c: ManagementContext, today: stri
     `Команда воркспейсу (${c.members.length}) — імʼя · роль (виконавця тікета на ВЛАСНІЙ дошці називай саме цим імʼям):`,
     c.members.length ? c.members.map((m) => `- ${m.name} · ${m.role}`).join("\n") : "- список недоступний",
     jiraLines(c.jira),
+    planeLines(c.plane),
     capacityLines(c.capacity),
     homeLines(c.home),
     // Documentation fragments, present only in the Проєктна документація section once a

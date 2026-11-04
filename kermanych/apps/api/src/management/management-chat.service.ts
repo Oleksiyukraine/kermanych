@@ -37,7 +37,7 @@ import { RegistryService } from "../registry/registry.service";
 import { reduceRpcEvents, sumTurnUsage } from "../supervisor/transcript-reducer";
 import { ManagementMcpService } from "./management-mcp.service";
 import { MachineResourcesService } from "../machine/machine-resources.service";
-import type { JiraToolScope } from "../jira/jira-tools.service";
+import type { ManagementToolScope } from "./tracker-tools";
 import {
   buildManagementTurn,
   managementCwd,
@@ -50,12 +50,13 @@ import {
 // is a different — and far more dangerous — product than one that reads it to answer about
 // risks. The same subset the quick chats run with (supervisor.service.ts CHAT_TOOLS), which is
 // the existing proof that omp is happy in a bare project directory with no git and no edit
-// tools. Jira is the one thing it WRITES, and only through the Jira tools the child is handed
-// over MCP (management-mcp.service.ts), never through a file tool.
+// tools. The trackers — Jira and Plane — are the one thing it WRITES, and only through the
+// tracker tools the child is handed over MCP (management-mcp.service.ts), never through a
+// file tool.
 export const MANAGEMENT_TOOLS = ["read", "grep", "glob"] as const;
 
-// The name the Jira tool server is given in the child. claude shows the tools as
-// `mcp__kermanych__jira_*`; omp shows them bare (`jira_*`).
+// The name the tracker tool server is given in the child. claude shows the tools as
+// `mcp__kermanych__jira_*` / `mcp__kermanych__plane_*`; omp shows them bare.
 const MCP_SERVER_NAME = "kermanych";
 
 // Documentation turns answer from passages the browser retrieved before the turn, and the
@@ -117,13 +118,13 @@ const LEDGER_MAX = 20;
 type Turn = { on: (e: RpcEvent) => void; fail: (reason: string) => void };
 
 // One file of the conversation as the api holds it: the prompt's view of it, plus where its
-// bytes are and what they are — the Jira tools upload from here. Images are on disk too (the
+// bytes are and what they are — the tracker tools upload from here. Images are on disk too (the
 // prompt still names them without a path: the model sees them through the image slots).
 type StoredFile = ManagementTurnFile & { stored: string; mimeType: string };
 
-// The Jira tools' scope for one child, mutated turn by turn: the acting user and workspace come
-// with each ask, and `changed` points at the current turn's collector.
-type ToolBinding = { token: string; scope: JiraToolScope; sink?: Notice[] };
+// The tracker tools' scope for one child, mutated turn by turn: the acting user and workspace
+// come with each ask, and `changed` points at the current turn's collector.
+type ToolBinding = { token: string; scope: ManagementToolScope; sink?: Notice[] };
 
 type Live = { rpc: AgentRuntime; greeted: boolean; lastAt: number; turn?: Turn; tools?: ToolBinding };
 
@@ -141,16 +142,16 @@ export class ManagementChatService implements OnModuleDestroy {
   // Every file the conversation has carried, by name, in arrival order. Outside `Live` for
   // the same reason as `tail` — a child that dies mid-conversation is respawned and the
   // operator's files did not go anywhere — and the reason it exists at all is the ordinary
-  // two-turn ticket: attach an image, ask for a Jira ticket, answer the assistant's
+  // two-turn ticket: attach an image, ask for a Jira or Plane ticket, answer the assistant's
   // `ticket.questions`, and the turn that finally files the ticket is a turn with no
-  // attachments of its own. The Jira tools upload from this ledger by name, so a file must
+  // attachments of its own. The tracker tools upload from this ledger by name, so a file must
   // still be here the turn the ticket is finally filed.
   private files = new Map<string, Map<string, StoredFile>>();
 
   constructor(
     private registry: RegistryService,
     // Both optional so a spec can build the chat without an http server: a child spawned
-    // without them simply has no Jira tools, which the prompt's board lines still describe.
+    // without them simply has no tracker tools, which the prompt's board lines still describe.
     @Optional() private mcp?: ManagementMcpService,
     @Optional() private http?: HttpAdapterHost,
     // The machine resource profile lowers this child's priority like every agent's
@@ -165,7 +166,7 @@ export class ManagementChatService implements OnModuleDestroy {
   }
 
   // `userId` is the guard's, never the body's (the jira controller's rule): it decides whose
-  // Jira token every tool call of this turn is signed with.
+  // Jira and Plane tokens every tool call of this turn is signed with.
   async ask(input: ManagementChatAsk, userId: string): Promise<ManagementChatReply> {
     const startedAt = Date.now();
     this.sweep();
@@ -216,7 +217,7 @@ export class ManagementChatService implements OnModuleDestroy {
     // conversation can legally follow at once, and its first attachment must not race a
     // removal still in flight.
     await rm(this.attachDir(key), { recursive: true, force: true }).catch(() => {});
-    await rm(this.jiraDir(key), { recursive: true, force: true }).catch(() => {});
+    await rm(this.downloadDir(key), { recursive: true, force: true }).catch(() => {});
     if (live?.tools) this.mcp?.close(live.tools.token);
     if (!live) return;
     // An in-flight turn is told why it will never finish. Stopping the child first would
@@ -244,11 +245,11 @@ export class ManagementChatService implements OnModuleDestroy {
     const live = await this.child(key, repos, docs ? DOCS_MODEL : undefined, !docs);
     // Re-pointed every turn: the child outlives any one ask, and the tools must act for the
     // operator and workspace of THIS one and report into THIS reply.
-    const jiraChanges: Notice[] = [];
+    const trackerChanges: Notice[] = [];
     if (live.tools) {
       live.tools.scope.userId = userId;
       live.tools.scope.workspaceId = input.workspaceId;
-      live.tools.sink = jiraChanges;
+      live.tools.sink = trackerChanges;
     }
     const first = !live.greeted;
     // Хелпери are expanded HERE rather than inside buildManagementTurn: that function wraps
@@ -257,7 +258,7 @@ export class ManagementChatService implements OnModuleDestroy {
     const helped = expandHelpers(input.text);
     // The operator's files, split by how the model reaches them: images ride the message
     // through omp's own image slots, documents are opened by the read tool. Both are NAMED
-    // in the turn (see attachmentsBlock) — the names are also what the Jira tools upload by.
+    // in the turn (see attachmentsBlock) — the names are also what the tracker tools upload by.
     const { images, files } = await this.storeAttachments(key, input.attachments ?? []);
     const message = buildManagementTurn({
       first,
@@ -300,7 +301,7 @@ export class ManagementChatService implements OnModuleDestroy {
       actions: parsed.actions,
       rejected: parsed.rejected,
       notices,
-      jiraChanges,
+      trackerChanges,
       ...(usage === undefined ? {} : { usage }),
       ...(model === undefined ? {} : { model }),
       // Wall time as the operator experienced it — the queue wait and the spawn included,
@@ -309,7 +310,7 @@ export class ManagementChatService implements OnModuleDestroy {
     };
   }
 
-  // The Jira tools for one child: a fresh bearer secret bound to a scope this service keeps
+  // The tracker tools for one child: a fresh bearer secret bound to a scope this service keeps
   // pointing at the current turn. Absent when the api has no MCP service or no listening
   // http server to name (specs), in which case the child runs without them.
   private bindTools(key: string): { binding: ToolBinding; mcp: { name: string; url: string; token: string } } | undefined {
@@ -325,7 +326,7 @@ export class ManagementChatService implements OnModuleDestroy {
           const f = this.files.get(key)?.get(name.trim());
           return f ? { path: f.stored, mimeType: f.mimeType } : undefined;
         },
-        downloadDir: this.jiraDir(key),
+        downloadDir: this.downloadDir(key),
         changed: (n) => binding.sink?.push(n),
       },
     };
@@ -351,7 +352,7 @@ export class ManagementChatService implements OnModuleDestroy {
     const cwd = managementCwd(repos);
     const append = languageAppendFor(this.registry.getAuthSession()?.agentLanguage);
     // Documentation turns answer from retrieved passages only (docsProtocol) and never touch
-    // Jira, so their child gets no Jira tools.
+    // a tracker, so their child gets no tracker tools.
     const tools = withTools ? this.bindTools(key) : undefined;
     const rpc = createRuntime(this.runtimeFor(), {
       cwd,
@@ -473,7 +474,7 @@ export class ManagementChatService implements OnModuleDestroy {
     // Same best-effort cleanup as reset: the documents are as disposable as the child, and
     // the names go with them — an evicted conversation starts its next turn as a new one.
     void rm(this.attachDir(key), { recursive: true, force: true }).catch(() => {});
-    void rm(this.jiraDir(key), { recursive: true, force: true }).catch(() => {});
+    void rm(this.downloadDir(key), { recursive: true, force: true }).catch(() => {});
     this.files.delete(key);
     const live = this.map.get(key);
     if (!live) return;
@@ -551,12 +552,12 @@ export class ManagementChatService implements OnModuleDestroy {
     return { images, files: [...fresh.map((f) => view(f, false)), ...earlier] };
   }
 
-  // Where jira_download_attachment writes for this conversation. A root of its own rather
-  // than a subdirectory of `attachDir`: an operator's document may be called anything, and a
-  // file named like this directory must not be able to shadow it. Same sanitised key, so no
-  // client string becomes a path segment.
-  private jiraDir(key: string): string {
-    return join(tmpdir(), "kermanych-management-jira", key.replace(/[^A-Za-z0-9._-]/g, "-"));
+  // Where jira_download_attachment / plane_download_attachment write for this conversation. A
+  // root of its own rather than a subdirectory of `attachDir`: an operator's document may be
+  // called anything, and a file named like this directory must not be able to shadow it. Same
+  // sanitised key, so no client string becomes a path segment.
+  private downloadDir(key: string): string {
+    return join(tmpdir(), "kermanych-management-downloads", key.replace(/[^A-Za-z0-9._-]/g, "-"));
   }
 
   // Idle eviction on use, not on a timer: a conversation nobody has touched for the TTL is
