@@ -344,6 +344,7 @@ export {
   type ManagementDocFragment,
   type ManagementDocs,
   type ManagementJiraBoard,
+  type ManagementPlaneBoard,
   type ManagementCapacity,
   type ManagementCapacityPerson,
   type ManagementCapacityWeek,

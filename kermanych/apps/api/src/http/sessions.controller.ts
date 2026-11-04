@@ -396,7 +396,7 @@ export class SessionsController {
   @Post(":id/findings/:findingId/filed")
   findingFiled(@Param("id") id: string, @Param("findingId") findingId: string, @Body() b: unknown) {
     const target = parseFindingTarget(b);
-    if (!target) throw new BadRequestException("body must be { kind: \"board\", taskId } or { kind: \"jira\", key, url }");
+    if (!target) throw new BadRequestException("body must be { kind: \"board\", taskId }, { kind: \"jira\", key, url } or { kind: \"plane\", key, url }");
     try {
       return this.sup.resolveFinding(id, findingId, { status: "filed", target });
     } catch (err) {

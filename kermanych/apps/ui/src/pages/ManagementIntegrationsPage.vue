@@ -68,6 +68,25 @@
               @click="openLinearConnect"
             >{{ t('management.integrations.connect') }}</button>
           </template>
+          <template v-else-if="brand.id === 'plane'">
+            <template v-if="plane.integrations.length">
+              <button class="int__cta" type="button" @click="openPlaneSettings">{{ t('plane.connect.configure') }}</button>
+              <button
+                v-if="canConnect && plane.integrations.length < 10"
+                class="int__cta"
+                type="button"
+                @click="openPlaneConnect"
+              >{{ t('plane.connect.addProject') }}</button>
+            </template>
+            <button
+              v-else
+              v-tip="canConnect ? '' : t('plane.connect.ownerOnly')"
+              class="int__cta"
+              type="button"
+              :disabled="!canConnect"
+              @click="openPlaneConnect"
+            >{{ t('management.integrations.connect') }}</button>
+          </template>
           <template v-else-if="brand.id === 'slack'">
             <button
               v-if="slackIntegration"
@@ -283,6 +302,133 @@
       </template>
     </KModal>
 
+    <!-- PLANE CONNECT — the owner's three steps: Plane address + workspace → personal API
+         token → project. -->
+    <KModal v-model="planeConnectOpen" :title="t('plane.connect.title')" width="520px" :persistent="planeBusy">
+      <div class="int__flow">
+        <template v-if="planeConnectStep === 'site'">
+          <KField
+            v-model="planeSiteInput"
+            :label="t('plane.connect.siteLabel')"
+            placeholder="https://app.plane.so/my-team/"
+            @keydown.enter="planeSiteNext"
+          />
+          <p class="int__hint">{{ t('plane.connect.siteHint') }}</p>
+          <KField
+            v-model="planeSlugInput"
+            :label="t('plane.connect.slugLabel')"
+            placeholder="my-team"
+            @keydown.enter="planeSiteNext"
+          />
+          <p class="int__hint">{{ t('plane.connect.slugHint') }}</p>
+        </template>
+
+        <template v-else-if="planeConnectStep === 'token'">
+          <KField v-model="planeTokenInput" :label="t('plane.connect.tokenLabel')" type="password" placeholder="plane_api_…" @keydown.enter="planeTokenNext" />
+          <p class="int__hint">
+            {{ t('plane.connect.tokenHintBefore') }}
+            <a class="int__link" :href="planeWorkspaceLink" target="_blank" rel="noopener noreferrer">{{ t('plane.connect.tokenPath') }}</a>.
+            {{ t('plane.connect.tokenHintAfter') }}
+          </p>
+        </template>
+
+        <template v-else>
+          <KSelect
+            v-if="planeProjectOptions.length"
+            v-model="planeProjectPick"
+            :label="t('plane.connect.projectLabel')"
+            :options="planeProjectOptions"
+            :placeholder="t('plane.connect.projectPlaceholder')"
+            searchable
+          />
+          <p v-else class="int__token-state">{{ t('plane.connect.noProjects') }}</p>
+          <p class="int__hint">{{ t('plane.connect.projectHint') }}</p>
+        </template>
+
+        <p v-if="planeFlowError" class="int__error mono">{{ planeFlowError }}</p>
+      </div>
+      <template #controls>
+        <KBtn variant="ghost" :disabled="planeBusy" @click="planeConnectOpen = false">{{ t('plane.connect.cancel') }}</KBtn>
+        <KBtn
+          v-if="planeConnectStep === 'site'"
+          variant="primary"
+          :loading="planeBusy"
+          :disabled="!planeSiteInput.trim()"
+          @click="planeSiteNext"
+        >{{ t('plane.connect.next') }}</KBtn>
+        <KBtn v-else-if="planeConnectStep === 'token'" variant="primary" :loading="planeBusy" :disabled="!planeTokenInput.trim()" @click="planeTokenNext">
+          {{ planeBusy ? t('plane.connect.checking') : t('plane.connect.next') }}
+        </KBtn>
+        <KBtn v-else variant="primary" :loading="planeBusy" :disabled="!planeProjectPick" @click="planeConnectFinish">
+          {{ planeBusy ? t('plane.connect.connecting') : t('management.integrations.connect') }}
+        </KBtn>
+      </template>
+    </KModal>
+
+    <!-- PLANE SETTINGS — the connected tile's card: facts, the member's own token, owner
+         actions. -->
+    <KModal v-model="planeSettingsOpen" title="Plane" width="520px">
+      <div v-if="planeSettingsRow" class="int__flow">
+        <!-- With several projects the card opens on a picker: whose facts, token and
+             disconnect the rest of the modal is about. -->
+        <KSelect
+          v-if="plane.integrations.length > 1"
+          v-model="planeSettingsId"
+          :label="t('plane.connect.projectLabel')"
+          :options="planeSettingsOptions"
+        />
+        <dl class="int__facts">
+          <div><dt>{{ t('plane.connect.siteFact') }}</dt><dd class="mono">{{ planeSettingsRow.siteUrl }}</dd></div>
+          <div><dt>{{ t('plane.connect.slugFact') }}</dt><dd class="mono">{{ planeSettingsRow.workspaceSlug }}</dd></div>
+          <div><dt>{{ t('plane.connect.projectLabel') }}</dt><dd>{{ planeSettingsRow.projectName }}</dd></div>
+          <div><dt>{{ t('plane.connect.identifierFact') }}</dt><dd class="mono">{{ planeSettingsRow.projectIdentifier }}</dd></div>
+        </dl>
+
+        <div class="int__token">
+          <!-- The token status is a second read per project: until it answers, «немає
+               токена» and its token form would be a false state. -->
+          <KSkeleton v-if="!planeSettingsTokenKnown" variant="lines" :rows="2" />
+          <template v-else>
+          <p class="int__token-state">
+            <template v-if="planeSettingsTokenPresent">
+              {{ t('plane.connect.tokenOnMachine') }} <span class="mono">{{ planeSettingsTokenName }}</span>
+            </template>
+            <template v-else>
+              {{ t('plane.connect.noToken') }}
+            </template>
+          </p>
+          <template v-if="planeTokenEditing || !planeSettingsTokenPresent">
+            <KField v-model="planeTokenInput" :label="t('plane.connect.tokenLabel')" type="password" placeholder="plane_api_…" />
+            <p class="int__hint">
+              {{ t('plane.connect.tokenHintBefore') }}
+              <a class="int__link" :href="planeWorkspaceLink" target="_blank" rel="noopener noreferrer">{{ t('plane.connect.tokenPath') }}</a>.
+            </p>
+            <div class="int__row">
+              <KBtn variant="secondary" :loading="planeBusy" :disabled="!planeTokenInput.trim()" @click="savePlaneToken">
+                {{ planeBusy ? t('plane.connect.checking') : t('plane.connect.saveToken') }}
+              </KBtn>
+              <KBtn v-if="planeTokenEditing" variant="ghost" @click="planeTokenEditing = false">{{ t('plane.connect.cancel') }}</KBtn>
+            </div>
+          </template>
+          <div v-else class="int__row">
+            <KBtn variant="ghost" @click="startPlaneTokenEdit">{{ t('plane.connect.replaceToken') }}</KBtn>
+            <KBtn variant="ghost" :loading="removingPlaneToken" @click="removePlaneToken">{{ t('plane.connect.removeToken') }}</KBtn>
+          </div>
+          </template>
+        </div>
+
+        <p v-if="planeFlowError" class="int__error mono">{{ planeFlowError }}</p>
+
+        <div v-if="isOwner" class="int__danger">
+          <KBtn v-if="plane.integrations.length < 10" variant="ghost" @click="addPlaneProjectFromSettings">{{ t('plane.connect.addProject') }}</KBtn>
+          <KBtn variant="ghost" :loading="disconnectingPlane" @click="disconnectPlane">{{ t('plane.connect.disconnect') }}</KBtn>
+        </div>
+      </div>
+      <template #controls>
+        <KBtn variant="primary" @click="planeSettingsOpen = false">{{ t('plane.connect.done') }}</KBtn>
+      </template>
+    </KModal>
+
     <!-- SLACK CONNECT — the owner's two steps: the app and its tokens → the channel. -->
     <KModal v-model="slackConnectOpen" :title="t('slack.connect.title')" width="520px" :persistent="slackBusy">
       <div class="int__flow">
@@ -415,9 +561,9 @@
 </template>
 
 <script setup lang="ts">
-// Integrations — Jira, Linear and Slack are all LIVE tiles: the workspace-level connection
-// (owner) and this member's personal tokens (everyone) both live here, one independent set
-// of controls each so a workspace may connect all three.
+// Integrations — Jira, Linear, Plane and Slack are all LIVE tiles: the workspace-level
+// connection (owner) and this member's personal tokens (everyone) both live here, one
+// independent set of controls each so a workspace may connect all of them.
 //
 // It takes the same props every section gets from ManagementPage, so the workspace it
 // connects is already named for it.
@@ -433,12 +579,20 @@ import { useAsyncAction, errorText } from '../composables/useAsyncAction';
 import { useLoadPhase } from '../composables/useLoadPhase';
 import type { SlackIntegration } from '@kermanych/cloud';
 import { getSlackIntegration } from '@kermanych/cloud';
-import { api, type JiraBoardOption, type LinearTeamOption, type SlackChannelOption } from '../lib/api';
+import {
+  api,
+  type JiraBoardOption,
+  type LinearTeamOption,
+  type PlaneProjectOption,
+  type SlackChannelOption,
+} from '../lib/api';
+import { parsePlaneAddress, planeWebBase } from '../lib/plane-view';
 import { IS_PREVIEW } from '../lib/preview';
 import { SLACK_MANIFEST } from '../lib/slack-manifest';
 import { useAuth } from 'stores/auth';
 import { useJira } from 'stores/jira';
 import { useLinear } from 'stores/linear';
+import { usePlane } from 'stores/plane';
 import { useOrchestrator } from 'stores/orchestrator';
 import { useProjects } from 'stores/projects';
 
@@ -448,6 +602,7 @@ const jira = useJira();
 const cloud = useProjects();
 const local = useOrchestrator();
 const linear = useLinear();
+const plane = usePlane();
 const auth = useAuth();
 
 const isOwner = computed(() => cloud.isWorkspaceOwner(props.workspaceId));
@@ -824,9 +979,261 @@ async function disconnectLinear(): Promise<void> {
   }
 }
 
+// ── Plane connect stepper ──────────────────────────────────────────────────────
+// Jira's three steps with Plane's addressing: the token is keyed by the Plane address AND
+// the Plane workspace slug (spec Decision 3), so the first step asks for both. A pasted
+// workspace URL fills both at once; a self-hosted origin or a bare `app.plane.so` leaves the
+// slug to its own field. The api validates the token (who am I + one projects read) before
+// it is stored.
+const planeConnectOpen = ref(false);
+const planeConnectStep = ref<'site' | 'token' | 'project'>('site');
+const planeSiteInput = ref('');
+const planeSlugInput = ref('');
+const planeTokenInput = ref('');
+// The address and slug the flow settled on at its first step — what the token and project
+// steps are about, whatever the fields hold afterwards.
+const planeSite = ref('');
+const planeSlug = ref('');
+const planeProjects = ref<PlaneProjectOption[]>([]);
+const planeProjectPick = ref('');
+const planeFlowError = ref('');
+// Same single guard as the Jira flow: button and Enter share `run`.
+const planeFlow = useAsyncAction((step: () => Promise<void>) => step(), {
+  onError: (e) => (planeFlowError.value = errorText(e)),
+});
+const planeBusy = planeFlow.busy;
+
+const planeSettingsOpen = ref(false);
+// Which connected project the settings card is about. Defaults to the board view's active
+// project; the picker (shown only with more than one) moves it.
+const planeSettingsId = ref('');
+// Token status for the SELECTED project's address + workspace, read here rather than off the
+// store: the store's flag follows the board view's active project, while this card can be
+// about any of the workspace's projects.
+const planeSettingsTokenPresent = ref(false);
+const planeSettingsTokenName = ref<string | undefined>(undefined);
+const planeSettingsTokenKnown = ref(false);
+const planeTokenEditing = ref(false);
+const removingPlaneToken = ref(false);
+const disconnectingPlane = ref(false);
+
+const planeSettingsRow = computed(() => plane.integrations.find((p) => p.id === planeSettingsId.value) ?? null);
+const planeSettingsOptions = computed<KSelectOption[]>(() =>
+  plane.integrations.map((p) => ({ value: p.id, label: `${p.projectName} · ${p.projectIdentifier}` })),
+);
+const planeProjectOptions = computed<KSelectOption[]>(() =>
+  planeProjects.value.map((p) => ({ value: p.id, label: `${p.name} · ${p.identifier}` })),
+);
+// Where the owner makes a token: their Plane workspace, from which the path in the hint is
+// two clicks. The settings card points at the selected project's workspace.
+const planeWorkspaceLink = computed(() => {
+  const row = planeSettingsOpen.value ? planeSettingsRow.value : null;
+  const site = row?.siteUrl ?? planeSite.value;
+  const slug = row?.workspaceSlug ?? planeSlug.value;
+  return site ? `${planeWebBase(site)}/${slug ? `${encodeURIComponent(slug)}/` : ''}` : 'https://app.plane.so/';
+});
+
+// A pasted workspace URL names the slug too: fill the slug field from it, so the paste is
+// the whole first step.
+watch(planeSiteInput, (raw) => {
+  const parsed = parsePlaneAddress(raw);
+  if (parsed?.slug) planeSlugInput.value = parsed.slug;
+});
+
+// A new project's flow prefills the first project's address and workspace: a workspace
+// usually mirrors several projects of ONE Plane workspace, and the token is already there.
+function openPlaneConnect(): void {
+  const first = plane.integrations[0];
+  planeConnectStep.value = 'site';
+  planeSiteInput.value = first?.siteUrl ?? '';
+  planeSlugInput.value = first?.workspaceSlug ?? '';
+  planeTokenInput.value = '';
+  planeProjectPick.value = '';
+  planeFlowError.value = '';
+  planeConnectOpen.value = true;
+}
+
+function openPlaneSettings(): void {
+  planeFlowError.value = '';
+  planeTokenEditing.value = false;
+  planeTokenInput.value = '';
+  planeSettingsId.value = plane.activeId ?? plane.integrations[0]?.id ?? '';
+  planeSettingsTokenKnown.value = false;
+  void loadPlaneSettingsToken();
+  planeSettingsOpen.value = true;
+}
+
+function planeSiteNext(): void {
+  const parsed = parsePlaneAddress(planeSiteInput.value);
+  planeFlowError.value = '';
+  if (!parsed) {
+    planeFlowError.value = t('plane.connect.badAddress');
+    return;
+  }
+  const slug = planeSlugInput.value.trim() || parsed.slug;
+  if (!slug) {
+    planeFlowError.value = t('plane.connect.slugRequired');
+    return;
+  }
+  planeSite.value = parsed.site;
+  planeSlug.value = slug;
+  void planeFlow.run(async () => {
+    // A token already on this machine for this address + workspace skips the token step.
+    const status = await api.planeTokenStatus(planeSite.value, planeSlug.value);
+    if (status.present) {
+      await loadPlaneProjects();
+      planeConnectStep.value = 'project';
+    } else {
+      planeConnectStep.value = 'token';
+    }
+  });
+}
+
+function planeTokenNext(): void {
+  const token = planeTokenInput.value.trim();
+  if (!token) return;
+  planeFlowError.value = '';
+  void planeFlow.run(async () => {
+    await api.planeSetToken(planeSite.value, planeSlug.value, token);
+    planeTokenInput.value = '';
+    await loadPlaneProjects();
+    planeConnectStep.value = 'project';
+  });
+}
+
+async function loadPlaneProjects(): Promise<void> {
+  // Projects already connected are dropped from the picker: the same project cannot be
+  // added twice (the db is unique on workspace+project), and offering it would read as new.
+  const connected = new Set(plane.integrations.map((p) => p.projectId));
+  planeProjects.value = (await api.planeProjects(planeSite.value, planeSlug.value)).filter((p) => !connected.has(p.id));
+  planeProjectPick.value = planeProjectOptions.value[0]?.value ?? '';
+}
+
+function planeConnectFinish(): void {
+  if (!planeProjectPick.value) return;
+  planeFlowError.value = '';
+  void planeFlow.run(async () => {
+    const created = await api.planeConnect(props.workspaceId, planeSite.value, planeSlug.value, planeProjectPick.value);
+    await plane.probe(props.workspaceId);
+    // Land on the project just added.
+    await plane.setActive(created.id);
+    planeConnectOpen.value = false;
+    local.notify(t('plane.notify.connected'), 'info');
+  });
+}
+
+// ── Plane settings actions ──────────────────────────────────────────────────────
+function startPlaneTokenEdit(): void {
+  planeTokenEditing.value = true;
+  planeTokenInput.value = '';
+}
+
+// The selected project's token, reloaded whenever the picker moves so the card always shows
+// the token for the project it is describing.
+async function loadPlaneSettingsToken(): Promise<void> {
+  const row = planeSettingsRow.value;
+  if (!row) {
+    planeSettingsTokenPresent.value = false;
+    planeSettingsTokenName.value = undefined;
+    planeSettingsTokenKnown.value = true;
+    return;
+  }
+  // The picker may have moved on to another project meanwhile.
+  const stillSelected = () => planeSettingsRow.value?.id === row.id;
+  try {
+    const status = await api.planeTokenStatus(row.siteUrl, row.workspaceSlug);
+    if (!stillSelected()) return;
+    planeSettingsTokenPresent.value = status.present;
+    planeSettingsTokenName.value = status.displayName;
+  } catch {
+    if (!stillSelected()) return;
+    planeSettingsTokenPresent.value = false;
+  }
+  planeSettingsTokenKnown.value = true;
+}
+
+watch(planeSettingsId, () => {
+  planeTokenEditing.value = false;
+  planeTokenInput.value = '';
+  planeFlowError.value = '';
+  if (planeSettingsOpen.value) {
+    planeSettingsTokenKnown.value = false;
+    void loadPlaneSettingsToken();
+  }
+});
+
+function savePlaneToken(): void {
+  const row = planeSettingsRow.value;
+  const token = planeTokenInput.value.trim();
+  if (!row || !token) return;
+  planeFlowError.value = '';
+  void planeFlow.run(async () => {
+    await api.planeSetToken(row.siteUrl, row.workspaceSlug, token);
+    planeTokenInput.value = '';
+    planeTokenEditing.value = false;
+    await loadPlaneSettingsToken();
+    // Keep the board view's active-project token in step if it shares this workspace.
+    await plane.probe(props.workspaceId);
+    local.notify(t('plane.notify.tokenSaved'), 'info');
+  });
+}
+
+async function removePlaneToken(): Promise<void> {
+  const row = planeSettingsRow.value;
+  if (!row || removingPlaneToken.value) return;
+  const ok = await confirmAction({
+    title: t('confirmations.removeToken.title', { service: 'Plane' }),
+    message: t('confirmations.removeToken.message', { service: 'Plane' }),
+    confirmLabel: t('confirmations.label.remove'),
+  });
+  if (!ok) return;
+  removingPlaneToken.value = true;
+  try {
+    await api.planeDeleteToken(row.siteUrl, row.workspaceSlug);
+    await loadPlaneSettingsToken();
+    await plane.probe(props.workspaceId);
+  } finally {
+    removingPlaneToken.value = false;
+  }
+}
+
+function addPlaneProjectFromSettings(): void {
+  planeSettingsOpen.value = false;
+  openPlaneConnect();
+}
+
+async function disconnectPlane(): Promise<void> {
+  const row = planeSettingsRow.value;
+  if (!row || disconnectingPlane.value) return;
+  const ok = await confirmAction({
+    title: t('confirmations.disconnect.title', { service: 'Plane' }),
+    message: t('confirmations.disconnect.message', { service: 'Plane' }),
+    confirmLabel: t('confirmations.label.disconnect'),
+  });
+  if (!ok) return;
+  planeFlowError.value = '';
+  disconnectingPlane.value = true;
+  try {
+    await api.planeDisconnect(row.id);
+    await plane.probe(props.workspaceId);
+    local.notify(t('plane.notify.disconnected'), 'info');
+    // Stay on the card for the workspace's remaining projects; close it when the last goes.
+    if (plane.integrations.length) {
+      planeSettingsId.value = plane.activeId ?? plane.integrations[0]?.id ?? '';
+      await loadPlaneSettingsToken();
+    } else {
+      planeSettingsOpen.value = false;
+    }
+  } catch (e) {
+    planeFlowError.value = e instanceof Error ? e.message : String(e);
+  } finally {
+    disconnectingPlane.value = false;
+  }
+}
+
 // ── Slack ──────────────────────────────────────────────────────────────────────
-// Page-local state, not a store: unlike Jira/Linear there is no board elsewhere in the app
-// that reads the row — the bot answers in Slack, and this tile is its only screen.
+// Page-local state, not a store: unlike Jira/Linear/Plane there is no board elsewhere in the
+// app that reads the row — the bot answers in Slack, and this tile is its only screen.
 //
 // Tokens are keyed by the Kermanych workspace (one Slack app per workspace), so their
 // status is asked with or without a row: an owner who already stored tokens skips straight
@@ -1072,14 +1479,15 @@ async function disconnectSlack(): Promise<void> {
 onMounted(() => {
   void jira.probe(props.workspaceId);
   void linear.probe(props.workspaceId);
+  void plane.probe(props.workspaceId);
   void probeSlack(props.workspaceId);
 });
 watch(
   () => props.workspaceId,
   (id) => {
     // The Slack row is page-local: drop the old workspace's at once (tile skeleton) and let
-    // probeSlack's generation bump discard a reply still in flight for it. Jira and Linear
-    // reset themselves inside probe().
+    // probeSlack's generation bump discard a reply still in flight for it. Jira, Linear and
+    // Plane reset themselves inside probe().
     slackGeneration++;
     slackIntegration.value = undefined;
     slackTokenPresent.value = false;
@@ -1087,6 +1495,7 @@ watch(
     slackListeningKnown.value = false;
     void jira.probe(id);
     void linear.probe(id);
+    void plane.probe(id);
     void probeSlack(id);
   },
 );
@@ -1094,7 +1503,7 @@ onBeforeUnmount(() => clearTimeout(slackRecheck));
 
 const { t } = useI18n();
 
-type BrandId = 'jira' | 'linear' | 'slack';
+type BrandId = 'jira' | 'linear' | 'plane' | 'slack';
 
 type Brand = {
   id: BrandId;
@@ -1116,6 +1525,7 @@ type Brand = {
 const tileState = computed<Record<BrandId, { on: boolean; label: string } | undefined>>(() => {
   const off = t('management.integrations.notConnected');
   const boards = jira.integrations.length;
+  const planeProjectsConnected = plane.integrations.length;
   return {
     jira: jira.integration === undefined
       ? undefined
@@ -1125,6 +1535,12 @@ const tileState = computed<Record<BrandId, { on: boolean; label: string } | unde
       : linear.integration
         ? { on: true, label: t('linear.connect.stateConnected', { board: linear.integration.teamName }) }
         : { on: false, label: off },
+    plane: plane.integration === undefined
+      ? undefined
+      : {
+          on: planeProjectsConnected > 0,
+          label: planeProjectsConnected ? t('plane.connect.stateConnectedN', planeProjectsConnected) : off,
+        },
     slack: slackIntegration.value === undefined
       ? undefined
       : slackIntegration.value
@@ -1135,6 +1551,7 @@ const tileState = computed<Record<BrandId, { on: boolean; label: string } | unde
 const tilePhase = {
   jira: useLoadPhase(() => jira.integration === undefined),
   linear: useLoadPhase(() => linear.integration === undefined),
+  plane: useLoadPhase(() => plane.integration === undefined),
   slack: useLoadPhase(() => slackIntegration.value === undefined),
 };
 
@@ -1152,6 +1569,13 @@ const BRANDS: readonly Brand[] = [
     blurb: 'management.integrations.jiraBlurb',
     color: '#0052CC',
     path: 'M11.571 11.513H0a5.218 5.218 0 0 0 5.232 5.215h2.13v2.057A5.215 5.215 0 0 0 12.575 24V12.518a1.005 1.005 0 0 0-1.005-1.005zm5.723-5.756H5.736a5.215 5.215 0 0 0 5.215 5.214h2.129v2.058a5.218 5.218 0 0 0 5.215 5.214V6.758a1.001 1.001 0 0 0-1.001-1.001zM23.013 0H11.455a5.215 5.215 0 0 0 5.215 5.215h2.129v2.057A5.215 5.215 0 0 0 24 12.483V1.005A1.001 1.001 0 0 0 23.013 0Z',
+  },
+  {
+    id: 'plane',
+    name: 'Plane',
+    blurb: 'management.integrations.planeBlurb',
+    color: '#3F76FF',
+    path: 'M0 5.358a.854.854 0 0 1 1.235-.767L6.134 7.05v5.768c0 .81.456 1.553 1.179 1.915l4.42 2.218v1.692a.853.853 0 0 1-1.235.766L1.18 14.732A2.14 2.14 0 0 1 0 12.817zm6.134 0a.853.853 0 0 1 1.235-.766l4.898 2.458v5.768c0 .81.457 1.552 1.18 1.915l4.42 2.218v1.692a.853.853 0 0 1-1.235.765l-4.899-2.457v-5.769a2.14 2.14 0 0 0-1.179-1.914L6.134 7.05zm6.133 0a.853.853 0 0 1 1.235-.766l9.319 4.676A2.14 2.14 0 0 1 24 11.182v7.46a.853.853 0 0 1-1.235.766l-4.899-2.457v-5.769a2.14 2.14 0 0 0-1.179-1.914l-4.42-2.218z',
   },
   {
     id: 'slack',

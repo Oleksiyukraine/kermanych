@@ -46,6 +46,10 @@
             <span class="findings__state">{{ t('agents.findings.filedJira') }}</span>
             <a class="findings__link" :href="f.target.url" target="_blank" rel="noopener">{{ f.target.key }}</a>
           </template>
+          <template v-else-if="f.target?.kind === 'plane'">
+            <span class="findings__state">{{ t('agents.findings.filedPlane') }}</span>
+            <a class="findings__link" :href="f.target.url" target="_blank" rel="noopener">{{ f.target.key }}</a>
+          </template>
           <template v-else-if="f.target?.kind === 'board'">
             <span class="findings__state">{{ t('agents.findings.filedBoard') }}</span>
             <RouterLink class="findings__link" :to="{ name: 'board' }">{{
@@ -58,8 +62,8 @@
     </ul>
     <p v-else-if="phase === 'ready' && !loadError" class="findings__empty mono">{{ t('agents.findings.empty') }}</p>
 
-    <!-- FINDING → CARD / ISSUE — the operator files what the agent proposed. Nothing reaches
-         the board or Jira without this click, and every field can be edited first. -->
+    <!-- FINDING → CARD / ISSUE / WORK ITEM — the operator files what the agent proposed. Nothing
+         reaches the board, Jira or Plane without this click, and every field can be edited first. -->
     <KModal v-model="dialogOpen" :title="t('agents.findings.dialog.title')" width="720px" :persistent="busy">
       <div class="findings__form">
         <div class="findings__seg" role="radiogroup" :aria-label="t('agents.findings.dialog.target')">
@@ -80,8 +84,18 @@
             :disabled="!jiraBoards.length"
             @click="target = 'jira'"
           >Jira</button>
+          <button
+            type="button"
+            role="radio"
+            class="findings__seg-btn mono"
+            :class="{ 'findings__seg-btn--active': target === 'plane' }"
+            :aria-checked="target === 'plane'"
+            :disabled="!planeProjects.length"
+            @click="target = 'plane'"
+          >Plane</button>
         </div>
         <p v-if="jiraHint" class="findings__hint mono">{{ jiraHint }}</p>
+        <p v-if="planeHint" class="findings__hint mono">{{ planeHint }}</p>
         <p v-if="!workspaceId" class="findings__hint mono">{{ t('agents.findings.dialog.notCloud') }}</p>
 
         <template v-if="target === 'board'">
@@ -100,7 +114,7 @@
             <p class="findings__check-desc">{{ t('minion.autoRun.caption') }}</p>
           </div>
         </template>
-        <template v-else>
+        <template v-else-if="target === 'jira'">
           <KSelect
             v-model="jiraBoard"
             :label="t('agents.findings.dialog.jiraBoard')"
@@ -116,6 +130,26 @@
           <!-- Jira's refusal to list the board's issue types belongs to this half only: the
                board is auto-picked on open, so it must not surface on the «Дошка» side. -->
           <p v-if="issueTypesError" class="findings__error" role="alert">{{ issueTypesError }}</p>
+        </template>
+        <template v-else>
+          <KSelect
+            v-model="planeProject"
+            :label="t('agents.findings.dialog.planeProject')"
+            :options="planeProjectOptions"
+            :loading="planeProbe === 'pending'"
+          />
+          <!-- Work-item types are Plane Pro: a project without them gets no type picker, and
+               the item is filed untyped. Shown while loading so the field does not pop in. -->
+          <KSelect
+            v-if="planeOptionsLoading || planeTypeOptions.length"
+            v-model="planeIssueType"
+            :label="t('plane.issueEditor.typeLabel')"
+            :options="planeTypeOptions"
+            placeholder="—"
+            :loading="planeOptionsLoading"
+          />
+          <KSelect v-model="planePriority" :label="t('plane.issueEditor.priorityLabel')" :options="planePriorityOptions" />
+          <p v-if="planeOptionsError" class="findings__error" role="alert">{{ planeOptionsError }}</p>
         </template>
         <KField v-model="title" :label="t('agents.findings.dialog.taskTitle')" />
         <div>
@@ -142,23 +176,25 @@
 <script setup lang="ts">
 // «Знахідки» (docs/specs/2026-10-13-agent-findings.md): what the session's agent noticed
 // outside its own task, reported through the `report_finding` MCP tool and kept on this
-// machine. The pane lists them; «Створити задачу →» files one as a native board card or a Jira
-// issue, «Відхилити» drops it. The card / issue is created here, under the operator's own JWT
-// or Jira token, and only then is the target reported to the api — so a failed create leaves
-// the finding open.
+// machine. The pane lists them; «Створити задачу →» files one as a native board card, a Jira
+// issue or a Plane work item, «Відхилити» drops it. The card / issue is created here, under the
+// operator's own JWT or tracker token, and only then is the target reported to the api — so a
+// failed create leaves the finding open.
 import { computed, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { RouterLink } from 'vue-router';
 import { FINDING_JIRA_LABEL, renderFindingDescription, type AgentFinding, type FindingTarget, type Session } from '@kermanych/core';
-import { listJiraIntegrations, type JiraIntegration } from '@kermanych/cloud';
+import { listJiraIntegrations, listPlaneIntegrations, type JiraIntegration, type PlaneIntegration } from '@kermanych/cloud';
 import { useOrchestrator } from 'stores/orchestrator';
 import { useProjects } from 'stores/projects';
 import { useBoard } from 'stores/board';
 import { useAuth } from 'stores/auth';
-import { api, type JiraEditorOptions } from '../../lib/api';
+import { usePlane } from 'stores/plane';
+import { api, type JiraEditorOptions, type PlaneEditorOptions } from '../../lib/api';
 import { IS_PREVIEW } from '../../lib/preview';
 import { handleOf } from '../../lib/members';
-import { findingTaskInsert, pickFindingIssueType } from '../../lib/findings';
+import { findingTaskInsert, pickFindingIssueType, pickPlaneFindingIssueType, planeFindingPriority } from '../../lib/findings';
+import { PLANE_PRIORITIES, planeIssueUrl, priorityValue } from '../../lib/plane-view';
 import KTag from 'components/kit/KTag.vue';
 import KModal from 'components/kit/KModal.vue';
 import KField from 'components/kit/KField.vue';
@@ -229,7 +265,7 @@ const cardTitles = computed(() => new Map(board.tasks.map((c) => [c.id, c.title]
 // ── The filing dialog ────────────────────────────────────────────────────
 const dialogOpen = ref(false);
 const finding = ref<AgentFinding | null>(null);
-const target = ref<'board' | 'jira'>('board');
+const target = ref<'board' | 'jira' | 'plane'>('board');
 const title = ref('');
 const description = ref('');
 const descriptionField = ref<InstanceType<typeof KField> | null>(null);
@@ -257,11 +293,14 @@ const assigneeOptions = computed<KSelectOption[]>(() => [
   ...(projects.members[workspaceId.value ?? ''] ?? []).map((m) => ({ value: m.userId, label: handleOf(m) })),
 ]);
 
-// Jira: the workspace's connected boards on whose site this machine holds the operator's
-// token. Probed per dialog open — a token added meanwhile under Менеджмент → Integrations is
-// picked up without a reload.
-type JiraProbe = 'pending' | 'unavailable' | 'noBoard' | 'noToken' | 'ready';
-const jiraProbe = ref<JiraProbe>('pending');
+// Jira and Plane alike: the workspace's connected boards / projects for which this machine
+// holds the operator's token. Probed per dialog open — a token added meanwhile under
+// Менеджмент → Integrations is picked up without a reload.
+type TrackerProbe = 'pending' | 'unavailable' | 'noBoard' | 'noToken' | 'ready';
+// «Nothing connected» is said about a tracker only while the other one has nothing either: a
+// Plane-only workspace must not be told about Jira on every filing, nor a Jira one about Plane.
+const noTracker = (p: TrackerProbe) => p === 'noBoard' || p === 'unavailable';
+const jiraProbe = ref<TrackerProbe>('pending');
 const jiraBoards = ref<JiraIntegration[]>([]);
 const jiraBoard = ref('');
 const jiraBoardOptions = computed<KSelectOption[]>(() =>
@@ -279,7 +318,7 @@ const jiraHint = computed(() => {
     case 'unavailable':
       return t('agents.findings.dialog.jiraUnavailable');
     case 'noBoard':
-      return t('agents.findings.dialog.jiraNoBoard');
+      return noTracker(planeProbe.value) ? t('agents.findings.dialog.jiraNoBoard') : '';
     case 'noToken':
       return t('agents.findings.dialog.jiraNoToken');
     case 'pending':
@@ -340,6 +379,97 @@ watch(jiraBoard, async (id) => {
   }
 });
 
+// Plane: a token is keyed by the Plane address AND the Plane workspace slug, so the answer is
+// per pair — two connected projects may live in different Plane workspaces.
+const plane = usePlane();
+const planeProbe = ref<TrackerProbe>('pending');
+const planeProjects = ref<PlaneIntegration[]>([]);
+const planeProject = ref('');
+const planeProjectOptions = computed<KSelectOption[]>(() =>
+  planeProjects.value.map((p) => ({ value: p.id, label: `${p.projectName} · ${p.projectIdentifier}` })),
+);
+const planeIssueTypes = ref<PlaneEditorOptions['issueTypes']>([]);
+const planeIssueType = ref('');
+const planeOptionsLoading = ref(false);
+const planeOptionsError = ref<string | null>(null);
+const planeTypeOptions = computed<KSelectOption[]>(() => planeIssueTypes.value.map((it) => ({ value: it.id, label: it.name })));
+const planePriority = ref<string>('none');
+const planePriorityOptions = computed<KSelectOption[]>(() =>
+  PLANE_PRIORITIES.map((p) => ({ value: p, label: t(`plane.priority.${p}`) })),
+);
+const planeHint = computed(() => {
+  switch (planeProbe.value) {
+    case 'unavailable':
+      return t('agents.findings.dialog.planeUnavailable');
+    case 'noBoard':
+      return noTracker(jiraProbe.value) ? t('agents.findings.dialog.planeNoBoard') : '';
+    case 'noToken':
+      return t('agents.findings.dialog.planeNoToken');
+    case 'pending':
+      return t('agents.findings.dialog.planeProbing');
+    default:
+      return '';
+  }
+});
+// A reopened dialog's probe supersedes the previous one's late answer.
+let planeProbeRun = 0;
+
+async function probePlane(ws: string | undefined): Promise<void> {
+  const mine = ++planeProbeRun;
+  planeProjects.value = [];
+  planeProject.value = '';
+  if (IS_PREVIEW || !auth.user || !ws) {
+    planeProbe.value = 'unavailable';
+    return;
+  }
+  planeProbe.value = 'pending';
+  try {
+    const rows = await listPlaneIntegrations(auth.client, ws);
+    if (mine !== planeProbeRun) return;
+    if (!rows.length) {
+      planeProbe.value = 'noBoard';
+      return;
+    }
+    const pairKey = (r: PlaneIntegration) => `${r.siteUrl}\n${r.workspaceSlug}`;
+    const pairs = [...new Map(rows.map((r) => [pairKey(r), r])).values()];
+    const present = new Set<string>();
+    await Promise.all(
+      pairs.map(async (r) => {
+        const status = await api.planeTokenStatus(r.siteUrl, r.workspaceSlug).catch(() => ({ present: false }));
+        if (status.present) present.add(pairKey(r));
+      }),
+    );
+    if (mine !== planeProbeRun) return;
+    planeProjects.value = rows.filter((r) => present.has(pairKey(r)));
+    planeProbe.value = planeProjects.value.length ? 'ready' : 'noToken';
+    // One project is always preselected: the one the Plane board last showed in this
+    // workspace when the operator can write to it, else the first.
+    planeProject.value = (planeProjects.value.find((p) => p.id === plane.activeId) ?? planeProjects.value[0])?.id ?? '';
+  } catch {
+    // An unreachable cloud: the board half is the offline story, Plane simply is not offered.
+    if (mine === planeProbeRun) planeProbe.value = 'unavailable';
+  }
+}
+
+// The work-item types belong to the chosen Plane project; the default follows the kind.
+watch(planeProject, async (id) => {
+  planeIssueTypes.value = [];
+  planeIssueType.value = '';
+  planeOptionsError.value = null;
+  if (!id) return;
+  planeOptionsLoading.value = true;
+  try {
+    const opts = await api.planeEditorOptions(id);
+    if (planeProject.value !== id) return;
+    planeIssueTypes.value = opts.issueTypes;
+    planeIssueType.value = (finding.value && pickPlaneFindingIssueType(opts.issueTypes, finding.value.kind)) ?? '';
+  } catch (e) {
+    if (planeProject.value === id) planeOptionsError.value = errorText(e);
+  } finally {
+    if (planeProject.value === id) planeOptionsLoading.value = false;
+  }
+});
+
 function openFile(f: AgentFinding): void {
   const s = props.session;
   finding.value = f;
@@ -353,6 +483,7 @@ function openFile(f: AgentFinding): void {
   project.value = home.value?.id ?? '';
   assignee.value = '';
   autoRun.value = false;
+  planePriority.value = planeFindingPriority(f.kind);
   dialogError.value = null;
   busy.value = false;
   dialogOpen.value = true;
@@ -365,13 +496,16 @@ function openFile(f: AgentFinding): void {
       .finally(() => { membersLoading.value = false; });
   }
   void probeJira(ws);
+  void probePlane(ws);
 }
 
 const canCreate = computed(() => {
   if (!title.value.trim() || busy.value) return false;
-  return target.value === 'board'
-    ? projects.byId.has(project.value)
-    : !!jiraBoards.value.find((b) => b.id === jiraBoard.value) && !!issueType.value;
+  if (target.value === 'board') return projects.byId.has(project.value);
+  if (target.value === 'jira') return !!jiraBoards.value.find((b) => b.id === jiraBoard.value) && !!issueType.value;
+  // The type is optional in Plane, but a create before the project's options answer would
+  // skip the preselected one.
+  return !!planeProjects.value.find((p) => p.id === planeProject.value) && !planeOptionsLoading.value;
 });
 
 // Creates the card / issue, then reports the target. Either step's refusal stays in the
@@ -394,6 +528,18 @@ async function createTarget(f: AgentFinding): Promise<FindingTarget | undefined>
       return undefined;
     }
     return { kind: 'board', taskId: card.id };
+  }
+  if (target.value === 'plane') {
+    const pp = planeProjects.value.find((p) => p.id === planeProject.value);
+    if (!pp) return undefined;
+    const item = await api.planeCreateIssue(pp.id, {
+      summary: title.value.trim(),
+      description: description.value,
+      ...(planeIssueType.value ? { issueTypeId: planeIssueType.value } : {}),
+      priority: priorityValue(planePriority.value),
+      labels: [FINDING_JIRA_LABEL, f.kind],
+    });
+    return { kind: 'plane', key: item.key, url: planeIssueUrl(pp, item.key) };
   }
   const jb = jiraBoards.value.find((b) => b.id === jiraBoard.value);
   if (!jb) return undefined;
@@ -422,7 +568,9 @@ async function submit(): Promise<void> {
     store.notify(
       dest.kind === 'jira'
         ? t('agents.findings.filedJiraNotify', { key: dest.key })
-        : t('agents.findings.filedBoardNotify', { title: title.value.trim(), project: projects.byId.get(project.value)?.name ?? '' }),
+        : dest.kind === 'plane'
+          ? t('agents.findings.filedPlaneNotify', { key: dest.key })
+          : t('agents.findings.filedBoardNotify', { title: title.value.trim(), project: projects.byId.get(project.value)?.name ?? '' }),
       'info',
     );
   } catch (e) {

@@ -83,14 +83,17 @@ describe("report_finding / list_findings", () => {
     await call("report_finding", { ...report, title: "A" });
     await call("report_finding", { ...report, title: "B", kind: "docs" });
     await call("report_finding", { ...report, title: "C" });
-    const [a, b] = registry.listFindings(s.id);
+    await call("report_finding", { ...report, title: "D", kind: "security" });
+    const [a, b, , d] = registry.listFindings(s.id);
     registry.resolveFinding(s.id, a!.id, { status: "filed", target: { kind: "jira", key: "KRM-7", url: "https://x.atlassian.net/browse/KRM-7" } });
     registry.resolveFinding(s.id, b!.id, { status: "dismissed" });
+    registry.resolveFinding(s.id, d!.id, { status: "filed", target: { kind: "plane", key: "WEB-12", url: "https://app.plane.so/team/browse/WEB-12/" } });
     const text = (await call("list_findings")).content[0]!.text.split("\n");
     expect(text).toEqual([
       expect.stringMatching(/^- \[filed → Jira KRM-7\] \(bug\) A {2}id=/),
       expect.stringMatching(/^- \[dismissed\] \(docs\) B {2}id=/),
       expect.stringMatching(/^- \[open\] \(bug\) C {2}id=/),
+      expect.stringMatching(/^- \[filed → Plane WEB-12\] \(security\) D {2}id=/),
     ]);
   });
 
@@ -134,6 +137,7 @@ describe("findings routes", () => {
     expect(() => ctl.listFindings("nope")).toThrow(expect.objectContaining({ status: 404 }));
     expect(() => ctl.dismissFinding(s.id, "nope")).toThrow(expect.objectContaining({ status: 404 }));
     expect(() => ctl.findingFiled(s.id, f!.id, { kind: "jira", key: "K-1", url: "javascript:alert(1)" })).toThrow(expect.objectContaining({ status: 400 }));
+    expect(() => ctl.findingFiled(s.id, f!.id, { kind: "plane", key: "WEB-1", url: "javascript:alert(1)" })).toThrow(expect.objectContaining({ status: 400 }));
     expect(() => ctl.findingFiled(s.id, f!.id, { kind: "board" })).toThrow(expect.objectContaining({ status: 400 }));
     expect(ctl.listFindings(s.id)[0]!.status).toBe("open");
   });

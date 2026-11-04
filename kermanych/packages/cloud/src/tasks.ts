@@ -13,7 +13,7 @@ import { isFindingKind, readDocsReport, readSessionReport, type QaChecklist } fr
 // on every card read it. Literal strings, so supabase-js can type the selects; Realtime's
 // `select` takes the same list as an array.
 const TASK_LIST_COLUMNS =
-  "id, project_id, title, description, status, assignee_id, created_by, model, effort, prefix, kind, branch, worktree, hidden, deep_analysis, auto_run, design, finding_kind, image_paths, jira_key, linear_key, session_report, created_at, updated_at";
+  "id, project_id, title, description, status, assignee_id, created_by, model, effort, prefix, kind, branch, worktree, hidden, deep_analysis, auto_run, design, finding_kind, image_paths, jira_key, linear_key, plane_key, session_report, created_at, updated_at";
 const TASK_COLUMNS = `${TASK_LIST_COLUMNS}, qa_checklist, docs_report` as const;
 const TASK_LIST_COLUMN_NAMES = TASK_LIST_COLUMNS.split(", ");
 
@@ -40,6 +40,7 @@ type TaskRow = {
   image_paths: string[] | null;
   jira_key: string | null;
   linear_key: string | null;
+  plane_key: string | null;
   qa_checklist: unknown;
   docs_report: unknown;
   session_report: unknown;
@@ -81,6 +82,8 @@ export function toTask(row: TaskRow): Task {
   if (row.jira_key !== null) t.jiraKey = row.jira_key;
   // The Linear twin of jira_key: a shadow task minted by launching a Linear ticket.
   if (row.linear_key !== null) t.linearKey = row.linear_key;
+  // The Plane twin: a shadow task minted by launching a Plane work item.
+  if (row.plane_key !== null) t.planeKey = row.plane_key;
   // `not null default '{}'`, so this is an array in practice; the Array check keeps an
   // image-less task an ABSENT key (like every other optional field) and tolerates a row
   // that omitted the column entirely.
@@ -120,6 +123,7 @@ export function toTaskRow(patch: TaskPatch): Record<string, unknown> {
   if (patch.branch !== undefined) row.branch = patch.branch.trim() || null;
   if (patch.jiraKey !== undefined) row.jira_key = patch.jiraKey.trim() || null;
   if (patch.linearKey !== undefined) row.linear_key = patch.linearKey.trim() || null;
+  if (patch.planeKey !== undefined) row.plane_key = patch.planeKey.trim() || null;
   // Arrays are sent verbatim: an empty array is the "no images" value, not a clear-to-null,
   // because the column is `not null`.
   if (patch.imagePaths !== undefined) row.image_paths = patch.imagePaths;
@@ -217,6 +221,7 @@ export async function createTask(
       imagePaths: input.imagePaths,
       jiraKey: input.jiraKey,
       linearKey: input.linearKey,
+      planeKey: input.planeKey,
     }),
     // Insert-only, so not part of toTaskRow: tasks_guard() keeps it frozen on every update.
     ...(input.findingKind ? { finding_kind: input.findingKind } : {}),
@@ -370,8 +375,8 @@ export async function releaseLaunchClaim(
 
 // The cards «Посіпака» may take on this machine, oldest first across the given projects: the
 // caller's own (`created_by`), allowed to run by themselves, waiting in the backlog, unassigned or
-// already the caller's, and neither a deep analysis (it interviews a person) nor a Jira/Linear
-// shadow card (those launch through their own flow).
+// already the caller's, and neither a deep analysis (it interviews a person) nor a Jira/Linear/
+// Plane shadow card (those launch through their own flow).
 export async function listMinionCandidates(
   client: SupabaseClient,
   projectIds: string[],
@@ -391,6 +396,7 @@ export async function listMinionCandidates(
     .eq("design", false)
     .is("jira_key", null)
     .is("linear_key", null)
+    .is("plane_key", null)
     .or(`assignee_id.is.null,assignee_id.eq.${userId}`)
     .order("created_at", { ascending: true })
     .limit(limit);
@@ -413,6 +419,7 @@ export async function claimMinionTask(client: SupabaseClient, id: string, userId
     .eq("design", false)
     .is("jira_key", null)
     .is("linear_key", null)
+    .is("plane_key", null)
     .or(`assignee_id.is.null,assignee_id.eq.${userId}`)
     .select(TASK_COLUMNS)
     .maybeSingle();

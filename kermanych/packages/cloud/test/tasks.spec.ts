@@ -475,7 +475,7 @@ describe("releaseLaunchClaim", () => {
 
 describe("minion candidates and claim", () => {
   // Every condition is part of the trust rule: only the caller's own backlog cards that allow
-  // auto-run, never a deep analysis, a design, a Jira/Linear shadow card, or a colleague's assignment.
+  // auto-run, never a deep analysis, a design, a Jira/Linear/Plane shadow card, or a colleague's assignment.
   const predicate = (ops: Op[]) => [
     ["eq", "status", "backlog"],
     ["eq", "auto_run", true],
@@ -484,6 +484,7 @@ describe("minion candidates and claim", () => {
     ["eq", "design", false],
     ["is", "jira_key", null],
     ["is", "linear_key", null],
+    ["is", "plane_key", null],
     ["or", "assignee_id.is.null,assignee_id.eq.u1"],
   ].every((op) => ops.some((o) => JSON.stringify(o) === JSON.stringify(op)));
 

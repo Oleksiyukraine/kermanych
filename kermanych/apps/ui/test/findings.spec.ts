@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { pickFindingIssueType } from "../src/lib/findings";
+import { pickFindingIssueType, pickPlaneFindingIssueType } from "../src/lib/findings";
 
 const types = [
   { id: "10", name: "Sub-task", subtask: true },
@@ -20,4 +20,15 @@ describe("pickFindingIssueType", () => {
   it("falls back to the first non-subtask type when the site has no such name", () =>
     expect(pickFindingIssueType([types[0]!, types[1]!], "bug")).toBe("1"));
   it("never picks a subtask type", () => expect(pickFindingIssueType([types[0]!], "docs")).toBeUndefined());
+});
+
+describe("pickPlaneFindingIssueType", () => {
+  it("picks Bug / Task by name, case-insensitively", () => {
+    expect(pickPlaneFindingIssueType(types, "security")).toBe("2");
+    expect(pickPlaneFindingIssueType(types, "docs")).toBe("3");
+  });
+  // Plane types are optional (Pro): an unmatched project files the item untyped, never as
+  // whatever type happens to come first.
+  it("picks nothing when the project has no such type", () =>
+    expect(pickPlaneFindingIssueType([{ id: "1", name: "Story" }], "bug")).toBeUndefined());
 });

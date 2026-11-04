@@ -58,6 +58,8 @@ import type {
   JiraIssue,
   LinearIntegration,
   LinearIssue,
+  PlaneIntegration,
+  PlaneIssue,
   ReleaseNotesSlack,
   SlackIntegration,
 } from '@kermanych/cloud';
@@ -308,6 +310,60 @@ export type LinearEditorOptions = {
 };
 export type LinearAssignableUser = { id: string; name: string; avatar?: string };
 
+// ── Plane (REST v1, proxied through the local api for the same reason as Jira: the
+// per-user API token lives in this machine's registry, never in the browser). A token is
+// keyed by the Plane address AND the Plane workspace slug — some editions scope a token to
+// one workspace — so every token route carries both. ──────────────────────────────────────
+export type PlaneTokenStatus = { present: boolean; displayName?: string };
+export type PlaneProjectOption = { id: string; name: string; identifier: string };
+// The project's states shaped as Jira-style transitions (id === stateId): Plane has no
+// workflow, so every other state is a «transition», and the board, the ticket dialog and the
+// merge prompt share one vocabulary with the Jira views.
+export type PlaneTransition = {
+  id: string;
+  name: string;
+  to: { id: string; name: string; statusCategory: { key: string } };
+};
+// Plane's fixed priority enum — no priorities endpoint, the five values are the whole set.
+export type PlanePriority = 'urgent' | 'high' | 'medium' | 'low' | 'none';
+// Create/edit a Plane work item. `description` is markdown (the api renders Plane's editor
+// HTML); `labels` are NAMES (the api resolves them to the project's label ids, creating a
+// missing one best-effort); `assigneeAccountId` null and `estimatePointId` null clear;
+// `startDate`/`dueDate` '' clear. `stateId` moves the item — the drag-to-column field.
+export type PlaneIssueDraft = {
+  summary?: string;
+  description?: string;
+  issueTypeId?: string;
+  priority?: PlanePriority;
+  labels?: string[];
+  assigneeAccountId?: string | null;
+  estimatePointId?: string | null;
+  startDate?: string;
+  dueDate?: string;
+  parentKey?: string;
+  stateId?: string;
+};
+// The editor's live lists, plus what the token may do to worklogs. `issueTypes` and
+// `estimatePoints` are empty where the project (or the edition) has none; time tracking is
+// a project switch Plane Pro owns, so the worklog surfaces read `timeTrackingEnabled` and
+// hide rather than break. An entry is «mine» when its authorAccountId is `myAccountId`.
+export type PlaneEditorOptions = {
+  issueTypes: { id: string; name: string }[];
+  priorities: { id: string; name: string }[];
+  labels: { id: string; name: string; color: string }[];
+  states: { id: string; name: string; group: string; color: string }[];
+  estimatePoints: { id: string; value: string }[];
+  estimateType: 'points' | 'categories' | 'time' | '';
+  timeTrackingEnabled: boolean;
+  myAccountId: string;
+  worklog: { editOwn: boolean; editAll: boolean; deleteOwn: boolean; deleteAll: boolean };
+};
+export type PlaneAssignableUser = { accountId: string; displayName: string; avatar?: string };
+// Plane's worklog is a duration and an optional note — no «started», no estimate
+// adjustment. The duration is typed in Jira's spelling (`3h 20m`, `45m`, `1.5h`); the api
+// converts it to Plane's minutes.
+export type PlaneWorklogDraft = { timeSpent: string; description?: string };
+
 // ── Slack (the documentation Q&A bot; its bot and app-level tokens live in this machine's
 // registry, keyed by the Kermanych workspace, and never reach the browser or the cloud) ────
 // `listening` = this machine holds an open Socket Mode connection answering for the
@@ -501,6 +557,105 @@ export const api = {
   ): Promise<{ session: Session; transitionError?: string }> =>
     post<{ session: Session; transitionError?: string }>(
       `/linear/issues/${workspaceId}/${encodeURIComponent(key)}/launch`,
+      { projectId, transitionId, images },
+    ),
+
+  // ── Plane. The acting user comes from the guard's token; their Plane API token from the
+  // machine's registry, keyed by site + Plane workspace slug. Every write returns the
+  // refreshed mirror issue so the caller can upsert it without waiting for realtime. The
+  // action key is the work item's key («WEB-42»).
+  planeTokenStatus: (site: string, workspace: string): Promise<PlaneTokenStatus> =>
+    get<PlaneTokenStatus>(`/plane/token?site=${encodeURIComponent(site)}&workspace=${encodeURIComponent(workspace)}`),
+  planeSetToken: (siteUrl: string, workspaceSlug: string, token: string): Promise<{ displayName: string }> =>
+    put<{ displayName: string }>('/plane/token', { siteUrl, workspaceSlug, token }),
+  planeDeleteToken: (site: string, workspace: string): Promise<void> =>
+    del(`/plane/token?site=${encodeURIComponent(site)}&workspace=${encodeURIComponent(workspace)}`),
+
+  planeProjects: (site: string, workspace: string): Promise<PlaneProjectOption[]> =>
+    get<PlaneProjectOption[]>(
+      `/plane/projects?site=${encodeURIComponent(site)}&workspace=${encodeURIComponent(workspace)}`,
+    ),
+  planeIntegrations: (workspaceId: string): Promise<PlaneIntegration[]> =>
+    get<PlaneIntegration[]>(`/plane/integrations/${workspaceId}`),
+  planeConnect: (
+    workspaceId: string,
+    siteUrl: string,
+    workspaceSlug: string,
+    projectId: string,
+  ): Promise<PlaneIntegration> =>
+    post<PlaneIntegration>('/plane/integrations', { workspaceId, siteUrl, workspaceSlug, projectId }),
+  // Disconnect ONE project by its integration id — the workspace's other projects stay.
+  planeDisconnect: (integrationId: string): Promise<void> => del(`/plane/integrations/${integrationId}`),
+
+  // `rateLimited`: Plane's 60-requests-a-minute budget ran out mid-tick and the api ended the
+  // tick quietly — not a failure, the next tick carries on.
+  planeSync: (integrationId: string, full = false): Promise<{ synced: boolean; rateLimited?: boolean }> =>
+    post<{ synced: boolean; rateLimited?: boolean }>(`/plane/sync/${integrationId}`, { full }),
+
+  planeTransitions: (integrationId: string, key: string): Promise<PlaneTransition[]> =>
+    get<PlaneTransition[]>(`/plane/issues/${integrationId}/${encodeURIComponent(key)}/transitions`),
+  planeTransition: (integrationId: string, key: string, transitionId: string): Promise<PlaneIssue> =>
+    post<PlaneIssue>(`/plane/issues/${integrationId}/${encodeURIComponent(key)}/transition`, { transitionId }),
+  planeComment: (integrationId: string, key: string, body: string): Promise<PlaneIssue> =>
+    post<PlaneIssue>(`/plane/issues/${integrationId}/${encodeURIComponent(key)}/comments`, { body }),
+  planeRefreshIssue: (integrationId: string, key: string): Promise<PlaneIssue> =>
+    post<PlaneIssue>(`/plane/issues/${integrationId}/${encodeURIComponent(key)}/refresh`, {}),
+  planeLogWork: (integrationId: string, key: string, draft: PlaneWorklogDraft): Promise<PlaneIssue> =>
+    post<PlaneIssue>(`/plane/issues/${integrationId}/${encodeURIComponent(key)}/worklogs`, draft),
+  planeEditWorklog: (
+    integrationId: string,
+    key: string,
+    worklogId: string,
+    draft: PlaneWorklogDraft,
+  ): Promise<PlaneIssue> =>
+    put<PlaneIssue>(
+      `/plane/issues/${integrationId}/${encodeURIComponent(key)}/worklogs/${encodeURIComponent(worklogId)}`,
+      draft,
+    ),
+  planeDeleteWorklog: (integrationId: string, key: string, worklogId: string): Promise<PlaneIssue> =>
+    delJson<PlaneIssue>(
+      `/plane/issues/${integrationId}/${encodeURIComponent(key)}/worklogs/${encodeURIComponent(worklogId)}`,
+    ),
+
+  planeCreateIssue: (integrationId: string, draft: PlaneIssueDraft): Promise<PlaneIssue> =>
+    post<PlaneIssue>(`/plane/issues/${integrationId}`, draft),
+  planeEditIssue: (integrationId: string, key: string, draft: PlaneIssueDraft): Promise<PlaneIssue> =>
+    put<PlaneIssue>(`/plane/issues/${integrationId}/${encodeURIComponent(key)}`, draft),
+  // An existing work item's description as markdown (from Plane's editor HTML) — the
+  // editor's start.
+  planeIssueDescription: (integrationId: string, key: string): Promise<{ markdown: string }> =>
+    get<{ markdown: string }>(`/plane/issues/${integrationId}/${encodeURIComponent(key)}/description`),
+  planeDeleteIssue: (integrationId: string, key: string): Promise<void> =>
+    del(`/plane/issues/${integrationId}/${encodeURIComponent(key)}`),
+
+  planeEditorOptions: (integrationId: string): Promise<PlaneEditorOptions> =>
+    get<PlaneEditorOptions>(`/plane/editor-options/${integrationId}`),
+  planeAssignableUsers: (integrationId: string, q: string): Promise<PlaneAssignableUser[]> =>
+    get<PlaneAssignableUser[]>(`/plane/assignable/${integrationId}?q=${encodeURIComponent(q)}`),
+
+  planeUploadAttachment: (
+    integrationId: string,
+    key: string,
+    filename: string,
+    data: string,
+    mimeType: string,
+  ): Promise<PlaneIssue> =>
+    post<PlaneIssue>(`/plane/issues/${integrationId}/${encodeURIComponent(key)}/attachments`, { filename, data, mimeType }),
+
+  // A fetch, not an <a href>, for Jira's reason (the bearer guard); the api follows Plane's
+  // presigned redirect itself, so the Plane key never reaches the storage host.
+  planeDownloadAttachment: (integrationId: string, key: string, attachmentId: string): Promise<Blob> =>
+    getBlob(`/plane/attachments/${integrationId}/${encodeURIComponent(key)}/${encodeURIComponent(attachmentId)}`),
+
+  planeLaunch: (
+    integrationId: string,
+    key: string,
+    projectId: string,
+    transitionId?: string,
+    images?: ImageInput[],
+  ): Promise<{ session: Session; transitionError?: string }> =>
+    post<{ session: Session; transitionError?: string }>(
+      `/plane/issues/${integrationId}/${encodeURIComponent(key)}/launch`,
       { projectId, transitionId, images },
     ),
 

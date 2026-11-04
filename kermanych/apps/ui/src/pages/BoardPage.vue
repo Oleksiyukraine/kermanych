@@ -1,10 +1,10 @@
 <template>
   <main class="board">
-    <!-- VIEW SWITCHER — exists when the scoped workspace mirrors a Jira and/or a Linear
-         board. «Задачі» is the native five-column board, untouched; «Jira»/«Linear»
-         reproduce each mirrored board's own columns. A workspace may mirror BOTH, so the
-         two tabs appear independently. -->
-    <div v-if="jiraAvailable || linearAvailable" class="board__views" role="tablist">
+    <!-- VIEW SWITCHER — exists when the scoped workspace mirrors a Jira, a Linear and/or a
+         Plane board. «Задачі» is the native five-column board, untouched; «Jira»/«Linear»/
+         «Plane» reproduce each mirrored board's own columns. A workspace may mirror several
+         trackers at once, so the tabs appear independently. -->
+    <div v-if="jiraAvailable || linearAvailable || planeAvailable" class="board__views" role="tablist">
       <button
         class="board__view mono"
         :class="{ 'board__view--on': boardView === 'tasks' }"
@@ -28,6 +28,14 @@
         :aria-selected="boardView === 'linear'"
         @click="setBoardView('linear')"
       >{{ t('board.viewSwitch.linear') }}</button>
+      <button
+        v-if="planeAvailable"
+        class="board__view mono"
+        :class="{ 'board__view--on': boardView === 'plane' }"
+        role="tab"
+        :aria-selected="boardView === 'plane'"
+        @click="setBoardView('plane')"
+      >{{ t('board.viewSwitch.plane') }}</button>
     </div>
 
     <JiraBoardView
@@ -40,8 +48,14 @@
       :workspace-id="local.selectedWorkspaceId"
     />
 
-    <!-- This workspace remembers «Jira»/«Linear» as its default but that integration has not
-         been probed yet: a skeleton, not the native board flashing up and then swapping. -->
+    <PlaneBoardView
+      v-if="boardView === 'plane' && local.selectedWorkspaceId"
+      :workspace-id="local.selectedWorkspaceId"
+    />
+
+    <!-- This workspace remembers «Jira»/«Linear»/«Plane» as its default but that integration
+         has not been probed yet: a skeleton, not the native board flashing up and then
+         swapping. -->
     <div v-if="viewPhase === 'skeleton'" class="board__columns">
       <div v-for="col in COLUMNS" :key="col.key" class="board__skeleton-col">
         <KSkeleton variant="line" width="60%" />
@@ -453,8 +467,10 @@ import { autoRunSwitchLocked, boardTasks, canAssignTask, canRunTask, cardModesFr
 import { cardDecisionReason, cardNotNeededReason } from '../lib/minion';
 import JiraBoardView from 'components/jira/JiraBoardView.vue';
 import LinearBoardView from 'components/linear/LinearBoardView.vue';
+import PlaneBoardView from 'components/plane/PlaneBoardView.vue';
 import { useJira } from 'stores/jira';
 import { useLinear } from 'stores/linear';
+import { usePlane } from 'stores/plane';
 
 const auth = useAuth();
 const board = useBoard();
@@ -465,20 +481,22 @@ const router = useRouter();
 const { t } = useI18n();
 const jiraStore = useJira();
 const linearStore = useLinear();
+const planeStore = usePlane();
 
-// ── the Jira / Linear view switcher ───────────────────────────────────────────
+// ── the Jira / Linear / Plane view switcher ───────────────────────────────────
 // Probed per scoped workspace; no integration (or no workspace scope at all — «Дошка
 // команди» across groups has no single board to show) means no switcher and the page is
-// exactly what it was before the integrations existed. Jira and Linear are independent:
-// a workspace may mirror one, the other, or both.
+// exactly what it was before the integrations existed. Jira, Linear and Plane are
+// independent: a workspace may mirror any of them, or several.
 //
-// The chosen tab IS the default: picking «Jira»/«Linear» persists per workspace (the
+// The chosen tab IS the default: picking «Jira»/«Linear»/«Plane» persists per workspace (the
 // kermanych.agents.tab idiom), so the next visit opens on it — falling back to the native
 // board whenever that integration is gone.
-type BoardViewKind = 'tasks' | 'jira' | 'linear';
+type BoardViewKind = 'tasks' | 'jira' | 'linear' | 'plane';
 const boardView = ref<BoardViewKind>('tasks');
 const jiraAvailable = computed(() => !!local.selectedWorkspaceId && !!jiraStore.integration);
 const linearAvailable = computed(() => !!local.selectedWorkspaceId && !!linearStore.integration);
+const planeAvailable = computed(() => !!local.selectedWorkspaceId && !!planeStore.integration);
 
 const viewKey = (ws: string) => `kermanych.board-view.${ws}`;
 
@@ -496,7 +514,7 @@ function setBoardView(v: BoardViewKind): void {
 function readBoardView(ws: string): BoardViewKind {
   try {
     const v = localStorage.getItem(viewKey(ws));
-    return v === 'jira' || v === 'linear' ? v : 'tasks';
+    return v === 'jira' || v === 'linear' || v === 'plane' ? v : 'tasks';
   } catch {
     return 'tasks';
   }
@@ -504,13 +522,14 @@ function readBoardView(ws: string): BoardViewKind {
 
 // The remembered default of this workspace is a mirrored board whose probe has not answered
 // (the stores reset `integration` to undefined on a workspace change, before awaiting): the
-// view is not decided yet, so neither the native board nor the Jira/Linear one renders.
+// view is not decided yet, so neither the native board nor the mirrored one renders.
 const viewPhase = useLoadPhase(() => {
   const ws = local.selectedWorkspaceId;
   if (!ws) return false;
   const stored = readBoardView(ws);
   if (stored === 'jira') return jiraStore.integration === undefined && jiraStore.loading;
   if (stored === 'linear') return linearStore.integration === undefined && linearStore.loading;
+  if (stored === 'plane') return planeStore.integration === undefined && planeStore.loading;
   return false;
 });
 watch(
@@ -519,16 +538,17 @@ watch(
     if (!ws) return;
     void jiraStore.probe(ws);
     void linearStore.probe(ws);
+    void planeStore.probe(ws);
   },
   { immediate: true },
 );
 
 // The one owner of what the switcher shows: a workspace switch or a disconnect folds back
-// to the native board; a workspace whose remembered default is «Jira»/«Linear» opens on it,
+// to the native board; a workspace whose remembered default is a tracker's tab opens on it,
 // but only while that integration is actually connected.
 watch(
-  () => [local.selectedWorkspaceId, jiraAvailable.value, linearAvailable.value] as const,
-  ([ws, jira, lin]) => {
+  () => [local.selectedWorkspaceId, jiraAvailable.value, linearAvailable.value, planeAvailable.value] as const,
+  ([ws, jira, lin, pln]) => {
     if (!ws) {
       boardView.value = 'tasks';
       return;
@@ -536,6 +556,7 @@ watch(
     const stored = readBoardView(ws);
     if (stored === 'jira' && jira) boardView.value = 'jira';
     else if (stored === 'linear' && lin) boardView.value = 'linear';
+    else if (stored === 'plane' && pln) boardView.value = 'plane';
     else boardView.value = 'tasks';
   },
   { immediate: true },

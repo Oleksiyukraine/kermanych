@@ -30,7 +30,7 @@ export function findingTools(language: AgentLanguage | undefined) {
     {
       name: "report_finding",
       description:
-        "Hand the operator a problem you noticed OUTSIDE your current task, so they can file it as a task on the Kermanych board or in Jira. " +
+        "Hand the operator a problem you noticed OUTSIDE your current task, so they can file it as a task on the Kermanych board, in Jira or in Plane. " +
         "Report a real problem: a bug, a vulnerability, broken or dead code, documentation that contradicts the code, or significant tech debt. " +
         "Something that is part of your current task is not a finding: fix it instead. " +
         "Do not get side-tracked: record the finding and continue your task. Do not fix it on this branch unless the operator asked. " +
@@ -68,7 +68,7 @@ export function findingTools(language: AgentLanguage | undefined) {
     {
       name: "list_findings",
       description:
-        "The findings this session already reported, in every state: open (waiting for the operator), filed (with the board card or Jira key it became) and dismissed. " +
+        "The findings this session already reported, in every state: open (waiting for the operator), filed (with the board card, Jira key or Plane key it became) and dismissed. " +
         "Call it before report_finding so you never report the same problem twice.",
       inputSchema: { type: "object", properties: {}, additionalProperties: false },
     },
@@ -93,7 +93,8 @@ export function callFindingTool(
     const rows = registry.listFindings(sessionId);
     if (!rows.length) return { content: [{ type: "text", text: "No findings reported in this session yet." }] };
     const lines = rows.map((f) => {
-      const where = f.target?.kind === "jira" ? ` → Jira ${f.target.key}` : f.target?.kind === "board" ? " → board card" : "";
+      const t = f.target;
+      const where = t?.kind === "jira" ? ` → Jira ${t.key}` : t?.kind === "plane" ? ` → Plane ${t.key}` : t?.kind === "board" ? " → board card" : "";
       return `- [${f.status}${where}] (${f.kind}) ${f.title}  id=${f.id}`;
     });
     return { content: [{ type: "text", text: lines.join("\n") }] };

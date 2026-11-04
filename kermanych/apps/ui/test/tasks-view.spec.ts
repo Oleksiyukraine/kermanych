@@ -205,13 +205,14 @@ describe('boardTasks', () => {
   // The kanban's whole guest list. Order is preserved — the columns rely on listTasks'
   // `created_at` ascending — and the two exclusions are the card's own properties, not the
   // operator's filters, which is why they are decided before filterTasks runs.
-  it('drops hidden cards and Jira shadows, keeps everything else in order', () => {
+  it('drops hidden cards and tracker shadows, keeps everything else in order', () => {
     const plain = task({ id: 'a', assigneeId: ME });
     const hidden = task({ id: 'b', assigneeId: ME, hidden: true });
     const shadow = task({ id: 'c', jiraKey: 'KAN-42' });
     const theirs = task({ id: 'd', assigneeId: OTHER });
+    const planeShadow = task({ id: 'e', planeKey: 'WEB-7' });
 
-    expect(boardTasks([plain, hidden, shadow, theirs]).map((t) => t.id)).toEqual(['a', 'd']);
+    expect(boardTasks([plain, hidden, shadow, theirs, planeShadow]).map((t) => t.id)).toEqual(['a', 'd']);
   });
 
   // A hidden card that is RUNNING is still hidden: the flag is about the board, not about

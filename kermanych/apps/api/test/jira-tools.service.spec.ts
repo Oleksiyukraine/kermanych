@@ -1,7 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
 import type { Notice } from "@kermanych/core";
 import type { JiraIntegration } from "@kermanych/cloud";
-import { JiraToolsService, type JiraToolScope } from "../src/jira/jira-tools.service";
+import { JiraToolsService } from "../src/jira/jira-tools.service";
+import type { ManagementToolScope } from "../src/management/tracker-tools";
 import type { JiraService } from "../src/jira/jira.service";
 import type { JiraClient } from "../src/jira/jira-client";
 
@@ -32,7 +33,7 @@ function setup(client: Partial<Record<keyof JiraClient, unknown>>, jira: Partial
     ...jira,
   } as unknown as JiraService;
   const changes: Notice[] = [];
-  const scope: JiraToolScope = {
+  const scope: ManagementToolScope = {
     userId: "u1",
     workspaceId: "w1",
     file: () => undefined,

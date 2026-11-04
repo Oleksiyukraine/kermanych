@@ -93,7 +93,7 @@ vi.mock('../src/lib/export-file', () => ({
 }));
 
 function reply(actions: ManagementChatReply['actions']): ManagementChatReply {
-  return { text: 'Готово.', actions, rejected: [], notices: [], jiraChanges: [], ms: 10 };
+  return { text: 'Готово.', actions, rejected: [], notices: [], trackerChanges: [], ms: 10 };
 }
 
 function results(entries: readonly MgmtChatEntry[]): string[] {
