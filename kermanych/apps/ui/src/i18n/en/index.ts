@@ -227,6 +227,7 @@ export const en: MessageSchema = {
       more: 'More actions',
       renameHint: 'Double-click to rename',
       renameAria: 'Agent name',
+      findLog: 'Find in the log (⌘F)',
       expandAll: 'Expand all',
       collapseAll: 'Collapse all',
       menu: {
@@ -476,10 +477,8 @@ export const en: MessageSchema = {
       splitResizeAria: 'Resize the browser beside the log',
       splitResizeTip: 'Drag to resize the browser',
       find: {
+        open: 'Find in page (⌘F)',
         placeholder: 'Find in page',
-        prev: 'Previous match',
-        next: 'Next match',
-        close: 'Close find',
       },
       dialog: {
         alert: 'Page alert',
@@ -1515,6 +1514,9 @@ export const en: MessageSchema = {
       claude: 'claude-code',
       note: 'Existing sessions keep their current backend.',
       checking: 'Checking that the CLI is ready…',
+      nativeLabel: 'Native Claude Code sessions',
+      claudeFullScreen: 'Full-screen layout',
+      claudeFullScreenNote: 'Full screen pins the input to the bottom, but keeps only the visible screen: find in the Лог reaches only what is on it. Off, the whole history stays in the terminal and can be searched. Applies when a session next starts or resumes.',
     },
     language: {
       label: 'Agent communication language',
@@ -2535,6 +2537,9 @@ export const en: MessageSchema = {
   kit: {
     toast: {
       close: 'Close',
+    },
+    terminal: {
+      findPlaceholder: 'Find in terminal',
     },
     composer: {
       helpers: 'Helpers',
