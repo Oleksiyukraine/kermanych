@@ -1,6 +1,13 @@
 // packages/cloud/test/account.spec.ts
 import { describe, it, expect } from "vitest";
-import { getMyAgentRuntime, setMyAgentRuntime, getMyAgentLanguage, setMyAgentLanguage } from "../src/account";
+import {
+  getMyAgentRuntime,
+  setMyAgentRuntime,
+  getMyAgentLanguage,
+  setMyAgentLanguage,
+  getMySkillImprovement,
+  setMySkillImprovement,
+} from "../src/account";
 
 // A minimal fake matching the postgrest chain the helpers use. getMyAgentRuntime does
 // client.from('profiles').select('agent_runtime').eq('id', uid).single(); setMyAgentRuntime
@@ -59,5 +66,34 @@ describe("account language helpers", () => {
     let sent: unknown;
     await setMyAgentLanguage(fakeLangClient({ agent_language: null }, (u) => (sent = u)), "en");
     expect(sent).toEqual({ agent_language: "en" });
+  });
+});
+
+describe("skill improvement switch", () => {
+  // Same postgrest chain, on the skill_improvement column.
+  function fakeSwitchClient(row: { skill_improvement: unknown }, sink?: (u: unknown) => void) {
+    return {
+      auth: { getUser: async () => ({ data: { user: { id: "u1" } }, error: null }) },
+      from() {
+        return {
+          select() { return this; },
+          update(u: unknown) { sink?.(u); return this; },
+          eq() { return this; },
+          single: async () => ({ data: row, error: null }),
+          then: undefined,
+        } as never;
+      },
+    } as never;
+  }
+
+  it("reads the stored boolean, and null for anything else", async () => {
+    expect(await getMySkillImprovement(fakeSwitchClient({ skill_improvement: false }))).toBe(false);
+    expect(await getMySkillImprovement(fakeSwitchClient({ skill_improvement: true }))).toBe(true);
+    expect(await getMySkillImprovement(fakeSwitchClient({ skill_improvement: "yes" }))).toBeNull();
+  });
+  it("writes the snake_case column for the current user", async () => {
+    let sent: unknown;
+    await setMySkillImprovement(fakeSwitchClient({ skill_improvement: true }, (u) => (sent = u)), false);
+    expect(sent).toEqual({ skill_improvement: false });
   });
 });
