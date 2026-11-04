@@ -247,7 +247,7 @@ const formError = ref('');
 const draftName = ref('');
 const draftDescription = ref('');
 const draftBody = ref('');
-// Carried through the editor and echoed on every upsert. `upsertProjectSkill` applies
+// Carried through the editor and echoed on every upsert. `upsertAiSkill` applies
 // `enabled ?? true` on the UPDATE branch as well, so omitting it here would silently
 // re-enable a default that this project had turned off — losing the one bit that
 // `Вимкнути` writes.
@@ -563,7 +563,7 @@ async function askDelete(name: string): Promise<void> {
 // DEFAULT_SKILLS with its original text, so the body the tombstone never carried is never
 // needed to switch it back on.
 //
-// `deleteProjectSkill` throws when the delete removed nothing — an RLS refusal or an
+// `deleteAiSkill` throws when the delete removed nothing — an RLS refusal or an
 // already-gone row. Nothing is dropped from the list here: the endpoint is re-read, so what
 // the screen shows is what the library resolves to.
 async function dropRow(name: string): Promise<void> {
