@@ -4,7 +4,7 @@
 // global SupabaseAuthGuard; the acting user comes from the guard, never the body.
 import { BadRequestException, Body, Controller, Get, HttpCode, Post, Put, Req } from "@nestjs/common";
 import { CodedError, badRequest } from "../management/coded-error";
-import { VoiceService, type VoiceSessionRequest } from "../voice/voice.service";
+import { VoiceService, type DictationRequest, type VoiceSessionRequest } from "../voice/voice.service";
 
 type Authed = { user: { id: string } };
 
@@ -44,6 +44,16 @@ export class VoiceController {
   async session(@Body() b: VoiceSessionRequest, @Req() req: Authed) {
     try {
       return await this.voice.createSession(req.user.id, b ?? ({} as VoiceSessionRequest));
+    } catch (err) {
+      relay(err);
+    }
+  }
+
+  // Voice dictation (docs/specs/2026-11-03-voice-dictation.md): a transcription session.
+  @Post("dictation")
+  async dictation(@Body() b: DictationRequest, @Req() req: Authed) {
+    try {
+      return await this.voice.createDictation(req.user.id, b ?? ({} as DictationRequest));
     } catch (err) {
       relay(err);
     }

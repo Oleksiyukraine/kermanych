@@ -2,6 +2,7 @@
 import { defineStore } from 'pinia';
 import { computed, ref, watch } from 'vue';
 import type { Task, TaskChange, TaskChannelState, TaskInsert, TaskPatch } from '@kermanych/cloud';
+import type { QaChecklist, QaChecklistItem } from '@kermanych/core';
 import {
   createTask as cloudCreateTask,
   deleteTask as cloudDeleteTask,
@@ -11,6 +12,7 @@ import {
   listTasksByIds as cloudListTasksByIds,
   listTaskVersions as cloudListTaskVersions,
   patchTask as cloudPatchTask,
+  patchQaItems as cloudPatchQaItems,
   subscribeTasks as cloudSubscribeTasks,
   uploadTaskImages as cloudUploadTaskImages,
   TASK_IMAGE_BUCKET,
@@ -493,23 +495,59 @@ export const useBoard = defineStore('board', () => {
     },
   );
 
-  // A human ticking one QA checklist item on the board. Rebuilds the whole checklist with that
-  // one item flipped — the stored shape is replace-whole (toTaskRow sends it verbatim) — and
-  // rides the same optimistic-patch-plus-rollback path every other field edit uses. `checkedBy`
-  // and `checkedAt` are stamped on a tick and dropped on an untick, so the row never names a
-  // tester behind an unchecked box.
-  function setQaItemChecked(id: string, itemId: string, checked: boolean): Promise<boolean> {
-    const before = tasks.value.find((t) => t.id === id);
-    if (!before?.qaChecklist) return Promise.resolve(false);
+  // Puts a checklist the cloud answered with onto the card, keeping the row's version: the
+  // write's Realtime echo (a newer `updated_at`) re-reads the held card as usual. Used for the
+  // answer of an item patch and for `qa_checklist_update` — the api's own writes (a tester's
+  // verdict, a checklist it composed, verdicts cleared at a run's start), which reach this
+  // machine over the socket before Realtime and so show live on an open QA tab and card.
+  function applyQaChecklist(id: string, checklist: QaChecklist): void {
+    if (!tasks.value.some((t) => t.id === id)) return;
+    tasks.value = tasks.value.map((t) => (t.id === id ? { ...t, qaChecklist: checklist } : t));
+  }
+
+  function replaceQaItem(id: string, item: QaChecklistItem): void {
+    const t = tasks.value.find((x) => x.id === id);
+    if (!t?.qaChecklist) return;
+    const items = t.qaChecklist.items.map((it) => (it.id === item.id ? item : it));
+    applyQaChecklist(id, { ...t.qaChecklist, items });
+  }
+
+  local.onServerEvent((e) => {
+    if (e.type === 'qa_checklist_update') applyQaChecklist(e.taskId, e.checklist);
+  });
+
+  // A human ticking one QA checklist item. The tester writes verdicts into the same column
+  // meanwhile (docs/specs/2026-11-04-qa-tester-agent.md, decision 3), so the write patches only
+  // this item in the database — never the whole column from a possibly stale local copy.
+  // Optimistic: the item flips at once and goes back to what it was when the cloud refuses.
+  // `checkedBy` / `checkedAt` are stamped on a tick and dropped on an untick, so the row never
+  // names a person behind an unchecked box; the item's `agent` verdict is never touched.
+  async function setQaItemChecked(id: string, itemId: string, checked: boolean): Promise<boolean> {
+    const before = tasks.value.find((t) => t.id === id)?.qaChecklist?.items.find((it) => it.id === itemId);
+    if (!before) return false;
     const userId = auth.user?.id;
-    const items = before.qaChecklist.items.map((it) =>
-      it.id !== itemId
-        ? it
-        : checked
-          ? { ...it, checked, ...(userId ? { checkedBy: userId } : {}), checkedAt: new Date().toISOString() }
-          : { id: it.id, text: it.text, checked },
-    );
-    return updateTaskFields(id, { qaChecklist: { ...before.qaChecklist, items } });
+    const stamp = checked ? { checkedAt: new Date().toISOString(), ...(userId ? { checkedBy: userId } : {}) } : {};
+    const optimistic: QaChecklistItem = { ...before, checked, ...stamp };
+    if (!checked) {
+      delete optimistic.checkedBy;
+      delete optimistic.checkedAt;
+    }
+    replaceQaItem(id, optimistic);
+    try {
+      const checklist = await cloudPatchQaItems(
+        auth.client,
+        id,
+        [itemId],
+        { checked, ...stamp },
+        checked ? [] : ['checkedBy', 'checkedAt'],
+      );
+      applyQaChecklist(id, checklist);
+      return true;
+    } catch (e) {
+      replaceQaItem(id, before);
+      fail(e);
+      return false;
+    }
   }
 
   return {

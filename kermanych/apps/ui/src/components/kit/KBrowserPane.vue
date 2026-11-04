@@ -269,7 +269,7 @@ function fail(e: unknown): void {
   store.notify(errorText(e), 'error');
 }
 function navigate(url: string): Promise<boolean> {
-  return browser.navigate(props.session.id, props.session.projectId, url);
+  return browser.navigate(props.session.id, props.session.projectId, url, props.session.tester === true);
 }
 // Resolves at main's next state push for this session (or after the pending cap): the end of
 // an action main reports only through state — a reload, a first load.
@@ -357,7 +357,7 @@ const scalePct = computed(() => Math.round((state.value?.scale ?? 1) * 100));
 const viewportPick = useOptimisticValue(
   () => viewportValue.value,
   async (value: string) => {
-    bridge.setViewport(props.session.id, props.session.projectId, value === 'fit' ? null : { width: Number(value) });
+    bridge.setViewport(props.session.id, props.session.projectId, value === 'fit' ? null : { width: Number(value) }, props.session.tester === true);
   },
 );
 // «Агент веде / пауза», the same way: the toggle flips at once, main's state confirms it.
@@ -529,7 +529,7 @@ async function openUrl(url: string, asPreview = false): Promise<void> {
   if (opening.value) return;
   opening.value = url;
   try {
-    const load = asPreview ? browser.openPreview(props.session.id, props.session.projectId, url) : navigate(url);
+    const load = asPreview ? browser.openPreview(props.session.id, props.session.projectId, url, props.session.tester === true) : navigate(url);
     await Promise.race([load, nextState()]);
   } finally {
     opening.value = null;
@@ -542,6 +542,8 @@ async function openUrl(url: string, asPreview = false): Promise<void> {
 // Ukrainian layout works too. Esc with focus in the app (not in the page, where the picker
 // handles it) cancels picking.
 function runShortcut(shortcut: KermanychBrowserShortcut): void {
+  // ⌘K is the shell's (components/assistant/AssistantLauncher.vue listens for it itself).
+  if (shortcut === 'assistant') return;
   if (shortcut === 'find') {
     if (state.value) void openFind();
     return;
@@ -636,7 +638,7 @@ function sync(): void {
   freezeGen += 1;
   frozen.value = null;
   browser.shownRect = bounds;
-  bridge.show(props.session.id, props.session.projectId, bounds);
+  bridge.show(props.session.id, props.session.projectId, bounds, props.session.tester === true);
 }
 
 const resize = new ResizeObserver(() => sync());

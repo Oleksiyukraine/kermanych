@@ -1,8 +1,9 @@
 // The «task-update» mechanism: the structured artifact an agent attaches to its cloud card, and
-// the one parser that reads it off its output. The «Тестувальник» skill speaks through it:
+// the one parser that reads it off its output. The `qa-tester` skill speaks through it:
 //
-//   * «Тестувальник» → a `qa-checklist`: the concrete, human-checkable things to test on the
-//     change. A person ticks the items on the board afterwards.
+//   * `qa-tester` → a `qa-checklist`: the concrete, human-checkable things to test on the
+//     change. A person ticks the items on the board afterwards; the «Тестувальник» agent
+//     (tester.ts) records its own verdict next to each tick.
 //
 // The split is deliberate:
 //   * the OUTPUT CONTRACT (this fence, this shape, this parser) lives HERE, in code, so a team
@@ -23,7 +24,26 @@ export const QA_CHECKLIST_KIND = "qa-checklist";
 
 // ── stored shapes ──────────────────────────────────────────────────────────────
 
-/** One line of a QA checklist. `text` is authored by the agent; the rest is a human ticking it. */
+/**
+ * «Тестувальник»'s verdict on one item (docs/specs/2026-11-04-qa-tester-agent.md, decision 2).
+ * Separate from the human tick: `checked` keeps meaning «a person checked it».
+ */
+export const QA_VERDICT_STATUSES = ["passed", "failed", "blocked"] as const;
+export type QaVerdictStatus = (typeof QA_VERDICT_STATUSES)[number];
+
+export type QaAgentVerdict = {
+  status: QaVerdictStatus;
+  /** What was done and seen; for failed — expected vs actual; for blocked — what stopped it. */
+  note: string;
+  /** Worktree-relative screenshot path under `docs/`, when the tester saved one. */
+  screenshot?: string;
+  /** The tester session that wrote it. */
+  sessionId: string;
+  /** ISO timestamp of the verdict. */
+  at: string;
+};
+
+/** One line of a QA checklist. `text` is authored by an agent; the tick is a human's. */
 export type QaChecklistItem = {
   /** Stable within a checklist, so a tick addresses one row across reorders and re-renders. */
   id: string;
@@ -32,6 +52,8 @@ export type QaChecklistItem = {
   /** The cloud user id who ticked it, and when — set on check, dropped on uncheck. */
   checkedBy?: string;
   checkedAt?: string;
+  /** The tester's latest verdict on this item, absent until a run reports it. */
+  agent?: QaAgentVerdict;
 };
 
 export type QaChecklist = {

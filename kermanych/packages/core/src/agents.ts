@@ -168,6 +168,28 @@ const DESIGN_SAVE = [
   "Do only this. When it is done, list the screenshots you wrote.",
 ].join("");
 
+// «Тестувальник» (docs/specs/2026-11-04-qa-tester-agent.md): a `review` child of the doer that
+// walks the card's QA checklist in its own temporary browser on the doer's preview. Kermanych
+// appends `testerContract` (tester.ts) after this text — the default or a workspace's rewrite —
+// so how items are reported never depends on the editable part.
+const TESTER = [
+  "You are «Тестувальник» (Tester). Another agent implemented the task below on this branch. Check its ",
+  "work the way a human tester would: in the live browser, item by item, against the QA checklist. You ",
+  "do not change code.\n\n",
+  "- Work in this branch's live preview: `preview_status`, `preview_start` when it is not running, then ",
+  "`browser_navigate` with no URL to open it. Your browser starts empty and signed out on every run.\n",
+  "- Perform each item as a user would: navigate, click, type, wait for the result. Judge only what you can ",
+  "see on the page, its console and its network requests. Reading the code tells you where to look; it never ",
+  "replaces the check.\n",
+  "- Sign in only with the test accounts below. Sign-in page: {{loginPath}}\n",
+  "- Follow the project notes below; never perform an action they forbid.\n",
+  "- Problems you notice outside the checklist go to `report_finding`.\n\n",
+  "## Task\n{{task}}\n\n",
+  "## Test accounts\n{{accounts}}\n\n",
+  "## Project notes\n{{notes}}\n\n",
+  "## QA checklist\n{{items}}",
+].join("");
+
 // The auth block is the load-bearing part: `gh pr create` and `git push` otherwise pick up
 // whatever ambient credential the machine has (a stored `gh` login, an ssh key, a credential
 // helper), which is often the wrong account. Kermanych copies the project's configured Git
@@ -272,6 +294,9 @@ export const MINION_AGENT_ID = "minion";
 // «Дизайн» (docs/specs/2026-10-29-design-tab.md): the Дизайнер session and «Зберегти дизайн».
 export const DESIGNER_AGENT_ID = "designer";
 export const DESIGN_SAVE_AGENT_ID = "design-save";
+// «Тестувальник» (docs/specs/2026-11-04-qa-tester-agent.md): run from «Виконати тестування» on a
+// doer session, never from a trigger (it needs a parent and a scope).
+export const TESTER_AGENT_ID = "tester";
 
 export const AGENTS: readonly AgentDef[] = [
   { id: "review", labelKey: "agents.role.review", kind: "session", instruction: REVIEW, holes: ["task", "base", "branch", "diff"] },
@@ -282,6 +307,7 @@ export const AGENTS: readonly AgentDef[] = [
   { id: MINION_AGENT_ID, labelKey: "agents.role.minion", kind: "session", instruction: MINION, holes: ["task"] },
   { id: DESIGNER_AGENT_ID, labelKey: "agents.role.designer", kind: "session", instruction: DESIGNER, holes: ["designDir", "topic", "description"] },
   { id: DESIGN_SAVE_AGENT_ID, labelKey: "agents.role.design-save", kind: "procedure", instruction: DESIGN_SAVE, holes: ["designDir", "branch", "message"] },
+  { id: TESTER_AGENT_ID, labelKey: "agents.role.tester", kind: "session", instruction: TESTER, holes: ["loginPath", "task", "accounts", "notes", "items"] },
   { id: "finish", labelKey: "agents.role.finish", kind: "automation" },
   { id: "summary", labelKey: "agents.role.summary", kind: "automation" },
 ];

@@ -117,3 +117,50 @@ describe("VoiceService — createSession", () => {
     expect(await codeOf(svc.createSession("u1", { sdp: offer, voice: "marin", language: "Ukrainian" }))).toBe("voice_upstream");
   });
 });
+
+describe("VoiceService — createDictation", () => {
+  const offer = "v=0\r\no=- 1 2 IN IP4 127.0.0.1\r\n";
+  const text = (status: number, body: string) => new Response(body, { status });
+
+  it("posts the offer and a gpt-live-transcribe session as a multipart form, answering the SDP", async () => {
+    const fetchFn = vi.fn(async () => text(201, "v=0\r\nanswer"));
+    const svc = new VoiceService(registry, fetchFn, {});
+    svc.setKey("u1", KEY);
+    expect(await svc.createDictation("u1", { sdp: offer, languages: ["uk", "en"] })).toEqual({ sdp: "v=0\r\nanswer" });
+    const [url, init] = fetchFn.mock.calls[0] as unknown as [string, RequestInit];
+    expect(url).toBe("https://api.openai.com/v1/realtime/calls");
+    expect((init.headers as Record<string, string>).authorization).toBe(`Bearer ${KEY}`);
+    const form = init.body as FormData;
+    expect(form.get("sdp")).toBe(offer);
+    const session = JSON.parse(form.get("session") as string);
+    expect(session.type).toBe("transcription");
+    expect(session.audio.input.turn_detection).toBeNull();
+    expect(session.audio.input.transcription).toMatchObject({ model: "gpt-live-transcribe", languages: ["uk", "en"] });
+  });
+
+  it("refuses unknown languages and a bad offer without calling OpenAI", async () => {
+    const fetchFn = vi.fn();
+    const svc = new VoiceService(registry, fetchFn, {});
+    svc.setKey("u1", KEY);
+    expect(await codeOf(svc.createDictation("u1", { sdp: offer, languages: ["xx"] }))).toBe("voice_language_invalid");
+    expect(await codeOf(svc.createDictation("u1", { sdp: "", languages: ["uk", "en"] }))).toBe("voice_offer_invalid");
+    expect(fetchFn).not.toHaveBeenCalled();
+  });
+
+  it("refuses with no key, and names the transcription model on 403", async () => {
+    const none = new VoiceService(registry, vi.fn(), {});
+    expect(await codeOf(none.createDictation("u1", { sdp: offer, languages: ["en"] }))).toBe("voice_key_missing");
+    const svc = new VoiceService(registry, async () => text(403, "{}"), {});
+    svc.setKey("u1", KEY);
+    const err = await svc.createDictation("u1", { sdp: offer, languages: ["en"] }).catch((e: CodedError) => e);
+    expect(err).toBeInstanceOf(CodedError);
+    expect((err as CodedError).code).toBe("voice_no_access");
+    expect((err as CodedError).params).toEqual({ model: "gpt-live-transcribe" });
+  });
+
+  it("treats a 2xx that is not an SDP answer as an upstream failure", async () => {
+    const svc = new VoiceService(registry, async () => text(200, '{"oops":1}'), {});
+    svc.setKey("u1", KEY);
+    expect(await codeOf(svc.createDictation("u1", { sdp: offer, languages: ["en"] }))).toBe("voice_upstream");
+  });
+});

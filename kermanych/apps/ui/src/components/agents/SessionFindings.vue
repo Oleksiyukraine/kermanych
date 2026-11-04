@@ -118,7 +118,17 @@
           <p v-if="issueTypesError" class="findings__error" role="alert">{{ issueTypesError }}</p>
         </template>
         <KField v-model="title" :label="t('agents.findings.dialog.taskTitle')" />
-        <KField v-model="description" :label="t('agents.findings.dialog.description')" multiline :rows="14" />
+        <div>
+          <KField ref="descriptionField" v-model="description" :label="t('agents.findings.dialog.description')" multiline :rows="14" @keydown="dictation.onKeydown" />
+          <!-- Диктування (docs/specs/2026-11-03-voice-dictation.md). -->
+          <KDictation
+            class="findings__dictate"
+            :state="dictation.state.value"
+            :caption="dictation.caption.value"
+            :level="dictation.level.value"
+            @toggle="dictation.toggle"
+          />
+        </div>
         <p v-if="dialogError" class="findings__error" role="alert">{{ dialogError }}</p>
       </div>
       <template #controls>
@@ -152,6 +162,7 @@ import { findingTaskInsert, pickFindingIssueType } from '../../lib/findings';
 import KTag from 'components/kit/KTag.vue';
 import KModal from 'components/kit/KModal.vue';
 import KField from 'components/kit/KField.vue';
+import KDictation from 'components/kit/KDictation.vue';
 import KBtn from 'components/kit/KBtn.vue';
 import KSelect, { type KSelectOption } from 'components/kit/KSelect.vue';
 import KCheckbox from 'components/kit/KCheckbox.vue';
@@ -159,6 +170,7 @@ import KSkeleton from 'components/kit/KSkeleton.vue';
 import KSpinner from 'components/kit/KSpinner.vue';
 import { errorText, useKeyedAction } from '../../composables/useAsyncAction';
 import { useLoadPhase } from '../../composables/useLoadPhase';
+import { useDictationField } from '../../composables/useDictationField';
 
 const props = defineProps<{ session: Session }>();
 
@@ -220,6 +232,12 @@ const finding = ref<AgentFinding | null>(null);
 const target = ref<'board' | 'jira'>('board');
 const title = ref('');
 const description = ref('');
+const descriptionField = ref<InstanceType<typeof KField> | null>(null);
+// Диктування: the description is said rather than typed; closing the dialog drops the phrase.
+const dictation = useDictationField({ el: () => descriptionField.value?.el(), value: description });
+watch(dialogOpen, (open) => {
+  if (!open) dictation.cancel();
+});
 const project = ref('');
 const assignee = ref('');
 const autoRun = ref(false);
@@ -394,6 +412,8 @@ async function submit(): Promise<void> {
   busy.value = true;
   dialogError.value = null;
   try {
+    // The phrase being spoken belongs to the description: it lands before the task is written.
+    await dictation.beforeSubmit();
     const dest = await createTarget(f);
     if (!dest) return;
     const updated = await api.fileFinding(props.session.id, f.id, dest);
@@ -535,6 +555,9 @@ async function submit(): Promise<void> {
   color: var(--k-muted);
 }
 
+.findings__dictate {
+  margin-top: 6px;
+}
 .findings__error {
   margin: 0;
   font-size: 12.5px;

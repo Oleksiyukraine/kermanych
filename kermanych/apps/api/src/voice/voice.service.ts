@@ -3,8 +3,9 @@
 // operator's OpenAI key and the one OpenAI call the window cannot make itself. The window holds
 // the WebRTC connection and the bridge to the agent; it hands its SDP offer here, and this
 // service exchanges it for GPT-Live's answer with the key, so the key never leaves this process.
+// Voice dictation (docs/specs/2026-11-03-voice-dictation.md) exchanges its offer the same way.
 import { Injectable, Optional } from "@nestjs/common";
-import { VOICE_MODEL, isVoiceId, voiceLivePrompt } from "@kermanych/core";
+import { DICTATION_MODEL, VOICE_MODEL, dictationSession, isDictationLanguages, isVoiceId, voiceLivePrompt } from "@kermanych/core";
 import { RegistryService } from "../registry/registry.service";
 import { CodedError } from "../management/coded-error";
 
@@ -17,6 +18,7 @@ const MAX_OFFER_BYTES = 64 * 1024;
 export type VoiceKeyStatus = { source: "env" | "stored" | null; hint?: string };
 export type VoiceSessionRequest = { sdp: string; voice: string; language: string };
 export type VoiceSessionAnswer = { id: string; sdp: string };
+export type DictationRequest = { sdp: string; languages: string[] };
 
 type Fetch = (url: string, init: RequestInit) => Promise<Response>;
 
@@ -52,12 +54,11 @@ export class VoiceService {
   async check(userId: string): Promise<void> {
     const key = this.requireKey(userId);
     const r = await this.call(`${OPENAI}/models/${VOICE_MODEL}`, { method: "GET", headers: { authorization: `Bearer ${key}` } });
-    if (!r.ok) throw refusal(r.status);
+    if (!r.ok) throw refusal(r.status, "GPT-Live");
   }
 
   async createSession(userId: string, req: VoiceSessionRequest): Promise<VoiceSessionAnswer> {
-    if (typeof req.sdp !== "string" || !req.sdp.trim() || Buffer.byteLength(req.sdp) > MAX_OFFER_BYTES)
-      throw new CodedError("voice_offer_invalid", "Немає опису WebRTC-з'єднання або він завеликий.");
+    requireOffer(req.sdp);
     if (!isVoiceId(req.voice)) throw new CodedError("voice_voice_invalid", "Невідомий голос.");
     const key = this.requireKey(userId);
     const body = {
@@ -74,10 +75,31 @@ export class VoiceService {
       headers: { authorization: `Bearer ${key}`, "content-type": "application/json" },
       body: JSON.stringify(body),
     });
-    if (!r.ok) throw refusal(r.status);
+    if (!r.ok) throw refusal(r.status, "GPT-Live");
     const out = (await r.json()) as { session?: { id?: string }; transport?: { sdp?: string } };
-    if (!out.session?.id || !out.transport?.sdp) throw refusal(r.status);
+    if (!out.session?.id || !out.transport?.sdp) throw refusal(r.status, "GPT-Live");
     return { id: out.session.id, sdp: out.transport.sdp };
+  }
+
+  // Voice dictation (docs/specs/2026-11-03-voice-dictation.md): a transcription session over
+  // WebRTC. OpenAI's unified interface takes the offer and the session as a multipart form and
+  // answers the SDP as plain text.
+  async createDictation(userId: string, req: DictationRequest): Promise<{ sdp: string }> {
+    requireOffer(req.sdp);
+    if (!isDictationLanguages(req.languages)) throw new CodedError("voice_language_invalid", "Невідома мова диктування.");
+    const key = this.requireKey(userId);
+    const form = new FormData();
+    form.set("sdp", req.sdp);
+    form.set("session", JSON.stringify(dictationSession(req.languages)));
+    const r = await this.call(`${OPENAI}/realtime/calls`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${key}` },
+      body: form,
+    });
+    if (!r.ok) throw refusal(r.status, DICTATION_MODEL);
+    const sdp = await r.text();
+    if (!sdp.trim().startsWith("v=")) throw refusal(r.status, DICTATION_MODEL);
+    return { sdp };
   }
 
   private requireKey(userId: string): string {
@@ -99,11 +121,17 @@ function hint(key: string): string {
   return `…${key.slice(-4)}`;
 }
 
+// An SDP offer with one audio track and a data channel; anything empty or near the bound is not one.
+function requireOffer(sdp: unknown): void {
+  if (typeof sdp !== "string" || !sdp.trim() || Buffer.byteLength(sdp) > MAX_OFFER_BYTES)
+    throw new CodedError("voice_offer_invalid", "Немає опису WebRTC-з'єднання або він завеликий.");
+}
+
 // OpenAI's status → the reason the operator can act on. Its own error text is not relayed: it
-// can echo part of the key.
-function refusal(status: number): CodedError {
+// can echo part of the key. `model` names what the key may lack access to.
+function refusal(status: number, model: string): CodedError {
   if (status === 401) return new CodedError("voice_key_invalid", "OpenAI не прийняв ключ.");
-  if (status === 403 || status === 404) return new CodedError("voice_no_access", "Цей ключ OpenAI не має доступу до GPT-Live.");
+  if (status === 403 || status === 404) return new CodedError("voice_no_access", `Цей ключ OpenAI не має доступу до ${model}.`, { model });
   if (status === 429) return new CodedError("voice_quota", "OpenAI: перевищено ліміт запитів або квоту.");
   return new CodedError("voice_upstream", `OpenAI відмовив (HTTP ${status}).`, { status });
 }

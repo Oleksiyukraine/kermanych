@@ -6,8 +6,10 @@ Turn the presentation-only Slack tile in **Менеджмент → Integrations
 integration: a Slack app (bot) sits in one Slack channel bound to one Kermanych workspace
 and answers questions about that workspace's project documentation.
 
-- A top-level message in the bound channel is a question. Kermanych replies **in a thread**
-  under it, grounded in the workspace's indexed project documentation.
+- A message in the bound channel that **@-mentions Kermanych** is a question. Kermanych
+  replies **in a thread** under it, grounded in the workspace's indexed project
+  documentation. A message that tags another app (Jira, another bot), an agent or a person,
+  or tags nobody, is left alone.
 - When the documentation does not describe what was asked, the reply says
   «We do not have such feature built yet.»
 - Inside a thread, Kermanych answers a follow-up **only when @-mentioned**, using the whole
@@ -47,9 +49,12 @@ and answers questions about that workspace's project documentation.
   manifest the UI copies takes a minute.
 - **One channel per workspace.** Messages in other channels the bot was invited to are
   ignored.
-- **Every top-level message in the channel is a question; thread replies need a mention.**
+- **Kermanych answers only messages that @-mention it**, top-level and in threads alike.
   Events used: `message.channels`, `message.groups`. Bot, edited, and system messages are
-  ignored.
+  ignored. Originally every top-level message was a question; that answered messages
+  addressed to other apps — «@Jira, for ticket PLAT-291 set priority to high» got «We do
+  not have such feature built yet.» — so top-level messages need the mention too
+  (`classifyMessage` in `slack-map.ts`).
 - **Retrieval is the existing RAG, under the operator's JWT**, across every project of the
   workspace that has an index. No index anywhere → a fixed reply saying the documentation is
   not indexed, without spending an LLM call.

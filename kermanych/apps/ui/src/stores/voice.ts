@@ -21,7 +21,7 @@ import {
   type Session,
 } from '@kermanych/core';
 import { api } from '../lib/api';
-import { connectVoice, type LiveEvent, type VoiceConnection } from '../lib/voice-connection';
+import { connectVoice, micErrorWords, type LiveEvent, type VoiceConnection } from '../lib/voice-connection';
 import { voicePick, type VoiceBarState } from '../lib/voice';
 import { locale } from '../lib/locale';
 import { nextMode } from '../lib/message-mode';
@@ -287,10 +287,7 @@ export const useVoice = defineStore('voice', () => {
       });
     } catch (e) {
       if (mine === generation) finish();
-      // The browser's own words for a refused or missing microphone are English and technical.
-      if (e instanceof DOMException && (e.name === 'NotAllowedError' || e.name === 'NotFoundError'))
-        throw new Error(globalTr.t(e.name === 'NotAllowedError' ? 'voice.micDenied' : 'voice.micMissing'));
-      throw e;
+      throw micErrorWords(e, { denied: globalTr.t('voice.micDenied'), missing: globalTr.t('voice.micMissing') });
     }
     // «Завершити» pressed (or another conversation started) while this one was connecting.
     if (mine !== generation) return opened.close();
@@ -319,11 +316,31 @@ export const useVoice = defineStore('voice', () => {
     await closing?.promise;
   }
 
-  function toggleMute(): void {
+  function setMuted(on: boolean): void {
     if (!conn) return;
-    muted.value = !muted.value;
-    conn.setMicEnabled(!muted.value);
-    conn.send({ type: muted.value ? 'session.input_audio.mute' : 'session.input_audio.unmute' });
+    muted.value = on;
+    conn.setMicEnabled(!on);
+    conn.send({ type: on ? 'session.input_audio.mute' : 'session.input_audio.unmute' });
+  }
+
+  function toggleMute(): void {
+    held = false;
+    setMuted(!muted.value);
+  }
+
+  // Voice dictation (docs/specs/2026-11-03-voice-dictation.md, decision 5): while a task
+  // description is dictated GPT-Live must not hear it, or it would hand it to the agent. The
+  // conversation is muted as 🔇 does and unmuted afterwards — unless the operator had muted it.
+  let held = false;
+  function holdMic(): void {
+    if (!conn || muted.value) return;
+    held = true;
+    setMuted(true);
+  }
+  function releaseMic(): void {
+    if (!held) return;
+    held = false;
+    setMuted(false);
   }
 
   function finish(): void {
@@ -339,10 +356,11 @@ export const useVoice = defineStore('voice', () => {
     caption.value = null;
     micLevel.value = 0;
     muted.value = false;
+    held = false;
     heard = [];
     closing?.resolve();
     closing = null;
   }
 
-  return { phase, sessionId, startedAt, muted, caption, micLevel, activity, elapsedMs, bar, start, end, toggleMute };
+  return { phase, sessionId, startedAt, muted, caption, micLevel, activity, elapsedMs, bar, start, end, toggleMute, holdMic, releaseMic };
 });

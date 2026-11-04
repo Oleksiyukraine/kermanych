@@ -144,12 +144,13 @@ export const useSessionBrowser = defineStore('sessionBrowser', () => {
       },
     );
   }
-  function navigate(sessionId: string, projectId: string, url: string): Promise<boolean> {
-    return bridge ? settled(bridge.navigate(sessionId, projectId, url)) : Promise.resolve(false);
+  // `ephemeral`: a «Тестувальник» run's view lives in its own in-memory partition.
+  function navigate(sessionId: string, projectId: string, url: string, ephemeral = false): Promise<boolean> {
+    return bridge ? settled(bridge.navigate(sessionId, projectId, url, ephemeral)) : Promise.resolve(false);
   }
   // The running live preview: main keeps the path of a page on the previous preview's origin.
-  function openPreview(sessionId: string, projectId: string, url: string): Promise<boolean> {
-    return bridge ? settled(bridge.openPreview(sessionId, projectId, url)) : Promise.resolve(false);
+  function openPreview(sessionId: string, projectId: string, url: string, ephemeral = false): Promise<boolean> {
+    return bridge ? settled(bridge.openPreview(sessionId, projectId, url, ephemeral)) : Promise.resolve(false);
   }
 
   function setSplit(on: boolean): void {

@@ -1,6 +1,6 @@
 // apps/api/src/http/sessions.controller.ts
 import { BadRequestException, Body, Controller, Delete, Get, NotFoundException, Param, Patch, Post, Query, Req, StreamableFile } from "@nestjs/common";
-import { isDevicePlatform, isNativeHarness, isThinkingLevel, parseFindingTarget } from "@kermanych/core";
+import { isDevicePlatform, isNativeHarness, isQaRunScope, isThinkingLevel, parseFindingTarget } from "@kermanych/core";
 import type { BranchPrefix, DocsWriteKind, ImageInput, RpcExtensionUIResponse, ThinkingLevel } from "@kermanych/core";
 import { SupervisorService } from "../supervisor/supervisor.service";
 import { sessionFailure } from "./session-failure";
@@ -113,6 +113,19 @@ export class SessionsController {
   async review(@Param("id") id: string) {
     try {
       return await this.sup.reviewSession(id);
+    } catch (err) {
+      throw sessionFailure(err);
+    }
+  }
+
+  // «Виконати тестування» (docs/specs/2026-11-04-qa-tester-agent.md, decisions 11-12): the created
+  // tester child, or a 400 saying why it cannot start now.
+  @Post(":id/qa-run")
+  async qaRun(@Param("id") id: string, @Body() b: { scope?: unknown } = {}) {
+    const scope = b?.scope === undefined ? "all" : b.scope;
+    if (!isQaRunScope(scope)) throw new BadRequestException(`invalid scope ${JSON.stringify(scope)}`);
+    try {
+      return await this.sup.runTester(id, scope);
     } catch (err) {
       throw sessionFailure(err);
     }

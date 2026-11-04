@@ -47,7 +47,16 @@ export type KIconName =
   | 'chevronRight'
   | 'coins'
   | 'mic'
-  | 'micOff';
+  | 'micOff'
+  | 'agentPromote'
+  | 'agentDesignSave'
+  | 'agentReview'
+  | 'agentPullRequest'
+  | 'agentCommit'
+  | 'agentResolveConflict'
+  | 'agentFinish'
+  | 'agentSummary'
+  | 'agentTester';
 </script>
 
 <script setup lang="ts">
@@ -193,6 +202,58 @@ const ICONS: Record<KIconName, readonly string[]> = {
   // and mic-off. 🎤 would render as a colour emoji beside line marks.
   mic: ['M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z', 'M19 10v2a7 7 0 0 1-14 0v-2', 'M12 19v3'],
   micOff: ['m2 2 20 20', 'M18.89 13.23A7.12 7.12 0 0 0 19 12v-2', 'M5 10v2a7 7 0 0 0 12 5', 'M15 9.34V5a3 3 0 0 0-5.68-1.33', 'M9 9v3a3 3 0 0 0 5.12 2.12', 'M12 19v3'],
+
+  // «ШІ-команда → Агенти» (docs/specs/2026-11-03-ai-team-agent-pages.md, decision 6): one mark per
+  // built-in agent, in a disc on its list row and its page. «Посіпака» is `minion` and «Дизайнер»
+  // is `design` above; the rest are Lucide's. Not the magnifier or the rocket: those already mean
+  // «Глибокий аналіз» and «Розпочати».
+  // Промоутер — a hammer (Lucide's): from talking it over to building it.
+  agentPromote: [
+    'm15 12-8.373 8.373a1 1 0 1 1-3-3L12 9',
+    'm18 15 4-4',
+    'm21.5 11.5-1.914-1.914A2 2 0 0 1 19 8.172V7l-2.26-2.26a6 6 0 0 0-4.202-1.756L9 2.96l.92.82A6.18 6.18 0 0 1 12 8.4V10l2 2h1.172a2 2 0 0 1 1.414.586L18.5 14.5',
+  ],
+  // Зберегти дизайн — a floppy (Lucide's save).
+  agentDesignSave: [
+    'M15.2 3a2 2 0 0 1 1.4.6l3.8 3.8a2 2 0 0 1 .6 1.4V19a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z',
+    'M17 21v-7a1 1 0 0 0-1-1H8a1 1 0 0 0-1 1v7',
+    'M7 3v4a1 1 0 0 0 1 1h7',
+  ],
+  // Ревізор — a shield with a tick (Lucide's shield-check): an independent audit.
+  agentReview: [
+    'M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z',
+    'm9 12 2 2 4-4',
+  ],
+  // Провізор — Lucide's git-pull-request.
+  agentPullRequest: [
+    'M15 18a3 3 0 1 0 6 0a3 3 0 1 0-6 0',
+    'M3 6a3 3 0 1 0 6 0a3 3 0 1 0-6 0',
+    'M13 6h3a2 2 0 0 1 2 2v7',
+    'M6 9v12',
+  ],
+  // Комітер — Lucide's git-commit-horizontal.
+  agentCommit: ['M9 12a3 3 0 1 0 6 0a3 3 0 1 0-6 0', 'M3 12h6', 'M15 12h6'],
+  // Вирішувач конфліктів — Lucide's git-merge: two lines meeting.
+  agentResolveConflict: [
+    'M15 18a3 3 0 1 0 6 0a3 3 0 1 0-6 0',
+    'M3 6a3 3 0 1 0 6 0a3 3 0 1 0-6 0',
+    'M6 21V9a9 9 0 0 0 9 9',
+  ],
+  // Завершити — a flag (Lucide's): the finish line.
+  agentFinish: ['M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1z', 'M4 22v-7'],
+  // Саммарі — a written scroll (Lucide's scroll-text).
+  agentSummary: [
+    'M15 12h-5',
+    'M15 8h-5',
+    'M19 17V5a2 2 0 0 0-2-2H4',
+    'M8 21h12a2 2 0 0 0 2-2v-1a1 1 0 0 0-1-1H11a1 1 0 0 0-1 1v1a2 2 0 1 1-4 0V5a2 2 0 1 0-4 0v2a1 1 0 0 0 1 1h3',
+  ],
+  // Тестувальник — a lab flask (Lucide's flask-conical): checks the change by trying it.
+  agentTester: [
+    'M14 2v6a2 2 0 0 0 .245.96l5.51 10.08A2 2 0 0 1 18 22H6a2 2 0 0 1-1.755-2.96l5.51-10.08A2 2 0 0 0 10 8V2',
+    'M6.453 15h11.094',
+    'M8.5 2h7',
+  ],
 };
 
 const props = defineProps<{ name: KIconName }>();

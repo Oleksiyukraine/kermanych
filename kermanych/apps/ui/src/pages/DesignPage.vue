@@ -215,13 +215,25 @@
           :placeholder="t('design.new.topicPlaceholder')"
           @keydown.enter.prevent="createAction.run()"
         />
-        <KField
-          v-model="newDescription"
-          multiline
-          :rows="5"
-          :label="`${t('design.new.description')} · ${t('agents.launcher.optional')}`"
-          :placeholder="t('design.new.descriptionPlaceholder')"
-        />
+        <div>
+          <KField
+            ref="descriptionField"
+            v-model="newDescription"
+            multiline
+            :rows="5"
+            :label="`${t('design.new.description')} · ${t('agents.launcher.optional')}`"
+            :placeholder="t('design.new.descriptionPlaceholder')"
+            @keydown="newDictation.onKeydown"
+          />
+          <!-- Диктування (docs/specs/2026-11-03-voice-dictation.md). -->
+          <KDictation
+            class="design__dictate"
+            :state="newDictation.state.value"
+            :caption="newDictation.caption.value"
+            :level="newDictation.level.value"
+            @toggle="newDictation.toggle"
+          />
+        </div>
         <!-- `searchable`, as in the launcher: a long-lived repo has hundreds of branches. -->
         <KSelect
           v-model="newBase"
@@ -276,6 +288,7 @@ import { useMarkSeen } from '../composables/useMarkSeen';
 import { useResizablePanel } from '../composables/useResizablePanel';
 import { errorText, useAsyncAction, useKeyedAction } from '../composables/useAsyncAction';
 import { useVoicePanel } from '../composables/useVoicePanel';
+import { useDictationField } from '../composables/useDictationField';
 import { nextMode as modeFor } from '../lib/message-mode';
 import { useOptimisticValue } from '../composables/useOptimisticValue';
 import { useLoadPhase } from '../composables/useLoadPhase';
@@ -289,6 +302,7 @@ import KTabs from 'components/kit/KTabs.vue';
 import KTag from 'components/kit/KTag.vue';
 import KModal from 'components/kit/KModal.vue';
 import KField from 'components/kit/KField.vue';
+import KDictation from 'components/kit/KDictation.vue';
 import KSelect from 'components/kit/KSelect.vue';
 import KSkeleton from 'components/kit/KSkeleton.vue';
 import KBrowserPane from 'components/kit/KBrowserPane.vue';
@@ -697,6 +711,12 @@ const newBranchesLoading = ref(false);
 const newError = ref<string | null>(null);
 const newCardId = ref<string | null>(null);
 const topicField = ref<InstanceType<typeof KField> | null>(null);
+const descriptionField = ref<InstanceType<typeof KField> | null>(null);
+// Диктування: the description is said rather than typed; closing the modal drops the phrase.
+const newDictation = useDictationField({ el: () => descriptionField.value?.el(), value: newDescription });
+watch(newOpen, (open) => {
+  if (!open) newDictation.cancel();
+});
 let branchesRun = 0;
 
 // The fork base, as the launcher offers it: the project's default first, then every branch
@@ -739,6 +759,9 @@ const createAction = useAsyncAction(createDesign, {
 const creating = computed(() => createAction.busy.value);
 
 async function createDesign(): Promise<void> {
+  // The phrase being spoken belongs to the description: it lands before the form is read,
+  // under «Створити»'s spinner.
+  await newDictation.beforeSubmit();
   const pid = store.selectedProjectId;
   const title = newTopic.value.trim();
   if (!pid || !title) return;
@@ -1105,6 +1128,9 @@ onMounted(() => {
   display: flex;
   flex-direction: column;
   gap: 16px;
+}
+.design__dictate {
+  margin-top: 6px;
 }
 
 .design__error {

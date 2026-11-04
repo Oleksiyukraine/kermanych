@@ -60,6 +60,7 @@ import {
   deepAnalysisPrompt,
   DEEP_ANALYSIS_SKILL,
   BRANCH_PREFIXES,
+  platformHasBrowser,
   platformHasDevice,
   type BranchPrefix,
   type StatusState,
@@ -103,8 +104,21 @@ import {
   designDirFor,
   designCommitMessage,
   voiceMessagePrompt,
+  TESTER_AGENT_ID,
+  testerRefusal,
+  qaItemsInScope,
+  qaHandoffText,
+  qaScreenshotDir,
+  testerContract,
+  testerItemsBlock,
+  testerAccountsBlock,
+  testerLoginPathLine,
+  testerNotesBlock,
+  type QaChecklist,
+  type QaRunScope,
+  type TesterRefusal,
 } from "@kermanych/core";
-import { claimTaskForLaunch, createTask, getTask, listProjects, patchTask, releaseLaunchClaim, type CloudProject, type AiTrigger, type Task, type TaskPatch } from "@kermanych/cloud";
+import { claimTaskForLaunch, createTask, getTask, listProjects, patchQaItems, patchTask, releaseLaunchClaim, setQaChecklistIfEmpty, type CloudProject, type AiTrigger, type Task } from "@kermanych/cloud";
 import { AuthService } from "../auth/auth.service";
 import { ModelsService } from "../models/models.service";
 import { NativeSessionService, nativeUnsupported } from "../native/native-session.service";
@@ -120,6 +134,17 @@ import { EnvFileService } from "../env/env-file.service";
 import { GithubClient, GithubHttpError, parseGithubPrUrl, parseGithubRemote, type GithubPull } from "../github/github-client";
 import { PreviewService } from "../preview/preview.service";
 import { PREVIEW_CONFIG_SKILL, previewConfigPrompt } from "../preview/preview-prompt";
+
+// Why «Виконати тестування» cannot start (core testerRefusal), in the words the api answers with.
+const TESTER_REFUSALS: Record<TesterRefusal, string> = {
+  running: "a tester of this session is already running",
+  "not-agent": "only agent sessions can be tested",
+  finished: "the session is finished — its worktree is gone",
+  "no-card": "testing works only for sessions started from a task card",
+  busy: "wait for the agent to finish its turn before testing",
+  "no-browser": "the session browser is not available: Kermanych is running without its desktop app",
+  platform: "this project's platform has no browser to test in",
+};
 
 // A failed merged-PR check, in the words the UI shows (docs/specs/2026-10-26-pr-merged-close-prompt.md,
 // decision 6). A spent rate limit is a 403 too, so it is read first. `fetch` rejects with a
@@ -383,6 +408,8 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     this.browser?.findingReported$.subscribe((id) => this.pushUpdate(id));
     // «Посіпака»: a run's verdict waits for the end of its turn (onMinionTurnEnd).
     this.browser?.outcomeReported$.subscribe(({ sessionId, report }) => this.onMinionVerdict(sessionId, report));
+    // «Тестувальник»: a verdict or a composed checklist reaches every open card view.
+    this.browser?.qaChecklistChanged$.subscribe(({ taskId, checklist }) => this.events.next({ type: "qa_checklist_update", taskId, checklist }));
     // A raised limit starts waiting sessions at once, a lowered one stops nothing (decision 5);
     // switching priority on renices what already runs (decision 9).
     this.resources?.onChange(() => {
@@ -557,11 +584,13 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
   // ── Agent slots (docs/specs/2026-10-21-machine-resource-profile.md, decisions 4-5) ──────────
 
   // The agents whose turn runs, and how many wait. Counted: `kind: "agent"`, managed or native,
-  // holding a slot. Not counted: chats, reviews, discussions — their tools cannot run a test
-  // suite, and making them queue behind agents would stall a conversation for nothing.
+  // holding a slot, and a «Тестувальник» run (docs/specs/2026-11-04-qa-tester-agent.md, decision
+  // 12: it drives a browser and a preview like an agent). Not counted: chats, other reviews,
+  // discussions — their tools cannot run a test suite, and making them queue behind agents would
+  // stall a conversation for nothing.
   slotCounts(): { running: number; waiting: number } {
     let running = 0;
-    for (const s of this.registry.listSessions()) if (s.kind === "agent" && !this.waiting.has(s.id) && this.holdsSlot(s)) running++;
+    for (const s of this.registry.listSessions()) if ((s.kind === "agent" || s.tester === true) && !this.waiting.has(s.id) && this.holdsSlot(s)) running++;
     return { running, waiting: this.waiting.size };
   }
 
@@ -619,15 +648,15 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
 
   // Run `op` — what starts an agent's turn or its native TUI — in an agent slot, or park
   // `replay` until one frees up; false when parked. A session that already holds a slot (its turn
-  // runs, or this is the replay that was granted one) keeps it across `op`. Other kinds are never
-  // counted, and with no limit (decision `declined`) nothing waits.
+  // runs, or this is the replay that was granted one) keeps it across `op`. Other kinds (but a
+  // tester run) are never counted, and with no limit (decision `declined`) nothing waits.
   private async withSlot(
     s: Session,
     op: () => Promise<unknown>,
     replay: () => Promise<unknown>,
     message?: { text: string; images?: ImageInput[] },
   ): Promise<boolean> {
-    if (s.kind !== "agent") {
+    if (s.kind !== "agent" && s.tester !== true) {
       await op();
       return true;
     }
@@ -759,7 +788,10 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     const queuedAt = this.registry.slotQueuedAt();
     const at = (s: Session) => queuedAt.get(s.id) ?? Date.parse(s.createdAt);
     const rows = this.registry.listSessions().filter((s) => {
-      if (s.kind !== "agent" || this.waiting.has(s.id)) return false;
+      if ((s.kind !== "agent" && s.tester !== true) || this.waiting.has(s.id)) return false;
+      // A «Тестувальник» run waits with its whole opening prompt on the row (runTester parks it
+      // with it); without one there is nothing to start it with.
+      if (s.tester === true) return s.status === "queued" && !!s.pendingPrompt?.trim();
       // A managed message with no text (its images did not survive) has nothing to send; a
       // native one is its «Продовжити», a resume with no prompt.
       if (s.pendingPrompt !== undefined && !s.pendingPrompt.trim() && !s.native && s.status !== "queued") {
@@ -772,7 +804,12 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     });
     for (const s of rows.sort((a, b) => at(a) - at(b))) {
       const text = s.pendingPrompt ?? s.task;
-      const job = s.status === "queued" ? () => this.relaunch(s.id, text) : () => this.deliver(s.id, text, "prompt", undefined, true);
+      const job =
+        s.tester === true
+          ? () => this.startTester(s, this.testerCwd(s), text)
+          : s.status === "queued"
+            ? () => this.relaunch(s.id, text)
+            : () => this.deliver(s.id, text, "prompt", undefined, true);
       this.park(s.id, job, { text }, at(s));
     }
     // Started once the api listens, not here: a native harness is handed the api's port.
@@ -1752,8 +1789,137 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     this.pushUpdate(child.id);
     return this.merge(child);
   }
+
+  // «Виконати тестування» (docs/specs/2026-11-04-qa-tester-agent.md, decisions 1, 9, 11, 12): a
+  // FRESH `review` child stamped `tester` in the doer's worktree, read-only like «Ревізор» but
+  // handed the session browser, the doer's preview and the QA tools. The in-scope verdicts of the
+  // card are cleared first (they describe old code). It takes an agent slot and waits for one in
+  // the queue like any agent launch.
+  async runTester(parentId: string, scope: QaRunScope): Promise<Session> {
+    const s = this.registry.listSessions().find((x) => x.id === parentId);
+    if (!s) throw new Error("session not found");
+    const g = this.boundProject(s.projectId);
+    const live = this.map.get(parentId);
+    const midTurn = live && (live.state.status === "thinking" || live.state.status === "tool") ? live.state.status : undefined;
+    const refusal = testerRefusal({
+      kind: s.kind,
+      status: midTurn ?? s.status,
+      worktree: s.worktree,
+      worktreePath: s.worktreePath,
+      taskId: s.taskId,
+      runningTester: this.registry.listSessions().some((x) => x.parentSessionId === parentId && x.tester === true && x.status !== "merged"),
+      browserHost: !!browserHost(),
+      platformHasBrowser: platformHasBrowser(g.platform),
+    });
+    if (refusal) throw new Error(TESTER_REFUSALS[refusal]);
+    const taskId = s.taskId!;
+
+    const client = this.auth.cloudClient();
+    const card = await getTask(client, taskId);
+    if (!card) throw new Error("the task card is not visible");
+    const items = card.qaChecklist?.items ?? [];
+    const inScope = qaItemsInScope(items, scope);
+    if (items.length && !inScope.length) throw new Error("nothing to test: every checklist item passed — run all items instead");
+    if (inScope.length) {
+      const checklist = await patchQaItems(client, taskId, inScope.map((i) => i.id), {}, ["agent"]);
+      this.events.next({ type: "qa_checklist_update", taskId, checklist });
+    }
+
+    const cwd = s.worktreePath || g.localRepoPath;
+    const settings = this.registry.getTesterSettings(s.projectId);
+    // A card with no checklist yet: the tester composes one by the `qa-tester` skill first.
+    const { template, block } = await this.agentPrompt(s.projectId, TESTER_AGENT_ID, cwd, items.length ? [] : ["qa-tester"]);
+    const prompt =
+      renderInstruction(
+        agentById(TESTER_AGENT_ID)!,
+        {
+          task: s.task,
+          loginPath: testerLoginPathLine(settings.loginPath),
+          accounts: testerAccountsBlock(settings.accounts),
+          notes: testerNotesBlock(settings.notes),
+          items: testerItemsBlock(inScope),
+        },
+        template,
+      ) +
+      `\n\n${testerContract(qaScreenshotDir(new Date(), s.branch))}` +
+      block;
+
+    const child = this.registry.createSession({
+      projectId: s.projectId,
+      name: `тестування: ${s.name}`,
+      task: s.task,
+      worktreePath: "",
+      branch: "",
+      worktree: false,
+      kind: "review",
+      parentSessionId: parentId,
+      runtime: this.runtimeFor(),
+      tester: true,
+    });
+    // Run now in a free slot, or replayed by the queue when one frees up.
+    const start = () => this.startTester(child, cwd, prompt);
+    // The prompt rides the wait so an api restart can start the run (restoreSlotQueue).
+    await this.withSlot(child, start, start, { text: prompt });
+    this.pushUpdate(child.id);
+    return this.merge(child);
+  }
+
+  // Where a tester run works: its parent's worktree, or the project checkout of an in-place parent.
+  private testerCwd(child: Session): string {
+    const parent = this.registry.listSessions().find((x) => x.id === child.parentSessionId);
+    return parent?.worktreePath || this.boundProject(child.projectId).localRepoPath;
+  }
+
+  // Spawn a tester child with its opening prompt; a failed spawn removes the row like «Ревізор».
+  private async startTester(child: Session, cwd: string, prompt: string): Promise<void> {
+    if (!this.registry.listSessions().some((x) => x.id === child.id)) return; // discarded while it waited
+    const configPath = await this.ompSkills(child.projectId, cwd, child.id);
+    const extensionPath = await this.ompTriggers(child.projectId, cwd, child.id);
+    const childRuntime = managedRuntime(child.runtime);
+    const browserMcp = this.browser?.bindingFor(child.id);
+    const rpc = createRuntime(childRuntime, { cwd, ...launchToolsFor("review"), ...(await this.spawnOpts(child.id, childRuntime, cwd, configPath)), ...(extensionPath ? { extensionPath } : {}), ...(browserMcp ? { mcp: browserMcp } : {}), ...this.systemAppendOpts(child.projectId, "review") });
+    const childLive = this.wireLive(child.id, rpc, "queued");
+    try {
+      await this.startChild(child.id, rpc);
+      this.appendEntry(child.id, this.userEntry(prompt));
+      rpc.prompt(prompt);
+    } catch (err) {
+      this.stopPoll(childLive);
+      await rpc.stop().catch(() => {});
+      this.map.delete(child.id);
+      this.toolDetails.dropSession(child.id);
+      this.skillLabels.delete(child.id);
+      this.browser?.revoke(child.id);
+      this.registry.removeSession(child.id);
+      this.events.next({ type: "session_removed", sessionId: child.id });
+      throw err;
+    }
+  }
+
+  // A tester run ends: its child stops, its row is history (`merged`), and its browser view goes
+  // with its in-memory partition (decision 7). ⤴ on a tester, and the parent's finish, end here.
+  private async retireTester(id: string): Promise<void> {
+    this.unpark(id);
+    const live = this.map.get(id);
+    if (live) {
+      live.live.status = "stopped";
+      this.stopPoll(live);
+      await live.rpc.stop();
+      this.map.delete(id);
+      this.toolDetails.dropSession(id);
+      this.skillLabels.delete(id);
+    }
+    browserHost()?.close(id);
+    this.browser?.revoke(id);
+    this.registry.updateSession(id, { status: "merged" });
+    this.pushUpdate(id);
+    this.drainSlots();
+  }
+
   // Pour a discussion or review child back into its parent: inject a (reviewed) summary
   // as a message into the parent's live conversation, then retire the child as merged.
+  // A tester's message is built from its verdicts on the card, not its last words
+  // (docs/specs/2026-11-04-qa-tester-agent.md, decision 13); when every item passed, nothing is sent.
   async mergeDiscussion(childId: string, summary?: string): Promise<{ merged: true }> {
     const c = this.registry.listSessions().find((x) => x.id === childId);
     if (!c) throw new Error("session not found");
@@ -1761,6 +1927,19 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
       throw new Error("not a discussion or review branch");
     const parentId = c.parentSessionId;
 
+    if (c.tester === true) {
+      const taskId = this.registry.listSessions().find((x) => x.id === parentId)?.taskId;
+      // A card that cannot be read throws here and leaves the child intact.
+      const card = taskId ? await getTask(this.auth.cloudClient(), taskId) : undefined;
+      const handoff = qaHandoffText(c.name, c.id, card?.qaChecklist?.items ?? []);
+      if (handoff) {
+        const parentLive = this.map.get(parentId);
+        const busy = parentLive && (parentLive.state.status === "thinking" || parentLive.state.status === "tool");
+        await this.sendAsKermanych(parentId, handoff, busy ? "follow_up" : "prompt");
+      }
+      await this.retireTester(childId);
+      return { merged: true };
+    }
     const live = this.map.get(childId);
     const last = [...(live?.transcript ?? [])]
       .reverse()
@@ -2580,7 +2759,18 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     // not asked to produce one. The pull-request agent is the same running child that did the
     // work, so it knows what to test. onRpcEvent captures whichever block it emits.
     // A native session has no event stream to capture the block from, so it is not asked.
-    const artifacts = s.taskId && !s.native ? `\n\n${QA_CHECKLIST_DIRECTIVE}` : "";
+    // The directive goes only to a card with no checklist yet (docs/specs/2026-11-04-qa-tester-agent.md,
+    // decision 10): a second «Створити ПР» must not regenerate one over the ticks and verdicts. A
+    // card that cannot be read is not asked either — never risk the overwrite.
+    let artifacts = "";
+    if (s.taskId && !s.native) {
+      try {
+        const card = await getTask(this.auth.cloudClient(), s.taskId);
+        if (card && !card.qaChecklist?.items.length) artifacts = `\n\n${QA_CHECKLIST_DIRECTIVE}`;
+      } catch (err) {
+        console.warn(`[supervisor] could not read task ${s.taskId} for its QA checklist: ${(err as Error).message}`);
+      }
+    }
     // Kermanych's base sync (docs/specs/2026-10-14-create-pr-base-sync.md, decision 8) goes right
     // after the instruction, whatever its source, so an overridden PR agent still brings the base in.
     const base = this.syncBase(s, g);
@@ -2620,11 +2810,13 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
   // bookkeeping write on that path — a cloud hiccup must never break the event stream, and an
   // artifact is best-effort, not a lifecycle signal. Provenance (session, timestamp) is stamped
   // here so the emitting skill never has to.
+  // Through qa_checklist_set_if_empty (docs/specs/2026-11-04-qa-tester-agent.md, decision 10): a
+  // block that races in after the card got a checklist can never wipe its ticks and verdicts.
   private async applyTaskArtifact(taskId: string, sessionId: string, action: TaskAction): Promise<void> {
-    const meta = { generatedAt: new Date().toISOString(), sessionId };
-    const patch: TaskPatch = { qaChecklist: buildQaChecklist(action.items, meta) };
+    const checklist = buildQaChecklist(action.items, { generatedAt: new Date().toISOString(), sessionId });
     try {
-      await patchTask(this.auth.cloudClient(), taskId, patch);
+      if (await setQaChecklistIfEmpty(this.auth.cloudClient(), taskId, checklist))
+        this.events.next({ type: "qa_checklist_update", taskId, checklist });
     } catch (err) {
       console.warn(`[supervisor] could not attach ${action.kind} to task ${taskId}: ${(err as Error).message}`);
     }
@@ -3122,6 +3314,10 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     // the card keeps the ones earlier turns sent.
     // A «Посіпака» run still in flight ends `stopped`; one that already ended keeps its result.
     await this.endMinionRun(id);
+    // A «Тестувальник» run of this session stops before the worktree it tests in goes
+    // (docs/specs/2026-11-04-qa-tester-agent.md, decision 13). closeMerged finishes through here.
+    for (const t of this.registry.listSessions().filter((x) => x.parentSessionId === id && x.tester === true && x.status !== "merged"))
+      await this.retireTester(t.id);
     await this.queueTaskReport(id, this.map.get(id)?.transcript);
 
     // A finished session waits for nothing: its parked calls and pending message go.
@@ -3798,8 +3994,9 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     if (refork && parent) this.assertTurnEnded(parent.id, "waking this branch");
     const configPath = await this.ompSkills(s.projectId, dir, id);
     const extensionPath = await this.ompTriggers(s.projectId, dir, id);
-    // Forks (discussion/review) never get the session browser; agents and chats do.
-    const browserMcp = s.kind === "discussion" || s.kind === "review" ? undefined : this.browser?.bindingFor(id);
+    // Forks (discussion/review) never get the session browser; agents, chats and a «Тестувальник»
+    // run (docs/specs/2026-11-04-qa-tester-agent.md, decision 8) do.
+    const browserMcp = (s.kind === "discussion" || s.kind === "review") && s.tester !== true ? undefined : this.browser?.bindingFor(id);
     const handle = refork ? { fork: refork } : runtimeKind === "claude-code" && resumeHandle ? { resume: resumeHandle } : {};
     const rpc = createRuntime(runtimeKind, { cwd: dir, ...launchToolsFor(s.kind), ...handle, ...(await this.spawnOpts(id, runtimeKind, dir, configPath)), ...(extensionPath ? { extensionPath } : {}), ...(browserMcp ? { mcp: browserMcp } : {}), ...this.systemAppendOpts(s.projectId, s.kind) });
     const live = this.wireLive(id, rpc, s.status);

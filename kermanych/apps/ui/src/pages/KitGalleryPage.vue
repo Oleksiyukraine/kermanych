@@ -524,6 +524,14 @@
         :voice-active="voiceSample"
         @voice="voiceSample = !voiceSample"
       />
+      <!-- Voice dictation sits under a task popup's description: the toggle, then the state, the
+           mic level and the draft of the phrase being spoken. -->
+      <KDictation
+        :state="dictateSample ? 'live' : 'idle'"
+        caption="Додай у BoardPage кнопку експорту в CSV, використай papaparse"
+        :level="0.4"
+        @toggle="dictateSample = !dictateSample"
+      />
     </section>
 
     <!-- file diff -->
@@ -650,6 +658,7 @@ import KTabs from 'components/kit/KTabs.vue';
 import KSubNav from 'components/kit/KSubNav.vue';
 import KComposer from 'components/kit/KComposer.vue';
 import KVoiceBar from 'components/kit/KVoiceBar.vue';
+import KDictation from 'components/kit/KDictation.vue';
 import KChipSelect from 'components/kit/KChipSelect.vue';
 import KCheckbox from 'components/kit/KCheckbox.vue';
 import KSkeleton from 'components/kit/KSkeleton.vue';
@@ -690,6 +699,8 @@ const detailTabs = [
 const composerDraft = ref('');
 // The voice bar sample: 🎤 in the composer below shows and hides it, «Завершити» hides it.
 const voiceSample = ref(true);
+// The dictation sample: its own toggle flips it between idle and listening.
+const dictateSample = ref(true);
 // The gallery has no session behind the chip, so the pick is held locally — the point here is
 // that the menu opens upward inside the row and reports the level it landed on.
 const composerEffort = ref<ThinkingLevel>('high');

@@ -33,7 +33,19 @@ import { PreviewService } from "../preview/preview.service";
 import { FINDING_TOOL_NAMES, callFindingTool, findingTools } from "../findings/findings-tools";
 import { resolveLanguage } from "../runtime/resolve-language";
 import { OUTCOME_TOOL, callOutcomeTool } from "../minion/outcome-tool";
+import { AuthService } from "../auth/auth.service";
 import {
+  CREDENTIAL_TOOL_DEF,
+  QA_CHECKLIST_TOOL_DEF,
+  QA_RESULT_TOOL_DEF,
+  TESTER_QA_TOOL_NAMES,
+  callTesterQaTool,
+  credentialValue,
+  isTesterSession,
+  maskSecret,
+} from "../tester/tester-tools";
+import {
+  CREDENTIAL_TOOL,
   DEVICE_BUTTONS,
   DEVICE_PLATFORM_BUTTONS,
   PREVIEW_CONFIG_PATH,
@@ -48,6 +60,8 @@ import {
   type DeviceRuntime,
   type MinionVerdictReport,
   type PreviewState,
+  type QaChecklist,
+  type Session,
 } from "@kermanych/core";
 import { DEVICE_API, type DeviceApi } from "../device/device.contract";
 import {
@@ -713,6 +727,9 @@ export class BrowserMcpService {
   readonly findingReported$ = new Subject<string>();
   // A «Посіпака» run reported its verdict — the supervisor holds it for the turn's end.
   readonly outcomeReported$ = new Subject<{ sessionId: string; report: MinionVerdictReport }>();
+  // A «Тестувальник» run wrote its card's QA checklist (a verdict, or the checklist it composed) —
+  // the supervisor forwards it as `qa_checklist_update`.
+  readonly qaChecklistChanged$ = new Subject<{ taskId: string; checklist: QaChecklist }>();
   // The tail of each session's tool-call chain. Agents fire calls in parallel (a snapshot
   // beside the navigate it depends on — observed with omp), and one page cannot serve two
   // actions at once, so a session's calls run one after another in arrival order.
@@ -726,7 +743,17 @@ export class BrowserMcpService {
     private preview: PreviewService,
     @Inject(DEVICE_API) private device: DeviceApi,
     @Optional() private http?: HttpAdapterHost,
+    // The cloud client for a tester run's checklist writes. Optional so specs construct the
+    // service without it — then those writes refuse.
+    @Optional() private auth?: AuthService,
   ) {}
+
+  // Whose live preview a session's preview tools act on: its own, or for a tester run the
+  // parent's (docs/specs/2026-11-04-qa-tester-agent.md, decision 6) — no second set of dev
+  // servers from the same worktree.
+  private previewOwner(session: Session): string {
+    return isTesterSession(session) && session.parentSessionId ? session.parentSessionId : session.id;
+  }
 
   tokenFor(sessionId: string): string {
     let token = this.tokens.get(sessionId);
@@ -789,12 +816,20 @@ export class BrowserMcpService {
         const platform = this.registry.listProjects().find((p) => p.id === session?.projectId)?.platform;
         const agent = session?.kind === "agent";
         const findings = findingTools(resolveLanguage(process.env.KERMANYCH_LANGUAGE, this.registry.getAuthSession()?.agentLanguage));
+        // A tester run (a `review` child stamped `tester`) gets the agent's browser and preview
+        // plus its QA and credential tools; any other review or discussion fork is never handed
+        // this server at all.
+        const tester = isTesterSession(session);
         const tools = [
           ...(browserHost() && platformHasBrowser(platform) ? TOOLS : []),
-          ...(agent && platformHasPreview(platform) ? previewTools(platformHasDevice(platform)) : []),
+          ...(browserHost() && platformHasBrowser(platform) && tester ? [CREDENTIAL_TOOL_DEF] : []),
+          // A tester run drives the parent's web preview only; a Mobile project's device belongs
+          // to the agent session.
+          ...((agent && platformHasPreview(platform)) || (tester && platformHasBrowser(platform)) ? previewTools(platformHasDevice(platform)) : []),
           ...(agent && platformHasDevice(platform) ? DEVICE_TOOLS : []),
           ...findings,
           ...(session?.minion === true ? [OUTCOME_TOOL] : []),
+          ...(tester ? [QA_RESULT_TOOL_DEF, QA_CHECKLIST_TOOL_DEF] : []),
         ];
         return result({ tools });
       }
@@ -806,6 +841,21 @@ export class BrowserMcpService {
           run = Promise.resolve().then(() => this.callFinding(sessionId, name, args));
         else if (name === OUTCOME_TOOL.name)
           run = Promise.resolve().then(() => callOutcomeTool(this.registry, sessionId, args, (report) => this.outcomeReported$.next({ sessionId, report })));
+        else if (TESTER_QA_TOOL_NAMES.has(name))
+          run = callTesterQaTool(
+            {
+              registry: this.registry,
+              client: () => {
+                if (!this.auth) throw new Error("not signed in");
+                return this.auth.cloudClient();
+              },
+              changed: (taskId, checklist) => this.qaChecklistChanged$.next({ taskId, checklist }),
+              screenshotFile,
+            },
+            sessionId,
+            name,
+            args,
+          );
         else if (PREVIEW_TOOL_NAMES.has(name)) run = this.callPreview(sessionId, name, args);
         else if (UNQUEUED.has(name)) run = this.call(sessionId, name, args);
         else {
@@ -843,10 +893,12 @@ export class BrowserMcpService {
     // Tools listed before the project became back-end or mobile stay in the agent's list.
     const platform = this.registry.listProjects().find((p) => p.id === session.projectId)?.platform;
     if (!platformHasBrowser(platform)) throw new Error(`The session browser is off: this is a ${platform} project.`);
-    const target: BrowserTarget = { sessionId, projectId: session.projectId };
+    const target: BrowserTarget = { sessionId, projectId: session.projectId, ...(isTesterSession(session) ? { ephemeral: true } : {}) };
+    // A tester run writes screenshots into the tested session's worktree: it has none of its own.
+    const shotOwner = isTesterSession(session) ? this.registry.listSessions().find((s) => s.id === session.parentSessionId) : session;
     switch (name) {
       case "browser_navigate": {
-        const url = typeof args.url === "string" && args.url ? args.url : this.preview.urlOf(sessionId);
+        const url = typeof args.url === "string" && args.url ? args.url : this.preview.urlOf(this.previewOwner(session));
         if (!url)
           throw new Error(
             "No url given and this session's live preview is not running. Pass a url, or start the preview with preview_start.",
@@ -864,6 +916,18 @@ export class BrowserMcpService {
         const typed = typeof args.text === "string" ? args.text : undefined;
         if (typed === undefined) throw new Error("`text` is required");
         return text(acted(await host.type(target, str(args, "ref"), typed, { clear: bool(args, "clear", true), submit: bool(args, "submit", false) })));
+      }
+      case CREDENTIAL_TOOL: {
+        if (!isTesterSession(session)) throw new Error(`${CREDENTIAL_TOOL} is only for «Тестувальник» runs.`);
+        const ref = str(args, "ref");
+        const { account, field, value } = credentialValue(this.registry, session.projectId, args);
+        let r: BrowserActionResult;
+        try {
+          r = await host.type(target, ref, value, { clear: true, submit: bool(args, "submit", false) });
+        } catch (err) {
+          throw new Error(maskSecret((err as Error)?.message ?? String(err), value));
+        }
+        return text(acted(r, `\ntyped the ${field} of «${account.name}»`));
       }
       case "browser_press":
         return text(acted(await host.press(target, str(args, "key"))));
@@ -904,9 +968,9 @@ export class BrowserMcpService {
         if (fullPage && ref) throw new Error("`full_page` and `ref` cannot be combined.");
         // A chat in the operator's checkout has no worktree of its own: writing there would
         // change the operator's files behind their back.
-        if (path !== undefined && (!session.worktree || !session.worktreePath))
+        if (path !== undefined && (!shotOwner?.worktree || !shotOwner.worktreePath))
           throw new Error("`path` needs a session with its own worktree; this one works in the operator's checkout.");
-        const file = path === undefined ? undefined : screenshotFile(session.worktreePath, path);
+        const file = path === undefined ? undefined : screenshotFile(shotOwner!.worktreePath, path);
         const shot = await host.screenshot(target, ref ? { fullPage, ref } : { fullPage });
         if (!file) return { content: [{ type: "image", data: shot.data, mimeType: shot.mimeType }] };
         const bytes = Buffer.from(shot.data, "base64");
@@ -945,17 +1009,20 @@ export class BrowserMcpService {
   private async callPreview(sessionId: string, name: string, args: Record<string, unknown>): Promise<ToolResult> {
     const session = this.registry.listSessions().find((s) => s.id === sessionId);
     if (!session) throw new Error("This session no longer exists.");
-    if (session.kind !== "agent") throw new Error(`The live preview is only for agent sessions (this is a ${session.kind}).`);
+    if (session.kind !== "agent" && !isTesterSession(session)) throw new Error(`The live preview is only for agent sessions (this is a ${session.kind}).`);
     const platform = this.registry.listProjects().find((p) => p.id === session.projectId)?.platform;
     if (!platformHasPreview(platform)) throw new Error(`The live preview is off: this is a ${platform} project.`);
     const onDevice = platformHasDevice(platform);
+    if (onDevice && isTesterSession(session)) throw new Error("A «Тестувальник» run has no device preview: it tests web projects.");
     // The operator's «Агент» pause covers starting and stopping, not reading. A device's pause
-    // lives in the api, since the device exists in the web build too (mobile decision 9).
+    // lives in the api, since the device exists in the web build too (mobile decision 9); a web
+    // preview's is the pause of the caller's own page.
     if (name === "preview_start" || name === "preview_stop") {
       if (onDevice && this.device.paused(sessionId)) throw new Error(DEVICE_PAUSED);
       if (!onDevice && browserHost()?.isPaused(sessionId) === true)
         throw new Error("The operator paused your control of this session's browser and preview. Ask them to resume it, or wait.");
     }
+    sessionId = this.previewOwner(session);
     switch (name) {
       case "preview_start": {
         const platformArg = args.platform ?? undefined;

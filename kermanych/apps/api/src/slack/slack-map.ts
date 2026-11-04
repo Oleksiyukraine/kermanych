@@ -28,9 +28,10 @@ function stripMention(text: string, botUserId: string): string {
   return text.replace(mentionPattern(botUserId), " ").replace(/[ \t]{2,}/g, " ").trim();
 }
 
-// What one Events API message means for the bot. Every top-level message in the bound
-// channel is a question; inside a thread only a message that @-mentions the bot is
-// addressed to it — the rest is people talking to each other.
+// What one Events API message means for the bot. Only a message that @-mentions the bot is
+// addressed to it, top-level or in a thread: a message tagging another app, agent or person
+// — or nobody — is people talking to someone else. A mentioning top-level message is a
+// question answered in its own thread; a mentioning thread reply is a follow-up.
 export function classifyMessage(event: unknown, botUserId: string): SlackAsk | null {
   if (!event || typeof event !== "object") return null;
   const e = event as Partial<SlackRawMessage> & { type?: string; channel?: string };
@@ -40,8 +41,8 @@ export function classifyMessage(event: unknown, botUserId: string): SlackAsk | n
   if (typeof e.channel !== "string" || typeof e.ts !== "string") return null;
 
   const raw = e.text ?? "";
+  if (!mentionPattern(botUserId).test(raw)) return null;
   const topLevel = !e.thread_ts || e.thread_ts === e.ts;
-  if (!topLevel && !mentionPattern(botUserId).test(raw)) return null;
 
   const text = stripMention(raw, botUserId);
   if (!text) return null;
