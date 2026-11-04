@@ -381,7 +381,7 @@
 // worklogs. Every ACTION goes to Jira under this member's token and lands back in the
 // mirror; a tokenless member sees everything and can touch nothing — each control says
 // why instead of hiding.
-import { computed, ref, watch } from 'vue';
+import { computed, onMounted, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import type { JiraAttachment, JiraIssue, JiraWorklog } from '@kermanych/cloud';
 import KAvatar from 'components/kit/KAvatar.vue';
@@ -581,27 +581,34 @@ const launchHint = computed(() => {
 });
 
 // Fresh detail on every open: live refresh through the api when a token is here (comments
-// fresher than the 30 s tick), the mirror's cache otherwise.
+// fresher than the 30 s tick), the mirror's cache otherwise. The board mounts this dialog
+// with `v-if` and opens it in the same tick, so the first open arrives as the initial
+// `modelValue`, which the watcher never sees — onMounted covers it.
+function onOpen(): void {
+  tab.value = 'comments';
+  confirmingDelete.value = false;
+  estimateDraft.value = props.issue.originalEstimate;
+  startDraft.value = props.issue.startDate;
+  dueDraft.value = props.issue.dueDate;
+  resetWorkDraft();
+  deletingWorklogId.value = null;
+  const mine = ++openRun;
+  kidsLoading.value = true;
+  void jira.loadChildren(props.issue.issueId).finally(() => {
+    if (mine === openRun) kidsLoading.value = false;
+  });
+  void jira.refreshIssue(props.issue.key);
+  if (canAct.value) void loadEditorLists(mine);
+}
 watch(
   () => props.modelValue,
   (open) => {
-    if (!open) return;
-    tab.value = 'comments';
-    confirmingDelete.value = false;
-    estimateDraft.value = props.issue.originalEstimate;
-    startDraft.value = props.issue.startDate;
-    dueDraft.value = props.issue.dueDate;
-    resetWorkDraft();
-    deletingWorklogId.value = null;
-    const mine = ++openRun;
-    kidsLoading.value = true;
-    void jira.loadChildren(props.issue.issueId).finally(() => {
-      if (mine === openRun) kidsLoading.value = false;
-    });
-    void jira.refreshIssue(props.issue.key);
-    if (canAct.value) void loadEditorLists(mine);
+    if (open) onOpen();
   },
 );
+onMounted(() => {
+  if (props.modelValue) onOpen();
+});
 
 // Realtime/refresh may change the issue under an open dialog; the inline inputs must
 // follow unless the user is mid-save on that very field (their draft would be stomped by

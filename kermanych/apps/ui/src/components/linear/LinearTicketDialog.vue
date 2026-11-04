@@ -216,7 +216,7 @@
 // and lands back in the mirror; a tokenless member sees everything and can touch nothing —
 // each control says why instead of hiding. Linear has no worklogs and no time tracking, so
 // this dialog is the Jira ticket dialog minus that half.
-import { computed, ref, watch } from 'vue';
+import { computed, onMounted, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import type { LinearIssue } from '@kermanych/cloud';
 import KAvatar from 'components/kit/KAvatar.vue';
@@ -315,24 +315,31 @@ const launchHint = computed(() => {
 });
 
 // Fresh detail on every open: live refresh through the api when a token is here (comments
-// fresher than the 30 s tick), the mirror's cache otherwise.
+// fresher than the 30 s tick), the mirror's cache otherwise. The board mounts this dialog
+// with `v-if` and opens it in the same tick, so the first open arrives as the initial
+// `modelValue`, which the watcher never sees — onMounted covers it.
+function onOpen(): void {
+  confirmingDelete.value = false;
+  commentDraft.value = '';
+  estimateDraft.value = props.issue.estimate > 0 ? String(props.issue.estimate) : '';
+  dueDraft.value = props.issue.dueDate;
+  const mine = ++openRun;
+  kidsLoading.value = true;
+  void linear.loadChildren(props.issue.issueId).finally(() => {
+    if (mine === openRun) kidsLoading.value = false;
+  });
+  void linear.refreshIssue(props.workspaceId, props.issue.key);
+  if (canAct.value) void loadAssignable(mine);
+}
 watch(
   () => props.modelValue,
   (open) => {
-    if (!open) return;
-    confirmingDelete.value = false;
-    commentDraft.value = '';
-    estimateDraft.value = props.issue.estimate > 0 ? String(props.issue.estimate) : '';
-    dueDraft.value = props.issue.dueDate;
-    const mine = ++openRun;
-    kidsLoading.value = true;
-    void linear.loadChildren(props.issue.issueId).finally(() => {
-      if (mine === openRun) kidsLoading.value = false;
-    });
-    void linear.refreshIssue(props.workspaceId, props.issue.key);
-    if (canAct.value) void loadAssignable(mine);
+    if (open) onOpen();
   },
 );
+onMounted(() => {
+  if (props.modelValue) onOpen();
+});
 
 // Realtime/refresh may change the issue under an open dialog; the inline inputs must
 // follow unless the user is mid-save on that very field.
