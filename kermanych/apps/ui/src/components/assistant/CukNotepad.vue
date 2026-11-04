@@ -1,13 +1,11 @@
 <template>
   <!-- ЦУК's notepad (docs/specs/2026-11-04-cuk-control-console.md, decisions 6 and 8): the current
-       workspace's «Список дій» — the very list the Огляд tile shows — on a small ruled notebook
-       page with a ringed binding. Built from theme tokens only, so it is a notebook in every
-       theme. -->
+       workspace's «Список дій» — the very list the Огляд tile shows — on the top sheet of a small
+       tear-off pad: a glued strip with a perforation under it, ruled paper, a few sheets showing
+       beneath. Built from theme tokens only, so it is a pad in every theme. -->
   <aside class="note" :aria-label="t('cuk.notes.title')">
-    <div class="note__binding" aria-hidden="true">
-      <span v-for="n in RINGS" :key="n" class="note__ring"></span>
-    </div>
     <header class="note__head">
+      <span class="note__glue" aria-hidden="true"></span>
       <span class="note__title mono">{{ t('cuk.notes.title') }}</span>
       <span v-if="workspace" class="note__ws mono">{{ workspace.icon ? `${workspace.icon} ` : '' }}{{ workspace.name }}</span>
     </header>
@@ -23,10 +21,6 @@ import { useOrchestrator } from 'stores/orchestrator';
 import { useProjects } from 'stores/projects';
 import HomeTodoWidget from 'components/home/HomeTodoWidget.vue';
 
-// How many rings hold the page: enough to read as a binding at ~300 px, few enough not to
-// turn into a zipper.
-const RINGS = 9;
-
 const { t } = useI18n();
 const orchestrator = useOrchestrator();
 const projects = useProjects();
@@ -40,64 +34,43 @@ const workspace = computed(() => (workspaceId.value ? projects.workspaceById.get
   // The notebook skin's margin (HomeTodoWidget `--nb-margin`), repeated for the header so the
   // title starts where the rows do.
   --note-margin: 34px;
-  position: relative;
+  // The glued edge the sheets hang from.
+  --note-glue: 14px;
   display: flex;
   flex-direction: column;
   min-height: 0;
   height: 100%;
-  // Room above the page for the rings to rise out of it.
-  padding-top: 9px;
-}
-
-// The binding: a row of rings that rise above the page's top edge and pass through punched
-// holes, the way a spiral notebook's wire does.
-.note__binding {
-  position: absolute;
-  z-index: 1;
-  top: 0;
-  left: var(--k-sp-4);
-  right: var(--k-sp-4);
-  display: flex;
-  justify-content: space-between;
-  pointer-events: none;
-}
-
-.note__ring {
-  position: relative;
-  width: 7px;
-  height: 20px;
-  border-radius: 4px;
-  border: 1.5px solid var(--k-muted);
-  background: linear-gradient(to right, var(--k-surface2), var(--k-line-strong));
-  box-shadow: 0 1px 0 color-mix(in srgb, #000 35%, transparent);
-
-  // The punched hole the ring passes through, on the page just under the ring's foot.
-  &::after {
-    content: '';
-    position: absolute;
-    z-index: -1;
-    left: 50%;
-    bottom: -4px;
-    width: 7px;
-    height: 7px;
-    border-radius: 50%;
-    background: var(--k-canvas);
-    transform: translateX(-50%);
-  }
+  // Room under the page for the sheets beneath it to show.
+  padding-bottom: 6px;
 }
 
 .note__head {
+  position: relative;
   flex: none;
   display: flex;
   align-items: baseline;
   gap: var(--k-sp-2);
   min-width: 0;
-  padding: 22px var(--k-sp-3) var(--k-sp-2) calc(var(--note-margin) + var(--k-sp-2));
+  padding: calc(var(--note-glue) + var(--k-sp-3)) var(--k-sp-3) var(--k-sp-2) calc(var(--note-margin) + var(--k-sp-2));
   border: var(--k-rule-thin) solid var(--k-line-strong);
   border-bottom: none;
   border-radius: var(--k-r-lg) var(--k-r-lg) 0 0;
   // Opaque, like paper: in the narrow layout the page slides over ЦУК's transcript.
   background: var(--k-surface);
+  overflow: hidden;
+}
+
+// The glued strip across the top, and the perforation the sheet tears off along.
+.note__glue {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: var(--note-glue);
+  background:
+    repeating-linear-gradient(to right, var(--k-line-strong) 0 6px, transparent 6px 10px) bottom / 100% 1px no-repeat,
+    linear-gradient(to bottom, color-mix(in srgb, #fff 6%, transparent), transparent) top / 100% 100% no-repeat,
+    var(--k-surface2);
 }
 
 .note__title {
@@ -116,6 +89,8 @@ const workspace = computed(() => (workspaceId.value ? projects.workspaceById.get
   color: var(--k-faint);
 }
 
+// The top sheet. The two offset edges under it are the sheets beneath — what makes it read as
+// a pad rather than a panel.
 .note__page {
   flex: 1;
   min-height: 0;
@@ -123,7 +98,12 @@ const workspace = computed(() => (workspaceId.value ? projects.workspaceById.get
   border-top: none;
   border-radius: 0 0 var(--k-r-lg) var(--k-r-lg);
   background: var(--k-surface);
-  box-shadow: var(--k-shadow-toast);
+  box-shadow:
+    0 3px 0 -1px var(--k-surface2),
+    0 3px 0 0 var(--k-line),
+    0 6px 0 -2px var(--k-surface2),
+    0 6px 0 -1px var(--k-line),
+    var(--k-shadow-toast);
   overflow: hidden;
 }
 

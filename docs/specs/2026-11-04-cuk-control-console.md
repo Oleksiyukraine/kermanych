@@ -6,8 +6,7 @@
   endpoint and service on a chat pool shared with the Менеджмент chat), `packages/core` (the ЦУК
   action set and its parser), `kermanych/README.md`. No cloud migration.
 - **Status:** decisions agreed with the operator in the deep-analysis interview (2026-11-04),
-  approved the same day; implemented on this branch (see «Verification»). Open: the operator's
-  pick of the notepad binding (decision 8).
+  approved the same day; implemented on this branch (see «Verification»).
 
 ## Goal
 
@@ -107,12 +106,13 @@ assistant stays available to managers in the same window, folded.
    «Відкрий налаштування проєкту») fill the transcript area. Below ~900 px of window width the
    notepad hides behind a 📝 button in the window head and slides over ЦУК.
    Rejected: height growing with content (the window jumps with every answer); near-full-screen.
-8. **The notepad looks like a small notebook built from theme tokens.** Page on `--k-surface`
+8. **The notepad looks like a small tear-off pad built from theme tokens.** Page on `--k-surface`
    with faint ruled lines (`--k-line`) the rows sit on, a thin `--k-accent` margin line on the
-   left, a binding strip with rings at the top, «ЗАПИСНИЧОК» in mono caps with the workspace
-   name, the UI font, the B/I/U · ☑ · 1. toolbar as one thin strip under the binding. Works in
-   all four themes. 2–3 variants of the binding and ruling are drawn and shown to the operator
-   as screenshots before one is finalised.
+   left; at the top a glued strip (`--k-surface2`) with a perforation under it; two sheet edges
+   showing beneath the page; «ЗАПИСНИЧОК» in mono caps with the workspace name, the UI font, the
+   B/I/U · ☑ · 1. toolbar as one thin strip. Works in all four themes. Three bindings were drawn
+   and shown as screenshots — rings, a spiral, the glued pad; the operator picked the pad
+   (2026-11-04), with the rings as the way back if it does not wear well.
    Rejected: a plain tile look; realistic cream paper with a handwriting font.
 9. **The «Асистент менеджменту» panel is for owners and managers of the current workspace.**
    A developer gets the window with ЦУК only, no accordion. With no workspace selected there
@@ -220,7 +220,7 @@ assistant stays available to managers in the same window, folded.
 - Not exercised: `agent.start` / `task.create` end to end (the preview has no cloud board); the
   Electron build (⌘K from inside a session browser page is an unchanged path).
 - Notepad binding variants for decision 8: `docs/design/2026-11-04-cuk-notepad/`
-  (`notepad-a-rings` — shipped, `notepad-b-spiral`, `notepad-c-pad`).
+  (`notepad-c-pad` — shipped, `notepad-a-rings` — the fallback, `notepad-b-spiral`).
 
 ## Documentation
 
