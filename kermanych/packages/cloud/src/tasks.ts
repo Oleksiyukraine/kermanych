@@ -13,7 +13,7 @@ import { isFindingKind, readDocsReport, readSessionReport, type QaChecklist } fr
 // on every card read it. Literal strings, so supabase-js can type the selects; Realtime's
 // `select` takes the same list as an array.
 const TASK_LIST_COLUMNS =
-  "id, project_id, title, description, status, assignee_id, created_by, model, effort, prefix, kind, branch, worktree, hidden, deep_analysis, auto_run, design, finding_kind, image_paths, jira_key, linear_key, plane_key, session_report, created_at, updated_at";
+  "id, project_id, title, description, status, assignee_id, created_by, model, effort, prefix, kind, branch, branch_slug, worktree, hidden, deep_analysis, auto_run, design, finding_kind, image_paths, jira_key, linear_key, plane_key, session_report, created_at, updated_at";
 const TASK_COLUMNS = `${TASK_LIST_COLUMNS}, qa_checklist, docs_report` as const;
 const TASK_LIST_COLUMN_NAMES = TASK_LIST_COLUMNS.split(", ");
 
@@ -37,6 +37,7 @@ type TaskRow = {
   finding_kind: string | null;
   kind: string | null;
   branch: string | null;
+  branch_slug: string | null;
   image_paths: string[] | null;
   jira_key: string | null;
   linear_key: string | null;
@@ -74,6 +75,8 @@ export function toTask(row: TaskRow): Task {
   if (row.prefix !== null) t.prefix = row.prefix;
   if (row.kind !== null) t.kind = row.kind;
   if (row.branch !== null) t.branch = row.branch;
+  // `!= null`, not `!== null`: a hand-built row from before the column (test fixtures) omits it.
+  if (row.branch_slug != null) t.branchSlug = row.branch_slug;
   // The column's check constraint names the same four kinds; anything else reads as «not from a
   // finding» rather than a value the UI cannot word.
   if (isFindingKind(row.finding_kind)) t.findingKind = row.finding_kind;
@@ -121,6 +124,7 @@ export function toTaskRow(patch: TaskPatch): Record<string, unknown> {
   if (patch.autoRun !== undefined) row.auto_run = patch.autoRun;
   if (patch.kind !== undefined) row.kind = patch.kind.trim() || null;
   if (patch.branch !== undefined) row.branch = patch.branch.trim() || null;
+  if (patch.branchSlug !== undefined) row.branch_slug = patch.branchSlug.trim() || null;
   if (patch.jiraKey !== undefined) row.jira_key = patch.jiraKey.trim() || null;
   if (patch.linearKey !== undefined) row.linear_key = patch.linearKey.trim() || null;
   if (patch.planeKey !== undefined) row.plane_key = patch.planeKey.trim() || null;
@@ -214,6 +218,7 @@ export async function createTask(
       prefix: input.prefix,
       kind: input.kind,
       branch: input.branch,
+      branchSlug: input.branchSlug,
       worktree: input.worktree,
       hidden: input.hidden,
       deepAnalysis: input.deepAnalysis,

@@ -376,7 +376,7 @@ selects it, so apply it before shipping a client that knows it
 launcher, in the board's create/edit form and in the findings dialog, and it is stored on the
 card (`tasks.auto_run`). Only the card's author can switch it on; anyone can switch it off; and
 when anyone but the author changes what the card asks for (title, description, project, base
-branch, model, effort, prefix, worktree, images, «Глибокий аналіз»), the database
+branch, branch name, model, effort, prefix, worktree, images, «Глибокий аналіз»), the database
 switches it off. It does not combine with «Глибокий аналіз», which needs a person to interview.
 Such cards carry the «Посіпака» mark on «Дошка» and in «Задачі». What the minion does with them
 is described under [Cloud tasks and local sessions](#cloud-tasks-and-local-sessions) →
@@ -655,6 +655,11 @@ gets the questions.
 their inserted values, only the author switches `auto_run` on, and anyone else's edit of a card's
 content switches it off. It only adds, but every task read selects the two columns, so push it
 before shipping a client that knows them.
+
+`20261104110000_task_branch_slug.sql` adds `tasks.branch_slug`, the card's own branch name from
+the launcher's «Гілка» field (NULL: the launch names the branch from the task), and adds it to
+the content `tasks_guard()` watches for auto-run. It only adds, but every task read selects the
+column, so push it before shipping a client that knows it.
 
 ### Running against a local stack or your own project
 
@@ -1425,13 +1430,17 @@ developer's machine. The direction is always task → session.
    `~/.kermanych/worktrees/<sessionId>`, copies the project's `carryFiles` (`.env` by
    default) into it, and spawns one `omp --mode rpc` child. From here on the session is an
    ordinary local session: it appears on the Агенти board and you drive it there. The branch
-   is named `<prefix>/<slug>`: the prefix is the card's (`feature` by default), and the slug is
-   a short English summary of the card's title and description written by the fast model of
-   your runtime (omp's `pi/smol` role, claude's `haiku`) in one tool-less call bounded at 15 s
-   to start and 15 s to answer. When that call fails or times out, the slug is the title
-   transliterated to Latin, cut at a whole word within 40 characters; a slug already taken in
-   the project gets `-2`, `-3`, … (Spec: `docs/specs/2026-10-26-branch-name-from-task.md`.) The
-   same naming applies to a chat promoted to an agent and to a reopened session whose branch is
+   is named `<prefix>/<slug>`: the prefix is the card's (`feature` by default). The slug is the
+   card's own when its «Гілка» field in the launcher was filled in, run through `slugify`
+   (lowercase, Latin, `a-z0-9` joined with `-`, at most 40 characters; the launcher's
+   hint shows the result when it differs from what was typed), and no model is asked. Left
+   blank, the slug is a short English summary of the card's title and description written by
+   the fast model of your runtime (omp's `pi/smol` role, claude's `haiku`) in one tool-less call
+   bounded at 15 s to start and 15 s to answer. When that call fails or times out, the slug is
+   the title transliterated to Latin, cut at a whole word within 40 characters. A slug already
+   taken in the project gets `-2`, `-3`, … (Specs: `docs/specs/2026-10-26-branch-name-from-task.md`,
+   `docs/specs/2026-11-04-custom-branch-name.md`.) The model naming also applies to a chat
+   promoted to an agent and to a reopened session whose branch is
    gone. The branch starts from the session's base — the card's base branch, else the
    project's default branch, else the branch the project checkout is on, recorded on the
    session either way.

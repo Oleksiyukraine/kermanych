@@ -24,6 +24,9 @@ export type LauncherDraft = {
   // that agent interviews the operator, and nobody is there.
   autoRun: boolean;
   baseBranch?: string | undefined;
+  // The agent's own branch after the prefix, typed in the launcher's «Гілка». Blank or absent:
+  // the launch names it from the task.
+  branchSlug?: string | undefined;
 };
 
 // The two card modes that exclude each other, as one pair so every form flips them the same way.
@@ -77,6 +80,7 @@ export function taskInsertFromDraft(
     hidden: draft.hidden,
     deepAnalysis: draft.deepAnalysis,
     autoRun: draft.autoRun && !draft.deepAnalysis,
+    ...(draft.branchSlug?.trim() ? { branchSlug: draft.branchSlug.trim() } : {}),
     ...(base ? { branch: base } : {}),
     assigneeId,
   };
@@ -101,6 +105,7 @@ export function taskPatchFromDraft(draft: LauncherDraft, openedAutoRun: boolean)
     deepAnalysis: draft.deepAnalysis,
     ...(autoRun !== openedAutoRun ? { autoRun } : {}),
     branch: (draft.worktree ? draft.baseBranch?.trim() : '') ?? '',
+    branchSlug: draft.branchSlug?.trim() ?? '',
   };
 }
 

@@ -1170,7 +1170,7 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
 
     const { branch, baseBranch } = await this.resolveLaunchParams(
       project,
-      { title: task.title, description: task.description },
+      { title: task.title, description: task.description, branchSlug: task.branchSlug },
       prefix,
       worktree,
       undefined,
@@ -1363,11 +1363,13 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
 
   // In-place guards + a de-duplicated branch name, shared by every birth path of an agent
   // (createSessionFromTask, promoteChatToAgent) and by attaching a worktree to an existing
-  // session. excludeId keeps a session from colliding with or blocking itself. The name comes
-  // from the task (BranchNameService), else from its transliterated title.
+  // session. excludeId keeps a session from colliding with or blocking itself. The name is the
+  // card's own when the launcher's «Гілка» box was filled in (slugified, so a typed value is
+  // always a valid ref; docs/specs/2026-11-04-custom-branch-name.md), else it comes from the task
+  // (BranchNameService), else from its transliterated title.
   private async resolveLaunchParams(
     project: Project,
-    task: BranchContext,
+    task: BranchContext & { branchSlug?: string },
     prefix: BranchPrefix,
     worktree: boolean,
     excludeId?: string,
@@ -1412,8 +1414,10 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
       baseBranch = requestedBase || project.defaultBranch || (await this.worktree.currentBranch(project.localRepoPath)) || undefined;
     }
     // Named after the guards, so a refused launch spends no model call; the taken set is read
-    // after the answer, so it includes whatever launched while the model was thinking.
-    const slug = (await this.branchNames?.suggest(task)) ?? slugify(task.title);
+    // after the answer, so it includes whatever launched while the model was thinking. A name the
+    // operator typed spends none either.
+    const typed = task.branchSlug?.trim();
+    const slug = typed ? slugify(typed) : ((await this.branchNames?.suggest(task)) ?? slugify(task.title));
     const existing = new Set(
       this.registry.listSessions(project.id).filter((s) => s.id !== excludeId).map((s) => s.branch).filter(Boolean),
     );
