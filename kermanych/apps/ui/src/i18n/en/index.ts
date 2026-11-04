@@ -1155,6 +1155,9 @@ export const en: MessageSchema = {
         eyes: 'Big eyes',
         captain: 'Captain',
         spark: 'Spark',
+        cowboy: 'Cowboy',
+        cossack: 'Cossack',
+        vader: 'Darth Vader',
       },
     },
     notifications: {

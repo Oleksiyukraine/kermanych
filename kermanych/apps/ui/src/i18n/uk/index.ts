@@ -1160,6 +1160,9 @@ export const uk = {
         eyes: 'Великі очі',
         captain: 'Капітан',
         spark: 'Іскра',
+        cowboy: 'Ковбой',
+        cossack: 'Козак',
+        vader: 'Дарт Вейдер',
       },
     },
     // «Налаштування → Сповіщення» (docs/specs/2026-11-01-dock-attention.md).

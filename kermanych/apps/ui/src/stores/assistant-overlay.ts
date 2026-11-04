@@ -25,7 +25,18 @@ export const assistantGestureOn: Ref<boolean> = persisted(
  * (docs/specs/2026-11-03-assistant-mascot-choice.md). In the order the picker shows them; the
  * first is the default, and a stored id no longer in the list reads as it.
  */
-export const ASSISTANT_MASCOTS = ['bot-eyes', 'bot', 'drop', 'tile', 'eyes', 'captain', 'spark'] as const;
+export const ASSISTANT_MASCOTS = [
+  'bot-eyes',
+  'bot',
+  'drop',
+  'tile',
+  'eyes',
+  'captain',
+  'spark',
+  'cowboy',
+  'cossack',
+  'vader',
+] as const;
 export type AssistantMascotId = (typeof ASSISTANT_MASCOTS)[number];
 
 export const assistantMascot: Ref<AssistantMascotId> = persisted<AssistantMascotId>(
