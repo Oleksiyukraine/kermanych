@@ -5,9 +5,16 @@
       <span v-else class="k-vb__dot" aria-hidden="true"></span>
       {{ t(`kit.voiceBar.state.${stateKey}`) }}
     </span>
-    <!-- The microphone's loudness: a bar that fills with the operator's voice, empty while muted. -->
-    <span class="k-vb__level" aria-hidden="true">
-      <span class="k-vb__level-fill" :style="{ transform: `scaleX(${muted ? 0 : micLevel})` }"></span>
+    <!-- The microphone's loudness: a bar that fills with the operator's voice, empty while muted.
+         With a noise gate the mark is its threshold, and the fill dims while GPT-Live does not
+         hear the microphone (docs/specs/2026-11-04-voice-background-noise.md, decision 4). -->
+    <span class="k-vb__level" :title="gate > 0 ? t('kit.voiceBar.gate') : undefined" aria-hidden="true">
+      <span
+        class="k-vb__level-fill"
+        :class="{ 'k-vb__level-fill--gated': gate > 0 && !gateOpen }"
+        :style="{ transform: `scaleX(${muted ? 0 : micLevel})` }"
+      ></span>
+      <span v-if="gate > 0" class="k-vb__gate" :style="{ left: `${Math.min(gate, 1) * 100}%` }"></span>
     </span>
     <!-- The phrase being said right now, by the operator or by the voice. Not stored anywhere:
          the session's transcript keeps what reached the agent and what it answered. -->
@@ -46,6 +53,9 @@ const props = defineProps<{
   activity: 'listening' | 'hearing' | 'speaking' | 'agent';
   caption: { who: 'operator' | 'voice'; text: string } | null;
   micLevel: number;
+  /** The noise gate's threshold on `micLevel`'s scale (0 = no gate) and whether it is open now. */
+  gate: number;
+  gateOpen: boolean;
   muted: boolean;
   elapsedMs: number;
 }>();
@@ -96,6 +106,7 @@ const clock = computed(() => {
 .k-vb__state--hearing .k-vb__dot,
 .k-vb__state--speaking .k-vb__dot { animation: k-vb-pulse 1s ease-in-out infinite; }
 .k-vb__level {
+  position: relative;
   flex: none;
   width: 48px;
   height: 4px;
@@ -109,6 +120,14 @@ const clock = computed(() => {
   background: var(--k-accent);
   transform-origin: left center;
   transition: transform 120ms linear;
+}
+.k-vb__level-fill--gated { background: var(--k-muted); }
+.k-vb__gate {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: var(--k-text);
 }
 .k-vb__caption {
   flex: 1;

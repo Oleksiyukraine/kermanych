@@ -679,6 +679,16 @@
           <div class="set__rule"></div>
 
           <div class="set__group">
+            <span class="set__label">{{ t('settings.voice.gate') }}</span>
+            <!-- docs/specs/2026-11-04-voice-background-noise.md, decision 4: applies at once,
+                 to a running conversation too. -->
+            <KSelect v-model="voiceGateChoice" :options="VOICE_GATE_OPTIONS" />
+            <p class="set__note">{{ t('settings.voice.gateNote') }}</p>
+          </div>
+
+          <div class="set__rule"></div>
+
+          <div class="set__group">
             <span class="set__label">{{ t('settings.voice.language') }}</span>
             <p class="set__note">{{ t('settings.voice.languageNote', { language: voiceLanguageLabel }) }}</p>
           </div>
@@ -975,7 +985,8 @@ import { useLoadPhase } from '../composables/useLoadPhase';
 import { dockBadgeOn, dockBounceOn } from '../lib/dock';
 import { ASSISTANT_MASCOTS, assistantGestureOn, assistantMascot } from 'stores/assistant-overlay';
 import AssistantMascot from 'components/assistant/AssistantMascot.vue';
-import { voicePick } from '../lib/voice';
+import { voiceGatePick, voicePick } from '../lib/voice';
+import { VOICE_GATE_LEVELS, type VoiceGateLevel } from '../lib/voice-gate';
 import { locale } from '../lib/locale';
 import { isMoveRefusal, memberErrorText, moveRefusalText, NO_ROWS } from '../lib/cloud-errors';
 import {
@@ -2014,6 +2025,10 @@ const checkVoiceKey = useAsyncAction(async () => {
 });
 const voiceChoice = voicePick;
 const VOICE_OPTIONS: readonly KSelectOption[] = VOICE_IDS.map((id) => ({ value: id, label: id }));
+const voiceGateChoice = voiceGatePick;
+const VOICE_GATE_OPTIONS = computed<readonly KSelectOption[]>(() =>
+  (Object.keys(VOICE_GATE_LEVELS) as VoiceGateLevel[]).map((level) => ({ value: level, label: t(`settings.voice.gateLevels.${level}`) })),
+);
 // The conversation speaks the agent's language, or the screen's when none is set (decision 11).
 const voiceLanguageLabel = computed(() =>
   auth.language ? AGENT_LANGUAGE_LABELS[auth.language] : locale.value === 'en' ? 'English' : 'Українська',

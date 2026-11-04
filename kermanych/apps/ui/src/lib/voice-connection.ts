@@ -6,6 +6,8 @@
 //
 // Kept apart from stores/voice.ts so the store's logic can be tested with a scripted connection:
 // nothing here decides anything, it only moves audio and JSON.
+import { levelOf } from './voice-gate';
+import gateWorkletUrl from './voice-gate.worklet.ts?worker&url';
 
 /** One server event from the data channel, as GPT-Live sent it. */
 export type LiveEvent = { type: string; [k: string]: unknown };
@@ -15,8 +17,10 @@ export interface VoiceConnection {
   send(event: Record<string, unknown>): void;
   /** Stops the microphone track from carrying sound (GPT-Live is told separately). */
   setMicEnabled(on: boolean): void;
-  /** The microphone's loudness right now, 0…1. */
+  /** The microphone's loudness right now, 0…1 — before the noise gate, so it can be calibrated. */
   micLevel(): number;
+  /** The noise gate's threshold on `micLevel`'s scale, 0 = off. Without a gate, does nothing. */
+  setGate(threshold: number): void;
   /** Tears everything down: tracks, channel, peer connection, audio element. */
   close(): void;
 }
@@ -25,12 +29,24 @@ export interface VoiceConnectionHandlers {
   onEvent(event: LiveEvent): void;
   /** The channel or the peer connection died without `close()` being called. */
   onDrop(): void;
+  /** The noise gate opened or closed (only with `gate`). */
+  onGate?(open: boolean): void;
+}
+
+export interface VoiceConnectionOptions {
+  /**
+   * A noise gate in front of GPT-Live (docs/specs/2026-11-04-voice-background-noise.md,
+   * decision 4): its starting threshold. Also turns the browser's automatic gain off, which would
+   * otherwise lift a distant TV to the operator's level while they are silent. Dictation passes
+   * none and keeps the plain microphone.
+   */
+  gate?: number;
 }
 
 /** Exchanges the SDP offer for GPT-Live's answer (the local api). */
 export type SdpExchange = (offer: string) => Promise<{ sdp: string }>;
 
-export type ConnectVoice = (exchange: SdpExchange, handlers: VoiceConnectionHandlers) => Promise<VoiceConnection>;
+export type ConnectVoice = (exchange: SdpExchange, handlers: VoiceConnectionHandlers, options?: VoiceConnectionOptions) => Promise<VoiceConnection>;
 
 /**
  * The browser's own words for a refused or missing microphone are English and technical: the
@@ -44,17 +60,22 @@ export function micErrorWords(e: unknown, words: { denied: string; missing: stri
 
 const ICE_TIMEOUT_MS = 10_000;
 
-export const connectVoice: ConnectVoice = async (exchange, handlers) => {
+export const connectVoice: ConnectVoice = async (exchange, handlers, options = {}) => {
   const pc = new RTCPeerConnection();
   const audio = new Audio();
   audio.autoplay = true;
   let mic: MediaStream | undefined;
   let ctx: AudioContext | undefined;
+  let analyser: AnalyserNode | undefined;
+  let gate: AudioWorkletNode | undefined;
+  // What GPT-Live receives: the microphone itself, or the gate's output.
+  let sent: MediaStream | undefined;
   let closed = false;
 
   const teardown = () => {
     closed = true;
     mic?.getTracks().forEach((track) => track.stop());
+    sent?.getTracks().forEach((track) => track.stop());
     void ctx?.close().catch(() => {});
     channel.close();
     pc.close();
@@ -92,8 +113,29 @@ export const connectVoice: ConnectVoice = async (exchange, handlers) => {
     // said no in System Settings, and the store words this refusal for them.
     if (window.kermanych?.voice && !(await window.kermanych.voice.requestMic()))
       throw new DOMException('microphone refused in System Settings', 'NotAllowedError');
-    mic = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true } });
-    for (const track of mic.getAudioTracks()) pc.addTrack(track, mic);
+    const gated = options.gate !== undefined;
+    mic = await navigator.mediaDevices.getUserMedia({
+      audio: { echoCancellation: true, noiseSuppression: true, ...(gated ? { autoGainControl: false } : {}) },
+    });
+    // The meter (and the gate) read the microphone directly; the meter's analyser is never in the
+    // path of the audio GPT-Live receives.
+    ctx = new AudioContext();
+    const source = ctx.createMediaStreamSource(mic);
+    sent = mic;
+    if (gated) {
+      await ctx.audioWorklet.addModule(gateWorkletUrl);
+      gate = new AudioWorkletNode(ctx, 'kermanych-voice-gate', { processorOptions: { threshold: options.gate } });
+      gate.port.onmessage = ({ data }: MessageEvent<{ open?: boolean }>) => {
+        if (typeof data.open === 'boolean') handlers.onGate?.(data.open);
+      };
+      const out = ctx.createMediaStreamDestination();
+      source.connect(gate).connect(out);
+      sent = out.stream;
+    }
+    for (const track of sent.getAudioTracks()) pc.addTrack(track, sent);
+    analyser = ctx.createAnalyser();
+    analyser.fftSize = 512;
+    source.connect(analyser);
 
     const offer = await pc.createOffer();
     await pc.setLocalDescription(offer);
@@ -107,13 +149,8 @@ export const connectVoice: ConnectVoice = async (exchange, handlers) => {
     throw e;
   }
 
-  // Loudness for the voice bar's level meter: an analyser on the microphone, never in the path
-  // of the audio GPT-Live receives.
-  ctx = new AudioContext();
-  const analyser = ctx.createAnalyser();
-  analyser.fftSize = 512;
-  ctx.createMediaStreamSource(mic).connect(analyser);
-  const samples = new Float32Array(analyser.fftSize);
+  const meter = analyser!;
+  const samples = new Float32Array(meter.fftSize);
 
   return {
     send(event) {
@@ -121,13 +158,14 @@ export const connectVoice: ConnectVoice = async (exchange, handlers) => {
     },
     setMicEnabled(on) {
       mic?.getAudioTracks().forEach((track) => (track.enabled = on));
+      sent?.getAudioTracks().forEach((track) => (track.enabled = on));
     },
     micLevel() {
-      analyser.getFloatTimeDomainData(samples);
-      let sum = 0;
-      for (const s of samples) sum += s * s;
-      // RMS of speech sits around 0.02–0.2; scaled so normal speech fills most of the meter.
-      return Math.min(1, Math.sqrt(sum / samples.length) * 6);
+      meter.getFloatTimeDomainData(samples);
+      return levelOf(samples);
+    },
+    setGate(threshold) {
+      gate?.port.postMessage({ threshold });
     },
     close: teardown,
   };

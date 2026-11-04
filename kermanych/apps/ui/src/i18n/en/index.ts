@@ -1568,6 +1568,14 @@ export const en: MessageSchema = {
       voiceNote: 'Applies from the next conversation.',
       language: 'Conversation language',
       languageNote: 'The conversation uses the agent’s language: {language}. Change it in “AI provider → Agent communication language”.',
+      gate: 'Microphone noise threshold',
+      gateLevels: {
+        off: 'Off — everything is heard',
+        low: 'Low — a quiet room',
+        medium: 'Medium — a TV or music in the room',
+        high: 'High — loud nearby',
+      },
+      gateNote: 'GPT-Live hears the microphone only while you are louder than the threshold: a voice close to the microphone is louder than a TV or the neighbours. Applies at once. During a conversation, a mark on the level bar shows the threshold: speak so the bar passes it. A headset helps most against background sound.',
     },
     runtime: {
       current: 'Current: {name}',
@@ -2636,6 +2644,7 @@ export const en: MessageSchema = {
       mute: 'Turn the microphone off',
       unmute: 'Turn the microphone on',
       end: 'End',
+      gate: 'Noise threshold: GPT-Live hears you when the bar passes the mark',
     },
     dictate: {
       start: 'Dictate',

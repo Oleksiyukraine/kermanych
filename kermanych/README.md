@@ -979,8 +979,9 @@ voice: it never answers about the code itself, and asks back only when it did no
   can use `gpt-live-1`. The same pane picks the voice (default `marin`); the conversation speaks
   the agent's language («Мова спілкування агента», an ASD-STE100 level is English), or the UI
   language when none is set.
-- **What the agent gets.** Your words since the previous hand-off, sent in the same mode typed
-  text takes — so speaking during a running turn steers it — under a short voice note (a speech
+- **What the agent gets.** Your last phrase before the hand-off — words before a pause of 3 s or
+  more are dropped, so a TV heard while the agent worked never rides along — sent in the same
+  mode typed text takes — so speaking during a running turn steers it — under a short voice note (a speech
   transcript, answer briefly, no tables). The log shows your own words with a 🎤 mark, after a
   restart too. When the turn ends GPT-Live retells the last reply (code blocks and tables become
   «shown in the chat»); while the agent works it gets silent progress, so «що він зараз робить?»
@@ -991,9 +992,16 @@ voice: it never answers about the code itself, and asks back only when it did no
 - **One conversation per app**, bound to the session it started in: switch pages or agents and
   it keeps talking to that session; a pill beside the settings gear shows it with 🔇 and ✕.
   Starting one elsewhere asks first. It ends on «Завершити», when the session is archived,
-  removed or errors, when the window closes, and after **3 minutes of silence** (no speech either
-  way and no running turn). Ending it never stops the agent. A dropped connection is not
-  re-established.
+  removed or errors, when the window closes, and after **3 minutes of silence** (GPT-Live silent,
+  nothing handed to the agent, no running turn — background sound does not count). Ending it
+  never stops the agent. A dropped connection is not re-established.
+- **A noisy room** (spec: `docs/specs/2026-11-04-voice-background-noise.md`). GPT-Live is told
+  that a TV, music or other people are not addressed to it. A noise gate lets GPT-Live hear the
+  microphone only while you are louder than a threshold: Settings → «Голос» → «Поріг шуму
+  мікрофона» (off / low / medium — the default / high), applied at once; the mark on the voice
+  bar's level meter is the threshold, and the meter dims while GPT-Live does not hear you. The
+  browser's automatic gain is off in a conversation, so a distant TV is not lifted to your
+  level. A loud source right next to the microphone still passes: a headset helps most.
 - **Cost.** $0.05 per minute of conversation, billed per second to your key, plus 15 s at each
   connection start; the agent runs on your usual Claude / omp plan.
 - **macOS microphone.** The first conversation triggers the system prompt

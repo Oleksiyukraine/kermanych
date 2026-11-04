@@ -504,6 +504,8 @@
         activity="hearing"
         :caption="{ who: 'operator', text: 'Давай другий варіант, і додай тест на порожній список' }"
         :mic-level="0.55"
+        :gate="0.08"
+        :gate-open="true"
         :muted="false"
         :elapsed-ms="252_000"
         @mute="() => {}"

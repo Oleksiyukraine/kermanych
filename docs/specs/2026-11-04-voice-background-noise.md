@@ -2,11 +2,13 @@
 
 - **Branch:** `feature/filter-background-voice-noise`
 - **Scope:** `packages/core` (`voice-bridge.ts`: what a delegation takes, the hang-up activity;
-  `voice.ts`: GPT-Live's prompt), `apps/ui` (`lib/voice-connection.ts`: microphone constraints;
-  `stores/voice.ts`: fragment timing, activity), `kermanych/README.md`. Conditionally (decision 4)
-  the «Голос» settings pane and i18n `uk` / `en`.
-- **Status:** decisions agreed with the operator in the deep-analysis interview (2026-11-04);
-  waiting for approval.
+  `voice.ts`: GPT-Live's prompt), `apps/ui` (`lib/voice-gate.ts` + its audio worklet: the noise
+  gate; `lib/voice-connection.ts`: microphone constraints and the gate graph; `stores/voice.ts`:
+  fragment timing, activity, the gate; `KVoiceBar`: the threshold mark; the «Голос» settings
+  pane), i18n `uk` / `en`, `kermanych/README.md`.
+- **Status:** decisions agreed with the operator in the deep-analysis interview (2026-11-04),
+  approved the same day; step 1 took decision 4 to its fallback; implemented on this branch (see
+  «Verification»). The live run in a noisy room (step 5) is the operator's.
 
 ## Goal
 
@@ -71,7 +73,7 @@ mode itself: the operator picks it in Control Center and macOS remembers it per 
    GPT-Live waits for the operator to finish, so such pauses are rare. Rejected: everything said
    after GPT-Live's or the agent's last words (the background while the agent works stays in);
    showing dropped words struck out in the captions (more UI; captions are transient).
-3. **GPT-Live's prompt names the background.** `voiceLivePrompt` gains, under «Delegation»: the
+3. **GPT-Live's prompt names the background.** `voiceLivePrompt` gains a «Background» block: the
    operator speaks to you directly and close to the microphone; speech from a TV, radio, video,
    music or other people in the room is not addressed to you; keep listening while the operator
    pauses; never delegate or answer a sound or phrase that is not addressed to you — when unsure,
@@ -87,13 +89,32 @@ mode itself: the operator picks it in Control Center and macOS remembers it per 
      and gets a level gate: the track sent to GPT-Live passes through Web Audio (mic → gain →
      `MediaStreamDestination`); the gain opens when the mic level is above a threshold and closes
      after it stayed below for a hold time (hysteresis, so word endings are not cut). The
-     threshold is a «Чутливість мікрофона» slider in the «Голос» pane with the live level next to
-     it, stored with `persisted('kermanych.voice.gate', …)`. The gate decision is a pure core
-     function beside `vadStep`. It applies to the conversation only; dictation keeps its own
-     `vadStep` and no gate. Known limit: a loud source close to the microphone still passes.
+     threshold is picked in the «Голос» pane, stored with `persisted('kermanych.voice.gate', …)`.
+     It applies to the conversation only; dictation keeps its own `vadStep`, no gate and the
+     browser's automatic gain. Known limit: a loud source close to the microphone still passes.
 
-   Either way the change in `connectVoice` reaches dictation too (it shares the function); the
-   check covers dictation as well.
+   **Outcome of step 1 (2026-11-04): the fallback.** In Electron 43 on this Mac,
+   `getSupportedConstraints()` lists `voiceIsolation` and the track's capabilities offer
+   `voiceIsolation: [true, false]` and `echoCancellation: [true, false, "remote-only", "all"]`;
+   `echoCancellation: "all"` was granted (`getSettings()` echoes it). But `getUserMedia` with
+   `voiceIsolation: true` never resolved, and afterwards no `getUserMedia` resolved in a fresh
+   Electron process (a fake capture device included) and the CoreAudio device list itself hung —
+   the system audio daemon was left stuck. Shipping a constraint that can hang the conversation's
+   start and the machine's audio is not acceptable, so decision 4 took its fallback. As built:
+   - the gate runs in an **AudioWorklet** (`lib/voice-gate.worklet.ts`, loaded via Vite's
+     `?worker&url`), not on a timer in the window: Chromium throttles a background window's
+     timers, and the operator often talks while looking at another app. Its decision,
+     `gateStep`, is a pure function in `apps/ui/src/lib/voice-gate.ts` rather than core: the
+     worklet bundles only that file, with no core index and nothing that assumes a window;
+   - the threshold is a **choice of four levels**, not a slider (the kit has no slider):
+     «Вимкнено» 0, «Низький» 0.04, «Середній» 0.08 (default), «Високий» 0.15 on the meter's scale
+     (`levelOf`: RMS × 6, shared with the voice bar's meter). It applies at once, to a running
+     conversation too;
+   - calibration happens in the conversation itself: the voice bar's level meter shows the
+     threshold as a mark and dims while the gate is closed. No microphone is opened in Settings.
+
+   The level gate and `autoGainControl: false` are passed by the voice store only, so dictation,
+   which shares `connectVoice`, keeps today's microphone.
 5. **Background sound no longer keeps the conversation alive.** `lastActivityAt` stops updating on
    `session.input_transcript.delta`; it still updates on GPT-Live's speech
    (`output_transcript.delta`), on a delegation, on `session.started` and when the agent's turn
@@ -101,7 +122,7 @@ mode itself: the operator picks it in Control Center and macOS remembers it per 
    sounds like. Talking to GPT-Live still counts: every answer it gives is its speech.
 6. **README:** «What the agent gets» says «your last phrase before the hand-off» instead of «your
    words since the previous hand-off»; the hang-up line drops «no speech either way»; a short
-   «Noisy room» bullet: what is filtered, Voice Isolation (or the slider), a headset as the most
+   «Noisy room» bullet: what is filtered, the threshold and its mark, a headset as the most
    effective fix.
 
 ## Design
@@ -112,16 +133,25 @@ mode itself: the operator picks it in Control Center and macOS remembers it per 
 - `VOICE_PHRASE_GAP_MS = 3000`; `takeUtterance(heard, offsetMs)` → `{ text, rest }` per
   decision 2 (`rest` = fragments with `startMs > offsetMs`; dropped ones are in neither).
 - `voiceLivePrompt(language)` — decision 3's lines.
-- Only if decision 4 falls back: `gateStep(state, level, now, threshold)` → `{ state, open }`
-  (open above the threshold, closed after `GATE_HOLD_MS` below it).
+- `gateStep` and `levelOf` live in `apps/ui/src/lib/voice-gate.ts` (decision 4, as built).
 
 ### UI (`apps/ui`)
 
 - `stores/voice.ts`: store `endMs: Number(e.end_ms ?? e.start_ms ?? 0)`; drop the
-  `lastActivityAt` update on input deltas (decision 5).
-- `lib/voice-connection.ts`: the constraints step 1 settles; only on fallback, the gate graph
-  and a `setGateThreshold` on `VoiceConnection` (the store passes the slider's value).
-- Only on fallback / only on Voice Isolation: the «Голос» pane's slider or hint; i18n `uk` / `en`.
+  `lastActivityAt` update on input deltas, add it on `session.delegation.created` (decision 5);
+  start the connection with `{ gate }`, forward a changed threshold with `setGate`, expose
+  `gate` / `gateOpen` in the bar state.
+- `lib/voice-gate.ts`: `levelOf`, `gateStep` (open at the threshold; kept open above 0.6 × it and
+  for 500 ms below; 5 ms attack, 80 ms release), `VOICE_GATE_LEVELS`.
+- `lib/voice-gate.worklet.ts`: `kermanych-voice-gate`, the gain glided per block; port in
+  `{ threshold }`, out `{ open }` on change.
+- `lib/voice-connection.ts`: with `options.gate`, `autoGainControl: false` and mic → worklet →
+  `MediaStreamDestination` → the peer connection; the meter reads the microphone before the
+  gate; `setGate(threshold)`; `onGate(open)`.
+- `lib/voice.ts`: `voiceGatePick` (persisted); `VoiceBarState.gate` / `gateOpen`.
+- `KVoiceBar`: the threshold mark and the dimmed fill; the kit gallery sample.
+- `SettingsPage` «Голос»: «Поріг шуму мікрофона» (`KSelect`) with a note; i18n `uk` / `en`.
+- `src/env.d.ts`: a `*?worker&url` module declaration (Vite's own types do not resolve here).
 
 ## Steps
 
@@ -131,7 +161,8 @@ mode itself: the operator picks it in Control Center and macOS remembers it per 
    speech near the laptop, read the input transcript (captions). Record the result here and pick
    the branch of decision 4.
 2. Core: `takeUtterance` with the gap rule, `endMs`, the prompt lines, with tests.
-3. UI: fragment timing, activity, the microphone branch from step 1 (gate + slider if fallback).
+3. UI: fragment timing, activity, the microphone branch from step 1 (the gate and its level
+   choice).
 4. README.
 5. Live run with the operator in a noisy room (a video with speech and music playing).
 
@@ -140,18 +171,41 @@ mode itself: the operator picks it in Control Center and macOS remembers it per 
 - `pnpm --filter @kermanych/core test`: `takeUtterance` — a request after a long stretch of
   background keeps only the last phrase; a pause under 3 s keeps both halves; a pause over 3 s
   keeps the second; fragments after the offset stay for the next delegation; a missing `end_ms`.
-  Fallback only: `gateStep` opens, holds, closes.
+  `gateStep` opens, holds, closes (`apps/ui/test/voice-gate.spec.ts`).
 - `pnpm --filter @kermanych/ui test`: the voice store — input deltas alone do not postpone the
   hang-up; GPT-Live's speech does; a delegation sends only the last phrase.
 - Live with the operator: a video with speech playing while the agent works → the next spoken
   request reaches the agent without the video's words; music in the room → GPT-Live does not
   delegate it; with only background sound for 3 minutes and no running turn → the conversation
-  ends. Dictation with the same constraints still transcribes.
+  ends. Dictation still transcribes. The «Середній» default neither cuts the operator's normal
+  speech nor lets the TV through — else the levels in `VOICE_GATE_LEVELS` are retuned.
+
+### Results
+
+- `@kermanych/core`: 323 passed (incl. `voice-bridge.spec.ts`: the background before the last
+  phrase dropped, a pause under the gap kept). `tsc --noEmit` clean.
+- `@kermanych/ui`: 86 files, 938 passed (incl. `voice-gate.spec.ts`, 5, and the store's «hangs
+  up while only the background is heard»). `vue-tsc --noEmit` reports nothing in the touched
+  code; its other errors come from unbuilt workspace packages, as on the base commit.
+- `@kermanych/api`: `voice.service.spec.ts` and `voice.deliver.spec.ts`, 20 passed.
+- The worklet in the dev server (preview, Chromium): an `OfflineAudioContext` fed a 220 Hz sine
+  through `kermanych-voice-gate` with threshold 0.08 — amplitude 0.1 passed unchanged (RMS
+  0.0707), amplitude 0.005 came out silent (RMS 0), and the same quiet input passed with the
+  gate off (RMS 0.0035).
+- `quasar build -m electron --skip-pkg` emits `assets/voice-gate.worklet-*.js` as one
+  self-contained script and references it with `new URL(…, import.meta.url)`, so it resolves
+  under `file://`.
+- The «Голос» pane shows «Поріг шуму мікрофона» with «Середній» picked; the kit gallery's voice
+  bar shows the mark at the threshold.
+- Not run here: a live conversation with a real microphone. After step 1 this machine's audio
+  capture hung (see decision 4), so the end-to-end check is the operator's (step 5).
 
 ## Risks
 
 - Voice Isolation may be unavailable to Electron; the fallback gate does not stop a loud source
   next to the microphone.
+- The gate levels are reasoned from the meter's scale, not measured in a real room; step 5 tunes
+  them.
 - The prompt is a hint: GPT-Live may still delegate a TV phrase (decision 2 then keeps it short)
   or ignore a quiet real request.
 - A request with a pause over 3 s loses its first part.
