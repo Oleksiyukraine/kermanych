@@ -44,6 +44,7 @@ const draft: LauncherDraft = {
   deepAnalysis: false,
   autoRun: false,
   baseBranch: 'develop',
+  branchSlug: '  kan-42-login  ',
 };
 
 describe('taskInsertFromDraft', () => {
@@ -63,6 +64,7 @@ describe('taskInsertFromDraft', () => {
       deepAnalysis: false,
       autoRun: false,
       branch: 'develop',
+      branchSlug: 'kan-42-login',
       assigneeId: ME,
     });
   });
@@ -89,7 +91,8 @@ describe('taskInsertFromDraft', () => {
 
 describe('taskPatchFromDraft', () => {
   it('sends every editable field, so clearing one clears the column', () => {
-    expect(taskPatchFromDraft({ ...draft, model: undefined }, false)).toEqual({
+    // A blanked «Гілка» travels as "", so the card goes back to a model-named branch.
+    expect(taskPatchFromDraft({ ...draft, model: undefined, branchSlug: ' ' }, false)).toEqual({
       title: 'Add login',
       description: 'wire GitHub OAuth',
       model: '',
@@ -99,6 +102,7 @@ describe('taskPatchFromDraft', () => {
       hidden: false,
       deepAnalysis: false,
       branch: 'develop',
+      branchSlug: '',
     });
   });
 });

@@ -342,6 +342,28 @@ describe("design on a task", () => {
   });
 });
 
+// The card's own branch name: what a backlog card, a teammate's ▶ and «Посіпака» launch under.
+// Lost on the way to the row, the card silently falls back to a model-named branch; a blank
+// edit must clear it, or the operator could never hand the naming back to the model.
+describe("branchSlug on a task", () => {
+  it("is selected and mapped, and absent while the column is null", async () => {
+    const { client, queries } = fakeClient({ data: [{ ...taskRow, branch_slug: "my-login" }, { ...taskRow, id: "t2", branch_slug: null }], error: null });
+    const [named, generated] = await listTasks(client, ["p1"]);
+    const [, columns] = queries[0]!.ops[0] as [string, string];
+    expect(columns.split(", ")).toContain("branch_slug");
+    expect(named!.branchSlug).toBe("my-login");
+    expect(generated).not.toHaveProperty("branchSlug");
+  });
+
+  it("sends a trimmed name on create and patches a blank one as null", async () => {
+    const { client, queries } = fakeClient({ data: taskRow, error: null }, { data: taskRow, error: null });
+    await createTask(client, { projectId: "p1", title: "T", branchSlug: "  my-login ", createdBy: "u1" });
+    expect(queries[0]!.ops[0]).toEqual(["insert", { project_id: "p1", created_by: "u1", title: "T", branch_slug: "my-login" }]);
+    await patchTask(client, "t1", { branchSlug: "  " });
+    expect(queries[1]!.ops[0]).toEqual(["update", { branch_slug: null }]);
+  });
+});
+
 // The reports the api leaves on the card for the «Документація» and «Сесія» tabs. jsonb with a
 // `{}` default: a card no session has reported on yet must read as «no report», not as an empty
 // one, and a write must touch nothing but the two columns.
