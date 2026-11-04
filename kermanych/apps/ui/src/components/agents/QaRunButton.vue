@@ -36,7 +36,7 @@
 // the tester's session id — the new one after a launch, or the running one.
 import { computed, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
-import type { PreviewConfigStatus, QaRunScope, Session } from '@kermanych/core';
+import { platformHasDevice, type PreviewConfigStatus, type QaRunScope, type Session } from '@kermanych/core';
 import { useOrchestrator } from 'stores/orchestrator';
 import { useBoard } from 'stores/board';
 import { useSessionBrowser } from 'stores/browser';
@@ -89,12 +89,16 @@ watch(
   { immediate: true },
 );
 
+const platform = computed(() => store.projects.find((p) => p.id === props.session.projectId)?.platform);
+// A Mobile project runs on the doer's device (docs/specs/2026-11-04-tester-mobile-device.md):
+// its preview lives in the «Пристрій» tab, and a run starts it clean (decision 6, no dialog).
+const device = computed(() => platformHasDevice(platform.value));
 const state = computed(() =>
   qaRunState({
     session: props.session,
     sessions: store.sessions,
     items: card.value?.qaChecklist?.items ?? [],
-    platform: store.projects.find((p) => p.id === props.session.projectId)?.platform,
+    platform: platform.value,
     browserHost: sessionBrowser.available,
     previewConfig: previewConfig.value?.kind,
   }),
@@ -102,9 +106,14 @@ const state = computed(() =>
 const hint = computed(() => {
   const st = state.value;
   const config = previewConfig.value;
-  if (st.kind === 'refused' && config?.kind === 'invalid' && st.hintKey === 'tester.refusal.no-preview') return t('tester.refusal.previewInvalid', { error: config.error });
+  if (st.kind === 'refused' && st.hintKey === 'tester.refusal.no-preview') {
+    if (config?.kind === 'invalid')
+      return t(device.value ? 'tester.refusal.previewInvalidDevice' : 'tester.refusal.previewInvalid', { error: config.error });
+    return t(device.value ? 'tester.refusal.noPreviewDevice' : st.hintKey);
+  }
   if (st.kind === 'refused') return t(st.hintKey);
-  return st.kind === 'ready' && st.allPassed ? t('tester.run.allPassed') : '';
+  if (st.kind !== 'ready') return '';
+  return [st.allPassed ? t('tester.run.allPassed') : '', device.value ? t('tester.run.deviceClean') : ''].filter(Boolean).join(' ');
 });
 
 // «Непройдені» is the default once verdicts exist; a first run checks everything, and so does a

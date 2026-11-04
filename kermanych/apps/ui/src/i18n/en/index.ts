@@ -826,6 +826,8 @@ export const en: MessageSchema = {
       runningTip: 'Open the tester’s session',
       scopeTitle: 'Which items to check',
       allPassed: 'Every item passed — testing checks them all again.',
+      // A Mobile project (docs/specs/2026-11-04-tester-mobile-device.md, decision 6).
+      deviceClean: 'The app’s data on the session’s device will be cleared and the preview restarted',
       scope: {
         open: 'Not passed',
         all: 'All',
@@ -838,9 +840,16 @@ export const en: MessageSchema = {
       'no-card': 'Testing works only for sessions started from a card: the checklist is stored on the card.',
       busy: 'The agent is working — wait for its turn to end.',
       'no-browser': 'Needs the browser of the Kermanych desktop app — the web build has none.',
-      platform: 'The project has no browser (back end or mobile) — nothing for the tester to open.',
+      platform: 'The project has neither a browser nor a device (back end) — nothing for the tester to open.',
       'no-preview': 'Set up the preview in the Browser tab first: without .kermanych/preview.json the tester has nothing to open.',
       previewInvalid: 'Fix the preview in the Browser tab first: .kermanych/preview.json is invalid — {error}',
+      noPreviewDevice: 'Set up the preview in the Device tab first: without .kermanych/preview.json and its device block the tester has nothing to start.',
+      previewInvalidDevice: 'Fix the preview in the Device tab first: .kermanych/preview.json is invalid — {error}',
+    },
+    // The doer's Device tab while its tester drives the device (decision 3).
+    device: {
+      busy: 'The device is busy with testing',
+      open: 'Open the tester’s session',
     },
     verdict: {
       passed: 'passed',
@@ -874,6 +883,8 @@ export const en: MessageSchema = {
       loginPath: 'Sign-in page',
       loginPathPlaceholder: '/login',
       loginPathHint: 'Optional. Without it the tester looks for the sign-in itself.',
+      loginPathPlaceholderDevice: 'myapp://login',
+      loginPathHintDevice: 'Optional. A deep link to the sign-in screen, e.g. myapp://login — the tester opens it on the device. A path without a scheme (/login) is ignored here.',
       notes: 'Notes for the tester',
       notesPlaceholder: 'Test data, limits, what not to press…',
       save: 'Save',

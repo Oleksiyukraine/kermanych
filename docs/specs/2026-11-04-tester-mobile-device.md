@@ -1,7 +1,8 @@
 # «Тестувальник» on a Mobile project's device
 
 - **Status:** decisions settled with the operator on 2026-11-04 (deep analysis, voice and chat; the
-  clean start reworked after checking it against `flutter run`). Awaiting the go-ahead to implement.
+  clean start reworked after checking it against `flutter run`). Approved and implemented on
+  `feature/mobile-device-tester`.
 - **Scope:** `packages/core` (`testerRefusal`, the tester contract, the login line),
   `apps/api` (`BrowserMcpService`: device and preview tools for a tester, the doer lock, the
   credential tool; `PreviewService`: the clean start; `apps/api/src/device`: clearing app data),
@@ -72,10 +73,19 @@ so the next `preview_start` tries again.
 as it is (the running one, or the project's device choice when none runs). A `platform` argument
 from a tester is refused.
 
-**Cost.** Each run pays one incremental rebuild and reinstall. [INFERENCE] This is tens of seconds
-for `flutter run` and up to 1–2 min for `expo run`. Measure it on g-app (iOS and Android) during
-implementation and record the numbers here. A «Чистий старт» switch is added only if the
-measurements call for it.
+**Cost.** Each run pays one incremental rebuild and reinstall. Measured on 2026-11-04 on this Mac
+with the real `DeviceService` / `PreviewService` / `BrowserMcpService` and `flutter run` as the
+`"device": true` service, from the tester's `preview_start` to `running`:
+
+| App | Platform | Clearing the data | Clean start to running |
+|---|---|---|---|
+| g-app (a copy of its worktree) | iOS (iPhone 17 Pro) | 0.6 s | 23.9 s |
+| `flutter create` app | iOS (iPhone 17 Pro) | 0.5 s | 15.5 s |
+| `flutter create` app | Android (AVD TinyApp) | 0.3 s | 5.6 s |
+
+g-app on Android was not measured: its Android build fails on this machine before Kermanych is
+involved (Gradle 8.12 below Flutter's minimum 8.14). `expo run` was not measured. The numbers do not
+call for a «Чистий старт» switch.
 
 Side effect, accepted: the tester always tests a fresh build of the current worktree, never a
 build the doer left behind after editing code without restarting.
@@ -142,8 +152,8 @@ In a Mobile project, «Виконати тестування» carries the hint 
 
 ### 7. The gate and the contract
 
-- `testerRefusal` takes `platformHasPreview` and `platformHasBrowser` instead of the browser flag
-  alone. `platform` refuses only a project with neither a browser nor a device (`backend`).
+- `testerRefusal` takes the project's `platform` instead of the browser flag. `platform` refuses
+  only a project with neither a browser nor a device (`backend`).
   `no-browser` applies only to projects with a browser (web in the web build): a device runs in
   the api, so a Mobile project can be tested in the web build too. A Mobile project needs a valid
   `preview.json` with a `device` block (the existing `no-preview`, since `PreviewService` already

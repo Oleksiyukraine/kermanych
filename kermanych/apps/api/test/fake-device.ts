@@ -99,6 +99,9 @@ export function fakeDevice(opts: FakeDeviceOptions = {}) {
       if (marker !== undefined) rmSync(marker, { force: true });
     }),
     appRunning: vi.fn(async (sessionId: string, app: string) => running(sessionId, app)),
+    clearApp: vi.fn(async (_sessionId: string, app: string) => {
+      calls.push(`clear ${app}`);
+    }),
     appLogs: vi.fn((sessionId: string, _app: string, onLine: (line: string) => void) => {
       logListeners.set(sessionId, onLine);
       return () => {
@@ -109,7 +112,7 @@ export function fakeDevice(opts: FakeDeviceOptions = {}) {
     tree: vi.fn(async () => tree),
     tap: vi.fn(async (_sessionId: string, _x: number, _y: number) => {}),
     swipe: vi.fn(async (_sessionId: string, _from: { x: number; y: number }, _to: { x: number; y: number }, _ms: number) => {}),
-    type: vi.fn(async (_sessionId: string, _text: string) => {}),
+    type: vi.fn(async (_sessionId: string, _text: string, _opts?: { secret?: boolean }) => {}),
     press: vi.fn(async () => {}),
     openUrl: vi.fn(async () => {}),
     rotate: vi.fn(async () => {}),

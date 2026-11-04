@@ -432,8 +432,9 @@ class AndroidDevice implements BootedDevice {
     });
   }
 
-  typeText(text: string): Promise<void> {
+  typeText(text: string, opts: { secret?: boolean } = {}): Promise<void> {
     return this.inOrder(async () => {
+      let pasted = false;
       for (const part of splitTyping(text, (ch) => ch === "\n" || (ch >= " " && ch <= "~"))) {
         if (part.kind === "keys") {
           for (const ch of part.text) await this.call(this.client.sendKey, { eventType: KEY_PRESS, key: ch === "\n" ? "Enter" : ch });
@@ -441,8 +442,11 @@ class AndroidDevice implements BootedDevice {
           // Decision 9: the device clipboard, then KEYCODE_PASTE in the focused field.
           await this.call(this.client.setClipboard, { text: part.text });
           await this.adb(["shell", "input", "keyevent", String(KEYCODE_PASTE)]);
+          pasted = true;
         }
       }
+      // A credential must not stay on the device's clipboard.
+      if (opts.secret && pasted) await this.call(this.client.setClipboard, { text: "" });
     });
   }
 
@@ -483,6 +487,15 @@ class AndroidDevice implements BootedDevice {
 
   async terminate(app: string): Promise<void> {
     await this.adb(["shell", "am", "force-stop", app]);
+  }
+
+  // `pm clear` drops the app's data and runtime permissions; an app not installed yet has none
+  // (docs/specs/2026-11-04-tester-mobile-device.md, decision 1).
+  async clearApp(app: string): Promise<void> {
+    const installed = (await this.adb(["shell", "pm", "path", app], { allowFail: true })).stdout.toString("utf8").trim();
+    if (!installed) return;
+    const out = (await this.adb(["shell", "pm", "clear", app], { allowFail: true })).stdout.toString("utf8").trim();
+    if (!/^Success/m.test(out)) throw new Error(`pm clear ${app} failed${out ? `: ${out}` : ""}`);
   }
 
   private async pid(app: string): Promise<string | null> {

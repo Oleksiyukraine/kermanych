@@ -1,8 +1,10 @@
 // «Тестувальник» (docs/specs/2026-11-04-qa-tester-agent.md): the agent that walks a card's QA
-// checklist in the live browser and records a verdict per item. This module is the shared
+// checklist in the live browser — or on a Mobile project's device
+// (docs/specs/2026-11-04-tester-mobile-device.md) — and records a verdict per item. This module is the shared
 // contract between the api (launch, MCP tools, hand-off), the UI (button scope, badges, settings)
 // and the model (the appended contract). The editable instruction lives in agents.ts.
 
+import { platformHasBrowser, platformHasDevice, platformHasPreview, type Platform } from "./platform";
 import { QA_VERDICT_STATUSES, type QaAgentVerdict, type QaChecklistItem, type QaVerdictStatus } from "./task-actions";
 
 /** The MCP tool that records one item's verdict. */
@@ -11,6 +13,11 @@ export const QA_RESULT_TOOL = "report_qa_result";
 export const QA_CHECKLIST_TOOL = "set_qa_checklist";
 /** The MCP tool that types a configured account's login or password without the model seeing it. */
 export const CREDENTIAL_TOOL = "browser_type_credential";
+/**
+ * Its device counterpart for a Mobile project (docs/specs/2026-11-04-tester-mobile-device.md,
+ * decision 4): types into the focused field of the doer's device.
+ */
+export const DEVICE_CREDENTIAL_TOOL = "device_type_credential";
 
 /**
  * Which items a run checks (decision 11): `all`, or `open` — every item without a `passed`
@@ -47,8 +54,8 @@ export type TesterRefusal =
   | "finished" // merged, or its worktree is gone
   | "no-card" // no taskId: nowhere to store the checklist
   | "busy" // the doer is mid-turn
-  | "no-browser" // no desktop browser host (web build)
-  | "platform" // backend / mobile project
+  | "no-browser" // a project with a browser, and no desktop browser host (web build)
+  | "platform" // a back-end project: neither a browser nor a device
   | "no-preview"; // the doer's `.kermanych/preview.json` is missing or invalid
 
 export function testerRefusal(input: {
@@ -59,7 +66,11 @@ export function testerRefusal(input: {
   taskId?: string;
   runningTester: boolean;
   browserHost: boolean;
-  platformHasBrowser: boolean;
+  /**
+   * The project's platform. A Mobile project is tested on the doer's device, which runs in the
+   * api, so it needs no browser host (docs/specs/2026-11-04-tester-mobile-device.md, decision 7).
+   */
+  platform: Platform | null | undefined;
   /**
    * The doer's preview config (docs/specs/2026-11-04-session-env-and-tester-preview-gate.md,
    * decision 3); undefined while it is not known, which refuses nothing — the api always knows.
@@ -70,8 +81,8 @@ export function testerRefusal(input: {
   if (input.kind !== "agent") return "not-agent";
   if (input.status === "merged" || (input.worktree && !input.worktreePath)) return "finished";
   if (!input.taskId) return "no-card";
-  if (!input.platformHasBrowser) return "platform";
-  if (!input.browserHost) return "no-browser";
+  if (!platformHasPreview(input.platform)) return "platform";
+  if (platformHasBrowser(input.platform) && !input.browserHost) return "no-browser";
   if (input.previewConfig === "missing" || input.previewConfig === "invalid") return "no-preview";
   if (input.status === "thinking" || input.status === "tool") return "busy";
   return null;
@@ -146,8 +157,17 @@ export function testerAccountsBlock(accounts: readonly Pick<TesterAccount, "name
     .join("\n");
 }
 
-export function testerLoginPathLine(loginPath: string): string {
-  return loginPath.trim() || "not set — find the sign-in page yourself";
+// A deep link such as `myapp://login`: what «Сторінка входу» holds in a Mobile project.
+const URL_SCHEME = /^[a-z][a-z0-9+.-]*:/i;
+
+/**
+ * The `{{loginPath}}` hole. In a Mobile project only a deep link means anything; a path such as
+ * `/login` is ignored there (docs/specs/2026-11-04-tester-mobile-device.md, decision 5).
+ */
+export function testerLoginPathLine(loginPath: string, platform: Platform | null | undefined): string {
+  const value = loginPath.trim();
+  if (!platformHasDevice(platform)) return value || "not set — find the sign-in page yourself";
+  return URL_SCHEME.test(value) ? `\`${value}\` — open it with \`device_open_url\`` : "not set — find the sign-in screen in the app yourself";
 }
 
 export function testerNotesBlock(notes: string): string {
@@ -163,20 +183,39 @@ export function qaScreenshotDir(date: Date, branch: string): string {
 
 /**
  * Appended after the tester's rendered instruction — the default or any override — the way the
- * minion gets MINION_OUTCOME_CONTRACT, so no rewrite can drop how a run reports.
+ * minion gets MINION_OUTCOME_CONTRACT, so no rewrite can drop how a run works and reports. The
+ * surface it names is the platform's: the browser, or a Mobile project's device
+ * (docs/specs/2026-11-04-tester-mobile-device.md, decisions 1 and 7).
  */
-export function testerContract(screenshotDir: string): string {
+export function testerContract(screenshotDir: string, platform: Platform | null | undefined): string {
+  const device = platformHasDevice(platform);
+  const surface = device
+    ? [
+        "- This is a Mobile project: you test the app on the session's device. Your first call is `preview_start`: it ",
+        "restarts this branch's live preview with the app's data cleared, so the app starts signed out with empty ",
+        "storage. The device tools are refused until it has run. Then drive the app with the `device_*` tools. Where ",
+        "the instruction above says browser or page, read device or screen.\n",
+      ]
+    : [
+        "- Work in this branch's live preview: `preview_status`, `preview_start` when it is not running, then ",
+        "`browser_navigate` with no URL to open it. Your browser starts empty and signed out on every run. The ",
+        "page's console and network requests count as what you observed.\n",
+      ];
+  const where = device ? "on the device" : "in the browser";
+  const shot = device ? "device_screenshot" : "browser_screenshot";
+  const credential = device ? DEVICE_CREDENTIAL_TOOL : CREDENTIAL_TOOL;
   return [
-    "How this run reports — this step is Kermanych's own and applies whatever the instruction above says:\n",
-    `- For every checklist item, in order: perform it in the browser, then call \`${QA_RESULT_TOOL}\` exactly once `,
-    "with its `itemId`, a `status` and a `note`. `passed` — the page did what the item says. `failed` — it did not: ",
+    "How this run works and reports — this step is Kermanych's own and applies whatever the instruction above says:\n",
+    ...surface,
+    `- For every checklist item, in order: perform it ${where}, then call \`${QA_RESULT_TOOL}\` exactly once `,
+    `with its \`itemId\`, a \`status\` and a \`note\`. \`passed\` — the app did what the item says. \`failed\` — it did not: `,
     "the note says what you did, what you expected and what you saw. `blocked` — you could not perform the item ",
     "(no account with the needed role, a sign-in you cannot pass, the preview does not start, missing data): ",
     "the note says what stopped you. Never report a result you did not observe.\n",
-    `- For every \`failed\` item, save a screenshot with \`browser_screenshot\` and \`path\` set to \`${screenshotDir}/<itemId>.png\`, `,
+    `- For every \`failed\` item, save a screenshot with \`${shot}\` and \`path\` set to \`${screenshotDir}/<itemId>.png\`, `,
     `and pass that path as \`screenshot\` to \`${QA_RESULT_TOOL}\`.\n`,
-    `- Type logins and passwords only with \`${CREDENTIAL_TOOL}\`; you are never given a password and must not `,
-    "read one back from the page.\n",
+    `- Type logins and passwords only with \`${credential}\`; you are never given a password and must not `,
+    `read one back from the ${device ? "screen" : "page"}.\n`,
     "- Write the notes in the language you were told to communicate in.\n",
     "- Do not edit, create or delete any file other than those screenshots, and do not commit.\n",
     "- When every item has a verdict, end your turn with one short paragraph: how many items passed, failed and ",

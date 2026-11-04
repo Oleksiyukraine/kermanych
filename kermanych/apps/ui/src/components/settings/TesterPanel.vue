@@ -36,8 +36,8 @@
         </div>
 
         <div class="ts__path">
-          <KField v-model="draft.loginPath" :label="t('tester.panel.loginPath')" :placeholder="t('tester.panel.loginPathPlaceholder')" />
-          <p class="ts__hint">{{ t('tester.panel.loginPathHint') }}</p>
+          <KField v-model="draft.loginPath" :label="t('tester.panel.loginPath')" :placeholder="loginPathPlaceholder" />
+          <p class="ts__hint">{{ loginPathHint }}</p>
         </div>
         <KField v-model="draft.notes" :label="t('tester.panel.notes')" :placeholder="t('tester.panel.notesPlaceholder')" multiline :rows="4" />
 
@@ -61,7 +61,7 @@
 // scope like every agent's. This block sits on the «Тестувальник» page at the project scope.
 import { computed, reactive, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
-import type { TesterAccount, TesterSettings } from '@kermanych/core';
+import { platformHasDevice, type TesterAccount, type TesterSettings } from '@kermanych/core';
 import { useOrchestrator } from 'stores/orchestrator';
 import { errorText, useAsyncAction } from '../../composables/useAsyncAction';
 import { useLoadPhase } from '../../composables/useLoadPhase';
@@ -74,6 +74,12 @@ const props = defineProps<{ projectId: string }>();
 
 const { t } = useI18n();
 const store = useOrchestrator();
+
+// «Сторінка входу» is a path in a web project and a deep link in a Mobile one
+// (docs/specs/2026-11-04-tester-mobile-device.md, decision 5).
+const deepLink = computed(() => platformHasDevice(store.projects.find((p) => p.id === props.projectId)?.platform));
+const loginPathPlaceholder = computed(() => t(deepLink.value ? 'tester.panel.loginPathPlaceholderDevice' : 'tester.panel.loginPathPlaceholder'));
+const loginPathHint = computed(() => t(deepLink.value ? 'tester.panel.loginPathHintDevice' : 'tester.panel.loginPathHint'));
 
 // `saved`: what the api holds; `draft`: the form. Both undefined until the read for the
 // current project answers.

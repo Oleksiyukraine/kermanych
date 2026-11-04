@@ -62,6 +62,9 @@ export interface DeviceApi {
   launch(sessionId: string, app: string): Promise<void>;
   terminate(sessionId: string, app: string): Promise<void>;
   appRunning(sessionId: string, app: string): Promise<boolean>;
+  // The tester's clean start (docs/specs/2026-11-04-tester-mobile-device.md, decision 1): the
+  // app's data goes (`pm clear`; iOS: uninstall and a keychain reset).
+  clearApp(sessionId: string, app: string): Promise<void>;
   // Follows the app's log (iOS `log stream` of its process, Android `logcat --pid`, re-attached
   // when the pid changes). Returns the stop function.
   appLogs(sessionId: string, app: string, onLine: (line: string) => void): () => void;
@@ -71,8 +74,9 @@ export interface DeviceApi {
   tree(sessionId: string): Promise<DeviceElement[]>;
   tap(sessionId: string, x: number, y: number): Promise<void>;
   swipe(sessionId: string, from: { x: number; y: number }, to: { x: number; y: number }, durationMs: number): Promise<void>;
-  // Focused field. Non-ASCII goes through the device clipboard and a paste (decision 9).
-  type(sessionId: string, text: string): Promise<void>;
+  // Focused field. Non-ASCII goes through the device clipboard and a paste (decision 9); a
+  // `secret` empties the clipboard afterwards.
+  type(sessionId: string, text: string, opts?: { secret?: boolean }): Promise<void>;
   press(sessionId: string, button: DeviceButton): Promise<void>;
   openUrl(sessionId: string, url: string): Promise<void>;
   rotate(sessionId: string, orientation: DeviceOrientation): Promise<void>;
