@@ -12,9 +12,18 @@
         {{ t('agents.preview.status.readFailed', { error: configError }) }}
       </span>
       <KSkeleton v-else-if="configPhase === 'skeleton'" variant="line" width="160px" />
+      <span v-if="device" class="k-preview-row__chip k-preview-row__chip--device" v-tip="device.serial">{{ device.name }}</span>
       <span v-for="s in services" :key="s.name" class="k-preview-row__chip mono">{{ s.name }} :{{ s.port }}</span>
     </div>
     <div class="k-preview-row__actions">
+      <!-- The app exited under a running Mobile preview: the device and services still run, so
+           only the app is launched again (decision 11). -->
+      <KBtn
+        v-if="appExited"
+        variant="primary"
+        :loading="launchAppAction.busy.value"
+        @click="launchAppAction.run()"
+      >{{ t('agents.preview.launchApp') }}</KBtn>
       <KBtn
         v-if="needsConfig"
         :loading="configureAction.busy.value"
@@ -56,11 +65,13 @@
 </template>
 
 <script setup lang="ts">
-// The preview row of the «Браузер» tab (docs/specs/2026-11-03-session-browser-preview.md,
-// decision 6): under the browser toolbar, moving with the pane into «Поруч із логом» — and the
-// whole tab in the web build. The status, the service chips, ▶ / ◼ / ↻, «Логи», and
-// «Доручити агенту» while the file is missing or broken (the row exists for `agent` sessions
-// only, the ones that may be asked). ◼ and a crash leave the page as it is.
+// The preview row of the «Браузер» and «Пристрій» tabs (docs/specs/2026-11-03-session-browser-
+// preview.md, decision 6; docs/specs/2026-11-03-mobile-device-preview.md, decisions 8, 11):
+// under the pane's toolbar, moving with the pane into «Поруч із логом» — and the whole tab in
+// the web build's Браузер. The status, the device and service chips, ▶ / ◼ / ↻, «Логи»,
+// «Запустити застосунок» after a Mobile app exited, and «Доручити агенту» while the file is
+// missing or broken (the row exists for `agent` sessions only, the ones that may be asked).
+// ◼ and a crash leave the page as it is.
 import { computed } from 'vue';
 import { useI18n } from 'vue-i18n';
 import KBtn from './KBtn.vue';
@@ -77,6 +88,9 @@ const {
   state,
   live,
   status,
+  device,
+  appExited,
+  launchAppAction,
   config,
   configError,
   configPhase,
@@ -152,6 +166,16 @@ const needsConfig = computed(() => config.value?.kind === 'missing' || config.va
   background: var(--k-surface2);
   border: 1px solid var(--k-line);
   border-radius: var(--k-r-sm);
+}
+// The session's device: what the screen below is, not a port — so the plain font, and it may
+// shrink with an ellipsis where the service chips may not.
+.k-preview-row__chip--device {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--k-text);
 }
 
 .k-preview-row__actions {

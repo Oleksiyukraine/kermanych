@@ -98,7 +98,11 @@ export default defineConfig((ctx) => {
         // from disk (it rewrites the path to app.asar.unpacked itself). Both ship N-API
         // prebuilds (ABI-stable across Node/Electron), so unpacking them suffices;
         // electron-builder's own native rebuild is unnecessary here.
-        asarUnpack: ['**/node_modules/better-sqlite3/**', '**/node_modules/node-pty/**'],
+        // serve-sim (the iOS device preview, docs/specs/2026-11-03-mobile-device-preview.md) is a
+        // CLI the api runs as Node from disk: its N-API addon and the helper binaries it execs
+        // (simax/, simcam/, simduo/) cannot live in an archive, and the CLI's one external import,
+        // `ws`, must sit beside it on disk for Node's resolver (ios.driver.ts serveSimPath).
+        asarUnpack: ['**/node_modules/better-sqlite3/**', '**/node_modules/node-pty/**', '**/node_modules/serve-sim/**', '**/node_modules/ws/**'],
         npmRebuild: false,
       },
 

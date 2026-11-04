@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import type { PreviewConfigStatus } from '@kermanych/core';
+import type { DeviceRuntime, PreviewConfigStatus } from '@kermanych/core';
 import { mergePreviewLogs, PREVIEW_LOG_LIMIT, previewStatusView, previewTabStatus } from '../src/lib/preview-view';
 
-const ok: PreviewConfigStatus = { kind: 'ok', services: ['api', 'web'] };
+const ok: PreviewConfigStatus = { kind: 'ok', services: ['api', 'web'], platforms: [] };
+const mobile: PreviewConfigStatus = { kind: 'ok', services: [], platforms: ['ios'] };
+const iphone: DeviceRuntime = { platform: 'ios', serial: 'UDID-1', name: 'iPhone 16', screen: { width: 393, height: 852 } };
 
 describe('previewStatusView', () => {
   it('waits for the config before saying anything about an idle preview', () => {
@@ -21,6 +23,41 @@ describe('previewStatusView', () => {
 
   it('shows what runs even when the file broke meanwhile', () => {
     expect(previewStatusView({ phase: 'running', url: 'http://localhost:1', services: [] }, { kind: 'invalid', error: 'x' })?.key).toBe('running');
+  });
+
+  it('names the device boot and the app install by what they are, not as services', () => {
+    expect(previewStatusView({ phase: 'starting', step: 'device', services: [] }, mobile)).toEqual({ key: 'device', params: {}, tone: 'busy' });
+    // The device has booted by then and rides along; the step still decides the text.
+    expect(previewStatusView({ phase: 'starting', step: 'install', services: [], device: iphone }, mobile)).toEqual({
+      key: 'install',
+      params: {},
+      tone: 'busy',
+    });
+    // A service called like neither is still a service.
+    expect(previewStatusView({ phase: 'starting', step: 'metro', services: [], device: iphone }, mobile)?.key).toBe('starting');
+  });
+
+  it('reads a running Mobile preview by its app: running, or exited in red while the device stays up', () => {
+    expect(previewStatusView({ phase: 'running', url: null, services: [], device: iphone, app: 'running' }, mobile)).toEqual({
+      key: 'running',
+      params: {},
+      tone: 'ok',
+    });
+    expect(previewStatusView({ phase: 'running', url: null, services: [], device: iphone, app: 'exited' }, mobile)).toEqual({
+      key: 'appExited',
+      params: {},
+      tone: 'error',
+    });
+    // Ahead of a file that broke meanwhile too: the exited app is what runs (or not) right now.
+    expect(previewStatusView({ phase: 'running', url: null, services: [], device: iphone, app: 'exited' }, { kind: 'invalid', error: 'x' })?.key).toBe('appExited');
+  });
+
+  it('reads a crashed device like a crashed service', () => {
+    expect(previewStatusView({ phase: 'crashed', step: 'device', code: null, signal: 'SIGKILL' }, mobile)).toEqual({
+      key: 'crashedSignal',
+      params: { service: 'device', signal: 'SIGKILL' },
+      tone: 'error',
+    });
   });
 
   it('puts a missing or broken file ahead of how the last run ended', () => {
@@ -53,6 +90,12 @@ describe('previewTabStatus', () => {
     expect(previewTabStatus({ phase: 'crashed', step: 'web', code: 1, signal: null })).toBe('error');
     expect(previewTabStatus({ phase: 'stopped' })).toBeUndefined();
     expect(previewTabStatus(undefined)).toBeUndefined();
+  });
+
+  it('turns red when the app of a running Mobile preview exited, green while it runs', () => {
+    expect(previewTabStatus({ phase: 'running', url: null, services: [], device: iphone, app: 'exited' })).toBe('error');
+    expect(previewTabStatus({ phase: 'running', url: null, services: [], device: iphone, app: 'running' })).toBe('ok');
+    expect(previewTabStatus({ phase: 'starting', step: 'install', services: [], device: iphone })).toBe('busy');
   });
 });
 

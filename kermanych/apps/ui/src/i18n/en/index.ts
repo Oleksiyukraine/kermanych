@@ -246,6 +246,7 @@ export const en: MessageSchema = {
       findings: 'Findings',
       qa: 'QA',
       browser: 'Browser',
+      device: 'Device',
     },
     actions: {
       mergeTip: 'Merge the conclusion into the parent agent',
@@ -517,14 +518,18 @@ export const en: MessageSchema = {
       emptyHint: 'Type an address above.',
       downloaded: 'Downloaded: {name}',
     },
-    // The live preview in the Browser tab: its row, the logs panel, the empty pane's offers.
+    // The live preview in the Browser and Device tabs: its row, the logs panel, the empty pane's
+    // offers.
     preview: {
       status: {
         missing: 'Preview not configured',
         invalid: 'Preview file has an error: {error}',
         setup: 'Running setup…',
+        device: 'Booting the device…',
+        install: 'Installing the app…',
         starting: 'Starting {service}…',
         running: 'Running',
+        appExited: 'The app crashed',
         crashed: 'Crashed ({service}, code {code})',
         crashedSignal: 'Crashed ({service}, signal {signal})',
         failed: 'Failed to start ({step}): {error}',
@@ -536,6 +541,7 @@ export const en: MessageSchema = {
       start: 'Start preview',
       stop: 'Stop preview',
       restart: 'Restart preview',
+      launchApp: 'Launch the app',
       open: 'Open preview',
       logs: 'Logs',
       configure: 'Ask the agent',
@@ -549,6 +555,35 @@ export const en: MessageSchema = {
       logsResize: 'Resize the logs',
       logsEmpty: 'No logs yet.',
       logsFailed: 'Couldn’t read the logs: {error}',
+    },
+    // The Device tab of a Mobile project's agent session: the device picker, the toolbar, the
+    // screen and its empty states.
+    device: {
+      baseTitle: 'The device the session’s copy is made from',
+      buttons: {
+        home: 'Home',
+        back: 'Back',
+        recents: 'Recent apps',
+      },
+      rotate: 'Rotate the screen',
+      screenshot: 'Save a screenshot (PNG)',
+      pickTitle: 'Point at an element on the screen — the agent gets its type, label, id and a crop. Shift+click to point at another',
+      pickNoElement: 'Point {point}: no element',
+      agentIdleTip: 'Pause the agent: its device_* tools and preview start/stop are refused until you hand control back',
+      agentPausedTip: 'Hand the device back to the agent',
+      screenAria: 'Screen of {name}',
+      waitingFrame: 'Waiting for the picture…',
+      streamFailed: 'The screen is unavailable: {error}',
+      booting: 'Booting the device…',
+      starting: 'The preview is starting…',
+      empty: 'This session’s device is not running.',
+      notConfigured: 'The device appears once the preview is configured and started.',
+      toolsTitle: 'This machine has no tools for the device',
+      infoFailed: 'Couldn’t read the device: {error}',
+      retry: 'Try again',
+      recreateTitle: 'Make the device copy anew?',
+      recreateMessage: 'This session’s device copy ({from}) will be deleted and a new one made from “{to}”. The app data on it — sign-ins, settings, files — will be lost.',
+      recreateConfirm: 'Make anew',
     },
     // The PR “Create PR” opened: the PR row in the Session tab and the merged-PR popup.
     pr: {
@@ -1302,7 +1337,7 @@ export const en: MessageSchema = {
       color: 'Project color',
       workspace: 'Workspace',
       platform: 'Platform',
-      platformNote: 'Back-end and Mobile have no «Browser» tab and no live preview.',
+      platformNote: 'Web has the «Browser» tab, Mobile the «Device» tab, both with the live preview. Back-end has neither.',
       platformChoice: {
         web: 'Web',
         backend: 'Back-end',
@@ -3182,7 +3217,7 @@ export const en: MessageSchema = {
     },
     canvas: {
       desktopOnly: 'The canvas exists only in the desktop app: the web build has no session browser. Below is the design’s saved folder; the log and composer on the right work here too.',
-      noBrowser: 'This project is set to Back-end or Mobile: it has no browser and no preview, so the canvas has nothing to show. Change the platform in the project settings.',
+      noBrowser: 'This project is set to Back-end or Mobile: it has no session browser, so the canvas has nothing to show. A Mobile project’s preview is in the agent session’s Device tab. Change the platform in the project settings.',
       retired: 'This design’s worktree is gone, so the canvas has nothing to show.',
     },
     folder: {

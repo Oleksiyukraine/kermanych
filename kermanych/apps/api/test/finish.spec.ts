@@ -10,7 +10,8 @@ import { stubSkills } from "./skills-stub";
 import { WorktreeService } from "../src/worktree/worktree.service";
 import { SupervisorService } from "../src/supervisor/supervisor.service";
 import type { ModelsService } from "../src/models/models.service";
-import type { PreviewService } from "../src/preview/preview.service";
+import { PreviewService } from "../src/preview/preview.service";
+import { fakeDevice } from "./fake-device";
 import { Subject } from "rxjs";
 
 const git = (cwd: string, ...args: string[]): string =>
@@ -99,6 +100,27 @@ test("stops the session's preview before the worktree is retired", async () => {
   expect(preview.retire).toHaveBeenCalledWith(id);
   expect(worktreeAtRetire).toBe(true);
   expect(existsSync(wtDir)).toBe(false);
+});
+
+// docs/specs/2026-11-03-mobile-device-preview.md, decisions 4 and 11: finishing deletes the
+// session's device clone, made by an earlier api run (nothing runs in this one), before the
+// worktree goes.
+test("deletes the session's device clone through the preview, with no preview running", async () => {
+  const { id, wtDir } = await seed(() => {});
+  reg.patchProject("p1", { platform: "mobile" });
+  const fake = fakeDevice();
+  let worktreeAtRemove: boolean | undefined;
+  fake.device.remove.mockImplementation(async () => {
+    worktreeAtRemove = existsSync(wtDir);
+  });
+  const preview = new PreviewService(reg, fake.device);
+  preview.opts.root = mkdtempSync(join(tmpdir(), "kmq-finish-preview-"));
+  trash.push(preview.opts.root);
+  const withPreview = new SupervisorService(reg, wt, offlineAuth(), stubSkills(), undefined as unknown as ModelsService, undefined, undefined, undefined, undefined, undefined, undefined, undefined, preview);
+  await withPreview.finishSession(id);
+  expect(fake.device.remove).toHaveBeenCalledWith(id);
+  expect(fake.device.shutdown).not.toHaveBeenCalled();
+  expect(worktreeAtRemove).toBe(true);
 });
 
 test("auto-commits uncommitted worktree work onto the branch before retiring it", async () => {

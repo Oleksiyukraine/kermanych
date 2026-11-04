@@ -36,6 +36,10 @@ import type {
   PreviewInfo,
   PreviewLogs,
   PreviewState,
+  DeviceChoice,
+  DeviceInfo,
+  DevicePick,
+  DevicePlatform,
   AgentFinding,
   FindingTarget,
   MachineResources,
@@ -699,8 +703,16 @@ export const api = {
   // `starting`) and reports its progress through `preview_update`.
   previewInfo: (id: string): Promise<PreviewInfo> => get<PreviewInfo>(`/sessions/${id}/preview`),
 
-  startPreview: (id: string, opts: { restart?: boolean } = {}): Promise<PreviewState> =>
-    post<PreviewState>(`/sessions/${id}/preview`, opts),
+  // `platform` / `base` (a Mobile project, docs/specs/2026-11-03-mobile-device-preview.md,
+  // decision 6): the device to start on; a base other than the session's clone re-clones it.
+  startPreview: (
+    id: string,
+    opts: { restart?: boolean; platform?: DevicePlatform; base?: string } = {},
+  ): Promise<PreviewState> => post<PreviewState>(`/sessions/${id}/preview`, opts),
+
+  // The app of a Mobile preview (decision 11): «Запустити застосунок» after it exited.
+  previewApp: (id: string, action: 'launch' | 'terminate' | 'restart'): Promise<PreviewState> =>
+    post<PreviewState>(`/sessions/${id}/preview/app`, { action }),
 
   stopPreview: (id: string): Promise<void> => del(`/sessions/${id}/preview`),
 
@@ -711,6 +723,24 @@ export const api = {
   // «Доручити агенту»: Kermanych asks the session's agent to write `.kermanych/preview.json`.
   configurePreview: (id: string): Promise<{ sent: true }> =>
     post<{ sent: true }>(`/sessions/${id}/preview/configure`, {}),
+
+  // The session's device (docs/specs/2026-11-03-mobile-device-preview.md): the tooling, the
+  // base devices of this machine, the project's choice, the session's clone and the pause.
+  deviceInfo: (id: string): Promise<DeviceInfo> => get<DeviceInfo>(`/sessions/${id}/device`),
+
+  // The project's base device on this machine (local registry only, decision 6).
+  setDeviceChoice: (projectId: string, choice: DeviceChoice): Promise<DeviceChoice> =>
+    put<DeviceChoice>(`/projects/${projectId}/device-choice`, choice),
+
+  // The «Агент» pause: `device_*` and preview start/stop refuse the agent while it is on.
+  setDevicePaused: (id: string, paused: boolean): Promise<{ paused: boolean }> =>
+    put<{ paused: boolean }>(`/sessions/${id}/device/pause`, { paused }),
+
+  // «◎ Вказати»: the element under a point given as fractions of the screen.
+  devicePick: (id: string, point: { x: number; y: number }): Promise<DevicePick> =>
+    post<DevicePick>(`/sessions/${id}/device/pick`, point),
+
+  deviceScreenshot: (id: string): Promise<Blob> => getBlob(`/sessions/${id}/device/screenshot`),
 
   finishInfo: (
     id: string,

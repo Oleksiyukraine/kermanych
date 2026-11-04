@@ -34,19 +34,20 @@
         role="menu"
         :aria-label="title"
       >
-        <button
-          v-for="o in options"
-          :key="o.value"
-          type="button"
-          class="k-chip-select__item"
-          :class="{ 'k-chip-select__item--active': o.value === modelValue }"
-          role="menuitemradio"
-          :aria-checked="o.value === modelValue"
-          @click="pick(o.value)"
-        >
-          <span class="k-chip-select__tick" aria-hidden="true">{{ o.value === modelValue ? '·' : '' }}</span>
-          <span class="k-chip-select__label-text">{{ o.label }}</span>
-        </button>
+        <template v-for="(o, i) in options" :key="o.value">
+          <span v-if="o.group && o.group !== options[i - 1]?.group" class="k-chip-select__group" role="presentation">{{ o.group }}</span>
+          <button
+            type="button"
+            class="k-chip-select__item"
+            :class="{ 'k-chip-select__item--active': o.value === modelValue }"
+            role="menuitemradio"
+            :aria-checked="o.value === modelValue"
+            @click="pick(o.value)"
+          >
+            <span class="k-chip-select__tick" aria-hidden="true">{{ o.value === modelValue ? '·' : '' }}</span>
+            <span class="k-chip-select__label-text">{{ o.label }}</span>
+          </button>
+        </template>
       </div>
     </Teleport>
   </span>
@@ -65,7 +66,8 @@ import KSpinner from './KSpinner.vue';
 // back from `update:modelValue` instead of a bare string it would have to re-narrow.
 const props = defineProps<{
   modelValue: T;
-  options: { value: T; label: string }[];
+  // `group`: a heading over consecutive options sharing it (the device picker's iOS / Android).
+  options: { value: T; label: string; group?: string | undefined }[];
   // Leading glyph. Mono-width in the row, so an icon-less chip still lines up with its peers.
   icon?: string | undefined;
   // Names the control for screen readers and for the app tooltip — the chip itself shows only
@@ -302,6 +304,14 @@ watch(
 .k-chip-select__menu--placed {
   opacity: 1;
   transform: none;
+}
+
+.k-chip-select__group {
+  display: block;
+  padding: 6px 10px 2px;
+  font-family: var(--k-font-ui);
+  font-size: var(--k-fs-xs);
+  color: var(--k-faint);
 }
 
 .k-chip-select__item {
