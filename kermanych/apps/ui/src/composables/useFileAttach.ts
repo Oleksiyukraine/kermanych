@@ -1,13 +1,15 @@
 // apps/ui/src/composables/useFileAttach.ts
 import { ref } from 'vue';
+import { globalTr } from '../boot/i18n';
 import { fileToAttachment, type AttachedFile } from '../lib/files';
 
 // Shared attachment state for a composer that takes files beyond images (the management
 // chat): collect files via paste, drag-drop, or file-pick, preview them, drop them, then
 // read them out. The image-only twin is useImageAttach — agent sessions take only what
 // omp's image slots carry, so the two stay separate composables rather than one with a
-// flag.
-export function useFileAttach() {
+// flag. `imagesOnly` is for a composer that shares this one's strip but whose model has no
+// file tools to open a document with (ЦУК): a document is refused with a line that says so.
+export function useFileAttach(opts: { imagesOnly?: boolean } = {}) {
   const files = ref<AttachedFile[]>([]);
   const error = ref<string | null>(null);
 
@@ -16,7 +18,12 @@ export function useFileAttach() {
     // caller's synchronous `input.value = ''` empties that FileList mid-loop.
     for (const file of [...list]) {
       try {
-        files.value = [...files.value, await fileToAttachment(file)];
+        const attached = await fileToAttachment(file);
+        if (opts.imagesOnly && !attached.mimeType.startsWith('image/')) {
+          error.value = globalTr.t('errors.file.imagesOnly', { name: file.name });
+          continue;
+        }
+        files.value = [...files.value, attached];
         error.value = null;
       } catch (e) {
         error.value = e instanceof Error ? e.message : String(e);

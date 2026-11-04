@@ -1,12 +1,11 @@
 // apps/ui/src/stores/assistant-overlay.ts
-// The Менеджмент assistant called up from anywhere (docs/specs/2026-11-03-assistant-overlay.md):
-// whether the overlay is open, whether an answer landed while nobody was looking, and the one
-// «summon» signal that ⌘K, the circle gesture, the mascot and the session browser all send.
+// The avatar's window (docs/specs/2026-11-04-cuk-control-console.md): whether it is open,
+// which panel of its accordion is expanded, whether an answer landed while nobody was looking,
+// and the one «summon» signal that ⌘K, the circle gesture, the mascot and the session browser
+// all send.
 //
-// A summons is a counter rather than a call into a component because two views answer it and
-// only one is mounted at a time: on the Менеджмент tab the page's own dock takes focus (decision
-// 7), everywhere else the shell's launcher toggles the overlay. Each watches `summons` and acts
-// only where it lives, so no caller has to know which tab is on screen.
+// A summons is a counter rather than a call into a component, so none of its senders has to
+// know where the window lives: the shell's launcher watches it and toggles the window.
 import { defineStore } from 'pinia';
 import { ref } from 'vue';
 import type { Ref } from 'vue';
@@ -35,13 +34,19 @@ export const assistantMascot: Ref<AssistantMascotId> = persisted<AssistantMascot
   (id) => id,
 );
 
+// The two panels of the window's accordion: ЦУК, and the Менеджмент assistant (managers only).
+export type AssistantPanel = 'cuk' | 'management';
+
 export const useAssistantOverlay = defineStore('assistant-overlay', () => {
   const open = ref(false);
-  // An answer finished while the overlay was closed: the mascot wears a dot until it is opened.
+  // An answer finished while the window was closed: the mascot wears a dot until it is opened.
   const unread = ref(false);
   const summons = ref(0);
+  const panel = ref<AssistantPanel>('cuk');
 
+  // Every opening starts on ЦУК: the console is what the window is for (decision 2).
   function show(): void {
+    panel.value = 'cuk';
     open.value = true;
     unread.value = false;
   }
@@ -54,5 +59,5 @@ export const useAssistantOverlay = defineStore('assistant-overlay', () => {
     summons.value++;
   }
 
-  return { open, unread, summons, show, close, summon };
+  return { open, unread, summons, panel, show, close, summon };
 });

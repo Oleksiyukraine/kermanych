@@ -1,12 +1,13 @@
 # ЦУК: the avatar opens Kermanych's control console
 
 - **Branch:** `feature/redesign-avatar-control-console`
-- **Scope:** `apps/ui` (the launcher overlay, a new ЦУК store and view, the notepad, the task
-  launch flow extracted from `AgentsPage.vue`, settings labels, i18n `uk` / `en`),
-  `apps/api` (a new ЦУК chat endpoint and service), `packages/core` (the `cuk.*` action set and
-  its parser), `kermanych/README.md`. No cloud migration.
-- **Status:** decisions agreed with the operator in the deep-analysis interview (2026-11-04);
-  waiting for the go-ahead.
+- **Scope:** `apps/ui` (the launcher window, a new ЦУК store and views, the shared composer, the
+  notepad skin of «Список дій», settings labels, i18n `uk` / `en`), `apps/api` (a ЦУК chat
+  endpoint and service on a chat pool shared with the Менеджмент chat), `packages/core` (the ЦУК
+  action set and its parser), `kermanych/README.md`. No cloud migration.
+- **Status:** decisions agreed with the operator in the deep-analysis interview (2026-11-04),
+  approved the same day; implemented on this branch (see «Verification»). Open: the operator's
+  pick of the notepad binding (decision 8).
 
 ## Goal
 
@@ -88,8 +89,9 @@ assistant stays available to managers in the same window, folded.
    machine; the header's current selection is its default target («запусти агента» means the
    selected project; with none selected it asks). Switching workspace does not end the
    conversation; ЦУК works with nothing selected. The transcript lives in memory until the app
-   restarts. The state digest lists live sessions only (no archived or merged ones), capped, each
-   with project, name, status and whether it waits for an answer (`waiting_input`).
+   restarts. The state digest lists live sessions (no merged ones), capped, each with project,
+   name, status and whether it waits for an answer (`waiting_input`); a few recent archived ones
+   follow, so «розархівуй» can name one (see «Defaults»).
    Rejected: a conversation per workspace (a partial answer to «що чекає на мене?», the chat
    disappearing on every switch).
 6. **The notepad is «Список дій».** The same data as the Огляд tile, shown for the current
@@ -137,56 +139,92 @@ assistant stays available to managers in the same window, folded.
 
 ## Defaults not raised in the interview
 
-- **Naming.** The panel title is «ЦУК · Центр управління Керманича» (`en`: «KCC · Kermanych
-  Control Center»). The mascot's tooltip, the «Гарячі клавіші» row, the gesture switch
-  («Жест для виклику ЦУК») and the character picker («Персонаж ЦУК») follow the name.
-- **A launched agent** gets the project's defaults (model, effort, branch prefix, worktree), as
-  «Нова задача» does with nothing changed; the card shows the project, the task text and the
-  mode (звичайна / «Глибокий аналіз»). After launch the console stays open and the result line
-  carries «Відкрити сесію».
+- **Naming.** The panel title is «ЦУК · Центр управління Керманича» (`en`: «ЦУК · Kermanych
+  Control Center» — the name stays ЦУК in both locales, as «Керманич» stays a name). The mascot's
+  tooltip, the «Гарячі клавіші» row, the gesture switch («Жест для виклику ЦУК») and the
+  character picker («Персонаж ЦУК») follow the name.
+- **A launched agent** gets the project's defaults (model, effort), prefix `feature`, a worktree,
+  and the launch mode last chosen in «Нова задача» (managed or native); the card shows the
+  project, an editable title (the launcher's own name rule as the placeholder), the task text and
+  «Глибокий аналіз». After launch the console stays open and the result line carries «Відкрити
+  сесію».
+- **Opening a place steps the window aside.** `navigate` and `session.open` close the window,
+  because the operator asked to see the place; ⌘K brings the conversation back.
+- **Archived sessions travel too.** The digest lists live sessions first (those waiting for an
+  answer at the top), then the ten most recent archived ones, so «розархівуй» has something to
+  name; merged sessions and project chats are left out.
+- **Images only.** ЦУК has no file tools, so its composer takes images and refuses documents with
+  a line saying so; the api drops anything else too.
 - **The `/` helpers and 📎** stay on the composer for both panels; the plan chip stays.
 
 ## Implementation
 
-- **core:** `packages/core/src/cuk-actions.ts` — the `cuk.*` action union, its validator and
-  the reply parser (sharing the fence and block parsing with `management-actions.ts` rather than
-  copying it), DTOs `CukChatAsk` / `CukChatReply`, the state-digest types.
-- **api:** `apps/api/src/cuk/` — contract prompt, service, controller; the common child
-  mechanics factored out of `management-chat.service.ts` instead of duplicated.
+- **core:** `packages/core/src/cuk-actions.ts` — the ЦУК action union, `validateCukAction`,
+  `parseCukReply`, `cukNeedsConfirm`, DTOs `CukChatAsk` / `CukChatReply`, the digest types. The
+  fence grammar is shared with the Менеджмент chat through `parseActionBlocks`
+  (`management-actions.ts`); the notepad verbs are the Менеджмент `todo.*` with its validator,
+  because it is the same list. New rejection codes `cuk_*` (`i18n-codes.ts`).
+- **api:**
+  - `assistant/rpc-chat-pool.ts` — the child map, per-key turn queue, spawn with start timeout,
+    one turn (interactive prompts cancelled, dropped frames reported), drop, reset, idle sweep;
+    `ManagementChatService` now runs on it and keeps its own extras (attachments on disk, Jira
+    tools, the docs child). `assistant/models.ts` holds `FAST_MODEL` (`claude-sonnet-5`, was
+    `DOCS_MODEL`).
+  - `cuk/cuk-prompt.ts` (contract once, context block every turn), `cuk/cuk-chat.service.ts`
+    (key `cuk:<userId>`, `noTools`, home directory as cwd, 120 s turn timeout),
+    `http/cuk.controller.ts` (`POST /cuk/chat`, `POST /cuk/chat/reset`; rebuilds and caps the
+    context, keeps image attachments only). `http/chat-input.ts` holds the attachment and
+    Action List parsing both controllers share.
 - **ui:**
-  - `stores/cuk-chat.ts` — the global conversation, the state digest (sessions, board,
-    projects, current selection), the executor; action cards with pending / done / cancelled
-    state.
-  - The «Нова задача» launch extracted from `AgentsPage.vue` into a shared module used by both
-    the page and ЦУК, so the two launch paths cannot drift.
-  - A view for the ЦУК transcript and its cards; the shared composer extracted from
-    `ManagementAssistant.vue` so the dock and the window keep one implementation; the
-    accordion in `AssistantLauncher.vue`; `stores/assistant-overlay.ts` gains the expanded
-    panel.
-  - The notepad component reusing the `home-todo` store and the row editor of
-    `HomeTodoWidget.vue` (one editor, two skins).
-  - Settings labels, keymap row, i18n `uk` / `en`.
+  - `stores/cuk-chat.ts` — the global conversation, the context (`lib/cuk-digest.ts` builds the
+    session and board rows), the executor, the cards (`pending` / `running` / `done` /
+    `cancelled`; a refused call puts the card back to `pending` with the reason).
+  - The launch uses the primitives every other launch path already shares —
+    `taskInsertFromDraft`, `board.createTask`, `api.createSessionFromTask` — as ChatPage does; the
+    launcher's component-local flow was not extracted, since nothing of it beyond those
+    primitives applies here.
+  - `components/assistant/AssistantComposer.vue` — the pill extracted from
+    `ManagementAssistant.vue` (draft, attachments, Хелпери, plan chip); both assistants use it.
+  - `components/assistant/CukAssistant.vue` (the ЦУК panel, its greeting and examples) and
+    `CukActionCard.vue`; `ManagementAssistant.vue` gains the folded window mode; the accordion,
+    the role rule and the notepad column live in `AssistantLauncher.vue`;
+    `stores/assistant-overlay.ts` gains `panel`. The dock no longer answers ⌘K.
+  - `components/assistant/CukNotepad.vue` — the binding and header around `HomeTodoWidget.vue`
+    in its new `notebook` skin; the widget re-renders a row another view of the same list
+    changed.
+  - Settings labels, keymap rows, i18n `uk` / `en`.
 
 ## Verification
 
-- Unit tests for the `cuk.*` validator and parser (unknown kinds and malformed fields
-  rejected, irreversible verbs not accepted) and for the at-once vs card split.
-- Live preview (web build), dark and light themes:
-  - the window opens expanded on Агенти, Дошка, Менеджмент; size and the notepad column as in
-    decision 7, the notepad behind 📝 below 900 px;
-  - a manager sees the accordion, switching folds one panel and swaps the draft; a developer
-    sees ЦУК only;
-  - «хто чекає на мою відповідь?» answered from the digest; «відкрий налаштування проєкту»
-    navigates at once; «запусти агента…» renders a card, edit then «Виконати» starts the session
-    and writes the result line; «Скасувати» does nothing;
-  - a note written in the notepad shows on Менеджмент → Огляд and back; «запиши собі: …» lands
-    in both;
-  - the mascot thinks and wears the dot for either assistant.
-- Not exercised unless the Electron build is run: ⌘K forwarded from a session browser page
-  (unchanged path).
+- `packages/core/test/cuk-actions.spec.ts`: irreversible and Менеджмент-only kinds refused as
+  unknown; required fields per kind; the notepad obeys the Action List rules; only navigation and
+  the notepad skip the card. `apps/api/test/cuk-chat.spec.ts` and `cuk-controller.spec.ts`:
+  contract once then follow-ups, `noTools` and `claude-sonnet-5`, a child per user, reset, the
+  image-only filter and the context caps. Full suites: core 306, api 1233, ui 865 passed; api
+  and ui typecheck clean (the ui's only errors are the unbuilt `@kermanych/api` in
+  `src-electron`, as before).
+- Live preview (web build), a workspace injected into the stores (the preview is cloudless):
+  - ⌘K opens the window at 1200 × 780 within 1280 × 800, ЦУК expanded with its greeting and
+    examples, the notepad column on the right; the mascot shows on Менеджмент too;
+  - as the owner, the Менеджмент bar sits above ЦУК; clicking it swaps the panels, each keeps its
+    own draft, focus follows; as a developer there is no bar and no caret;
+  - «Хто чекає на мою відповідь?» was answered by the real model in ~4 s from the digest;
+    «Зупини сесію «Рефактор стора» і відкрий налаштування гарячих клавіш» opened Налаштування →
+    Гарячі клавіші at once (window closed, result line written) and left a `session.stop` card
+    pending;
+  - a `session.stop` card run wrote «Сесію «Додати онбординг» зупинено.» with «Відкрити сесію»;
+    a refused `session.archive` printed the api's reason and returned to `pending`;
+  - two rows typed and ticked in the notepad appeared in the Огляд tile, and an edit made in the
+    notepad while the tile was mounted showed in the tile;
+  - below 900 px the notepad hides behind 📝 and slides over ЦУК; dark and light themes.
+- Not exercised: `agent.start` / `task.create` end to end (the preview has no cloud board); the
+  Electron build (⌘K from inside a session browser page is an unchanged path).
+- Notepad binding variants for decision 8: `docs/design/2026-11-04-cuk-notepad/`
+  (`notepad-a-rings` — shipped, `notepad-b-spiral`, `notepad-c-pad`).
 
 ## Documentation
 
-`kermanych/README.md` → «The Менеджмент tab and its assistant»: the avatar now opens ЦУК, what
-it can and cannot do, the confirmation rule, the notepad, the management panel for managers.
-`docs/specs/2026-11-03-assistant-overlay.md` decisions 5–7 point here as superseded.
+`kermanych/README.md` → a new section «ЦУК — the avatar's control console» (what it sees and
+does, the confirmation rule, what it refuses, the notepad, the management panel for managers);
+«The Менеджмент tab and its assistant» points to it. `docs/specs/2026-11-03-assistant-overlay.md`
+says which of its decisions this one replaces.

@@ -1,6 +1,8 @@
 // apps/ui/src/lib/api.ts
 // Typed REST helpers against the Kermanych API (NestJS, global prefix "api").
 import type {
+  CukChatAsk,
+  CukChatReply,
   DirListing,
   ImageInput,
   ManagementChatAsk,
@@ -598,6 +600,12 @@ export const api = {
   // than a fresh transcript in front of a model that still remembers the old one.
   resetManagementChat: (conversationId: string): Promise<{ ok: boolean }> =>
     post<{ ok: boolean }>('/management/chat/reset', { conversationId }),
+
+  // ЦУК (docs/specs/2026-11-04-cuk-control-console.md): one global conversation per signed-in
+  // user — the api keys it by the guard's user id, so neither call names a conversation.
+  cukChat: (ask: CukChatAsk): Promise<CukChatReply> => post<CukChatReply>('/cuk/chat', ask),
+
+  resetCukChat: (): Promise<{ ok: boolean }> => post<{ ok: boolean }>('/cuk/chat/reset', {}),
 
   // Write release notes from the bound repo's git history — local-only for the same
   // reason as the chat above. Generation only: the document comes back to the browser,
