@@ -147,10 +147,10 @@ export const MANAGEMENT_SECTIONS: readonly ManagementSection[] = [
     hint: "зміни по релізах",
     capability: "read_write",
   },
-  // Readable since Team Capacity got a screen: it shows Jira's estimates and worklogs
-  // against an 8 h/day baseline. Nothing on it is ours to write — load changes by editing
-  // tickets in Jira — so the assistant describes it (from the digest in its context) and
-  // refuses to change it with this sentence.
+  // Readable since Team Capacity got a screen: it shows the tracker's (Jira's or Plane's)
+  // estimates and worklogs against an 8 h/day baseline. Nothing on it is ours to write — load
+  // changes by editing tickets in that tracker — so the assistant describes it (from the digest
+  // in its context) and refuses to change it with this sentence.
   {
     name: "management-capacity",
     path: "team-capacity",
@@ -158,18 +158,18 @@ export const MANAGEMENT_SECTIONS: readonly ManagementSection[] = [
     hint: "навантаження команди",
     capability: "read",
     limitation:
-      "розділ лише читає оцінки й ворклоги Jira — навантаження змінюється редагуванням тікетів у Jira, не з чату",
+      "розділ лише читає оцінки й ворклоги Jira або Plane — навантаження змінюється редагуванням тікетів у трекері, не з чату",
   },
-  // Readable, not writable: Linear, Jira and Slack connect on the screen (tokens are pasted
+  // Readable, not writable: Linear, Jira, Plane and Slack connect on the screen (tokens are pasted
   // there and stay on the machine), so the assistant describes the section and refuses to
   // connect anything from the chat with this sentence.
   {
     name: "management-integrations",
     path: "integrations",
     label: "Integrations",
-    hint: "Linear, Jira, Slack",
+    hint: "Linear, Jira, Plane, Slack",
     capability: "read",
-    limitation: "підключення (Linear, Jira, Slack) налаштовуються на екрані, не з чату",
+    limitation: "підключення (Linear, Jira, Plane, Slack) налаштовуються на екрані, не з чату",
   },
 ];
 

@@ -223,9 +223,9 @@ export type ManagementAction =
   // File one card on the workspace's own board — «Дошка» → «Задачі», which is `tasks` rows
   // and therefore the DEFAULT board: it is the one that always exists, needs no integration
   // and no personal token, and every member of the workspace can already see it. A request
-  // that does not name a board lands here; a Jira issue is filed only when the operator
-  // named Jira, and then not through an action block at all but live, through the api's
-  // Jira tools during the turn (the reply reports it in `jiraChanges`).
+  // that does not name a board lands here; a tracker issue is filed only when the operator
+  // named Jira or Plane, and then not through an action block at all but live, through the
+  // api's tracker tools during the turn (the reply reports it in `trackerChanges`).
   //
   // `project` is a NAME from the prompt's repository list, for the reason `release.notes`
   // names one: a card belongs to exactly one `projects` row, a uuid is something the model
@@ -396,6 +396,22 @@ export type ManagementJiraBoard = {
   canWrite: boolean;
 };
 
+// One connected Plane project, the Plane twin of ManagementJiraBoard and for its reasons:
+// which projects exist (the identifier is the prefix of every key there, so a quoted
+// `WEB-42` names its project) and whether this machine may write to them. A Plane token is
+// personal and keyed by the Plane address AND the Plane workspace slug, so the two travel
+// with the row — two connected projects may live in different Plane workspaces, and only
+// one of them may have a token here. Items, members and labels are read LIVE through the
+// api's Plane tools, never shipped from the mirror.
+export type ManagementPlaneBoard = {
+  projectIdentifier: string;
+  projectName: string;
+  siteUrl: string;
+  workspaceSlug: string;
+  // Whether this operator has a Plane token for the project's site and workspace here.
+  canWrite: boolean;
+};
+
 // One week of somebody's (or everybody's) capacity, in hours with one decimal. `week` is
 // the Monday, YYYY-MM-DD. Past weeks carry `loggedH` (worklogs), future weeks `plannedH`
 // (remaining estimates spread to their due dates); the current week carries both.
@@ -510,6 +526,9 @@ export type ManagementContext = {
   // why this is context and not contract: a board connected mid-conversation must reach the
   // model on the next turn.
   jira?: ManagementJiraBoard[];
+  // The connected Plane projects (up to ten), absent when the workspace has none — the
+  // `jira` field's twin, and context rather than contract for the same reason.
+  plane?: ManagementPlaneBoard[];
   // Team Capacity, present only when the workspace has a Jira board. Re-sent every turn:
   // estimates move between turns.
   capacity?: ManagementCapacity;
@@ -560,12 +579,13 @@ export type ManagementChatReply = {
   // omp notices raised during the turn (dropped frames, provider warnings, a cancelled
   // interactive prompt).
   notices: Notice[];
-  // One line per Jira write the assistant made through the api's Jira tools during the turn,
-  // in the order it made them (created KRM-12, moved KRM-9 to Done, …). The writes already
-  // happened server-side, so the browser executes nothing here: it prints each line into the
-  // transcript and refreshes its Jira board so the screen shows what the turn changed.
-  // Required, and empty when the turn wrote nothing to Jira.
-  jiraChanges: Notice[];
+  // One line per tracker write the assistant made through the api's Jira and Plane tools
+  // during the turn, in the order it made them (created KRM-12, moved WEB-9 to Done, …). The
+  // writes already happened server-side, so the browser executes nothing here: it prints each
+  // line into the transcript and refreshes the board of each tracker the turn wrote to (the
+  // line's code says which — `jira_*` or `plane_*`). Required, and empty when the turn wrote
+  // nothing.
+  trackerChanges: Notice[];
   // What the turn cost on the connected plan. This chat runs through the same `omp` binary,
   // the same provider account and the same subscription as every agent, so a turn here is a
   // turn debited there — and the composer says so.
@@ -1315,11 +1335,21 @@ export function validateManagementAction(raw: unknown): ManagementAction | { err
   return { error: { text: `невідома дія ${JSON.stringify(o.kind)}`, code: "action_kind_unknown", params: { value: JSON.stringify(o.kind) } } };
 }
 
-// Split an assistant answer into the prose the user reads and the actions the app runs.
-// Pure and total: unparseable JSON and an unknown `kind` both land in `rejected` and
-// NOTHING is executed on a guess.
-export function parseManagementReply(raw: string): ParsedManagementReply {
-  const actions: ManagementAction[] = [];
+// A validator's refusal, told apart from an action by shape: every action has a `kind` and
+// no `error`, every refusal the reverse.
+function isRejection(v: unknown): v is { error: ManagementRejection } {
+  return isObj(v) && "error" in v && !("kind" in v);
+}
+
+// Split an assistant answer into the prose the user reads and the blocks the app runs, each
+// block validated by `validate`. Pure and total: unparseable JSON and an unknown `kind` both
+// land in `rejected` and NOTHING is executed on a guess. Shared by every assistant that speaks
+// this fence (the Менеджмент chat here, ЦУК in ./cuk-actions), so the fence grammar is one.
+export function parseActionBlocks<A extends { kind: string }>(
+  raw: string,
+  validate: (block: unknown) => A | { error: ManagementRejection },
+): { text: string; actions: A[]; rejected: ManagementRejection[] } {
+  const actions: A[] = [];
   const rejected: ManagementRejection[] = [];
   const text = raw
     .replace(BLOCK_RE, (_m, body: string) => {
@@ -1337,8 +1367,8 @@ export function parseManagementReply(raw: string): ParsedManagementReply {
       }
       // A model that batches two refusals into one block is being helpful, not wrong.
       for (const one of Array.isArray(parsed) ? parsed : [parsed]) {
-        const res = validateManagementAction(one);
-        if ("error" in res) rejected.push(res.error);
+        const res = validate(one);
+        if (isRejection(res)) rejected.push(res.error);
         else actions.push(res);
       }
       return "";
@@ -1348,4 +1378,8 @@ export function parseManagementReply(raw: string): ParsedManagementReply {
     .replace(/\n{3,}/g, "\n\n")
     .trim();
   return { text, actions, rejected };
+}
+
+export function parseManagementReply(raw: string): ParsedManagementReply {
+  return parseActionBlocks(raw, validateManagementAction);
 }

@@ -23,10 +23,10 @@
 //      Registry branch in `run()` below calls `useRisks().create(workspaceId, …)`; the
 //      Release Notes branch hands `useReleaseNotes().generate(…)` a job and that store does
 //      the writing. The api deliberately holds no write path of its own and no cloud
-//      credentials for either table. Jira is the one exception, and not a cloud table: its
-//      writes are signed with the operator's personal token, which lives in this machine's
-//      local registry and never reaches the browser, so the api's Jira tools make them
-//      during the turn and the reply reports each one in `jiraChanges`.
+//      credentials for either table. The trackers are the one exception, and not cloud tables:
+//      Jira and Plane writes are signed with the operator's personal token, which lives in this
+//      machine's local registry and never reaches the browser, so the api's tracker tools make
+//      them during the turn and the reply reports each one in `trackerChanges`.
 //
 // Two sections say `read_write` in @kermanych/core, so four actions reach something:
 // `risk.create` / `risk.update` write a row, and `release.notes` STARTS a generation — the
@@ -45,6 +45,7 @@ import type {
   ManagementChatAsk,
   ManagementHome,
   ManagementJiraBoard,
+  ManagementPlaneBoard,
   ManagementMember,
   ManagementDocs,
   ManagementReleaseNotes,
@@ -60,7 +61,16 @@ import { localizeNotice, localizeRejection } from '../lib/i18n-coded';
 import { locale } from '../lib/locale';
 import { api } from '../lib/api';
 import { handleOf } from '../lib/members';
-import { capacityDigest, capacityReport, digestRange, todayIso } from '../lib/capacity';
+import {
+  capacityDigest,
+  capacityReport,
+  digestRange,
+  todayIso,
+  type CapacityIssue,
+  type CapacityRange,
+  type CapacityWorklog,
+} from '../lib/capacity';
+import { pickTrackerSource, trackerSourceKey, type TrackerKind } from '../lib/tracker-source';
 import { readCapacityPrefs } from '../lib/capacity-prefs';
 import { readLayout, visibleTiles } from '../lib/dashboard';
 import { useHomeTodo } from './home-todo';
@@ -68,6 +78,7 @@ import { homeDigest, todayTaskGroups } from '../lib/home-digest';
 import { todoPlainText } from '../lib/home-todo';
 import { useBoard } from './board';
 import { useJira } from './jira';
+import { usePlane } from './plane';
 import { useOrchestrator } from './orchestrator';
 import { useProjects } from './projects';
 import { useReleaseNotes } from './release-notes';
@@ -131,6 +142,9 @@ export const useManagementChat = defineStore('management-chat', () => {
   // The Jira mirror: read for which boards exist and whether this machine may write to them,
   // for the capacity and home digests, and reloaded after a turn whose tools wrote to Jira.
   const jira = useJira();
+  // The Plane mirror: jira's twin for which projects exist and whether this machine may write
+  // to them, and reloaded after a turn whose tools wrote to Plane.
+  const plane = usePlane();
   // The Action List tile's list — the same reactive copy HomeTodoWidget renders, so a change
   // the assistant makes is on the dashboard before its notice prints.
   const homeTodo = useHomeTodo();
@@ -350,6 +364,53 @@ export const useManagementChat = defineStore('management-chat', () => {
     }));
   }
 
+  // The workspace's Plane projects, or nothing — jiraDigest's twin, for its reasons. A Plane
+  // token is keyed by the Plane address AND the Plane workspace slug, so `canWrite` is answered
+  // per pair: the ACTIVE project's is the store's own (already probed) flag, the others' a
+  // local registry read per unique pair — usually one, because projects share a workspace.
+  async function planeDigest(): Promise<ManagementPlaneBoard[]> {
+    const rows = plane.integrations;
+    if (!rows.length) return [];
+    const pair = (p: { siteUrl: string; workspaceSlug: string }) => `${p.siteUrl}\n${p.workspaceSlug}`;
+    const others = new Map(rows.filter((p) => p.id !== plane.activeId).map((p) => [pair(p), p]));
+    const present: Record<string, boolean> = {};
+    await Promise.all(
+      [...others.entries()].map(async ([key, p]) => {
+        try {
+          present[key] = (await api.planeTokenStatus(p.siteUrl, p.workspaceSlug)).present;
+        } catch {
+          present[key] = false;
+        }
+      }),
+    );
+    return rows.map((p) => ({
+      projectIdentifier: p.projectIdentifier,
+      projectName: p.projectName,
+      siteUrl: p.siteUrl,
+      workspaceSlug: p.workspaceSlug,
+      canWrite: p.id === plane.activeId ? plane.tokenPresent : (present[pair(p)] ?? false),
+    }));
+  }
+
+  // The tracker the capacity and home digests read: the same pick the Team Capacity screen and
+  // the Home tiles show for this workspace (lib/tracker-source.ts), so the assistant quotes the
+  // numbers the operator is looking at. Undefined when neither Jira nor Plane is connected.
+  function digestSource(
+    workspaceId: string,
+  ): { issues: readonly CapacityIssue[]; fetchWorklogs: (r: CapacityRange) => Promise<CapacityWorklog[]> } | undefined {
+    const available: TrackerKind[] = [];
+    if (jira.integration) available.push('jira');
+    if (plane.integration) available.push('plane');
+    let stored: string | null = null;
+    try {
+      stored = localStorage.getItem(trackerSourceKey(workspaceId));
+    } catch {
+      /* private mode: the default pick */
+    }
+    const kind = pickTrackerSource(available, stored);
+    return kind === 'plane' ? plane : kind === 'jira' ? jira : undefined;
+  }
+
   // The Home overview as the assistant is shown it: the SAME data the dashboard tiles render
   // (lib/home-digest.ts) — the operator's tile layout, their Action List, today's tasks and
   // the recent release notes. The capacity and risks tiles are not repeated here; their data
@@ -368,7 +429,10 @@ export const useManagementChat = defineStore('management-chat', () => {
       // The tiles the operator actually sees: a developer's Home has no Risk Registry tile.
       layout: visibleTiles(readLayout(workspaceId), projects.canManageWorkspace(workspaceId)),
       todo: homeTodo.listFor(workspaceId),
-      groups: jira.integration ? todayTaskGroups(jira.issues, todayIso(Date.now())) : [],
+      groups: (() => {
+        const source = digestSource(workspaceId);
+        return source ? todayTaskGroups(source.issues, todayIso(Date.now())) : [];
+      })(),
       notes: releaseNotes.byWorkspace[workspaceId] ?? [],
     });
   }
@@ -377,21 +441,23 @@ export const useManagementChat = defineStore('management-chat', () => {
   // over the fixed digest window, by week. The operator's own view of the team travels with
   // it — the inactive marks (`excluded`) and the configured hours — so the assistant reasons
   // about the people who actually count and quotes the same capacity the screen does, not a
-  // roster padded with muted or non-participating accounts. Only with a Jira board — the
-  // native board has no estimates — and never fatal: a failed read costs the assistant this
-  // one block, and the prompt then says capacity is unavailable rather than inventing it.
+  // roster padded with muted or non-participating accounts. Only with a Jira board or a Plane
+  // project — the native board has no estimates — and never fatal: a failed read costs the
+  // assistant this one block, and the prompt then says capacity is unavailable rather than
+  // inventing it.
   async function capacityDigestFor(workspaceId: string): Promise<ManagementCapacity | undefined> {
-    if (!jira.integration) return undefined;
+    const source = digestSource(workspaceId);
+    if (!source) return undefined;
     try {
       const today = todayIso(Date.now());
       const range = digestRange(today);
-      const worklogs = await jira.fetchWorklogs(range);
+      const worklogs = await source.fetchWorklogs(range);
       const prefs = readCapacityPrefs(workspaceId);
       const excluded = Array.isArray(prefs?.excluded) ? prefs.excluded : [];
       const hoursPerDay = typeof prefs?.teamHoursPerDay === 'number' ? prefs.teamHoursPerDay : undefined;
       const hoursPerDayByPerson = prefs?.capacityMode === 'member' && prefs.memberHours ? prefs.memberHours : undefined;
       return capacityDigest(
-        capacityReport(jira.issues, worklogs, {
+        capacityReport(source.issues, worklogs, {
           range,
           today,
           granularity: 'week',
@@ -725,10 +791,14 @@ export const useManagementChat = defineStore('management-chat', () => {
       if (projects.canManageWorkspace(workspaceId) && !risks.byWorkspace[workspaceId])
         await risks.load(workspaceId);
       if (jira.integration === undefined) await jira.probe(workspaceId);
+      if (plane.integration === undefined) await plane.probe(workspaceId);
       // The active board's mirror, loaded ONCE for the turn: the capacity and home digests
-      // both read it, and a board nobody has opened yet is otherwise empty here.
+      // read whichever tracker this workspace's capacity view shows, and a board nobody has
+      // opened yet is otherwise empty here.
       if (jira.integration && !jira.issues.length) await jira.loadBoard();
+      if (plane.integration && !plane.issues.length) await plane.loadBoard();
       const jiraBoards = await jiraDigest();
+      const planeBoards = await planeDigest();
       const capacity = await capacityDigestFor(workspaceId);
       // Documentation retrieval, ONLY in the Проєктна документація section and only once a
       // project is selected: embed the question and search, in one Edge Function round trip,
@@ -748,6 +818,7 @@ export const useManagementChat = defineStore('management-chat', () => {
           risks: riskDigest(workspaceId),
           members: memberDigest(workspaceId),
           ...(jiraBoards.length ? { jira: jiraBoards } : {}),
+          ...(planeBoards.length ? { plane: planeBoards } : {}),
           ...(capacity ? { capacity } : {}),
           home: await homeDigestFor(workspaceId),
           ...(docs ? { docs } : {}),
@@ -776,14 +847,16 @@ export const useManagementChat = defineStore('management-chat', () => {
       // was not is exactly how that ends. Notices are omp's own asides and rank below it.
       for (const line of reply.rejected) result(workspaceId, 'warn', localizeRejection(globalTr, line));
       for (const line of reply.notices) result(workspaceId, 'info', localizeNotice(globalTr, line));
-      // Jira writes the assistant already made through its tools, in the order it made them.
+      // Tracker writes the assistant already made through its tools, in the order it made them.
       // Printed before the actions run, because they happened first — during the turn.
-      for (const line of reply.jiraChanges) result(workspaceId, 'info', localizeNotice(globalTr, line));
-      // The mirror is what the Jira view, Team Capacity and the home tiles render, so reload
-      // it once the turn wrote there. `loadBoard` never throws — a failed read lands in the
-      // store's own `loadError`, which the Jira view shows — so a stale board can never turn
-      // a turn that did its work into an error line.
-      if (reply.jiraChanges.length > 0 && jira.integration) await jira.loadBoard();
+      for (const line of reply.trackerChanges) result(workspaceId, 'info', localizeNotice(globalTr, line));
+      // The mirrors are what the Jira and Plane views, Team Capacity and the home tiles render,
+      // so each tracker the turn wrote to (the line's code names it) is reloaded. `loadBoard`
+      // never throws — a failed read lands in the store's own `loadError`, which the view shows
+      // — so a stale board can never turn a turn that did its work into an error line.
+      const wrote = (tracker: 'jira_' | 'plane_') => reply.trackerChanges.some((n) => n.code?.startsWith(tracker));
+      if (wrote('jira_') && jira.integration) await jira.loadBoard();
+      if (wrote('plane_') && plane.integration) await plane.loadBoard();
       // In order and one at a time: the model may file two risks in one turn, and the codes
       // Postgres mints depend on the order they arrive in. Awaited, so the transcript's
       // result lines follow the actions rather than racing them.

@@ -108,7 +108,7 @@ const ICONS: Record<KIconName, readonly string[]> = {
   // Team Capacity — a gauge. The hint is «навантаження команди»: a load, i.e. a reading
   // against a limit, which a group-of-people mark would have said nothing about.
   capacity: ['M3.34 19a10 10 0 1 1 17.32 0', 'm12 14 4.5-4.5'],
-  // Integrations — a plug. The section is nothing but connections to Linear, Jira and Slack,
+  // Integrations — a plug. The section is nothing but connections to Linear, Jira, Plane and Slack,
   // and «plug it in» is the one action every tile on that screen offers. The two prongs are
   // what keep it from reading as the page-shaped Release Notes mark two rows above.
   // Wider and shorter than Lucide's stock plug (which is 12×20 in this box): beside five

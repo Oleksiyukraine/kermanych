@@ -431,6 +431,65 @@ launches are independent, and its mirror is removed on its own «Відключ�
   Kermanych asks where the ticket should go next and applies that transition in
   Jira.
 
+### Plane
+
+A workspace can mirror **up to ten Plane projects** onto «Дошка», from Plane Cloud or a
+self-hosted Plane. The owner connects each one in **Менеджмент → Integrations**: the Plane
+address and workspace slug (pasting a workspace URL such as
+`https://app.plane.so/my-team/projects/` fills both), then a personal API token (Plane →
+Profile settings → Personal Access Tokens), then the project picker. More projects are added
+from the same card until the tenth. The board page grows a «Plane» view next to «Задачі»
+(and Jira / Linear when they are connected), with a project picker when several are connected.
+Jira, Linear and Plane are independent and may all be connected at once.
+
+- **The columns are the project's states.** Each state is one column, ordered by Plane's state
+  groups (Backlog → Unstarted → Started → Completed → Cancelled). Dragging a card to a column
+  moves the work item to that state. Plane has no workflow, so any state is allowed.
+- **Tokens are personal and local.** Each member who wants to *act* adds their own Plane API
+  token on the Integrations tab. Acting means moving, commenting, logging work,
+  creating/editing/deleting work items, or uploading files. The token is stored in this
+  machine's registry SQLite (`plane_tokens`, keyed by Plane address and workspace slug) and is
+  checked against Plane before it is saved. Actions land in Plane under that member's own
+  account. A member without a token gets a read-only mirror.
+- **Plane is the source of truth, polled within its rate limit.** Plane allows 60 API requests
+  a minute per token, so the mirror is kept differently from Jira's:
+  - Whoever has the Plane view open polls every ~30 s, sharing one lease per project.
+  - A poll reads only the work items changed since the last one.
+  - Comments, attachments and worklogs are refreshed for at most five work items per poll, and
+    at once for the ticket you open.
+  - The project's states, and work items deleted or archived in Plane, are reconciled by a full
+    sweep every 10 minutes and on «Синхронізувати».
+  - If Plane answers «too many requests», the poll stops quietly, and the rest arrives with the
+    next one.
+- **Text is Markdown in, Plane formatting out.** Descriptions and comments written in Kermanych
+  are converted to Plane's editor HTML. `- [ ]` / `- [x]` become Plane checklists. The editor
+  opens an existing work item with its description read back as Markdown.
+- **One assignee, Kermanych-side.** The card shows a work item's first assignee. Choosing an
+  assignee in Kermanych replaces Plane's assignee list with that one person.
+- **Fields:**
+  - the five Plane priorities (urgent, high, medium, low, none);
+  - labels, chosen by name;
+  - the project's estimate points, when the project has estimates;
+  - start and due dates;
+  - the parent;
+  - the work-item type, on editions that have types.
+- **Work is logged where it is done, when the project tracks time.** Time tracking is a Plane
+  Pro feature that a project turns on. With it on, the ticket dialog's «Ворклоги» tab logs a
+  duration in the same spelling as Jira («3h 20m», «45m», «1.5h») with an optional note.
+  - Plane has no work date and no remaining estimate, so neither is asked.
+  - You may edit or delete your own entries, and a project admin may edit or delete anyone's.
+  - Without time tracking, the tab is not shown.
+- **Attachments** upload through Kermanych (Plane's default limit is 5 MB) and download through
+  the local api, so your token never reaches the storage host.
+- **Tickets launch like tasks.** «Запустити» asks for the Kermanych project and the Plane state
+  to move the work item to, and runs it on a hidden shadow task (`tasks.plane_key`). After the
+  merge, Kermanych asks which state the work item goes to next.
+- **Beyond the board.**
+  - The Менеджмент assistant reads and changes Plane with its own `plane_*` tools.
+  - A finding can be filed as a Plane work item.
+  - Team Capacity and the Home capacity and tasks tiles can read a Plane project, as described
+    in their sections.
+
 ### Slack
 
 A workspace can bind **one Slack channel** to a Slack app that answers questions about
@@ -1483,7 +1542,7 @@ problems in its reply.
   «Чат»). Its counter and the ⚑ mark on the agent's session card show how many are still open.
   A new report arrives live, and it does not change the session's status or interrupt the
   agent.
-- **Створити задачу →** opens one dialog for both targets, prefilled and editable: the title,
+- **Створити задачу →** opens one dialog for every target, prefilled and editable: the title,
   and a description with Context, Acceptance criteria, Evidence, Suggested fix and the origin
   (project, branch, session). A board card also records that it came from a finding and of
   which kind (`tasks.finding_kind`, kept as created, for later counts), and the dialog offers
@@ -1497,11 +1556,22 @@ problems in its reply.
     and to Task otherwise (or to the first type the project offers). The labels are
     `kermanych-finding` plus the kind. The option is disabled, with the reason, when the
     workspace has no connected board or this machine has no token for its site.
+  - **Plane** creates a work item in a connected project through
+    `POST /api/plane/issues/:integrationId`, signed with your personal Plane token. The project
+    picker preselects the project the Plane board last showed. Priority defaults to High for
+    `bug` / `security` and to None otherwise. The type is preselected only when the project
+    has work-item types (Plane Pro) and one is named Bug / Task for the kind; otherwise the
+    item is filed untyped. The labels are `kermanych-finding` plus the kind, created in the
+    project when missing. The option is disabled, with the reason, when the workspace has no
+    connected Plane project or this machine has no token for its address and Plane workspace.
+  A tracker's «not connected» reason is shown only while the other tracker has nothing
+  connected either.
 - **Відхилити** marks a finding dismissed. This cannot be undone, and the agent sees it in
   `list_findings`.
 - **Routes.** `GET /api/sessions/:id/findings`;
-  `POST /api/sessions/:id/findings/:findingId/filed` with `{ "kind": "board", "taskId" }` or
-  `{ "kind": "jira", "key", "url" }`; `POST /api/sessions/:id/findings/:findingId/dismiss`.
+  `POST /api/sessions/:id/findings/:findingId/filed` with `{ "kind": "board", "taskId" }`,
+  `{ "kind": "jira", "key", "url" }` or `{ "kind": "plane", "key", "url" }`;
+  `POST /api/sessions/:id/findings/:findingId/dismiss`.
   An unknown session or finding answers 404, and a finding that is no longer open answers 400.
   If the card or issue is created but recording it fails, the finding stays open with the error
   shown in the dialog. The card or issue already exists then: check before filing again.
@@ -1836,29 +1906,59 @@ corrects the board — it
 cannot stop a session on a machine you do not control, and if that machine is still alive
 it will simply push its real status again.
 
+## ЦУК — the avatar's control console
+
+A small character — the logo's `›_` as a face — peeks out of the window's left edge on every tab.
+Click it, press <kbd>Ctrl</kbd>/<kbd>⌘</kbd>+<kbd>K</kbd> (matched by the physical key, so the
+Ukrainian layout works; also inside a session's browser page), or draw a counter-clockwise circle
+with the mouse, no button held, and a large window opens in the middle of the screen:
+**ЦУК — «Центр управління Керманича»**, a console for Kermanych itself, with a notepad on its
+right. (Spec: `docs/specs/2026-11-04-cuk-control-console.md`.)
+
+- **One conversation for the whole app.** ЦУК sees every workspace, project and session on this
+  machine and the open board cards; whatever the header has selected is its default target
+  («запусти агента» means the selected project). Switching workspace does not end the
+  conversation; it lives until the app restarts, and «×» starts a new one.
+- **What it does.** Answers about the state («хто чекає на мою відповідь?», «що впало?», «що на
+  дошці?»); opens a tab, a Менеджмент section or any settings pane; selects a workspace or a
+  project; opens a session; files a card into the backlog or launches an agent on a task (plain or
+  «Глибокий аналіз», with the project's defaults and your launch mode); sends a message to an
+  agent; stops, resumes, restarts, archives or unarchives a session; starts or stops its preview;
+  writes to the notepad. It has no file tools — it answers from the app's state, and the agent it
+  launches reads the code — and runs on `claude-sonnet-5` for speed. It sees attached images, not
+  documents.
+- **What waits for you.** Navigation, selection and the notepad happen at once (opening a screen
+  also steps the window aside). Everything that spends the subscription or touches an agent — a
+  launch, a card, a message, stop, resume, restart, archive, unarchive, preview — appears as a card
+  under the answer: what will happen, the text editable, «Виконати» / «Скасувати». The line that
+  says what happened is written by the app after the call answered, never by the model.
+- **What it does not do.** Nothing irreversible: deleting a session or a card, finish, a pull
+  request, a merge, risks, release notes, Jira. Asked for one, it opens the screen with the button
+  and names it.
+- **The notepad is «Список дій».** The ruled page on the right is the current workspace's Action
+  List — the same list, on this machine, as the Менеджмент → Огляд tile, so a line written in one
+  is in the other. Without a workspace it asks you to pick one. Below ~900 px of window width it
+  hides behind 📝.
+- **The Менеджмент assistant is the second panel.** For the owner and managers of the current
+  workspace the window is an accordion: ЦУК expanded (every opening starts there), «Асистент
+  менеджменту» folded to its bar above it. Clicking a bar swaps them; the one composer at the
+  bottom writes to the expanded panel, and each keeps its own draft and attachments. It is the same
+  conversation as the Менеджмент tab's dock, asked as the «Огляд» section. Developers see ЦУК only.
+
+Esc, a click outside, <kbd>⌘K</kbd>, the character or another circle closes the window; a question
+in flight keeps running, the character shows it is thinking, then wears a dot until you look at
+the answer. The circle can be switched off in Settings → «Загальне» if it fires by accident; it
+does not work over a session's browser page, which the app cannot see the mouse over. The
+character is yours to pick in the same pane, under «Персонаж ЦУК»: ten drawings, from the
+terminal bot (the default) to the original glossy drop, a cowboy, a Cossack and Darth Vader; the
+choice is kept on this computer. (docs/specs/2026-11-03-assistant-mascot-choice.md)
+
 ## The Менеджмент tab and its assistant
 
 Менеджмент is the non-code half of the product: seven workspace-scoped sections
 (`packages/core/src/management.ts` is the one table that names them) plus a chat
-field docked to the foot of the page.
-
-**The same chat, from any tab.** A small character — the logo's `›_` as a face — peeks out of
-the window's left edge everywhere except the Менеджмент tab. Click it, press
-<kbd>Ctrl</kbd>/<kbd>⌘</kbd>+<kbd>K</kbd> (matched by the physical key, so the Ukrainian layout
-works; also inside a session's browser page), or draw a counter-clockwise circle with the mouse,
-no button held, and the chat opens as an overlay in the middle of the screen. It is the same
-conversation as the tab's, with the same composer — helpers, attachments, the plan chip, «Новий
-чат». Every turn sent from the overlay is asked as the «Огляд» section, so documentation search
-stays on the Документація section. Esc, a click outside, <kbd>⌘K</kbd>, the character or another
-circle closes it; a question in flight keeps running, the character shows it is thinking, then
-wears a dot until you look at the answer. A half-written question and its attachments wait for
-the next opening. On the Менеджмент tab the same keys and gesture put the cursor in the tab's own
-field instead. The circle can be switched off in Settings → «Загальне» if it fires by accident;
-it does not work over a session's browser page, which the app cannot see the mouse over. The
-character itself is yours to pick in the same pane, under «Персонаж асистента»: ten drawings,
-from the terminal bot (the default) to the original glossy drop, a cowboy, a Cossack and Darth
-Vader; the choice is kept on this computer. (docs/specs/2026-11-03-assistant-overlay.md,
-docs/specs/2026-11-03-assistant-mascot-choice.md)
+field docked to the foot of the page. Owners and managers also reach the same conversation as
+the second panel of the ЦУК window (above).
 
 Wherever it is opened, that chat is a real assistant, and it is deliberately narrow:
 
@@ -1953,9 +2053,13 @@ Wherever it is opened, that chat is a real assistant, and it is deliberately nar
   written in. Commits in another language are translated; names of people, the product and
   interface labels stay as they are.
 - **It reads the team's capacity.** Team Capacity is the one section marked `read`: the
-  screen adds up the Jira board's remaining estimates (spread over business days up to
+  screen adds up the tracker's remaining estimates (spread over business days up to
   each ticket's due date) and its worklogs against 8 h per person per business day, for a
-  date range you pick, as a chart or a table, for the whole team or the people you tick
+  date range you pick. The tracker is the workspace's Jira board or Plane project; with both
+  connected, a «Jira | Plane» switch on the screen and on the Home capacity and tasks tiles
+  picks one (remembered per workspace, Jira by default). A Plane item counts as estimated only
+  with a time-type estimate. The screen shows the range as a chart or a table, for the whole
+  team or the people you tick
   in the roster picker — the chart, the table and the totals all show that same selection. The
   browser hands the assistant the same numbers by week — two weeks back, six ahead — as
   `context.capacity` on every turn, so «what's Marina's load for the next two weeks» is
@@ -1988,7 +2092,9 @@ Wherever it is opened, that chat is a real assistant, and it is deliberately nar
     project or board (or the assistant asks); a workspace with one Jira board needs no naming.
     Naming Jira in a workspace that has none — or on a machine with no personal Jira token — is
     refused with the reason, and NOT quietly filed on the native board instead: you named a
-    board, and a card on the other one is a card you will not find where you looked.
+    board, and a card on the other one is a card you will not find where you looked. Plane
+    follows the same rule: only «створи в Plane…» (or a Plane key or project) routes to
+    `plane_create_issue`, and with several connected Plane projects the request names one.
   - **The ticket is written as a project manager writes one, and the app owns its shape.**
     The action carries five named slots — a business context, an optional user flow,
     acceptance criteria, an optional out-of-scope list, and the title — and
@@ -2068,6 +2174,28 @@ Wherever it is opened, that chat is a real assistant, and it is deliberately nar
   - **Not covered** (present in some Jira MCP servers): Jira Service Management queues and
     customer requests, ProForma forms, development info (PRs/commits), moving an issue to
     another project, entity properties, dashboards and saved filters.
+- **It works in Plane live too, through `plane_*` tools on the same endpoint.** The one MCP
+  server (`kermanych-trackers`) lists the Jira tools and then the Plane tools
+  (`apps/api/src/plane/plane-tools.service.ts`) and routes each call by its name. Every Plane
+  call runs under your own Plane API key and reaches ONLY the Plane projects the workspace
+  connected — a key from any other project is refused. What that covers:
+  - **Reading.** Search (Plane's own search by name or number, narrowed on the board mirror by
+    state group, state, assignee, labels and priority; one page), a full work-item read
+    (fields by name, description and comments as markdown, attachments, links, parent,
+    sub-items, and on request worklogs and the activity log), attachment download, and the
+    vocabularies: projects, states, labels, project members, estimate points, cycles, modules.
+  - **Writing.** Create (the same five ticket slots, English rule and open-question refusal;
+    priority, labels by name, an assignee resolved among the project's members with the
+    candidates named when a name is ambiguous, estimate point, dates, parent, state,
+    attachments), update, a move to any state (`plane_set_state` — Plane has no workflow),
+    comments (add, edit, delete), worklogs (a duration like `3h 20m`, on projects with time
+    tracking), web links, attachments and delete. Plane has no sprints or versions: cycles and
+    modules stand in for them (create, add work items, remove one).
+  - **What you see.** Each Plane write prints its own line («Plane: створено WEB-12 — …»), the
+    board mirror is refreshed for items, comments, worklogs and attachments, and a write Plane
+    accepted is reported with its key even when that refresh failed. Reads stay inside
+    Plane's 60-requests-a-minute budget: the vocabularies are cached and search reads the
+    mirror.
 - **It spends the same subscription your agents spend.** It runs through the same
   `omp` on your PATH, the same provider account and the same plan; there is no second
   key to configure and no separate budget. The mono pill on the right of the field is

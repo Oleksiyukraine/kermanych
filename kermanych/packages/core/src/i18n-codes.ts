@@ -10,7 +10,7 @@
 // array in lockstep with its union.
 
 // Notices — prose RETURNED to the operator as a transcript `notice` entry (supervisor) or a
-// `ManagementChatReply.notices` / `.jiraChanges` line (management chat). These never abort a
+// `ManagementChatReply.notices` / `.trackerChanges` line (management chat). These never abort a
 // turn: they ride alongside a real answer. A turn that FAILS is an `ApiErrorCode`, thrown to
 // the controller. `params` documents the values the localized message interpolates; a code
 // with no params carries a fixed sentence.
@@ -44,7 +44,7 @@ export type NoticeCode =
   // supervisor.service.ts — the machine resource profile (docs/specs/2026-10-21-machine-resource-profile.md):
   | "slot_wait" // supervisor.service.ts — a message is accepted but waits for an agent slot (params: { running, limit })
   | "watchdog_killed" // watchdog.service.ts — the watchdog killed an agent command at critical memory pressure (params: { command, size })
-  // jira-tools.service.ts — one `ManagementChatReply.jiraChanges` line per Jira write the
+  // jira-tools.service.ts — one `ManagementChatReply.trackerChanges` line per Jira write the
   // assistant made through its Jira tools during the turn:
   | "jira_issue_created" // jira-tools.service.ts — jira_create_issue filed an issue (params: { key, summary })
   | "jira_issue_updated" // jira-tools.service.ts — jira_update_issue changed fields (params: { key, fields } — comma-joined names)
@@ -65,7 +65,25 @@ export type NoticeCode =
   | "jira_issues_moved_to_sprint" // jira-tools.service.ts — issues moved into a sprint (params: { keys, sprint } — keys comma-joined)
   | "jira_issues_moved_to_backlog" // jira-tools.service.ts — issues moved to the backlog (params: { keys } — comma-joined)
   | "jira_version_created" // jira-tools.service.ts — a fix version was created (params: { name, project })
-  | "jira_version_updated"; // jira-tools.service.ts — a fix version was changed (params: { name })
+  | "jira_version_updated" // jira-tools.service.ts — a fix version was changed (params: { name })
+  // plane-tools.service.ts — one `ManagementChatReply.trackerChanges` line per Plane write the
+  // assistant made through its Plane tools during the turn:
+  | "plane_issue_created" // plane-tools.service.ts — plane_create_issue filed a work item (params: { key, summary })
+  | "plane_issue_updated" // plane-tools.service.ts — plane_update_issue changed fields (params: { key, fields } — comma-joined names)
+  | "plane_issue_state_changed" // plane-tools.service.ts — plane_set_state moved a work item (params: { key, state })
+  | "plane_issue_deleted" // plane-tools.service.ts — plane_delete_issue removed a work item (params: { key })
+  | "plane_comment_added" // plane-tools.service.ts — a comment was added (params: { key })
+  | "plane_comment_updated" // plane-tools.service.ts — a comment was edited (params: { key })
+  | "plane_comment_deleted" // plane-tools.service.ts — a comment was removed (params: { key })
+  | "plane_worklog_added" // plane-tools.service.ts — time was logged (params: { key, time })
+  | "plane_link_added" // plane-tools.service.ts — a web link was attached (params: { key, url })
+  | "plane_attachment_added" // plane-tools.service.ts — a file was uploaded onto a work item (params: { key, name })
+  | "plane_cycle_created" // plane-tools.service.ts — a cycle was created (params: { name, project })
+  | "plane_issues_added_to_cycle" // plane-tools.service.ts — work items were put into a cycle (params: { keys, cycle } — keys comma-joined)
+  | "plane_issue_removed_from_cycle" // plane-tools.service.ts — a work item was taken out of a cycle (params: { key, cycle })
+  | "plane_module_created" // plane-tools.service.ts — a module was created (params: { name, project })
+  | "plane_issues_added_to_module" // plane-tools.service.ts — work items were added to a module (params: { keys, module } — keys comma-joined)
+  | "plane_issue_removed_from_module"; // plane-tools.service.ts — a work item was removed from a module (params: { key, module })
 
 // HTTP errors — Ukrainian prose thrown as an exception and shown to the operator in place
 // of a 500. The controller carries `{ code, message, params }` in the response body (see
@@ -168,6 +186,22 @@ export const NOTICE_CODES = [
   "jira_issues_moved_to_backlog",
   "jira_version_created",
   "jira_version_updated",
+  "plane_issue_created",
+  "plane_issue_updated",
+  "plane_issue_state_changed",
+  "plane_issue_deleted",
+  "plane_comment_added",
+  "plane_comment_updated",
+  "plane_comment_deleted",
+  "plane_worklog_added",
+  "plane_link_added",
+  "plane_attachment_added",
+  "plane_cycle_created",
+  "plane_issues_added_to_cycle",
+  "plane_issue_removed_from_cycle",
+  "plane_module_created",
+  "plane_issues_added_to_module",
+  "plane_issue_removed_from_module",
 ] as const satisfies readonly NoticeCode[];
 
 export const API_ERROR_CODES = [
@@ -312,6 +346,13 @@ export type ManagementRejectionCode =
   | "todo_index_range" // a todo.update/delete index that is not a whole number ≥ 1 (params: { value })
   | "todo_update_empty" // a todo.update with no patch or an empty one (params: none)
   | "todo_done_type" // a todo.update done that is not a boolean (params: { value })
+  // validateCukAction — the ЦУК console's blocks (./cuk-actions):
+  | "cuk_place_missing" // a navigate without a place id (params: none)
+  | "cuk_select_empty" // a scope.select naming neither a workspace nor a project (params: none)
+  | "cuk_session_missing" // a session action without the session ref (params: { kind })
+  | "cuk_project_missing" // a task.create / agent.start without a project name (params: { kind })
+  | "cuk_task_missing" // a task.create / agent.start without the task text (params: { kind })
+  | "cuk_message_missing" // a session.message without the message text (params: none)
   // parseManagementReply — the block never parsed as JSON:
   | "block_unreadable"; // the fenced block was not readable JSON (params: { message })
 
@@ -370,6 +411,12 @@ export const MANAGEMENT_REJECTION_CODES = [
   "todo_index_range",
   "todo_update_empty",
   "todo_done_type",
+  "cuk_place_missing",
+  "cuk_select_empty",
+  "cuk_session_missing",
+  "cuk_project_missing",
+  "cuk_task_missing",
+  "cuk_message_missing",
   "block_unreadable",
 ] as const satisfies readonly ManagementRejectionCode[];
 

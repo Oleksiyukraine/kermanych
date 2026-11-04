@@ -37,19 +37,20 @@
 // arranges themselves — drag a tile by its header to reorder, drag its corner to resize — over
 // the four widgets that snapshot the other sections (Team Capacity, today's board, the risk
 // register, recent release notes). The layout model and its arithmetic live in lib/dashboard.ts;
-// this component owns the DOM the gestures run against and the Jira session two of the widgets
-// read from.
+// this component owns the DOM the gestures run against and the tracker sessions two of the
+// widgets read from.
 //
-// The Jira session is opened HERE, once, not inside the capacity and tasks widgets: both read
-// the one useJira() singleton, and two openers would fight over its generation guard. It is
-// opened post-mount for the same reason ManagementCapacityPage does — a sibling section's
-// onUnmounted close() runs after this setup, so an immediate open would be torn down moments
-// later.
+// The tracker sessions (Jira's AND Plane's, through stores/tracker.ts, so the tiles' «Jira |
+// Plane» switch is instant) are opened HERE, once, not inside the capacity and tasks widgets:
+// both read the one useJira() / usePlane() singletons, and two openers would fight over their
+// generation guards. They are opened post-mount for the same reason ManagementCapacityPage
+// does — a sibling section's onUnmounted close() runs after this setup, so an immediate open
+// would be torn down moments later.
 import { computed, markRaw, onMounted, onUnmounted, ref, watch, type Component } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { confirmAction } from '../lib/confirm';
 import KBtn from 'components/kit/KBtn.vue';
-import { useJira } from 'stores/jira';
+import { useTrackerSource, type TrackerToken } from 'stores/tracker';
 import { useProjects } from 'stores/projects';
 import HomeTile from 'components/home/HomeTile.vue';
 import HomeCapacityWidget from 'components/home/HomeCapacityWidget.vue';
@@ -72,7 +73,7 @@ import {
 const props = defineProps<{ workspaceId: string; workspaceName: string }>();
 
 const { t } = useI18n();
-const jira = useJira();
+const tracker = useTrackerSource();
 const projects = useProjects();
 
 const WIDGETS: Record<WidgetId, Component> = {
@@ -221,12 +222,12 @@ function onPointerUp(): void {
   if (moved) persist();
 }
 
-// ── Jira session (capacity + tasks widgets) ────────────────────────────────────
-let openToken: number | undefined;
+// ── Tracker sessions (capacity + tasks widgets) ────────────────────────────────
+let openToken: TrackerToken | undefined;
 
 async function enter(id: string): Promise<void> {
   if (!id) return;
-  openToken = await jira.open(id);
+  openToken = await tracker.open(id);
 }
 
 onMounted(() => {
@@ -245,7 +246,7 @@ watch(
 
 onUnmounted(() => {
   observer?.disconnect();
-  jira.close(openToken);
+  tracker.close(openToken);
   document.body.style.userSelect = '';
   window.removeEventListener('pointermove', onPointerMove);
   window.removeEventListener('pointerup', onPointerUp);

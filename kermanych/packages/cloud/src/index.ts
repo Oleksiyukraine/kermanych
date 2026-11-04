@@ -59,6 +59,15 @@ export type {
   LinearIssue,
   LinearComment,
   LinearAttachment,
+  PlaneStatusCategory,
+  PlaneIntegration,
+  PlaneIntegrationInsert,
+  PlaneSyncState,
+  PlaneColumn,
+  PlaneIssue,
+  PlaneComment,
+  PlaneWorklog,
+  PlaneAttachment,
   SlackIntegration,
   SlackIntegrationInsert,
   ReleaseNotesSlack,
@@ -273,6 +282,32 @@ export {
   replaceLinearIssueChildren,
   subscribeLinearIssues,
 } from "./linear";
+
+export type { PlaneIssueChange, PlaneIssueChildren } from "./plane";
+export {
+  toPlaneIntegration,
+  toPlaneIssue,
+  toPlaneIssueRow,
+  listPlaneIntegrations,
+  getPlaneIntegrationById,
+  upsertPlaneIntegration,
+  deletePlaneIntegration,
+  getPlaneSyncState,
+  ensurePlaneSyncState,
+  takePlaneSyncLease,
+  advancePlaneSyncCursor,
+  listPlaneColumns,
+  replacePlaneColumns,
+  listPlaneIssues,
+  upsertPlaneIssues,
+  deletePlaneIssues,
+  patchPlaneIssueBinding,
+  markPlaneChildrenSynced,
+  listPlaneIssueChildren,
+  listPlaneWorklogsBetween,
+  replacePlaneIssueChildren,
+  subscribePlaneIssues,
+} from "./plane";
 
 export {
   toSlackIntegration,

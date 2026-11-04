@@ -2,9 +2,12 @@
 // pages/ManagementCapacityPage.vue (chart + table) and stores/management-chat.ts (the digest
 // the assistant answers from). Everything a screen or a prompt line shows is derived here.
 //
-// The units are Jira's: `*Seconds` on issues, `seconds` on worklogs. The baseline is the
-// one thing Jira does not have — DEFAULT_HOURS_PER_DAY per person per business day — and
-// it is an option so a later per-member table can feed it without touching the maths.
+// The units are Jira's: `*Seconds` on issues, `seconds` on worklogs. Plane's mirror spells the
+// same fields the same way (docs/specs/2026-11-04-plane-integration.md, Decision 11), so the
+// maths reads either tracker through the structural `CapacityIssue` / `CapacityWorklog`. The
+// baseline is the one thing neither tracker has — DEFAULT_HOURS_PER_DAY per person per
+// business day — and it is an option so a later per-member table can feed it without
+// touching the maths.
 //
 // Dates are YYYY-MM-DD strings and go through lib/calendar.ts for arithmetic: a parsed
 // `Date` of such a string is UTC midnight, which is yesterday for half of Europe.
@@ -12,6 +15,28 @@ import { isoOf, isoParts, shiftDays, shiftMonths, todayIso } from './calendar';
 import type { JiraIssue, JiraStatusCategory, JiraWorklog } from '@kermanych/cloud';
 import type { ManagementCapacity, ManagementCapacityWeek } from '@kermanych/core';
 import { UNASSIGNED } from './jira-view';
+
+/**
+ * What capacity reads of an issue: Jira's and Plane's mirror rows both fit. Plane keeps no
+ * remaining estimate, so it is optional and `remainingSeconds` derives it.
+ */
+export type CapacityIssue = Pick<
+  JiraIssue,
+  | 'key'
+  | 'summary'
+  | 'assigneeAccountId'
+  | 'assigneeName'
+  | 'assigneeAvatar'
+  | 'statusName'
+  | 'statusCategory'
+  | 'startDate'
+  | 'dueDate'
+  | 'originalEstimateSeconds'
+  | 'timeSpentSeconds'
+> & { remainingEstimateSeconds?: number };
+
+/** What capacity reads of a worklog, Jira's or Plane's. */
+export type CapacityWorklog = Pick<JiraWorklog, 'authorAccountId' | 'authorName' | 'authorAvatar' | 'seconds' | 'startedAt'>;
 
 export const DEFAULT_HOURS_PER_DAY = 8;
 // Up to a month reads day by day; longer than that a bar per day is noise, so weeks.
@@ -125,9 +150,11 @@ export { todayIso };
 export type CapacityFlag = 'overdue' | 'unscheduled' | 'unestimated';
 
 /** What is left to do on an issue. Jira keeps `remaining` itself once anything is logged;
- *  before that it may be blank, so original − spent is the fallback, floored at zero. */
-export function remainingSeconds(issue: JiraIssue): number {
-  if (issue.remainingEstimateSeconds > 0) return issue.remainingEstimateSeconds;
+ *  before that it may be blank, and Plane keeps none at all, so original − spent is the
+ *  fallback, floored at zero. */
+export function remainingSeconds(issue: CapacityIssue): number {
+  const kept = issue.remainingEstimateSeconds ?? 0;
+  if (kept > 0) return kept;
   return Math.max(issue.originalEstimateSeconds - issue.timeSpentSeconds, 0);
 }
 
@@ -143,7 +170,7 @@ export type IssuePlan = { remaining: number; days: string[]; flag?: CapacityFlag
  *     undated estimated work is the main reason a capacity view under-reports;
  *   - nothing left → flag `unestimated`.
  */
-export function planIssue(issue: JiraIssue, today: string): IssuePlan {
+export function planIssue(issue: CapacityIssue, today: string): IssuePlan {
   const remaining = remainingSeconds(issue);
   if (remaining <= 0) return { remaining: 0, days: [], flag: 'unestimated' };
   if (!isoParts(issue.dueDate)) return { remaining, days: [], flag: 'unscheduled' };
@@ -251,8 +278,8 @@ function localDay(instant: string): string {
 }
 
 export function capacityReport(
-  issues: readonly JiraIssue[],
-  worklogs: readonly JiraWorklog[],
+  issues: readonly CapacityIssue[],
+  worklogs: readonly CapacityWorklog[],
   opts: CapacityOptions,
 ): CapacityReport {
   const range = normalizeRange(opts.range);

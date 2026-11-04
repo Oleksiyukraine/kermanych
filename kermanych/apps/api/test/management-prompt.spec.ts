@@ -374,6 +374,31 @@ describe("buildManagementTurn", () => {
     expect(writable).toContain("є особистий токен — читай і змінюй інструментами jira_*");
   });
 
+  // Plane's twin of the three states, plus what only Plane needs: the Plane workspace the
+  // project lives in, because a Plane token is keyed by it and two connected projects may sit
+  // in different ones.
+  it("states which Plane projects are connected and whether this machine may write to each", () => {
+    const none = buildManagementTurn({ first: false, repos, context, today: TODAY, text: "?" });
+    expect(none).toContain("Проєкти Plane: не підключені");
+
+    const out = buildManagementTurn({
+      first: false,
+      repos,
+      context: {
+        ...context,
+        plane: [
+          { projectIdentifier: "WEB", projectName: "Web", siteUrl: "https://app.plane.so", workspaceSlug: "acme", canWrite: true },
+          { projectIdentifier: "OPS", projectName: "Ops", siteUrl: "https://plane.acme.io", workspaceSlug: "ops", canWrite: false },
+        ],
+      },
+      today: TODAY,
+      text: "?",
+    });
+    expect(out).toContain("Проєкти Plane (2) — у plane_create_issue назви project");
+    expect(out).toContain("- «Web» · проєкт WEB · https://app.plane.so/acme · є особистий токен — читай і змінюй інструментами plane_*");
+    expect(out).toContain("- «Ops» · проєкт OPS · https://plane.acme.io/ops · БЕЗ особистого токена Plane");
+  });
+
   // A Jira issue is assigned to an ATLASSIAN account, so the roster cannot answer it: with only
   // the roster to go by, the assistant refused «створи тікет у Jira на Марину» because Maryna
   // has no Kermanych seat. The rule names both sets and sends the Jira name to the tool.

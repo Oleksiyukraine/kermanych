@@ -320,6 +320,7 @@ export {
 export {
   MANAGEMENT_ACTION_FENCE,
   RISK_EXPORT_FORMATS,
+  parseActionBlocks,
   parseManagementReply,
   renderTicketDescription,
   validateManagementAction,
@@ -343,6 +344,7 @@ export {
   type ManagementDocFragment,
   type ManagementDocs,
   type ManagementJiraBoard,
+  type ManagementPlaneBoard,
   type ManagementCapacity,
   type ManagementCapacityPerson,
   type ManagementCapacityWeek,
@@ -360,6 +362,26 @@ export {
   type ManagementChatReply,
   type ParsedManagementReply,
 } from "./management-actions";
+export {
+  CUK_SESSION_VERBS,
+  CUK_TITLE_MAX,
+  cukNeedsConfirm,
+  parseCukReply,
+  validateCukAction,
+  type CukAction,
+  type CukActionKind,
+  type CukBoardRow,
+  type CukChatAsk,
+  type CukChatReply,
+  type CukContext,
+  type CukPlace,
+  type CukProjectRow,
+  type CukSessionAction,
+  type CukSessionRow,
+  type CukSessionVerb,
+  type CukTaskAction,
+  type CukWorkspaceRow,
+} from "./cuk-actions";
 export {
   QA_CHECKLIST_KIND,
   QA_CHECKLIST_DIRECTIVE,

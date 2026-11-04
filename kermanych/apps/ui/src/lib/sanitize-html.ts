@@ -1,7 +1,8 @@
 // apps/ui/src/lib/sanitize-html.ts
-// Allowlist sanitizer for the HTML Jira renders (descriptions, comment bodies) before it
-// meets v-html. The mirror stores what Jira said; TRUST is decided here, on display, so a
-// malicious or merely exotic fragment degrades to its text rather than executing.
+// Allowlist sanitizer for the HTML a tracker renders (Jira descriptions and comment bodies,
+// Plane's editor HTML) before it meets v-html. The mirror stores what the tracker said; TRUST
+// is decided here, on display, so a malicious or merely exotic fragment degrades to its text
+// rather than executing.
 //
 // A DOM walk over a detached template — not a regex: browsers parse HTML, so the
 // sanitizer must parse it the same way or be lied to (`<img src=x onerror=…>` hides from
@@ -18,12 +19,17 @@ const ALLOWED_TAGS: Record<string, true> = {
   A: true, IMG: true,
 };
 
-// Per-tag attribute allowlist; anything else — style, class, on*, data-* — is dropped.
+// Per-tag attribute allowlist; anything else — style, class, on*, other data-* — is dropped.
+// The two data attributes are Plane's task list (`<ul data-type="taskList">` of
+// `<li data-checked="true|false">`): inert strings the dialog's CSS draws the box from, so a
+// checklist keeps its ticks instead of reading as a plain bullet list.
 const ALLOWED_ATTRS: Record<string, Record<string, true>> = {
   A: { href: true, title: true },
   IMG: { src: true, alt: true, title: true, width: true, height: true },
   TH: { colspan: true, rowspan: true },
   TD: { colspan: true, rowspan: true },
+  UL: { "data-type": true },
+  LI: { "data-checked": true },
 };
 
 // http(s) and site-relative only: `javascript:`, `data:` and friends are how an href

@@ -133,6 +133,7 @@ const eligible = (t: Task, projectIds: string[], userId: string) =>
   !t.design &&
   !t.jiraKey &&
   !t.linearKey &&
+  !t.planeKey &&
   (!t.assigneeId || t.assigneeId === userId);
 vi.mock("@kermanych/cloud", () => ({
   getTask: async (_c: unknown, id: string) => cards.get(id),

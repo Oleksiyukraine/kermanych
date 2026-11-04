@@ -9,6 +9,7 @@ import { UsageController } from "./http/usage.controller";
 import { SkillsController } from "./http/skills.controller";
 import { SkillImportController } from "./http/skill-import.controller";
 import { ManagementController } from "./http/management.controller";
+import { CukController } from "./http/cuk.controller";
 import { ModelsController } from "./http/models.controller";
 import { RegistryService } from "./registry/registry.service";
 import { WorktreeService } from "./worktree/worktree.service";
@@ -24,12 +25,15 @@ import { CloudSyncService } from "./cloud/cloud-sync.service";
 import { SkillsService } from "./skills/skills.service";
 import { ManagementChatService } from "./management/management-chat.service";
 import { ReleaseNotesService } from "./management/release-notes.service";
+import { CukChatService } from "./cuk/cuk-chat.service";
 import { ModelsService } from "./models/models.service";
 import { RuntimeCheckService } from "./runtime/runtime-check.service";
 import { JiraController } from "./http/jira.controller";
 import { JiraService } from "./jira/jira.service";
 import { LinearController } from "./http/linear.controller";
 import { LinearService } from "./linear/linear.service";
+import { PlaneController } from "./http/plane.controller";
+import { PlaneService } from "./plane/plane.service";
 import { SlackController } from "./http/slack.controller";
 import { SlackService } from "./slack/slack.service";
 import { SlackReleaseNotesService } from "./slack/slack-release-notes.service";
@@ -38,6 +42,7 @@ import { DocsController } from "./http/docs.controller";
 import { ManagementMcpController } from "./http/management-mcp.controller";
 import { ManagementMcpService } from "./management/management-mcp.service";
 import { JiraToolsService } from "./jira/jira-tools.service";
+import { PlaneToolsService } from "./plane/plane-tools.service";
 import { TerminalService } from "./terminal/terminal.service";
 import { TerminalGateway } from "./ws/terminal.gateway";
 import { NativeSessionService } from "./native/native-session.service";
@@ -59,7 +64,7 @@ import { DeviceController } from "./http/device.controller";
 import { DeviceGateway } from "./ws/device.gateway";
 
 @Module({
-  controllers: [AuthController, ProjectsController, SessionsController, FsController, UsageController, CloudController, SkillsController, SkillImportController, ManagementController, ManagementMcpController, ModelsController, JiraController, LinearController, SlackController, AccountController, DocsController, NativeController, BrowserMcpController, MachineController, MinionController, TesterController, VoiceController, DeviceController],
+  controllers: [AuthController, ProjectsController, SessionsController, FsController, UsageController, CloudController, SkillsController, SkillImportController, ManagementController, ManagementMcpController, CukController, ModelsController, JiraController, LinearController, PlaneController, SlackController, AccountController, DocsController, NativeController, BrowserMcpController, MachineController, MinionController, TesterController, VoiceController, DeviceController],
   providers: [
     RegistryService, WorktreeService, SupervisorService, PreviewService, EnvFileService, EventsGateway,
     UsageService,
@@ -74,14 +79,20 @@ import { DeviceGateway } from "./ws/device.gateway";
     // this check exists to undo.
     RuntimeCheckService,
     // The Менеджмент assistant. Resolves the scoped workspace's local repo paths
-    // (RegistryService), drives its own agent children, and hands each child the Jira tools
-    // through ManagementMcpService. It deliberately knows nothing about SupervisorService —
+    // (RegistryService), drives its own agent children, and hands each child the tracker
+    // tools through ManagementMcpService. It deliberately knows nothing about SupervisorService —
     // this chat has no session, branch or worktree.
     ManagementChatService,
-    // The assistant's live Jira tools (JiraToolsService, over JiraService under the acting
-    // user's own token) served as MCP to the chat's children, one bearer secret per child.
+    // The assistant's live tracker tools — Jira's (JiraToolsService over JiraService) and
+    // Plane's (PlaneToolsService over PlaneService), each under the acting user's own token —
+    // served together as MCP to the chat's children, one bearer secret per child.
     JiraToolsService,
+    PlaneToolsService,
     ManagementMcpService,
+    // ЦУК, the console behind the avatar (docs/specs/2026-11-04-cuk-control-console.md): one
+    // tool-less child per user on the same chat pool as the Менеджмент assistant. Knows only
+    // the runtime preference (RegistryService) and the renice (MachineResourcesService).
+    CukChatService,
     // The Release Notes generator: one one-shot omp child per request, reading the bound
     // repo's git history through { RegistryService, WorktreeService }. Like the chat it
     // knows nothing about SupervisorService — a generation has no session and no worktree.
@@ -106,6 +117,11 @@ import { DeviceGateway } from "./ws/device.gateway";
     // (RegistryService), Linear HTTP under the acting user, mirror writes under their JWT,
     // and the same SupervisorService.createSessionFromTask launch path.
     LinearService,
+    // The Plane integration engine: the Jira precedent over Plane's REST v1 — per-user API
+    // keys (RegistryService), Plane HTTP under the acting user within Plane's 60-requests-a-
+    // minute budget, mirror writes under their JWT, and the same
+    // SupervisorService.createSessionFromTask launch path.
+    PlaneService,
     // The Slack documentation bot: per-user Slack tokens (RegistryService), Socket Mode
     // connections dialled OUT from this machine (the api binds 127.0.0.1, so Slack cannot
     // call in), retrieval and the integration row under the operator's JWT
