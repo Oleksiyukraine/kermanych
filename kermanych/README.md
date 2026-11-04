@@ -436,8 +436,8 @@ launches are independent, and its mirror is removed on its own «Відключ�
 A workspace can bind **one Slack channel** to a Slack app that answers questions about
 the workspace's project documentation. The owner connects it in **Менеджмент →
 Integrations** (create the Slack app → paste its two tokens → pick the channel); after
-that, every top-level message in the channel is a question, and Kermanych replies in a
-thread under it.
+that, a message in the channel that @-mentions Kermanych is a question, and Kermanych
+replies in a thread under it.
 
 Setting up the Slack app, once per workspace:
 
@@ -471,10 +471,12 @@ Setting up the Slack app, once per workspace:
   thread, in order. Parts break between paragraphs where possible, and a code block cut in
   two is closed and reopened so both halves still render as code. There is no upper limit
   on the answer's length.
-- **Follow-ups need a mention.** Inside a thread, Kermanych answers only messages that
-  @-mention it, and reads the whole thread — the question, its earlier answers and the
-  discussion — as the context for the new answer. Thread replies without a mention are
-  left alone, as are messages in any other channel the bot was invited to.
+- **Kermanych answers only when tagged.** A message — top-level or in a thread — is
+  answered only when it @-mentions Kermanych. A message that tags another app (Jira,
+  another bot), an agent or a person, or tags nobody, is left alone, as are messages in
+  any other channel the bot was invited to. A message that tags Kermanych together with
+  someone else is answered. Inside a thread, Kermanych reads the whole thread — the
+  question, its earlier answers and the discussion — as the context for the new answer.
 - **It answers while someone is online.** Slack delivers events over Socket Mode to
   the Kermanych app itself, because the local API is not reachable from the internet.
   The bot therefore answers only while a member whose machine holds the tokens has
