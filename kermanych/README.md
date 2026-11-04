@@ -1782,9 +1782,10 @@ wears a dot until you look at the answer. A half-written question and its attach
 the next opening. On the Менеджмент tab the same keys and gesture put the cursor in the tab's own
 field instead. The circle can be switched off in Settings → «Загальне» if it fires by accident;
 it does not work over a session's browser page, which the app cannot see the mouse over. The
-character itself is yours to pick in the same pane, under «Персонаж асистента»: seven drawings,
-from the terminal bot (the default) to the original glossy drop; the choice is kept on this
-computer. (docs/specs/2026-11-03-assistant-overlay.md, docs/specs/2026-11-03-assistant-mascot-choice.md)
+character itself is yours to pick in the same pane, under «Персонаж асистента»: ten drawings,
+from the terminal bot (the default) to the original glossy drop, a cowboy, a Cossack and Darth
+Vader; the choice is kept on this computer. (docs/specs/2026-11-03-assistant-overlay.md,
+docs/specs/2026-11-03-assistant-mascot-choice.md)
 
 Wherever it is opened, that chat is a real assistant, and it is deliberately narrow:
 
