@@ -106,13 +106,13 @@ assistant stays available to managers in the same window, folded.
    «Відкрий налаштування проєкту») fill the transcript area. Below ~900 px of window width the
    notepad hides behind a 📝 button in the window head and slides over ЦУК.
    Rejected: height growing with content (the window jumps with every answer); near-full-screen.
-8. **The notepad looks like a small tear-off pad built from theme tokens.** Page on `--k-surface`
-   with faint ruled lines (`--k-line`) the rows sit on, a thin `--k-accent` margin line on the
-   left; at the top a glued strip (`--k-surface2`) with a perforation under it; two sheet edges
-   showing beneath the page; «ЗАПИСНИЧОК» in mono caps with the workspace name, the UI font, the
-   B/I/U · ☑ · 1. toolbar as one thin strip. Works in all four themes. Three bindings were drawn
-   and shown as screenshots — rings, a spiral, the glued pad; the operator picked the pad
-   (2026-11-04), with the rings as the way back if it does not wear well.
+8. **The notepad looks like a small ringed notebook built from theme tokens.** Page on
+   `--k-surface` with faint ruled lines (`--k-line`) the rows sit on, a thin `--k-accent` margin
+   line on the left, a row of rings rising above the page's top edge through punched holes,
+   «ЗАПИСНИЧОК» in mono caps with the workspace name, the UI font, the B/I/U · ☑ · 1. toolbar as
+   one thin strip. Works in all four themes. Three bindings were drawn and shown as screenshots —
+   rings, a spiral, a glued tear-off pad; the operator tried the pad and came back to the rings
+   (2026-11-04).
    Rejected: a plain tile look; realistic cream paper with a handwriting font.
 9. **The «Асистент менеджменту» panel is for owners and managers of the current workspace.**
    A developer gets the window with ЦУК only, no accordion. With no workspace selected there
@@ -220,7 +220,7 @@ assistant stays available to managers in the same window, folded.
 - Not exercised: `agent.start` / `task.create` end to end (the preview has no cloud board); the
   Electron build (⌘K from inside a session browser page is an unchanged path).
 - Notepad binding variants for decision 8: `docs/design/2026-11-04-cuk-notepad/`
-  (`notepad-c-pad` — shipped, `notepad-a-rings` — the fallback, `notepad-b-spiral`).
+  (`notepad-a-rings` — shipped, `notepad-b-spiral`, `notepad-c-pad` — tried, rejected).
 
 ## Documentation
 
