@@ -36,12 +36,19 @@ import type {
   PreviewInfo,
   PreviewLogs,
   PreviewState,
+  DeviceChoice,
+  DeviceInfo,
+  DevicePick,
+  DevicePlatform,
   AgentFinding,
   FindingTarget,
   MachineResources,
   ResourcesUpdate,
   MinionState,
+  NativeSettings,
   PrCheck,
+  QaRunScope,
+  TesterSettings,
 } from '@kermanych/core';
 import type {
   CloudProject,
@@ -714,6 +721,21 @@ export const api = {
   setMinionProject: (projectId: string, active: boolean): Promise<MinionState> =>
     put<MinionState>(`/minion/projects/${projectId}`, { active }),
 
+  // How native TUIs launch on this machine — local-only, applied at a session's next start.
+  nativeSettings: (): Promise<NativeSettings> => get<NativeSettings>('/native/settings'),
+
+  setNativeSettings: (s: NativeSettings): Promise<NativeSettings> =>
+    put<NativeSettings>('/native/settings', s),
+
+  // «Тестувальник» settings of a project on this machine (docs/specs/2026-11-04-qa-tester-agent.md,
+  // decisions 4 and 14). Local only and passwords included: the agent never gets them, the
+  // operator's own settings form does. The PUT answers with what the api stored (trimmed, ids).
+  getTesterSettings: (projectId: string): Promise<TesterSettings> =>
+    get<TesterSettings>(`/tester/projects/${projectId}`),
+
+  putTesterSettings: (projectId: string, settings: TesterSettings): Promise<TesterSettings> =>
+    put<TesterSettings>(`/tester/projects/${projectId}`, settings),
+
   // The watchdog's «Зупинити команду»: the api kills only a subtree that session started
   // after it became ready, never the agent or its MCP servers.
   killAgentCommand: (sessionId: string, pid: number): Promise<{ ok: boolean }> =>
@@ -836,8 +858,16 @@ export const api = {
   // `starting`) and reports its progress through `preview_update`.
   previewInfo: (id: string): Promise<PreviewInfo> => get<PreviewInfo>(`/sessions/${id}/preview`),
 
-  startPreview: (id: string, opts: { restart?: boolean } = {}): Promise<PreviewState> =>
-    post<PreviewState>(`/sessions/${id}/preview`, opts),
+  // `platform` / `base` (a Mobile project, docs/specs/2026-11-03-mobile-device-preview.md,
+  // decision 6): the device to start on; a base other than the session's clone re-clones it.
+  startPreview: (
+    id: string,
+    opts: { restart?: boolean; platform?: DevicePlatform; base?: string } = {},
+  ): Promise<PreviewState> => post<PreviewState>(`/sessions/${id}/preview`, opts),
+
+  // The app of a Mobile preview (decision 11): «Запустити застосунок» after it exited.
+  previewApp: (id: string, action: 'launch' | 'terminate' | 'restart'): Promise<PreviewState> =>
+    post<PreviewState>(`/sessions/${id}/preview/app`, { action }),
 
   stopPreview: (id: string): Promise<void> => del(`/sessions/${id}/preview`),
 
@@ -848,6 +878,24 @@ export const api = {
   // «Доручити агенту»: Kermanych asks the session's agent to write `.kermanych/preview.json`.
   configurePreview: (id: string): Promise<{ sent: true }> =>
     post<{ sent: true }>(`/sessions/${id}/preview/configure`, {}),
+
+  // The session's device (docs/specs/2026-11-03-mobile-device-preview.md): the tooling, the
+  // base devices of this machine, the project's choice, the session's clone and the pause.
+  deviceInfo: (id: string): Promise<DeviceInfo> => get<DeviceInfo>(`/sessions/${id}/device`),
+
+  // The project's base device on this machine (local registry only, decision 6).
+  setDeviceChoice: (projectId: string, choice: DeviceChoice): Promise<DeviceChoice> =>
+    put<DeviceChoice>(`/projects/${projectId}/device-choice`, choice),
+
+  // The «Агент» pause: `device_*` and preview start/stop refuse the agent while it is on.
+  setDevicePaused: (id: string, paused: boolean): Promise<{ paused: boolean }> =>
+    put<{ paused: boolean }>(`/sessions/${id}/device/pause`, { paused }),
+
+  // «◎ Вказати»: the element under a point given as fractions of the screen.
+  devicePick: (id: string, point: { x: number; y: number }): Promise<DevicePick> =>
+    post<DevicePick>(`/sessions/${id}/device/pick`, point),
+
+  deviceScreenshot: (id: string): Promise<Blob> => getBlob(`/sessions/${id}/device/screenshot`),
 
   finishInfo: (
     id: string,
@@ -973,6 +1021,10 @@ export const api = {
 
   reviewSession: (id: string): Promise<Session> =>
     post<Session>(`/sessions/${id}/review`, {}),
+
+  // «Виконати тестування»: starts a tester child of a doer session; answers with the child.
+  runTester: (id: string, scope: QaRunScope): Promise<Session> =>
+    post<Session>(`/sessions/${id}/qa-run`, { scope }),
 
   mergeBranch: (id: string, summary?: string): Promise<{ merged: boolean }> =>
     post<{ merged: boolean }>(`/sessions/${id}/merge`, { summary }),

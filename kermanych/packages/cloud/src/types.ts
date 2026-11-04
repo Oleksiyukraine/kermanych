@@ -901,8 +901,8 @@ export type PlaneAttachment = {
 };
 
 // ── Slack integration ─────────────────────────────────────────────────────────
-// One Slack channel bound per workspace; its top-level messages are questions answered
-// from the workspace's indexed documentation. The camelCase shape of
+// One Slack channel bound per workspace; its messages that @-mention the bot are questions
+// answered from the workspace's indexed documentation. The camelCase shape of
 // workspace_slack_integrations; slack.ts owns the snake_case boundary. Addresses only —
 // the bot/app tokens never leave each machine's registry SQLite.
 export type SlackIntegration = {

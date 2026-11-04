@@ -24,6 +24,7 @@ import {
   DESIGNER_AGENT_ID,
   DESIGN_SAVE_AGENT_ID,
   MINION_AGENT_ID,
+  TESTER_AGENT_ID,
   instructionErrors,
   type AgentDef,
   type SkillView,
@@ -80,7 +81,7 @@ export type AiTeamAgentGroup = 'work' | 'design' | 'ship' | 'auto';
 export const AI_TEAM_AGENT_GROUPS: readonly { key: AiTeamAgentGroup; agents: readonly string[] }[] = [
   { key: 'work', agents: [MINION_AGENT_ID, 'promote'] },
   { key: 'design', agents: [DESIGNER_AGENT_ID, DESIGN_SAVE_AGENT_ID] },
-  { key: 'ship', agents: ['review', 'pull-request', 'commit', 'resolve-conflict'] },
+  { key: 'ship', agents: ['review', TESTER_AGENT_ID, 'pull-request', 'commit', 'resolve-conflict'] },
   { key: 'auto', agents: ['finish', 'summary'] },
 ];
 
@@ -90,6 +91,7 @@ export const AGENT_ICONS: Readonly<Record<string, KIconName>> = {
   [DESIGNER_AGENT_ID]: 'design',
   [DESIGN_SAVE_AGENT_ID]: 'agentDesignSave',
   review: 'agentReview',
+  [TESTER_AGENT_ID]: 'agentTester',
   'pull-request': 'agentPullRequest',
   commit: 'agentCommit',
   'resolve-conflict': 'agentResolveConflict',

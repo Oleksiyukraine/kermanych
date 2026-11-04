@@ -152,6 +152,8 @@ export {
   getTask,
   createTask,
   patchTask,
+  patchQaItems,
+  setQaChecklistIfEmpty,
   claimTaskForLaunch,
   releaseLaunchClaim,
   listMinionCandidates,

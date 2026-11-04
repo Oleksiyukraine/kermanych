@@ -244,6 +244,39 @@ export async function patchTask(client: SupabaseClient, id: string, patch: TaskP
   return toTask(data as TaskRow);
 }
 
+// ── QA checklist, item by item (docs/specs/2026-11-04-qa-tester-agent.md, decision 3) ─────────
+// A person's tick and the tester's verdict land on the same column concurrently; these go through
+// SQL functions that change it inside one UPDATE (20261104090000), never a whole-column rewrite
+// from a possibly stale copy. Same JWT, same RLS and tasks_guard() as patchTask.
+
+/**
+ * Merge `patch` into the items named by `itemIds` and drop the `drop` keys from them. Returns the
+ * checklist as written; throws when the card is not visible or holds none of the items.
+ */
+export async function patchQaItems(
+  client: SupabaseClient,
+  taskId: string,
+  itemIds: readonly string[],
+  patch: Record<string, unknown>,
+  drop: readonly string[] = [],
+): Promise<QaChecklist> {
+  const { data, error } = await client.rpc("qa_checklist_patch_items", {
+    p_task: taskId,
+    p_items: [...itemIds],
+    p_patch: patch,
+    p_drop: [...drop],
+  });
+  if (error) throw new Error(error.message);
+  return data as QaChecklist;
+}
+
+/** Write `checklist` only onto a card that has none. True when it wrote. */
+export async function setQaChecklistIfEmpty(client: SupabaseClient, taskId: string, checklist: QaChecklist): Promise<boolean> {
+  const { data, error } = await client.rpc("qa_checklist_set_if_empty", { p_task: taskId, p_checklist: checklist });
+  if (error) throw new Error(error.message);
+  return data === true;
+}
+
 // ── Images ──────────────────────────────────────────────────────────────────
 // Task images live in a PRIVATE Storage bucket; the task row carries only these paths.
 // Both helpers run under the caller's JWT, so the storage RLS in 20260830160000 — project

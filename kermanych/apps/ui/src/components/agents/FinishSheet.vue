@@ -37,6 +37,11 @@
             <p class="finish__hint mono">{{ t('agents.finish.docsBlocked') }}</p>
           </template>
         </template>
+        <!-- «Виконати тестування»: before retiring, the tester walks the card's QA checklist in
+             the browser (docs/specs/2026-11-04-qa-tester-agent.md). Its session opens. -->
+        <div v-if="liveSession" class="finish__qa">
+          <QaRunButton :session="liveSession" @select="onTester" />
+        </div>
       </div>
       <p v-if="error" class="finish__error" role="alert">{{ error }}</p>
     </div>
@@ -80,10 +85,11 @@ import { useOrchestrator } from 'stores/orchestrator';
 import { errorText, useAsyncAction } from '../../composables/useAsyncAction';
 import KModal from 'components/kit/KModal.vue';
 import KBtn from 'components/kit/KBtn.vue';
+import QaRunButton from './QaRunButton.vue';
 
 const props = defineProps<{ modelValue: boolean; session: Session | null }>();
-// `focus`: an action left the agent working on the session (resolve, PR, commit, docs) — the
-// parent shows it, so the operator watches that turn in its log.
+// `focus`: an action left an agent working — on the session (resolve, PR, commit, docs) or in the
+// tester it started — the parent shows that session, so the operator watches the turn in its log.
 const emit = defineEmits<{ 'update:modelValue': [open: boolean]; focus: [sessionId: string] }>();
 
 const { t } = useI18n();
@@ -112,6 +118,16 @@ const conflicts = computed(() => info.value?.conflicts ?? []);
 // `in_review` status — the operator keeps prompting the agent after «Створити ПР», which
 // drives the card back through thinking/tool and would otherwise flip the button back.
 const hasPr = computed(() => props.session?.prOpened === true || props.session?.status === 'in_review');
+
+// The session as the store holds it now, not as it was when ✓ was pressed: whether the agent is
+// mid-turn or a tester runs decides the testing button's state.
+const liveSession = computed(() => (props.session ? (store.sessions.find((x) => x.id === props.session!.id) ?? props.session) : null));
+
+// A tester started (or the running one): show its session, where the run is watched.
+function onTester(testerId: string): void {
+  close();
+  emit('focus', testerId);
+}
 
 // Every open starts clean and reads the branch afresh. A reply for a session the sheet was
 // reopened on since is dropped.
@@ -188,6 +204,10 @@ function run(action: { run: (s: Session) => Promise<unknown> }): void {
   display: flex;
   flex-direction: column;
   gap: 16px;
+}
+
+.finish__qa {
+  margin-top: 12px;
 }
 
 .finish__hint {

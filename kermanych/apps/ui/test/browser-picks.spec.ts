@@ -1,12 +1,37 @@
 import { describe, expect, it } from 'vitest';
+import type { DevicePick } from '@kermanych/core';
 import {
   composePicksMessage,
+  isDevicePick,
   loadPicksTray,
   picksImages,
   PICKS_STORAGE_KEY,
   savePicksTray,
   type TrayPick,
 } from '../src/lib/browser-picks';
+
+function devicePick(over: Partial<DevicePick> = {}, comment = ''): TrayPick {
+  return {
+    id: Math.random().toString(36),
+    comment,
+    pick: {
+      platform: 'ios',
+      deviceName: 'iPhone 16',
+      screen: { width: 393, height: 852 },
+      point: { x: 120.4, y: 610.6 },
+      element: {
+        type: 'Button',
+        label: 'Увійти',
+        id: 'login',
+        value: null,
+        frame: { x: 24.2, y: 600, width: 345, height: 47.6 },
+        enabled: true,
+      },
+      screenshot: { data: 'iVBORw0KGgo=', mimeType: 'image/png' },
+      ...over,
+    },
+  };
+}
 
 function pick(over: Partial<KermanychBrowserPick> = {}, comment = ''): TrayPick {
   return {
@@ -134,6 +159,74 @@ describe('composePicksMessage', () => {
   });
 });
 
+describe('composePicksMessage — device picks', () => {
+  it('names the device, the screen and the element instead of a page and a selector', () => {
+    const msg = composePicksMessage([devicePick({}, 'не натискається')], { native: false });
+    expect(msg).toBe(
+      [
+        'Елементи, вказані на екрані пристрою (1):',
+        '',
+        '## Елемент 1',
+        'Коментар: не натискається',
+        'Пристрій: iPhone 16 (iOS)',
+        'Екран: 393×852 (точки)',
+        'Точка: 120,611',
+        'Елемент: Button «Увійти», id login',
+        'Розташування: 24,600 345×48',
+        'Скриншот: зображення 1 у вкладенні',
+      ].join('\n'),
+    );
+    expect(picksImages([devicePick()], { native: false })).toEqual([{ data: 'iVBORw0KGgo=', mimeType: 'image/png' }]);
+  });
+
+  it('says Android coordinates are pixels and writes a value and a disabled element', () => {
+    const msg = composePicksMessage(
+      [
+        devicePick({
+          platform: 'android',
+          deviceName: 'Pixel 8',
+          screen: { width: 1080, height: 2400 },
+          element: { type: 'EditText', label: null, id: 'com.acme:id/email', value: 'a@b.c', frame: { x: 0, y: 0, width: 1080, height: 120 }, enabled: false },
+        }),
+      ],
+      { native: false },
+    );
+    expect(msg).toContain('Пристрій: Pixel 8 (Android)');
+    expect(msg).toContain('Екран: 1080×2400 (пікселі)');
+    expect(msg).toMatch(/^Елемент: EditText, id com\.acme:id\/email, значення «a@b\.c», вимкнений$/m);
+  });
+
+  it('says so when nothing was under the point, and still gives the point', () => {
+    const msg = composePicksMessage([devicePick({ element: null })], { native: false });
+    expect(msg).toContain('Точка: 120,611');
+    expect(msg).toContain('Елемент: під точкою немає елемента в дереві доступності');
+    expect(msg).not.toContain('Розташування:');
+  });
+
+  it('gives a native session no screenshot line (a device crop has no file) and no images', () => {
+    const picks = [devicePick()];
+    expect(composePicksMessage(picks, { native: true })).not.toContain('Скриншот:');
+    expect(picksImages(picks, { native: true })).toEqual([]);
+  });
+
+  it('numbers attached images across a tray that mixes browser and device picks, without throwing', () => {
+    const msg = composePicksMessage([pick({ screenshot: shot }), devicePick(), devicePick({ screenshot: { data: '', mimeType: 'image/png' } })], {
+      native: false,
+    });
+    expect(msg.split('\n')[0]).toBe('Елементи, вказані в браузері сесії та на екрані пристрою (3):');
+    const sections = msg.split(/\n(?=## Елемент )/).slice(1);
+    expect(sections[0]).toContain('Скриншот: зображення 1 у вкладенні');
+    expect(sections[0]).toContain('Селектор:');
+    expect(sections[1]).toContain('Скриншот: зображення 2 у вкладенні');
+    expect(sections[2]).not.toContain('Скриншот:');
+  });
+
+  it('tells device picks from browser picks, including a browser pick saved before device picks existed', () => {
+    expect(isDevicePick(devicePick().pick)).toBe(true);
+    expect(isDevicePick(pick().pick)).toBe(false);
+  });
+});
+
 // A Storage double whose setItem refuses values past `limit` characters, like a full quota.
 function storage(limit = Number.POSITIVE_INFINITY): Storage & { data: Map<string, string> } {
   const data = new Map<string, string>();
@@ -167,6 +260,14 @@ describe('picks tray persistence', () => {
     savePicksTray(s, { picks: { s1: [pick({ screenshot: big })] }, notes: {} });
     const restored = loadPicksTray(s).picks.s1![0]!.pick.screenshot;
     expect(restored).toEqual({ ...big, data: '' });
+  });
+
+  it('drops a device crop’s bytes too when the tray does not fit, keeping the pick', () => {
+    const s = storage(5_000);
+    savePicksTray(s, { picks: { s1: [devicePick({ screenshot: { data: 'A'.repeat(10_000), mimeType: 'image/png' } })] }, notes: {} });
+    const restored = loadPicksTray(s).picks.s1![0]!.pick;
+    expect(isDevicePick(restored) && restored.screenshot).toEqual({ data: '', mimeType: 'image/png' });
+    expect(isDevicePick(restored) && restored.element?.label).toBe('Увійти');
   });
 
   it('never throws: a tray that fits in no form leaves nothing stale behind', () => {

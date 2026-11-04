@@ -16,6 +16,9 @@ import type {
   DocsWriteKind,
   MachineAlert,
   PreviewState,
+  DevicePlatform,
+  QaRunScope,
+  TesterSettings,
 } from '@kermanych/core';
 import { connectSocket } from '../lib/socket';
 import { api, type MessageMode } from '../lib/api';
@@ -473,6 +476,20 @@ export const useOrchestrator = defineStore('orchestrator', () => {
     return api.mergeBranch(id, summary);
   }
 
+  // «Виконати тестування» (docs/specs/2026-11-04-qa-tester-agent.md): the api answers with the
+  // tester child, which the caller selects. The child's own row also arrives as session_update.
+  function runTester(id: string, scope: QaRunScope) {
+    return api.runTester(id, scope);
+  }
+
+  function getTesterSettings(projectId: string) {
+    return api.getTesterSettings(projectId);
+  }
+
+  function putTesterSettings(projectId: string, settings: TesterSettings) {
+    return api.putTesterSettings(projectId, settings);
+  }
+
   function archiveSession(id: string) {
     return api.archiveSession(id);
   }
@@ -527,11 +544,21 @@ export const useOrchestrator = defineStore('orchestrator', () => {
   const previewLive = (s: PreviewState | undefined): boolean => s?.phase === 'starting' || s?.phase === 'running';
 
   // `restart`: stop first (↻). An already starting/running preview answers with its state.
-  async function startPreview(id: string, restart = false) {
+  // `device`: the platform and base device of a Mobile start (KDevicePane); a base other than
+  // the session's clone re-clones it (docs/specs/2026-11-03-mobile-device-preview.md, decision 6).
+  async function startPreview(id: string, restart = false, device: { platform?: DevicePlatform; base?: string } = {}) {
     const before = previews.value[id];
-    const state = await api.startPreview(id, { restart });
+    const state = await api.startPreview(id, { restart, ...device });
     if (restart || !previewLive(before)) await untilPreview(id, (s) => s !== before && s !== undefined);
     return state;
+  }
+
+  // «Запустити застосунок» after the app exited (decision 11): resolves once the store shows a
+  // state other than the one it was pressed on — the app running again, or anything that ended it.
+  async function launchPreviewApp(id: string) {
+    const before = previews.value[id];
+    await api.previewApp(id, 'launch');
+    await untilPreview(id, (s) => s !== before);
   }
 
   async function stopPreview(id: string) {
@@ -694,6 +721,9 @@ export const useOrchestrator = defineStore('orchestrator', () => {
     branchSession,
     reviewSession,
     mergeBranch,
+    runTester,
+    getTesterSettings,
+    putTesterSettings,
     reopenSession,
     loadTranscript,
     subagents,
@@ -705,6 +735,7 @@ export const useOrchestrator = defineStore('orchestrator', () => {
     previewInfo,
     previewLogs,
     configurePreview,
+    launchPreviewApp,
     setProjectBinding,
     syncProjects,
     listBranches,

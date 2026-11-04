@@ -2,8 +2,8 @@
   <div>
     <button type="button" class="k-tr" :aria-expanded="open" @click="toggle">
       <span class="k-tr__g" :class="`k-tr__g--${entry.status}`" role="img" :aria-label="statusLabel">{{ glyph }}</span>
-      <span class="k-tr__t" :class="{ 'k-tr__t--skill': entry.tool === 'skill' }">{{ entry.tool }}</span>
-      <span class="k-tr__tg">{{ entry.target ?? '' }}</span>
+      <span v-tip.overflow="entry.tool" class="k-tr__t" :class="{ 'k-tr__t--skill': entry.tool === 'skill' }">{{ entry.tool }}</span>
+      <span v-tip.overflow="entry.target ?? ''" class="k-tr__tg">{{ entry.target ?? '' }}</span>
       <span class="k-tr__st">{{ statText }}</span>
       <span class="k-tr__ch" aria-hidden="true">{{ open ? '⌄' : '›' }}</span>
     </button>

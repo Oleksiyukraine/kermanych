@@ -178,6 +178,7 @@ export const en: MessageSchema = {
       minion: 'Minion',
       designer: 'Designer',
       'design-save': 'Save design',
+      tester: 'Tester',
     },
     blank: {
       eyebrow: 'KERMANYCH',
@@ -226,6 +227,7 @@ export const en: MessageSchema = {
       more: 'More actions',
       renameHint: 'Double-click to rename',
       renameAria: 'Agent name',
+      findLog: 'Find in the log (⌘F)',
       expandAll: 'Expand all',
       collapseAll: 'Collapse all',
       menu: {
@@ -244,6 +246,7 @@ export const en: MessageSchema = {
       findings: 'Findings',
       qa: 'QA',
       browser: 'Browser',
+      device: 'Device',
     },
     actions: {
       mergeTip: 'Merge the conclusion into the parent agent',
@@ -346,7 +349,7 @@ export const en: MessageSchema = {
     },
     qa: {
       title: 'What to verify',
-      empty: 'The QA list appears after «Create PR» — the agent composes it; a tester ticks the items off.',
+      empty: 'The QA list appears after «Create PR» or the first «Run testing» — the agent composes it. A person ticks the items; «Tester» records its own verdict next to each.',
     },
     slotWait: {
       waiting: 'waiting for a slot · {running} of {limit} running',
@@ -475,10 +478,8 @@ export const en: MessageSchema = {
       splitResizeAria: 'Resize the browser beside the log',
       splitResizeTip: 'Drag to resize the browser',
       find: {
+        open: 'Find in page (⌘F)',
         placeholder: 'Find in page',
-        prev: 'Previous match',
-        next: 'Next match',
-        close: 'Close find',
       },
       dialog: {
         alert: 'Page alert',
@@ -517,14 +518,18 @@ export const en: MessageSchema = {
       emptyHint: 'Type an address above.',
       downloaded: 'Downloaded: {name}',
     },
-    // The live preview in the Browser tab: its row, the logs panel, the empty pane's offers.
+    // The live preview in the Browser and Device tabs: its row, the logs panel, the empty pane's
+    // offers.
     preview: {
       status: {
         missing: 'Preview not configured',
         invalid: 'Preview file has an error: {error}',
         setup: 'Running setup…',
+        device: 'Booting the device…',
+        install: 'Installing the app…',
         starting: 'Starting {service}…',
         running: 'Running',
+        appExited: 'The app crashed',
         crashed: 'Crashed ({service}, code {code})',
         crashedSignal: 'Crashed ({service}, signal {signal})',
         failed: 'Failed to start ({step}): {error}',
@@ -536,6 +541,7 @@ export const en: MessageSchema = {
       start: 'Start preview',
       stop: 'Stop preview',
       restart: 'Restart preview',
+      launchApp: 'Launch the app',
       open: 'Open preview',
       logs: 'Logs',
       configure: 'Ask the agent',
@@ -549,6 +555,35 @@ export const en: MessageSchema = {
       logsResize: 'Resize the logs',
       logsEmpty: 'No logs yet.',
       logsFailed: 'Couldn’t read the logs: {error}',
+    },
+    // The Device tab of a Mobile project's agent session: the device picker, the toolbar, the
+    // screen and its empty states.
+    device: {
+      baseTitle: 'The device the session’s copy is made from',
+      buttons: {
+        home: 'Home',
+        back: 'Back',
+        recents: 'Recent apps',
+      },
+      rotate: 'Rotate the screen',
+      screenshot: 'Save a screenshot (PNG)',
+      pickTitle: 'Point at an element on the screen — the agent gets its type, label, id and a crop. Shift+click to point at another',
+      pickNoElement: 'Point {point}: no element',
+      agentIdleTip: 'Pause the agent: its device_* tools and preview start/stop are refused until you hand control back',
+      agentPausedTip: 'Hand the device back to the agent',
+      screenAria: 'Screen of {name}',
+      waitingFrame: 'Waiting for the picture…',
+      streamFailed: 'The screen is unavailable: {error}',
+      booting: 'Booting the device…',
+      starting: 'The preview is starting…',
+      empty: 'This session’s device is not running.',
+      notConfigured: 'The device appears once the preview is configured and started.',
+      toolsTitle: 'This machine has no tools for the device',
+      infoFailed: 'Couldn’t read the device: {error}',
+      retry: 'Try again',
+      recreateTitle: 'Make the device copy anew?',
+      recreateMessage: 'This session’s device copy ({from}) will be deleted and a new one made from “{to}”. The app data on it — sign-ins, settings, files — will be lost.',
+      recreateConfirm: 'Make anew',
     },
     // The PR “Create PR” opened: the PR row in the Session tab and the merged-PR popup.
     pr: {
@@ -764,6 +799,70 @@ export const en: MessageSchema = {
       pollError: 'Could not ask the cloud: {error}',
       loadFailed: 'Could not read the Minion’s state: {error}',
       findingsSkill: 'Cards from «Findings» also get the {name} skill — rules for bug, security, tech-debt and docs; «Library» can override or switch it off.',
+    },
+  },
+  // «Тестувальник» (docs/specs/2026-11-04-qa-tester-agent.md): the run button, its refusals, the
+  // per-item verdicts, the hand-off to the doer and the project's settings card.
+  tester: {
+    run: {
+      label: 'Run testing',
+      running: 'Testing in progress',
+      runningTip: 'Open the tester’s session',
+      scopeTitle: 'Which items to check',
+      allPassed: 'Every item passed — testing checks them all again.',
+      scope: {
+        open: 'Not passed',
+        all: 'All',
+      },
+    },
+    refusal: {
+      running: 'Testing of this session is already running.',
+      'not-agent': 'Testing runs only for a doer agent’s session.',
+      finished: 'The session is finished — its working copy is gone.',
+      'no-card': 'Testing works only for sessions started from a card: the checklist is stored on the card.',
+      busy: 'The agent is working — wait for its turn to end.',
+      'no-browser': 'Needs the browser of the Kermanych desktop app — the web build has none.',
+      platform: 'The project has no browser (back end or mobile) — nothing for the tester to open.',
+    },
+    verdict: {
+      passed: 'passed',
+      failed: 'failed',
+      blocked: 'blocked',
+      title: 'Tester’s verdict',
+      screenshot: 'Screenshot:',
+    },
+    handoff: {
+      title: 'Hand over to the doer',
+      hint: 'The doer gets one message with every failed and blocked item of this run — with notes and screenshots. When everything passed, the tester’s session just closes and nothing is sent.',
+      action: '⤴ Hand over',
+    },
+    panel: {
+      title: 'On this machine: test accounts and notes',
+      lead: 'For this project, on this machine only — never sent to the cloud. The agent never sees passwords: Kermanych types them into the field itself.',
+      accounts: 'Accounts',
+      noAccounts: 'None — the tester will check without signing in.',
+      add: '+ Add account',
+      name: 'Name or role',
+      namePlaceholder: 'Admin',
+      login: 'Login',
+      password: 'Password',
+      show: 'show',
+      hide: 'hide',
+      note: 'Note',
+      notePlaceholder: 'What this account is for',
+      moveUp: 'Up',
+      moveDown: 'Down',
+      remove: 'Delete account',
+      loginPath: 'Sign-in page',
+      loginPathPlaceholder: '/login',
+      loginPathHint: 'Optional. Without it the tester looks for the sign-in itself.',
+      notes: 'Notes for the tester',
+      notesPlaceholder: 'Test data, limits, what not to press…',
+      save: 'Save',
+      cancel: 'Cancel',
+      saved: 'Tester settings saved',
+      loadFailed: 'Could not read the tester settings: {error}',
+      unsaved: 'There are unsaved changes. An account without a name or login is not saved.',
     },
   },
   onboarding: {
@@ -1098,6 +1197,9 @@ export const en: MessageSchema = {
         eyes: 'Big eyes',
         captain: 'Captain',
         spark: 'Spark',
+        cowboy: 'Cowboy',
+        cossack: 'Cossack',
+        vader: 'Darth Vader',
       },
     },
     notifications: {
@@ -1243,7 +1345,7 @@ export const en: MessageSchema = {
       color: 'Project color',
       workspace: 'Workspace',
       platform: 'Platform',
-      platformNote: 'Back-end and Mobile have no «Browser» tab and no live preview.',
+      platformNote: 'Web has the «Browser» tab, Mobile the «Device» tab, both with the live preview. Back-end has neither.',
       platformChoice: {
         web: 'Web',
         backend: 'Back-end',
@@ -1455,6 +1557,9 @@ export const en: MessageSchema = {
       claude: 'claude-code',
       note: 'Existing sessions keep their current backend.',
       checking: 'Checking that the CLI is ready…',
+      nativeLabel: 'Native Claude Code sessions',
+      claudeFullScreen: 'Full-screen layout',
+      claudeFullScreenNote: 'Full screen pins the input to the bottom, but keeps only the visible screen: find in the Лог reaches only what is on it. Off, the whole history stays in the terminal and can be searched. Applies when a session next starts or resumes.',
     },
     language: {
       label: 'Agent communication language',
@@ -2478,6 +2583,9 @@ export const en: MessageSchema = {
     toast: {
       close: 'Close',
     },
+    terminal: {
+      findPlaceholder: 'Find in terminal',
+    },
     composer: {
       helpers: 'Helpers',
       helpersTip: 'Helpers — instruction commands',
@@ -3119,7 +3227,7 @@ export const en: MessageSchema = {
     },
     canvas: {
       desktopOnly: 'The canvas exists only in the desktop app: the web build has no session browser. Below is the design’s saved folder; the log and composer on the right work here too.',
-      noBrowser: 'This project is set to Back-end or Mobile: it has no browser and no preview, so the canvas has nothing to show. Change the platform in the project settings.',
+      noBrowser: 'This project is set to Back-end or Mobile: it has no session browser, so the canvas has nothing to show. A Mobile project’s preview is in the agent session’s Device tab. Change the platform in the project settings.',
       retired: 'This design’s worktree is gone, so the canvas has nothing to show.',
     },
     folder: {
@@ -3898,7 +4006,7 @@ export const en: MessageSchema = {
       channelLabel: 'Channel',
       channelPlaceholder: 'pick a channel…',
       private: 'private',
-      channelHint: 'Every message in this channel is a question — Kermanych answers in a thread. In a thread it answers only when mentioned.',
+      channelHint: 'Kermanych answers only messages in this channel that mention it, in a thread under the message. Messages that tag another app or person are left alone.',
       noChannels: 'The bot is not in any channel yet.',
       inviteBefore: 'Only channels the bot is in are listed. Invite it in the channel with',
       inviteAfter: ', then press Refresh.',

@@ -32,6 +32,7 @@ import type { WorktreeService } from "../src/worktree/worktree.service";
 import type { AuthService } from "../src/auth/auth.service";
 import type { ModelsService } from "../src/models/models.service";
 import type { PreviewService } from "../src/preview/preview.service";
+import type { DeviceApi } from "../src/device/device.contract";
 import type { MachineResourcesService } from "../src/machine/machine-resources.service";
 import type { RuntimeCheck, RuntimeCheckService } from "../src/runtime/runtime-check.service";
 
@@ -225,7 +226,7 @@ function make() {
   } as unknown as AuthService;
   const skills = Object.assign(stubSkills(), { assignedForNames: async () => ({ block: "", view: [], missing: [] }) });
   const models = { validModel: async (_r: string, w: string | undefined) => w } as unknown as ModelsService;
-  const browser = new BrowserMcpService(registry, { urlOf: () => undefined } as unknown as PreviewService, http);
+  const browser = new BrowserMcpService(registry, { urlOf: () => undefined } as unknown as PreviewService, {} as DeviceApi, http);
   const sup = new SupervisorService(registry, worktree as unknown as WorktreeService, auth, skills, models, undefined, browser, resources);
   const runtimeCheck = { check: vi.fn(async () => preflight) };
   const minion = new MinionService(registry, sup, auth, runtimeCheck as unknown as RuntimeCheckService);

@@ -249,6 +249,14 @@
             <KAnalysisMark v-if="selectedSession.deepAnalysis" />
             <KDesignMark v-if="selectedSession.designDir" />
             <KMinionMark v-if="selectedSession.minion" kind="running" />
+            <!-- A tester walks this session's QA checklist: the run is one click away. -->
+            <button
+              v-if="runningTester"
+              type="button"
+              class="agents__detail-tester mono"
+              v-tip="t('tester.run.runningTip')"
+              @click="store.selectSession(runningTester.id)"
+            ><KSpinner :size="9" />{{ t('tester.run.running') }}</button>
             <KDecisionMark v-if="selectedDecision" :reason="selectedDecision" />
             <KNotNeededMark v-else-if="selectedNotNeeded" :reason="selectedNotNeeded" />
           </div>
@@ -274,7 +282,7 @@
                 <KIconButton
                   v-if="selectedSession.status !== 'merged'"
                   :disabled="selectedPending"
-                  :title="selectedSession.kind === 'review' ? t('agents.merge.reviewTitle') : t('agents.actions.mergeTip')"
+                  :title="selectedSession.tester ? t('tester.handoff.title') : selectedSession.kind === 'review' ? t('agents.merge.reviewTitle') : t('agents.actions.mergeTip')"
                   @click="openMerge(selectedSession)"
                 >⤴</KIconButton>
               </template>
@@ -384,6 +392,14 @@
         </div>
         <KTabs v-model="detailTab" :tabs="detailTabs" class="agents__detail-tabs" @close="onDetailTabClose">
           <template #end>
+            <!-- The native Лог's find (KTerminalView): ⌘F inside the terminal does the same. -->
+            <KIconButton
+              v-if="detailTab === 'log' && selectedSession.native && selectedSession.terminalId"
+              :title="t('agents.detail.findLog')"
+              :active="!!logTermRef?.findOpen"
+              :aria-pressed="!!logTermRef?.findOpen"
+              @click="logTermRef?.toggleFind()"
+            ><KIcon name="search" /></KIconButton>
             <template v-if="detailTab === 'log' && !selectedSession.native">
               <button type="button" class="agents__log-ctl" @click="onExpandAll(true)">{{ t('agents.detail.expandAll') }}</button>
               <button type="button" class="agents__log-ctl" @click="onExpandAll(false)">{{ t('agents.detail.collapseAll') }}</button>
@@ -397,7 +413,7 @@
           v-show="detailTab === 'log'"
           ref="splitEl"
           class="agents__tabpane agents__tabpane--log"
-          :class="{ 'agents__tabpane--split': browserSplit }"
+          :class="{ 'agents__tabpane--split': paneSplit }"
         >
           <div class="agents__log-main">
             <!-- A native session's Лог is the harness's own TUI; Kermanych only hosts its pty. -->
@@ -405,6 +421,7 @@
               <KTerminalView
                 v-if="selectedSession.terminalId"
                 :key="selectedSession.terminalId"
+                ref="logTermRef"
                 class="agents__native-term"
                 :terminal-id="selectedSession.terminalId"
                 :active="detailTab === 'log'"
@@ -477,7 +494,7 @@
               </template>
             </KPanel>
           </div>
-          <template v-if="browserSplit && detailTab === 'log'">
+          <template v-if="paneSplit && detailTab === 'log'">
             <div
               class="agents__resizer"
               role="separator"
@@ -491,7 +508,15 @@
               @keydown="onSplitResizeKeydown"
             ></div>
             <div class="agents__split-browser" :style="{ width: splitWidth + 'px' }">
+              <KDevicePane
+                v-if="deviceTab"
+                :key="selectedSession.id"
+                :session="selectedSession"
+                :sending="sendingPicks"
+                @send="onSendPicks(selectedSession)"
+              />
               <KBrowserPane
+                v-else
                 :key="selectedSession.id"
                 :session="selectedSession"
                 :sending="sendingPicks"
@@ -504,7 +529,7 @@
         <!-- Desktop: mounted only while this tab is open — the pane parks the native view when it
              unmounts, so every other tab, a deselect and leaving Агенти hide the page. The web
              build has no page to embed: an `agent` session's tab is the preview row and logs. -->
-        <div v-if="detailTab === 'browser' && browserTab && !browserSplit" class="agents__tabpane">
+        <div v-if="detailTab === 'browser' && browserTab && !paneSplit" class="agents__tabpane">
           <KBrowserPane
             v-if="sessionBrowser.available"
             :key="selectedSession.id"
@@ -514,6 +539,16 @@
             @send="onSendPicks(selectedSession)"
           />
           <KPreviewWebPane v-else :key="selectedSession.id" :session="selectedSession" />
+        </div>
+        <!-- A Mobile project's agent session, both builds: mounted only while shown, so the
+             device's screen is watched (and streamed by the api) only then. -->
+        <div v-if="detailTab === 'device' && deviceTab && !paneSplit" class="agents__tabpane">
+          <KDevicePane
+            :key="selectedSession.id"
+            :session="selectedSession"
+            :sending="sendingPicks"
+            @send="onSendPicks(selectedSession)"
+          />
         </div>
         <div v-if="detailTab === 'changes'" class="agents__tabpane agents__changes">
           <div v-if="worktreeGone" class="agents__pane-blank">
@@ -767,26 +802,31 @@
         </div>
         <!-- QA tab: the checklist lives on the linked cloud CARD, so it is read from the board
              store (not the transcript) and persists past this session's archive. A brand-new
-             task has none until a «Створити ПР» run generates it — hence the empty state. -->
+             task has none until «Створити ПР» or the tester composes it — hence the empty state.
+             «Виконати тестування» heads the tab either way; each item shows the tester's verdict
+             beside the human tick. -->
         <div v-if="detailTab === 'qa'" class="agents__tabpane agents__docs">
           <KSkeleton v-if="qaPhase === 'skeleton'" variant="rows" :rows="4" />
           <template v-else-if="qaPhase === 'blank'"></template>
-          <template v-else-if="qaChecklist?.items.length">
+          <template v-else>
             <div class="agents__qa-head">
               <h3 class="agents__docs-title">{{ t('agents.qa.title') }}</h3>
-              <span class="agents__qa-count mono">{{ qaDone }}/{{ qaChecklist.items.length }}</span>
+              <span v-if="qaChecklist?.items.length" class="agents__qa-count mono">{{ qaDone }}/{{ qaChecklist.items.length }}</span>
+              <!-- A tester child shows its doer's checklist; the doer's own tab and «Завершити» start runs. -->
+              <QaRunButton v-if="!selectedSession.tester" class="agents__qa-run" :session="selectedSession" @select="store.selectSession" />
             </div>
-            <ul class="agents__qa-list">
+            <ul v-if="qaChecklist?.items.length" class="agents__qa-list">
               <li v-for="item in qaChecklist.items" :key="item.id" class="agents__qa-item">
                 <KCheckbox
                   :model-value="item.checked"
                   :label="item.text"
                   @update:model-value="(v: boolean) => onQaToggle(item.id, v)"
                 />
+                <QaVerdict v-if="item.agent" :verdict="item.agent" />
               </li>
             </ul>
+            <p v-else class="agents__log-empty mono">{{ t('agents.qa.empty') }}</p>
           </template>
-          <p v-else class="agents__log-empty mono">{{ t('agents.qa.empty') }}</p>
         </div>
         </template>
         <div v-else class="agents__detail-blank mono">{{ t('agents.detail.blank') }}</div>
@@ -1091,27 +1131,31 @@
       </template>
     </KModal>
 
-    <!-- MERGE — pour a discussion branch's conclusion into its parent -->
-    <KModal v-model="mergeOpen" :title="mergeIsReview ? t('agents.merge.reviewTitle') : t('agents.merge.branchTitle')">
+    <!-- MERGE — pour a discussion branch's conclusion into its parent. A tester's run has no
+         summary to edit: the api builds the doer's message from this run's verdicts. -->
+    <KModal v-model="mergeOpen" :title="mergeTitle">
       <div class="agents__form">
-        <label class="agents__field">
-          <span class="agents__field-label">{{ t('agents.merge.summaryLabel') }}</span>
-          <textarea
-            v-model="mergeSummary"
-            class="agents__textarea mono"
-            rows="6"
-            :placeholder="mergeIsReview ? t('agents.merge.summaryPlaceholderReview') : t('agents.merge.summaryPlaceholder')"
-          />
-        </label>
-        <p class="agents__hint mono">
-          {{ t('agents.merge.hint') }}
-          (<code class="mono">merged</code>).
-        </p>
+        <p v-if="mergeIsTester" class="agents__hint">{{ t('tester.handoff.hint') }}</p>
+        <template v-else>
+          <label class="agents__field">
+            <span class="agents__field-label">{{ t('agents.merge.summaryLabel') }}</span>
+            <textarea
+              v-model="mergeSummary"
+              class="agents__textarea mono"
+              rows="6"
+              :placeholder="mergeIsReview ? t('agents.merge.summaryPlaceholderReview') : t('agents.merge.summaryPlaceholder')"
+            />
+          </label>
+          <p class="agents__hint mono">
+            {{ t('agents.merge.hint') }}
+            (<code class="mono">merged</code>).
+          </p>
+        </template>
         <p v-if="mergeError" class="agents__error" role="alert">{{ mergeError }}</p>
       </div>
       <template #controls>
         <KBtn variant="ghost" @click="mergeOpen = false">{{ t('agents.launcher.cancel') }}</KBtn>
-        <KBtn variant="primary" :loading="mergeBusy" @click="submitMerge">{{ mergeIsReview ? t('agents.merge.give') : t('agents.merge.pour') }}</KBtn>
+        <KBtn variant="primary" :loading="mergeBusy" @click="submitMerge">{{ mergeIsTester ? t('tester.handoff.action') : mergeIsReview ? t('agents.merge.give') : t('agents.merge.pour') }}</KBtn>
       </template>
     </KModal>
 
@@ -1252,7 +1296,7 @@ import KDictation from 'components/kit/KDictation.vue';
 import KCheckbox from 'components/kit/KCheckbox.vue';
 import KField from 'components/kit/KField.vue';
 import KSelect from 'components/kit/KSelect.vue';
-import { BRANCH_PREFIXES, platformHasBrowser, prependHelper, type BranchPrefix } from '@kermanych/core';
+import { BRANCH_PREFIXES, platformHasBrowser, platformHasDevice, prependHelper, type BranchPrefix } from '@kermanych/core';
 import { useImageAttach } from '../composables/useImageAttach';
 import { useFileMention } from '../composables/useFileMention';
 import { useDictationField } from '../composables/useDictationField';
@@ -1268,8 +1312,13 @@ import { nativeHarnessName, nativeRuntimeFor, sessionCostKnown, sessionLaunchMod
 import KTerminalView from 'components/kit/KTerminalView.vue';
 import KBrowserPane from 'components/kit/KBrowserPane.vue';
 import KPreviewWebPane from 'components/kit/KPreviewWebPane.vue';
+import KDevicePane from 'components/kit/KDevicePane.vue';
 import { previewTabStatus } from '../lib/preview-view';
 import FinishSheet from 'components/agents/FinishSheet.vue';
+import QaRunButton from 'components/agents/QaRunButton.vue';
+import QaVerdict from 'components/agents/QaVerdict.vue';
+import KSpinner from 'components/kit/KSpinner.vue';
+import { runningTesterOf } from '../lib/tester';
 import { useSessionBrowser } from 'stores/browser';
 import { useSendPicks } from '../composables/useSendPicks';
 import { historyLoadFor } from '../lib/open-session-history';
@@ -1740,6 +1789,8 @@ const parentOfSelected = computed<Session | undefined>(() =>
     ? store.sessions.find((s) => s.id === selectedSession.value?.parentSessionId)
     : undefined,
 );
+// The tester walking the selected doer's QA checklist right now (docs/specs/2026-11-04-qa-tester-agent.md).
+const runningTester = computed(() => (selectedSession.value ? runningTesterOf(store.sessions, selectedSession.value.id) : undefined));
 
 // A plain load that failed leaves `transcripts[id]` unset; this ends the skeleton for it.
 const transcriptFailed = ref<string | null>(null);
@@ -1936,48 +1987,71 @@ const docsUsedHint = computed(() => t('agents.docs.usedHint'));
 
 // ── QA tab: the checklist off the linked cloud CARD ─────────────────────────
 // Like «Документація»'s reports, the QA checklist lives on the task and outlives the session,
-// so it is read off `linkedTask` (above) and ticked back through the same store method the
-// board dialog uses.
-const qaChecklist = computed(() => linkedTask.value?.qaChecklist);
+// so it is read off the card and ticked back through the same store method the board dialog
+// uses. A «Тестувальник» child has no card of its own on purpose (its status must never mirror
+// onto one): its QA tab shows the doer's card, where its verdicts land live.
+const qaTaskId = computed(() => {
+  const s = selectedSession.value;
+  return s?.tester ? parentOfSelected.value?.taskId : s?.taskId;
+});
+const qaTask = computed(() => (qaTaskId.value ? board.tasks.find((t) => t.id === qaTaskId.value) : undefined));
+// The selected session already holds its own card above; this hold covers the tester's parent.
+useTaskDetails(() => (selectedSession.value?.tester ? qaTaskId.value : undefined));
+const qaChecklist = computed(() => qaTask.value?.qaChecklist);
 const qaDone = computed(() => qaChecklist.value?.items.filter((i) => i.checked).length ?? 0);
 // Not loaded: the session has a card the board has not read yet, or whose checklist and
 // reports the store has not read yet. A session without a card is «loaded» at once — its empty
 // state is the true answer.
-const qaNotLoaded = computed(() => {
-  const taskId = selectedSession.value?.taskId;
+function cardNotLoaded(taskId: string | undefined, task: unknown): boolean {
   if (!taskId) return false;
-  return linkedTask.value ? !board.detailsLoaded(taskId) : board.loading;
-});
+  return task ? !board.detailsLoaded(taskId) : board.loading;
+}
+const qaNotLoaded = computed(() => cardNotLoaded(qaTaskId.value, qaTask.value));
 const qaPhase = useLoadPhase(() => qaNotLoaded.value);
-// «Документація» joins the transcript, the Зміни listing and the card; until the first two
-// have answered its lists are incomplete, so it is a skeleton rather than «немає документів».
+// «Документація» joins the transcript, the Зміни listing and the session's own card; until the
+// first two have answered its lists are incomplete, so it is a skeleton rather than «немає документів».
 const docsNotLoaded = computed(
-  () => !transcriptLoaded.value || (changesLoading.value && changesInfo.value === null) || qaNotLoaded.value,
+  () =>
+    !transcriptLoaded.value ||
+    (changesLoading.value && changesInfo.value === null) ||
+    cardNotLoaded(selectedSession.value?.taskId, linkedTask.value),
 );
 
 function onQaToggle(itemId: string, checked: boolean): void {
-  const task = linkedTask.value;
+  const task = qaTask.value;
   if (task) void board.setQaItemChecked(task.id, itemId, checked);
 }
 
-// ── Detail tabs (Лог / Зміни / Сесія / Документація / QA / Браузер) ─────────
+// ── Detail tabs (Лог / Зміни / Сесія / Документація / QA / Браузер or Пристрій) ─────────
 // The right panel splits the session into these views. The choice is persisted
 // per session (localStorage `kermanych.agents.tab.<id>`) so reopening an agent lands where the
 // operator left it; a fresh session defaults to the log.
 const sessionBrowser = useSessionBrowser();
+const selectedPlatform = computed(() => {
+  const s = selectedSession.value;
+  return s ? store.projects.find((p) => p.id === s.projectId)?.platform : undefined;
+});
 // Whether the selected session has a Браузер tab (docs/specs/2026-11-03-session-browser-
 // preview.md, decisions 8–9): never in a back-end or mobile project; in the desktop app for
-// every session here (a discussion or review fork gets the plain browser, no preview); in the
-// web build, which cannot embed the page, only for an `agent` session — its tab is the preview
-// row and logs.
+// every session here (a discussion or review fork gets the plain browser, no preview — a
+// «Тестувальник» child included: its tab is where the operator watches the run and passes an
+// SSO login by hand); in the web build, which cannot embed the page, only for an `agent`
+// session — its tab is the preview row and logs.
 const browserTab = computed(() => {
   const s = selectedSession.value;
   if (!s) return false;
-  const project = store.projects.find((p) => p.id === s.projectId);
-  return platformHasBrowser(project?.platform) && (sessionBrowser.available || s.kind === 'agent');
+  return platformHasBrowser(selectedPlatform.value) && (sessionBrowser.available || s.kind === 'agent');
 });
-// Beside the Лог instead of its own tab (desktop only) — see «Session browser beside the Лог» below.
-const browserSplit = computed(() => browserTab.value && sessionBrowser.available && sessionBrowser.split);
+// A Mobile project's `agent` session has a Пристрій tab in its place, in both builds
+// (docs/specs/2026-11-03-mobile-device-preview.md, decision 8): forks and chats have no device.
+const deviceTab = computed(() => selectedSession.value?.kind === 'agent' && platformHasDevice(selectedPlatform.value));
+// The tab of the pane that can go beside the Лог: the browser's in the desktop app only (the
+// web build's is a note and a link), the device's in both.
+const paneTab = computed<'browser' | 'device' | null>(() =>
+  deviceTab.value ? 'device' : browserTab.value && sessionBrowser.available ? 'browser' : null,
+);
+// Beside the Лог instead of its own tab — see «Session browser beside the Лог» below.
+const paneSplit = computed(() => paneTab.value !== null && sessionBrowser.split);
 const detailTabs = computed(() => {
   const tabs: { value: string; label: string; count?: number; live?: boolean; status?: 'busy' | 'ok' | 'error'; closeLabel?: string }[] = [
     { value: 'log', label: t('agents.tabs.log') },
@@ -2001,7 +2075,7 @@ const detailTabs = computed(() => {
     const live = sessionBrowser.agentLive.has(s.id);
     const status = s.kind === 'agent' ? previewTabStatus(store.previews[s.id]) : undefined;
     const marks = { live, ...(status ? { status } : {}) };
-    if (browserSplit.value) Object.assign(tabs[0]!, marks);
+    if (paneSplit.value) Object.assign(tabs[0]!, marks);
     else
       tabs.push({
         value: 'browser',
@@ -2009,6 +2083,14 @@ const detailTabs = computed(() => {
         ...marks,
         ...(sessionBrowser.states[s.id] ? { closeLabel: t('agents.browser.close') } : {}),
       });
+  }
+  // The Пристрій tab's mark is the preview's too, an app that exited counting as red. It has no
+  // ✕: the device belongs to the preview, which ◼ stops.
+  if (deviceTab.value && s) {
+    const status = previewTabStatus(store.previews[s.id]);
+    const marks = status ? { status } : {};
+    if (paneSplit.value) Object.assign(tabs[0]!, marks);
+    else tabs.push({ value: 'device', label: t('agents.tabs.device'), ...marks });
   }
   return tabs;
 });
@@ -2019,7 +2101,8 @@ watch(
     const saved = id ? localStorage.getItem(`kermanych.agents.tab.${id}`) : null;
     detailTab.value =
       saved === 'changes' || saved === 'session' || saved === 'docs' || saved === 'findings' || saved === 'qa' ||
-      (saved === 'browser' && browserTab.value && !browserSplit.value)
+      (saved === 'browser' && browserTab.value && !paneSplit.value) ||
+      (saved === 'device' && deviceTab.value && !paneSplit.value)
         ? saved
         : 'log';
   },
@@ -2035,22 +2118,27 @@ function onDetailTabClose(tab: string): void {
   if (tab === 'browser' && id) sessionBrowser.close(id);
 }
 
-// ── Session browser beside the Лог («Поруч із логом») ────────────────────────
-// One app-wide preference, toggled from the browser's own toolbar — so the operator is looking
-// at the browser when it flips, and the detail follows it: on, the Браузер tab folds into Лог;
-// off, the page gets its tab back and stays on screen. The seam between log and browser works
-// like the board's (drag or arrow keys), and both halves keep a usable minimum.
+// ── Session browser / device beside the Лог («Поруч із логом») ───────────────
+// One app-wide preference, toggled from the pane's own toolbar — so the operator is looking
+// at the pane when it flips, and the detail follows it: on, the Браузер / Пристрій tab folds
+// into Лог; off, the pane gets its tab back and stays on screen. The seam between log and pane
+// works like the board's (drag or arrow keys), and both halves keep a usable minimum.
 watch(
   () => sessionBrowser.split,
   (on) => {
-    if (!browserTab.value || !sessionBrowser.available) return;
-    if (on && detailTab.value === 'browser') detailTab.value = 'log';
-    else if (!on && detailTab.value === 'log') detailTab.value = 'browser';
+    const tab = paneTab.value;
+    if (!tab) return;
+    if (on && detailTab.value === tab) detailTab.value = 'log';
+    else if (!on && detailTab.value === 'log') detailTab.value = tab;
   },
 );
-// The project switched to back-end or mobile under the open tab: the tab is gone (spec decision 9).
+// The project switched platform under the open tab: the tab is gone (spec decision 9 of the
+// browser preview; decision 8 of the device preview).
 watch(browserTab, (on) => {
   if (!on && detailTab.value === 'browser') detailTab.value = 'log';
+});
+watch(deviceTab, (on) => {
+  if (!on && detailTab.value === 'device') detailTab.value = 'log';
 });
 const MIN_SPLIT_LOG = 360;
 const MIN_SPLIT_BROWSER = 320;
@@ -2076,9 +2164,9 @@ const {
 // Re-clamp whenever the split becomes measurable or its container changes width: the board
 // seam narrows the detail column without a window resize.
 watch(
-  [browserSplit, () => detailTab.value === 'log', () => !!selectedSession.value, detailWidth],
+  [paneSplit, () => detailTab.value === 'log', () => !!selectedSession.value, detailWidth],
   () => {
-    if (browserSplit.value) void nextTick(refreshSplitWidth);
+    if (paneSplit.value) void nextTick(refreshSplitWidth);
   },
 );
 
@@ -3195,6 +3283,7 @@ function nextMode(s: Session): MessageMode {
 // The composer clears on send and the store shows the «надсилаю…» bubble at once; the panel
 // ref is how a refused message gets its text and images back.
 const panelRef = ref<InstanceType<typeof KPanel> | null>(null);
+const logTermRef = ref<InstanceType<typeof KTerminalView> | null>(null);
 async function onSend(text: string, images: ImageInput[]): Promise<void> {
   const s = selectedSession.value;
   if (!s) return;
@@ -3214,7 +3303,7 @@ async function onSend(text: string, images: ImageInput[]): Promise<void> {
 const { send: onSendPicks, sending: sendingPicks } = useSendPicks({
   mode: nextMode,
   onSent: (s) => {
-    if (store.selectedSessionId === s.id && !browserSplit.value) detailTab.value = 'log';
+    if (store.selectedSessionId === s.id && !paneSplit.value) detailTab.value = 'log';
   },
 });
 
@@ -3385,6 +3474,13 @@ const mergeSummary = ref('');
 const mergeBusy = ref(false);
 const mergeError = ref<string | null>(null);
 const mergeIsReview = computed(() => mergeFor.value?.kind === 'review');
+// ⤴ «Передати виконавцю» of a tester (docs/specs/2026-11-04-qa-tester-agent.md, decision 13): the
+// same merge, sent with no summary — the api writes the message from this run's verdicts, or
+// sends nothing when every item passed.
+const mergeIsTester = computed(() => mergeFor.value?.tester === true);
+const mergeTitle = computed(() =>
+  mergeIsTester.value ? t('tester.handoff.title') : mergeIsReview.value ? t('agents.merge.reviewTitle') : t('agents.merge.branchTitle'),
+);
 
 function openMerge(s: Session): void {
   mergeFor.value = s;
@@ -3404,7 +3500,7 @@ async function submitMerge(): Promise<void> {
   mergeBusy.value = true;
   mergeError.value = null;
   try {
-    await store.mergeBranch(s.id, mergeSummary.value.trim() || undefined);
+    await store.mergeBranch(s.id, s.tester ? undefined : mergeSummary.value.trim() || undefined);
     mergeOpen.value = false;
     if (s.parentSessionId) store.selectSession(s.parentSessionId);
   } catch (e) {
@@ -3862,6 +3958,24 @@ function openDocTask(path: string): void {
   white-space: nowrap;
 }
 
+// «Тестування триває» on a doer whose tester runs: opens the tester's session.
+.agents__detail-tester {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  flex: none;
+  padding: 1px 6px;
+  border: 1px solid var(--k-line-strong);
+  border-radius: var(--k-r);
+  background: transparent;
+  color: var(--k-muted);
+  font-size: 11px;
+  cursor: pointer;
+
+  &:hover { color: var(--k-accent); border-color: var(--k-accent); }
+  &:focus-visible { outline: 1px solid var(--k-accent); outline-offset: 2px; }
+}
+
 // The session's own name — the bar's title, so it carries the UI face at full text colour,
 // not the muted mono the old path label wore.
 // The name's own box while it is edited: same type, an accent underline for the field.
@@ -4232,8 +4346,10 @@ function openDocTask(path: string): void {
 }
 
 // ── QA tab: checklist off the linked card ──────────────────────────────────
-.agents__qa-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+.agents__qa-head { display: flex; align-items: baseline; gap: 8px; }
+.agents__qa-head .agents__docs-title { white-space: nowrap; }
 .agents__qa-count { font-size: 11.5px; color: var(--k-muted); }
+.agents__qa-run { margin-left: auto; }
 .agents__qa-list { margin: 8px 0 0; padding: 0; list-style: none; display: grid; gap: 8px; }
 
 // ── Task brief (full description + creation images) ────────────────────────

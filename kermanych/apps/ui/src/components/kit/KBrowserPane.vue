@@ -63,6 +63,13 @@
           <span class="k-browser__agent-dot" aria-hidden="true"></span><span class="k-browser__label">{{ agentLive ? t('agents.browser.agentLive') : t('agents.browser.agentIdle') }}</span>
         </template>
       </button>
+      <KIconButton
+        :title="t('agents.browser.find.open')"
+        :active="findOpen"
+        :aria-pressed="findOpen"
+        :disabled="!state"
+        @click="findOpen ? closeFind() : openFind()"
+      ><KIcon class="k-browser__icon" name="search" /></KIconButton>
       <KIconButton :title="t('agents.browser.external')" :disabled="!externalUrl" @click="openExternal(externalUrl)">⤤</KIconButton>
       <KIconButton :title="t('agents.browser.devtools')" :disabled="!state" @click="bridge.openDevTools(session.id)">
         <span class="mono">&lt;/&gt;</span>
@@ -82,22 +89,17 @@
     <!-- The live preview of an `agent` session (forks get the plain browser). -->
     <KPreviewRow v-if="preview" :preview="preview" />
 
-    <div v-if="findOpen" class="k-browser__find">
-      <input
-        ref="findEl"
-        v-model="findQuery"
-        class="k-browser__find-input"
-        type="text"
-        spellcheck="false"
-        :placeholder="t('agents.browser.find.placeholder')"
-        @keydown.enter.prevent="findStep(!$event.shiftKey)"
-        @keydown.esc.prevent="closeFind"
-      />
-      <span class="k-browser__find-count mono">{{ findCount }}</span>
-      <KIconButton :title="t('agents.browser.find.prev')" :disabled="!findQuery" @click="findStep(false)">↑</KIconButton>
-      <KIconButton :title="t('agents.browser.find.next')" :disabled="!findQuery" @click="findStep(true)">↓</KIconButton>
-      <KIconButton :title="t('agents.browser.find.close')" @click="closeFind">✕</KIconButton>
-    </div>
+    <KFindBar
+      v-if="findOpen"
+      ref="findBarEl"
+      v-model:query="findQuery"
+      plain
+      :placeholder="t('agents.browser.find.placeholder')"
+      :count="findCount"
+      :has-hits="!!findQuery && (state?.find?.matches ?? 0) > 0"
+      @step="findStep"
+      @close="closeFind"
+    />
 
     <!-- The page is blocked on alert/confirm until someone answers: the operator here, or the
          agent through its tools (the bar goes away when main reports it answered). -->
@@ -119,66 +121,7 @@
       </div>
     </div>
 
-    <!-- The tray sits between the toolbar and the page, so a pick never covers what it was
-         taken from; it scrolls on its own past a few entries, and folds to one row. -->
-    <section v-if="picks.length" class="k-browser__tray" :class="{ 'k-browser__tray--folded': trayFolded }">
-      <button
-        type="button"
-        class="k-browser__tray-head"
-        :aria-expanded="!trayFolded"
-        v-tip="trayFolded ? t('agents.browser.tray.expand') : t('agents.browser.tray.collapse')"
-        @click="trayFolded = !trayFolded"
-      >
-        <span class="k-browser__tray-caret" aria-hidden="true">{{ trayFolded ? '▸' : '▾' }}</span>
-        {{ t('agents.browser.tray.title', { n: picks.length }) }}
-      </button>
-      <template v-if="!trayFolded">
-        <div class="k-browser__tray-list">
-          <div v-for="p in picks" :key="p.id" class="k-browser__pick">
-            <img
-              v-if="p.pick.screenshot?.data"
-              class="k-browser__thumb"
-              :src="`data:${p.pick.screenshot.mimeType};base64,${p.pick.screenshot.data}`"
-              alt=""
-            />
-            <div v-else class="k-browser__thumb k-browser__thumb--none mono">&lt;{{ p.pick.tag.toLowerCase() }}&gt;</div>
-            <div class="k-browser__pick-body">
-              <span class="k-browser__pick-sel mono" v-tip="p.pick.selector">{{ p.pick.selector }}</span>
-              <span v-if="p.pick.source" class="k-browser__pick-src mono">
-                {{ p.pick.source.line != null ? `${p.pick.source.file}:${p.pick.source.line}` : p.pick.source.file }}
-              </span>
-              <input
-                class="k-browser__comment"
-                type="text"
-                :value="p.comment"
-                :placeholder="t('agents.browser.commentPlaceholder')"
-                @input="browser.setComment(session.id, p.id, ($event.target as HTMLInputElement).value)"
-                @keydown.enter="sendOnModEnter"
-              />
-            </div>
-            <button
-              type="button"
-              class="k-browser__pick-x"
-              :title="t('agents.browser.removePick')"
-              :aria-label="t('agents.browser.removePick')"
-              @click="browser.removePick(session.id, p.id)"
-            >✕</button>
-          </div>
-        </div>
-        <input
-          class="k-browser__comment k-browser__note"
-          type="text"
-          :value="browser.notes[session.id] ?? ''"
-          :placeholder="t('agents.browser.tray.notePlaceholder')"
-          @input="browser.setNote(session.id, ($event.target as HTMLInputElement).value)"
-          @keydown.enter="sendOnModEnter"
-        />
-      </template>
-      <div class="k-browser__tray-actions">
-        <KBtn variant="primary" :loading="sending" @click="emit('send')">{{ t('agents.browser.send') }}</KBtn>
-        <KBtn variant="ghost" :disabled="sending" @click="browser.clearPicks(session.id)">{{ t('agents.browser.clear') }}</KBtn>
-      </div>
-    </section>
+    <KPicksTray :session-id="session.id" :sending="sending" @send="emit('send')" />
 
     <!-- The native view is laid over this box by Electron main. The box shows something of its
          own only while the view is parked: a still frame of the page while an overlay is open,
@@ -281,10 +224,13 @@ import type { Session } from '@kermanych/core';
 import KBtn from './KBtn.vue';
 import KSkeleton from './KSkeleton.vue';
 import KPreviewLogs from './KPreviewLogs.vue';
+import KPicksTray from './KPicksTray.vue';
 import KPreviewRow from './KPreviewRow.vue';
 import KChipSelect from './KChipSelect.vue';
 import KField from './KField.vue';
+import KFindBar from './KFindBar.vue';
 import KFullscreenButton from './KFullscreenButton.vue';
+import KIcon from './KIcon.vue';
 import KIconButton from './KIconButton.vue';
 import KModal from './KModal.vue';
 import { useSessionBrowser } from 'stores/browser';
@@ -313,7 +259,6 @@ const store = useOrchestrator();
 const bridge = window.kermanych!.browser!;
 
 const state = computed(() => browser.states[props.session.id]);
-const picks = computed(() => browser.picks[props.session.id] ?? []);
 // Only `agent` sessions have a preview (spec decision 8). The pane is keyed by the session, so
 // its kind never changes under it.
 const preview = props.session.kind === 'agent' ? useSessionPreview(() => props.session) : null;
@@ -328,7 +273,7 @@ function fail(e: unknown): void {
   store.notify(errorText(e), 'error');
 }
 function navigate(url: string): Promise<boolean> {
-  return browser.navigate(props.session.id, props.session.projectId, url);
+  return browser.navigate(props.session.id, props.session.projectId, url, props.session.tester === true);
 }
 // Resolves at main's next state push for this session (or after the pending cap): the end of
 // an action main reports only through state — a reload, a first load.
@@ -416,7 +361,7 @@ const scalePct = computed(() => Math.round((state.value?.scale ?? 1) * 100));
 const viewportPick = useOptimisticValue(
   () => viewportValue.value,
   async (value: string) => {
-    bridge.setViewport(props.session.id, props.session.projectId, value === 'fit' ? null : { width: Number(value) });
+    bridge.setViewport(props.session.id, props.session.projectId, value === 'fit' ? null : { width: Number(value) }, props.session.tester === true);
   },
 );
 // «Агент веде / пауза», the same way: the toggle flips at once, main's state confirms it.
@@ -454,29 +399,23 @@ async function togglePick(): Promise<void> {
   }
 }
 
-// ── Tray ─────────────────────────────────────────────────────────────────
-const trayFolded = ref(false);
-function sendOnModEnter(e: KeyboardEvent): void {
-  if (!(e.metaKey || e.ctrlKey) || props.sending) return;
-  e.preventDefault();
-  emit('send');
-}
-
 // ── Find in page ─────────────────────────────────────────────────────────
 const findOpen = ref(false);
 const findQuery = ref('');
-const findEl = ref<HTMLInputElement | null>(null);
+const findBarEl = ref<{ $el: HTMLElement } | null>(null);
 const findCount = computed(() => {
   const f = state.value?.find;
-  return f && findQuery.value && f.query === findQuery.value ? `${f.active} / ${f.matches}` : '';
+  if (!f || !findQuery.value || f.query !== findQuery.value) return '';
+  return f.matches === 0 ? t('kit.fileView.find.none') : `${f.active} / ${f.matches}`;
 });
 // Reopened with the last query still in the field: its highlights come back with it.
 async function openFind(): Promise<void> {
   if (!findOpen.value && findQuery.value) bridge.find(props.session.id, findQuery.value, true);
   findOpen.value = true;
   await nextTick();
-  findEl.value?.focus();
-  findEl.value?.select();
+  const input = findBarEl.value?.$el.querySelector<HTMLInputElement>('.k-find-bar__input');
+  input?.focus();
+  input?.select();
 }
 function closeFind(): void {
   if (!findOpen.value) return;
@@ -596,7 +535,7 @@ async function openUrl(url: string, asPreview = false): Promise<void> {
   if (opening.value) return;
   opening.value = url;
   try {
-    const load = asPreview ? browser.openPreview(props.session.id, props.session.projectId, url) : navigate(url);
+    const load = asPreview ? browser.openPreview(props.session.id, props.session.projectId, url, props.session.tester === true) : navigate(url);
     await Promise.race([load, nextState()]);
   } finally {
     opening.value = null;
@@ -705,7 +644,7 @@ function sync(): void {
   freezeGen += 1;
   frozen.value = null;
   browser.shownRect = bounds;
-  bridge.show(props.session.id, props.session.projectId, bounds);
+  bridge.show(props.session.id, props.session.projectId, bounds, props.session.tester === true);
 }
 
 const resize = new ResizeObserver(() => sync());
@@ -901,38 +840,7 @@ onBeforeUnmount(() => {
   50% { opacity: 0.3; }
 }
 
-.k-browser__find {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  padding: 4px 6px 4px 12px;
-  border-bottom: 1px solid var(--k-line);
-  flex: none;
-}
-.k-browser__find-input {
-  flex: 1;
-  min-width: 0;
-  max-width: 320px;
-  height: 26px;
-  padding: 0 8px;
-  font-family: var(--k-font-ui);
-  font-size: var(--k-fs-sm);
-  color: var(--k-text);
-  background: var(--k-surface);
-  border: 1px solid var(--k-line);
-  border-radius: var(--k-r-sm);
-  outline: none;
-
-  &:focus {
-    border-color: var(--k-accent);
-  }
-}
-.k-browser__find-count {
-  min-width: 48px;
-  font-size: var(--k-fs-xs);
-  color: var(--k-muted);
-  text-align: center;
-}
+.k-browser__icon { --k-icon-size: var(--k-icon-md); }
 
 .k-browser__dialog {
   display: flex;
@@ -972,134 +880,6 @@ onBeforeUnmount(() => {
   color: var(--k-faint);
 }
 .k-browser__dialog-actions {
-  display: flex;
-  gap: 8px;
-  flex: none;
-}
-
-.k-browser__tray {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  padding: 8px 12px;
-  border-bottom: 1px solid var(--k-line);
-  flex: none;
-  max-height: 40%;
-}
-// Folded: the header and the actions share one row.
-.k-browser__tray--folded {
-  flex-direction: row;
-  align-items: center;
-  justify-content: space-between;
-}
-
-.k-browser__tray-head {
-  align-self: flex-start;
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 0;
-  font-family: var(--k-font-ui);
-  font-size: var(--k-fs-xs);
-  font-weight: var(--k-fw-medium);
-  color: var(--k-muted);
-  background: transparent;
-  border: none;
-  cursor: pointer;
-
-  &:hover {
-    color: var(--k-text);
-  }
-}
-.k-browser__tray--folded .k-browser__tray-head {
-  align-self: center;
-}
-.k-browser__tray-caret {
-  width: 10px;
-}
-
-.k-browser__tray-list {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  overflow-y: auto;
-  min-height: 0;
-}
-
-.k-browser__pick {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-}
-
-.k-browser__thumb {
-  flex: none;
-  width: 64px;
-  height: 40px;
-  object-fit: contain;
-  background: var(--k-surface);
-  border: 1px solid var(--k-line);
-  border-radius: var(--k-r-sm);
-}
-.k-browser__thumb--none {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: var(--k-fs-xs);
-  color: var(--k-faint);
-}
-
-.k-browser__pick-body {
-  flex: 1;
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-
-.k-browser__pick-sel,
-.k-browser__pick-src {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: var(--k-fs-xs);
-}
-.k-browser__pick-sel { color: var(--k-text); }
-.k-browser__pick-src { color: var(--k-muted); }
-
-.k-browser__comment {
-  height: 24px;
-  padding: 0 6px;
-  font-family: var(--k-font-ui);
-  font-size: var(--k-fs-sm);
-  color: var(--k-text);
-  background: transparent;
-  border: 1px solid var(--k-line);
-  border-radius: var(--k-r-sm);
-  outline: none;
-
-  &:focus {
-    border-color: var(--k-accent);
-  }
-}
-.k-browser__note {
-  flex: none;
-  height: 28px;
-}
-
-.k-browser__pick-x {
-  flex: none;
-  border: none;
-  background: transparent;
-  color: var(--k-faint);
-  cursor: pointer;
-
-  &:hover {
-    color: var(--k-danger);
-  }
-}
-
-.k-browser__tray-actions {
   display: flex;
   gap: 8px;
   flex: none;

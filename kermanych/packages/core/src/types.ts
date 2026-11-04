@@ -8,6 +8,7 @@ import type { NativeHarness } from "./runtime";
 import type { MachineAlert } from "./machine-profile";
 import type { MinionResult, MinionState } from "./minion";
 import type { FindingKind } from "./findings";
+import type { QaChecklist } from "./task-actions";
 
 // `in_review` is the PR hand-off state: the operator asked for a pull request, the agent
 // pushed it, and the work now waits on a HUMAN reviewer. It is settled (nothing moves on
@@ -83,6 +84,11 @@ export type Session = {
   // when the run is created, so its opening prompt — a relaunch's too — carries the per-kind rules
   // (docs/specs/2026-10-23-minion-auto-run.md, decision 14). Absent for every other session.
   findingKind?: FindingKind;
+  // A «Тестувальник» run (docs/specs/2026-11-04-qa-tester-agent.md): a `review` child of the
+  // doer that walks the card's QA checklist in its own temporary browser, drives the parent's
+  // preview and records a verdict per item. Stamped at creation, never changed. Absent for
+  // every other session, including an ordinary «Ревізор» fork.
+  tester?: boolean;
   // How the minion's run ended so far: `needs_decision` keeps the «потрібне рішення» mark until
   // a later turn ends differently. Persisted; absent until the first turn of a minion run ends.
   minionResult?: MinionResult;
@@ -294,7 +300,12 @@ export type ServerEvent =
   // «Посіпака» on this machine changed: its cap, pause, running and waiting counts, projects.
   | { type: "minion_update"; state: MinionState }
   // A session's live preview changed state; `state: null` = it has none any more (session gone).
-  | { type: "preview_update"; sessionId: string; state: PreviewState | null };
+  | { type: "preview_update"; sessionId: string; state: PreviewState | null }
+  // The api wrote a card's QA checklist (docs/specs/2026-11-04-qa-tester-agent.md): a tester
+  // verdict, a checklist the tester or «Створити ПР» composed, or verdicts cleared at a run's
+  // start. Carries the checklist as written, so an open QA tab updates without re-reading the
+  // card (the board's Realtime binding leaves this column out).
+  | { type: "qa_checklist_update"; taskId: string; checklist: QaChecklist };
 
 // How much of omp's subagent activity a session subscribes to. "progress" streams lifecycle
 // + coalesced progress (enough for the agent map); "events" adds every subagent tool/message
@@ -373,3 +384,9 @@ export type TerminalOpenReply = { terminal: TerminalInfo } | TerminalError;
 // `replay` repaints the terminal as it stands — its scrollback, the alternate screen and
 // modes included — written before live data flows.
 export type TerminalAttachReply = { terminal: TerminalInfo; replay: string } | TerminalError;
+
+// How native sessions' TUIs are launched on this machine (machine-local, never synced).
+// `claudeFullScreen`: claude draws on the terminal's alternate screen — its full-screen layout,
+// input pinned at the bottom — which keeps no scrollback, so the Лог's find reaches only the
+// rows on screen. Off (the default), claude prints inline and its history stays searchable.
+export type NativeSettings = { claudeFullScreen: boolean };

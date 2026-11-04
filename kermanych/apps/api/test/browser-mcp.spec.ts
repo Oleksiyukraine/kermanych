@@ -2,7 +2,8 @@
 // The session browser's MCP server (docs/specs/2026-10-05-embedded-browser.md): the per-session
 // bearer, the binding a launch is handed, and tools/call routed to the desktop app's host for
 // the right session and project. The host is a fake BrowserHost. Also the live-preview tools and
-// the platform and kind gates (docs/specs/2026-11-03-session-browser-preview.md).
+// the platform and kind gates (docs/specs/2026-11-03-session-browser-preview.md), and a Mobile
+// project's device tools against a fake DeviceApi (docs/specs/2026-11-03-mobile-device-preview.md).
 import { HttpException } from "@nestjs/common";
 import type { HttpAdapterHost } from "@nestjs/core";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync } from "node:fs";
@@ -15,6 +16,7 @@ import type { Platform, PreviewState, Session } from "@kermanych/core";
 import { setBrowserHost, type BrowserActionResult, type BrowserHost, type BrowserNetworkEntry } from "../src/browser/browser-host";
 import { BrowserMcpService, NETWORK_OUTPUT_LIMIT, screenshotFile } from "../src/browser/browser-mcp.service";
 import { BrowserMcpController } from "../src/http/browser-mcp.controller";
+import { el, fakeDevice } from "./fake-device";
 
 const http = { httpAdapter: { getHttpServer: () => ({ address: () => ({ port: 4317 }) }) } } as unknown as HttpAdapterHost;
 const page = { url: "http://localhost:5173/", title: "App" };
@@ -67,8 +69,10 @@ function make(
     stop: vi.fn(async () => {}),
     steps: vi.fn(() => ["setup", "web"]),
     tail: vi.fn((_id: string, _step: string, n: number) => ["one", "two", "three"].slice(-n)),
+    app: vi.fn(async (_id: string, action: string): Promise<PreviewState> => ({ ...running, app: action === "terminate" ? "exited" : "running" })),
   };
-  const mcp = new BrowserMcpService(registry, preview as unknown as PreviewService, http);
+  const fake = fakeDevice();
+  const mcp = new BrowserMcpService(registry, preview as unknown as PreviewService, fake.device, http);
   const host = fakeHost();
   setBrowserHost(host);
   const call = async (name: string, args: Record<string, unknown> = {}) => {
@@ -77,10 +81,22 @@ function make(
     return reply.result;
   };
   const list = async () => ((await mcp.handle(s.id, { jsonrpc: "2.0", id: 1, method: "tools/list" })) as { result: { tools: { name: string }[] } }).result.tools.map((t) => t.name);
-  return { mcp, host, s, call, list, preview, registry };
+  return { mcp, host, s, call, list, preview, registry, fake, device: fake.device };
 }
 
 const PREVIEW_TOOL_NAMES = ["preview_start", "preview_status", "preview_stop", "preview_logs"];
+const DEVICE_TOOL_NAMES = [
+  "device_snapshot",
+  "device_screenshot",
+  "device_tap",
+  "device_swipe",
+  "device_type",
+  "device_press",
+  "device_wait_for",
+  "device_open_url",
+  "device_app",
+  "device_rotate",
+];
 
 const tmpDirs: string[] = [];
 function tmp(): string {
@@ -181,14 +197,25 @@ describe("bearer and binding", () => {
     }
   });
 
-  // Decision 9: back-end and mobile projects have no browser and no preview; decision 8: only an
-  // agent session has the preview. The findings tools stay in every case.
-  it("gates the browser and preview tools by the project's platform and the session's kind", async () => {
-    for (const platform of ["backend", "mobile"] as const) expect(await make(undefined, { platform }).list()).toEqual(["report_finding", "list_findings"]);
-    expect(await make(undefined, { platform: "web" }).list()).toContain("preview_start");
+  // Decision 9: a back-end project has no browser and no preview; decision 8: only an agent
+  // session has the preview. Mobile decision 8: a Mobile project's agent session has the preview
+  // and the device instead of the browser. The findings tools stay in every case.
+  it("gates the browser, preview and device tools by the project's platform and the session's kind", async () => {
+    expect(await make(undefined, { platform: "backend" }).list()).toEqual(["report_finding", "list_findings"]);
+    const web = await make(undefined, { platform: "web" }).list();
+    expect(web).toContain("browser_navigate");
+    expect(web).toContain("preview_start");
+    expect(web.some((n) => n.startsWith("device_"))).toBe(false);
     const chat = await make(undefined, { kind: "chat" }).list();
     expect(chat).toContain("browser_navigate");
     expect(chat.some((n) => n.startsWith("preview_"))).toBe(false);
+
+    const mobile = make(undefined, { platform: "mobile" });
+    expect(await mobile.list()).toEqual([...PREVIEW_TOOL_NAMES, ...DEVICE_TOOL_NAMES, "report_finding", "list_findings"]);
+    // The device is driven by the api: the web build (no host) lists the same.
+    setBrowserHost(undefined);
+    expect(await mobile.list()).toEqual([...PREVIEW_TOOL_NAMES, ...DEVICE_TOOL_NAMES, "report_finding", "list_findings"]);
+    for (const kind of ["chat", "discussion"] as const) expect(await make(undefined, { platform: "mobile", kind }).list()).toEqual(["report_finding", "list_findings"]);
   });
 });
 
@@ -454,6 +481,247 @@ describe("preview tools", () => {
     const chat = make(undefined, { kind: "chat" });
     expect((await chat.call("preview_status")).isError).toBe(true);
     expect(chat.preview.settled).not.toHaveBeenCalled();
+  });
+});
+
+describe("device tools (Mobile)", () => {
+  const ios = { platform: "ios" as const, serial: "SIM-UDID-1", name: "iPhone 16", screen: { width: 393, height: 852 } };
+  const android = { platform: "android" as const, serial: "emulator-5584", name: "Pixel 8", screen: { width: 1080, height: 2400 } };
+  const login = () => [
+    el("Window", null, [0, 0, 393, 852], {
+      children: [
+        el("StaticText", "Вхід", [24, 100, 345, 40]),
+        el("TextField", "Email", [24, 200, 345, 44], { id: "email", value: "a@b.c" }),
+        el("Button", "Увійти", [24, 610, 345, 48], { id: "login" }),
+        el("Other", null, [0, 0, 0, 0], { children: [el("Button", "Hidden child", [10, 10, 20, 20], { enabled: false })] }),
+      ],
+    }),
+  ];
+  function mobile(runtime: typeof ios | typeof android | null = ios, opts: { kind?: Session["kind"]; worktreePath?: string } = {}) {
+    const m = make(undefined, { platform: "mobile", ...opts });
+    if (runtime) m.fake.boot(m.s.id, runtime);
+    m.fake.setTree(login());
+    return m;
+  }
+
+  it("describes the device's preview and coordinate space, with closed schemas", async () => {
+    const { mcp, s } = mobile();
+    const reply = (await mcp.handle(s.id, { jsonrpc: "2.0", id: 1, method: "tools/list" })) as {
+      result: { tools: { name: string; description: string; inputSchema: { properties: Record<string, unknown>; required?: string[]; additionalProperties: boolean } }[] };
+    };
+    const tools = new Map(reply.result.tools.map((t) => [t.name, t]));
+    expect(Object.keys(tools.get("preview_start")!.inputSchema.properties)).toEqual(["restart", "platform"]);
+    for (const name of PREVIEW_TOOL_NAMES) expect(tools.get(name)!.description).toMatch(/«Пристрій»/);
+    for (const name of DEVICE_TOOL_NAMES) {
+      const t = tools.get(name)!;
+      expect(t.description).toMatch(/THIS session's virtual device/);
+      expect(t.inputSchema.additionalProperties).toBe(false);
+      for (const r of t.inputSchema.required ?? []) expect(Object.keys(t.inputSchema.properties)).toContain(r);
+    }
+    for (const name of ["device_snapshot", "device_tap", "device_swipe"]) expect(tools.get(name)!.description).toMatch(/points on iOS, pixels on Android/);
+    // A web project's preview_start has no platform.
+    const w = make();
+    const web = (await w.mcp.handle(w.s.id, { jsonrpc: "2.0", id: 1, method: "tools/list" })) as typeof reply;
+    expect(Object.keys(web.result.tools.find((t) => t.name === "preview_start")!.inputSchema.properties)).toEqual(["restart"]);
+  });
+
+  it("device_snapshot answers the compact tree with refs, ids and values, skipping what has no area", async () => {
+    const { call } = mobile();
+    expect((await call("device_snapshot")).content[0].text).toBe(
+      [
+        "Device: iPhone 16 (ios), screen 393×852 points. The refs are valid for this snapshot only.",
+        "",
+        "e1 Window [0,0 393×852]",
+        '  e2 StaticText "Вхід" [24,100 345×40]',
+        '  e3 TextField "Email" [24,200 345×44] id=email value="a@b.c"',
+        '  e4 Button "Увійти" [24,610 345×48] id=login',
+        '    e5 Button "Hidden child" [10,10 20×20] disabled',
+      ].join("\n"),
+    );
+  });
+
+  it("a ref taps its element where it is now, and is refused once the element is no longer near where the snapshot saw it", async () => {
+    const { call, device, fake, s } = mobile();
+    await call("device_snapshot");
+    expect((await call("device_tap", { ref: "e4" })).content[0].text).toBe('tapped Button "Увійти" [24,610 345×48] id=login');
+    expect(device.tap).toHaveBeenLastCalledWith(s.id, 196.5, 634);
+
+    // A few points of layout shift: the same button, tapped where it is now.
+    const shifted = login();
+    shifted[0]!.children[2]!.frame.y = 616;
+    fake.setTree(shifted);
+    await call("device_tap", { ref: "e4" });
+    expect(device.tap).toHaveBeenLastCalledWith(s.id, 196.5, 640);
+
+    // The screen scrolled: a button of that label is elsewhere now. Not tapped blind.
+    const moved = login();
+    moved[0]!.children[2]!.frame.y = 700;
+    fake.setTree(moved);
+    device.tap.mockClear();
+    const stale = await call("device_tap", { ref: "e4" });
+    expect(stale.isError).toBe(true);
+    expect(stale.content[0].text).toBe('e4 (Button "Увійти") is no longer where device_snapshot saw it: the screen changed. Take a new device_snapshot.');
+    const relabelled = login();
+    relabelled[0]!.children[2]!.label = "Вийти";
+    fake.setTree(relabelled);
+    expect((await call("device_tap", { ref: "e4" })).isError).toBe(true);
+    expect((await call("device_swipe", { ref: "e4", direction: "up" })).isError).toBe(true);
+    expect((await call("device_tap", { ref: "e99" })).content[0].text).toMatch(/^Unknown ref e99/);
+    expect(device.tap).not.toHaveBeenCalled();
+    expect(device.swipe).not.toHaveBeenCalled();
+
+    // A new snapshot binds the refs again; a rotation unbinds them.
+    await call("device_snapshot");
+    expect((await call("device_tap", { ref: "e4" })).isError).toBeUndefined();
+    await call("device_rotate", { orientation: "landscape" });
+    expect(device.rotate).toHaveBeenCalledWith(s.id, "landscape");
+    expect((await call("device_tap", { ref: "e4" })).content[0].text).toMatch(/^Unknown ref e4/);
+  });
+
+  it("taps by label, id or point, and refuses a bad target", async () => {
+    const { call, device, s } = mobile();
+    await call("device_tap", { label: "Email" });
+    expect(device.tap).toHaveBeenLastCalledWith(s.id, 196.5, 222);
+    await call("device_tap", { id: "login" });
+    expect(device.tap).toHaveBeenLastCalledWith(s.id, 196.5, 634);
+    expect((await call("device_tap", { x: 10, y: 20 })).content[0].text).toBe("tapped (10, 20)");
+    device.tap.mockClear();
+    for (const args of [{}, { ref: "e1", x: 1, y: 1 }, { x: 10 }, { x: 400, y: 10 }, { label: "Nope" }, { label: "Email", id: "email" }]) {
+      expect((await call("device_tap", args)).isError, JSON.stringify(args)).toBe(true);
+    }
+    expect(device.tap).not.toHaveBeenCalled();
+  });
+
+  it("swipes between points or in a direction, inside the screen", async () => {
+    const { call, device, s } = mobile();
+    await call("device_swipe", { x: 100, y: 700, to_x: 100, to_y: 200 });
+    expect(device.swipe).toHaveBeenLastCalledWith(s.id, { x: 100, y: 700 }, { x: 100, y: 200 }, 300);
+    // Without a start: the centre; the finger moves up half the screen.
+    await call("device_swipe", { direction: "up" });
+    expect(device.swipe).toHaveBeenLastCalledWith(s.id, { x: 196.5, y: 426 }, { x: 196.5, y: 0 }, 300);
+    await call("device_swipe", { x: 300, y: 400, direction: "right", distance: 0.8, duration_ms: 1000 });
+    expect(device.swipe).toHaveBeenLastCalledWith(s.id, { x: 300, y: 400 }, { x: 393, y: 400 }, 1000);
+    device.swipe.mockClear();
+    for (const args of [{}, { to_x: 1, to_y: 1 }, { x: 1, y: 1, to_x: 2, to_y: 2, direction: "up" }, { direction: "sideways" }, { direction: "up", distance: 2 }]) {
+      expect((await call("device_swipe", args)).isError, JSON.stringify(args)).toBe(true);
+    }
+    expect(device.swipe).not.toHaveBeenCalled();
+  });
+
+  it("types, presses the buttons the platform has, opens URLs, and waits for the tree", async () => {
+    const ios = mobile();
+    await ios.call("device_type", { text: "Привіт", submit: true });
+    expect(ios.device.type).toHaveBeenCalledWith(ios.s.id, "Привіт");
+    expect(ios.device.press).toHaveBeenCalledWith(ios.s.id, "enter");
+    const back = await ios.call("device_press", { button: "back" });
+    expect(back.isError).toBe(true);
+    expect(back.content[0].text).toMatch(/An ios device has no back button/);
+    expect((await ios.call("device_open_url", { url: "not a url" })).isError).toBe(true);
+    await ios.call("device_open_url", { url: "myapp://orders/42" });
+    expect(ios.device.openUrl).toHaveBeenCalledWith(ios.s.id, "myapp://orders/42");
+
+    expect((await ios.call("device_wait_for", { text: "Вхід" })).content[0].text).toMatch(/^found StaticText "Вхід" \[24,100 345×40\] after \d+ ms$/);
+    const missing = await ios.call("device_wait_for", { id: "welcome", timeout: 0.2 });
+    expect(missing.isError).toBe(true);
+    expect(missing.content[0].text).toBe("Not on the screen after 0.2 s: id welcome.");
+    setTimeout(() => ios.fake.setTree([]), 100);
+    expect((await ios.call("device_wait_for", { text: "Вхід", gone: true, timeout: 5 })).content[0].text).toMatch(/^gone after \d+ ms$/);
+
+    const droid = mobile(android);
+    expect((await droid.call("device_press", { button: "back" })).isError).toBeUndefined();
+    expect(droid.device.press).toHaveBeenCalledWith(droid.s.id, "back");
+  });
+
+  it("device_screenshot answers the PNG or saves it under the worktree's docs/", async () => {
+    const worktree = tmp();
+    const { call } = mobile(ios, { worktreePath: worktree });
+    expect(await call("device_screenshot")).toEqual({ content: [{ type: "image", data: "iVBORw0K", mimeType: "image/png" }] });
+    expect((await call("device_screenshot", { path: "docs/screens/login.png" })).content[0].text).toBe("saved docs/screens/login.png (6 bytes)");
+    expect(readFileSync(join(worktree, "docs/screens/login.png"))).toEqual(Buffer.from("iVBORw0K", "base64"));
+    expect((await call("device_screenshot", { path: "src/x.png" })).isError).toBe(true);
+  });
+
+  it("device_app goes through the preview, and preview_start takes the platform", async () => {
+    const { call, preview, s } = mobile();
+    expect((await call("device_app", { action: "restart" })).content[0].text).toBe("restarted the app; it is running");
+    expect(preview.app).toHaveBeenCalledWith(s.id, "restart");
+    expect((await call("device_app", { action: "terminate" })).content[0].text).toBe("terminated the app");
+    preview.app.mockResolvedValueOnce({ phase: "running", url: null, services: [], device: ios, app: "exited" });
+    expect((await call("device_app", { action: "launch" })).isError).toBe(true);
+    expect((await call("device_app", { action: "kill" })).isError).toBe(true);
+
+    await call("preview_start", { platform: "android" });
+    expect(preview.start).toHaveBeenLastCalledWith(s.id, { restart: false, platform: "android" });
+    expect((await call("preview_start", { platform: "windows" })).isError).toBe(true);
+    preview.settled.mockResolvedValueOnce({ phase: "running", url: null, services: [], device: ios, app: "exited" });
+    expect((await call("preview_status")).content[0].text).toBe(
+      "Running on iPhone 16 (ios, DEVICE_ID SIM-UDID-1, screen 393×852 points). The app has exited (it crashed or was closed); the services and the device keep running. Read preview_logs for `device`, then start it again with device_app launch.",
+    );
+    preview.settled.mockResolvedValueOnce({ phase: "crashed", step: "device", code: null, signal: null });
+    expect((await call("preview_status")).content[0].text).toMatch(/^Crashed: the device itself \(simulator or emulator\) exited/);
+  });
+
+  it("the operator's pause refuses every device action and preview start/stop, not reading", async () => {
+    const { call, device, preview, host, s } = mobile();
+    device.setPaused(s.id, true);
+    for (const [name, args] of [["device_snapshot", {}], ["device_tap", { x: 1, y: 1 }], ["device_app", { action: "launch" }], ["preview_start", {}], ["preview_stop", {}]] as const) {
+      const out = await call(name, args);
+      expect(out.isError, name).toBe(true);
+      expect(out.content[0].text).toMatch(/paused your control of this session's device/);
+    }
+    expect(device.tree).not.toHaveBeenCalled();
+    expect(device.tap).not.toHaveBeenCalled();
+    expect(preview.app).not.toHaveBeenCalled();
+    expect(preview.start).not.toHaveBeenCalled();
+    expect(preview.stop).not.toHaveBeenCalled();
+    expect((await call("preview_status")).isError).toBeUndefined();
+    // On Mobile the browser's pause is not the one that counts.
+    device.setPaused(s.id, false);
+    host.isPaused.mockReturnValue(true);
+    expect((await call("preview_start")).isError).toBeUndefined();
+    // And on the web the device's pause is not.
+    const web = make();
+    web.device.setPaused(web.s.id, true);
+    expect((await web.call("preview_start")).isError).toBeUndefined();
+  });
+
+  it("calls are refused off Mobile, for a non-agent session and while no device runs", async () => {
+    const web = make();
+    web.fake.boot(web.s.id, ios);
+    expect((await web.call("device_snapshot")).content[0].text).toBe("The device is off: this project's platform is not set, not Mobile.");
+
+    // The agent listed the tools before the project became a web one.
+    const switched = mobile();
+    switched.registry.upsertProject({ id: "p1", name: "p", localRepoPath: "/tmp/p1", platform: "web" });
+    expect((await switched.call("device_tap", { x: 1, y: 1 })).content[0].text).toBe("The device is off: this project's platform is web, not Mobile.");
+    expect(switched.device.tap).not.toHaveBeenCalled();
+
+    expect((await mobile(ios, { kind: "chat" }).call("device_snapshot")).content[0].text).toMatch(/only for agent sessions/);
+    const idle = mobile(null);
+    const out = await idle.call("device_snapshot");
+    expect(out.isError).toBe(true);
+    expect(out.content[0].text).toMatch(/not running.*preview_start/);
+    expect(idle.device.tree).not.toHaveBeenCalled();
+  });
+
+  it("device actions wait in the session's queue", async () => {
+    const { call, device } = mobile();
+    const order: string[] = [];
+    let release!: () => void;
+    device.tap.mockImplementationOnce(async () => {
+      order.push("tap:start");
+      await new Promise<void>((resolve) => (release = resolve));
+      order.push("tap:end");
+    });
+    device.type.mockImplementationOnce(async () => {
+      order.push("type");
+    });
+    const tapping = call("device_tap", { x: 1, y: 1 });
+    const typing = call("device_type", { text: "a" });
+    await vi.waitFor(() => expect(order).toEqual(["tap:start"]));
+    release();
+    await Promise.all([tapping, typing]);
+    expect(order).toEqual(["tap:start", "tap:end", "type"]);
   });
 });
 

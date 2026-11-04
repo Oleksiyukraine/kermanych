@@ -6,8 +6,8 @@ import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { mkdirSync } from "node:fs";
 import { Subject } from "rxjs";
-import { isThinkingLevel, isAgentRuntime, isNativeHarness, isAgentLanguage, isFindingKind, isPlatform, parseFindingTarget, docsPolicy, combineReportWrites, readMinionResult, isMinionPauseCode, clampMinionCap, MINION_CAP_DEFAULT } from "@kermanych/core";
-import type { AgentFinding, DocsPolicy, FindingReport, FindingTarget, MinionPause, MinionResult, Platform, Project, ResourceDecision, Session, SessionStatus, ThinkingLevel, Usage, AgentRuntimeKind, AgentLanguage, TaskReportsWrite } from "@kermanych/core";
+import { isThinkingLevel, isAgentRuntime, isNativeHarness, isAgentLanguage, isFindingKind, isPlatform, parseFindingTarget, docsPolicy, combineReportWrites, readMinionResult, isMinionPauseCode, clampMinionCap, MINION_CAP_DEFAULT, isDevicePlatform } from "@kermanych/core";
+import type { AgentFinding, DeviceChoice, DocsPolicy, FindingReport, FindingTarget, MinionPause, MinionResult, NativeSettings, Platform, Project, ResourceDecision, Session, SessionDevice, SessionStatus, ThinkingLevel, Usage, AgentRuntimeKind, AgentLanguage, TaskReportsWrite, TesterSettings } from "@kermanych/core";
 
 // The cached Supabase session. Lives in SQLite so a restarted api still knows who
 // its user is without a cloud round trip.
@@ -110,6 +110,35 @@ function readMinionPause(raw: string | null): MinionPause | undefined {
     return { code: p.code, at: p.at, ...(typeof p.detail === "string" && p.detail ? { detail: p.detail } : {}) };
   } catch {
     return undefined;
+  }
+}
+
+// The `projects.device_choice` column: only the keys of a DeviceChoice with the right types, so a
+// row another version wrote reads as the defaults rather than as a bad choice.
+function readDeviceChoice(raw: string | null): DeviceChoice {
+  if (!raw) return {};
+  try {
+    const c = JSON.parse(raw) as Record<string, unknown> | null;
+    if (!c || typeof c !== "object") return {};
+    return {
+      ...(isDevicePlatform(c.platform) ? { platform: c.platform } : {}),
+      ...(typeof c.ios === "string" && c.ios ? { ios: c.ios } : {}),
+      ...(typeof c.android === "string" && c.android ? { android: c.android } : {}),
+    };
+  } catch {
+    return {};
+  }
+}
+
+// The `sessions.device` column: a SessionDevice, or null for none or a malformed blob.
+function readSessionDevice(raw: string | null): SessionDevice | null {
+  if (!raw) return null;
+  try {
+    const d = JSON.parse(raw) as Record<string, unknown> | null;
+    if (!d || !isDevicePlatform(d.platform) || typeof d.base !== "string" || typeof d.id !== "string" || !d.id) return null;
+    return { platform: d.platform, base: d.base, baseName: typeof d.baseName === "string" ? d.baseName : d.base, id: d.id };
+  } catch {
+    return null;
   }
 }
 
@@ -439,6 +468,28 @@ export class RegistryService {
         /* column already exists */
       }
     }
+    // Additive migration: the mobile device preview (docs/specs/2026-11-03-mobile-device-preview.md,
+    // decisions 4 and 6). `projects.device_choice` is this machine's JSON DeviceChoice (base device
+    // and platform), `sessions.device` the JSON SessionDevice of the session's clone. Both are local
+    // only: device ids mean nothing on another machine, so no cloud path reads or writes them, and
+    // upsertProject's ON CONFLICT list leaves `device_choice` alone.
+    try {
+      this.db.exec(`ALTER TABLE projects ADD COLUMN device_choice TEXT`);
+    } catch {
+      /* column already exists */
+    }
+    try {
+      this.db.exec(`ALTER TABLE sessions ADD COLUMN device TEXT`);
+    } catch {
+      /* column already exists */
+    }
+    // Additive migration: a «Тестувальник» run (docs/specs/2026-11-04-qa-tester-agent.md,
+    // decision 1), a `review` child fixed as such at creation, like `minion`.
+    try {
+      this.db.exec(`ALTER TABLE sessions ADD COLUMN tester INTEGER NOT NULL DEFAULT 0`);
+    } catch {
+      /* column already exists */
+    }
     // The first index in this schema: listSessions(projectId) filters on project_id on
     // every board render and every supervisor lookup.
     this.db.exec(`CREATE INDEX IF NOT EXISTS sessions_project_idx ON sessions (project_id)`);
@@ -527,6 +578,18 @@ export class RegistryService {
       `CREATE TABLE IF NOT EXISTS minion_settings (id INTEGER PRIMARY KEY CHECK (id = 1), cap INTEGER NOT NULL, pause TEXT, failures INTEGER NOT NULL DEFAULT 0)`,
     );
     this.db.exec(`CREATE TABLE IF NOT EXISTS minion_projects (project_id TEXT PRIMARY KEY, activated_at TEXT NOT NULL)`);
+    // Native sessions' launch preferences (core NativeSettings), single-row and machine-local
+    // like the two above: how a TUI is drawn is this machine's operator's choice.
+    this.db.exec(
+      `CREATE TABLE IF NOT EXISTS native_settings (id INTEGER PRIMARY KEY CHECK (id = 1), claude_full_screen INTEGER NOT NULL DEFAULT 0)`,
+    );
+    // «Тестувальник» settings (docs/specs/2026-11-04-qa-tester-agent.md, decision 4): per project,
+    // THIS machine only and never synced — the Jira/Linear custody rule, passwords in plaintext.
+    this.db.exec(`CREATE TABLE IF NOT EXISTS tester_settings (project_id TEXT PRIMARY KEY, login_path TEXT NOT NULL DEFAULT '', notes TEXT NOT NULL DEFAULT '')`);
+    this.db.exec(
+      `CREATE TABLE IF NOT EXISTS tester_accounts (id TEXT PRIMARY KEY, project_id TEXT NOT NULL, name TEXT NOT NULL, login TEXT NOT NULL, password TEXT NOT NULL, note TEXT NOT NULL DEFAULT '', position INTEGER NOT NULL)`,
+    );
+    this.db.exec(`CREATE INDEX IF NOT EXISTS tester_accounts_project_idx ON tester_accounts (project_id)`);
   }
 
   // v1 (2026-08-21, team cloud): `groups` becomes `projects`, its id becomes the CLOUD
@@ -812,16 +875,18 @@ export class RegistryService {
     this.db.prepare(`DELETE FROM session_findings WHERE session_id IN (SELECT id FROM sessions WHERE project_id = ?)`).run(id);
     this.db.prepare(`DELETE FROM sessions WHERE project_id = ?`).run(id);
     this.db.prepare(`DELETE FROM minion_projects WHERE project_id = ?`).run(id);
+    this.db.prepare(`DELETE FROM tester_settings WHERE project_id = ?`).run(id);
+    this.db.prepare(`DELETE FROM tester_accounts WHERE project_id = ?`).run(id);
     this.db.prepare(`DELETE FROM projects WHERE id = ?`).run(id);
   }
 
   listSessions(projectId?: string): Session[] {
-    const sql = `SELECT id, project_id as projectId, task_id as taskId, name, task, worktree_path as worktreePath, branch, worktree, base_branch as baseBranch, omp_session_id as ompSessionId, omp_session_file as ompSessionFile, parent_session_id as parentSessionId, kind, model, prefix, runtime, native, deep_analysis, design_dir, minion, minion_result, finding_kind, effort, status, pr_opened as prOpened, pr_url, archived, usage, pending_prompt, created_at as createdAt, last_activity_at as lastActivityAt, (SELECT COUNT(*) FROM session_findings f WHERE f.session_id = sessions.id AND f.status = 'open') as open_findings FROM sessions`;
+    const sql = `SELECT id, project_id as projectId, task_id as taskId, name, task, worktree_path as worktreePath, branch, worktree, base_branch as baseBranch, omp_session_id as ompSessionId, omp_session_file as ompSessionFile, parent_session_id as parentSessionId, kind, model, prefix, runtime, native, deep_analysis, design_dir, minion, minion_result, finding_kind, tester, effort, status, pr_opened as prOpened, pr_url, archived, usage, pending_prompt, created_at as createdAt, last_activity_at as lastActivityAt, (SELECT COUNT(*) FROM session_findings f WHERE f.session_id = sessions.id AND f.status = 'open') as open_findings FROM sessions`;
     const rows = (
       projectId
         ? this.db.prepare(sql + ` WHERE project_id = ? ORDER BY created_at`).all(projectId)
         : this.db.prepare(sql + ` ORDER BY created_at`).all()
-    ) as (Omit<Session, "archived" | "worktree" | "usage" | "effort" | "runtime" | "prOpened" | "prUrl" | "native" | "deepAnalysis" | "designDir" | "minion" | "minionResult" | "findingKind" | "openFindings" | "pendingPrompt"> & { archived: number; worktree: number; usage: string | null; effort: string | null; runtime: string | null; prOpened: number; pr_url: string | null; native: number; deep_analysis: number; design_dir: string | null; minion: number; minion_result: string | null; finding_kind: string | null; open_findings: number; pending_prompt: string | null })[];
+    ) as (Omit<Session, "archived" | "worktree" | "usage" | "effort" | "runtime" | "prOpened" | "prUrl" | "native" | "deepAnalysis" | "designDir" | "minion" | "minionResult" | "findingKind" | "tester" | "openFindings" | "pendingPrompt"> & { archived: number; worktree: number; usage: string | null; effort: string | null; runtime: string | null; prOpened: number; pr_url: string | null; native: number; deep_analysis: number; design_dir: string | null; minion: number; minion_result: string | null; finding_kind: string | null; tester: number; open_findings: number; pending_prompt: string | null })[];
     // SQLite stores the flag as 0/1; hand callers a real boolean. `effort` is validated rather
     // than cast: a row written by an older build (or by hand) must degrade to "not known" —
     // typing an unknown word as a ThinkingLevel would send it straight back into omp's argv.
@@ -833,10 +898,10 @@ export class RegistryService {
     // a PR URL was stored.
     // `minion` likewise; `minion_result` and `finding_kind` are validated like `effort`, so a
     // hand-edited row degrades.
-    // `design_dir` likewise appears only on a design session.
-    return rows.map(({ native, deep_analysis, design_dir, minion, minion_result, finding_kind, open_findings, pending_prompt, pr_url, ...r }) => {
+    // `design_dir` likewise appears only on a design session, `tester` only on a tester run.
+    return rows.map(({ native, deep_analysis, design_dir, minion, minion_result, finding_kind, tester, open_findings, pending_prompt, pr_url, ...r }) => {
       const minionResult = readMinionColumn(minion_result);
-      return { ...r, ...(native ? { native: true } : {}), ...(deep_analysis ? { deepAnalysis: true } : {}), ...(design_dir ? { designDir: design_dir } : {}), ...(minion ? { minion: true } : {}), ...(minionResult ? { minionResult } : {}), ...(isFindingKind(finding_kind) ? { findingKind: finding_kind } : {}), ...(open_findings ? { openFindings: open_findings } : {}), ...(pending_prompt !== null ? { pendingPrompt: pending_prompt } : {}), ...(pr_url ? { prUrl: pr_url } : {}), archived: r.archived !== 0, worktree: r.worktree !== 0, prOpened: r.prOpened !== 0, taskId: r.taskId ?? undefined, model: r.model ?? undefined, prefix: r.prefix ?? undefined, runtime: isNativeHarness(r.runtime) ? r.runtime : undefined, effort: isThinkingLevel(r.effort) ? r.effort : undefined, usage: readUsage(r.usage) };
+      return { ...r, ...(native ? { native: true } : {}), ...(deep_analysis ? { deepAnalysis: true } : {}), ...(design_dir ? { designDir: design_dir } : {}), ...(minion ? { minion: true } : {}), ...(minionResult ? { minionResult } : {}), ...(isFindingKind(finding_kind) ? { findingKind: finding_kind } : {}), ...(tester ? { tester: true } : {}), ...(open_findings ? { openFindings: open_findings } : {}), ...(pending_prompt !== null ? { pendingPrompt: pending_prompt } : {}), ...(pr_url ? { prUrl: pr_url } : {}), archived: r.archived !== 0, worktree: r.worktree !== 0, prOpened: r.prOpened !== 0, taskId: r.taskId ?? undefined, model: r.model ?? undefined, prefix: r.prefix ?? undefined, runtime: isNativeHarness(r.runtime) ? r.runtime : undefined, effort: isThinkingLevel(r.effort) ? r.effort : undefined, usage: readUsage(r.usage) };
     });
   }
 
@@ -860,7 +925,7 @@ export class RegistryService {
     };
     this.db
       .prepare(
-        `INSERT INTO sessions (id, project_id, task_id, name, task, worktree_path, branch, worktree, base_branch, omp_session_id, omp_session_file, parent_session_id, kind, model, prefix, runtime, native, deep_analysis, design_dir, minion, finding_kind, effort, status, created_at, last_activity_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+        `INSERT INTO sessions (id, project_id, task_id, name, task, worktree_path, branch, worktree, base_branch, omp_session_id, omp_session_file, parent_session_id, kind, model, prefix, runtime, native, deep_analysis, design_dir, minion, finding_kind, tester, effort, status, created_at, last_activity_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
       )
       .run(
         row.id,
@@ -884,6 +949,7 @@ export class RegistryService {
         row.designDir ?? null,
         row.minion ? 1 : 0,
         row.findingKind ?? null,
+        row.tester ? 1 : 0,
         row.effort ?? null,
         row.status,
         row.createdAt,
@@ -1207,6 +1273,18 @@ export class RegistryService {
       .run(row.cap, row.pause ? JSON.stringify(row.pause) : null, row.failures);
   }
 
+  // No row yet reads as the defaults: claude inline, its history searchable.
+  getNativeSettings(): NativeSettings {
+    const row = this.db.prepare(`SELECT claude_full_screen FROM native_settings WHERE id = 1`).get() as
+      | { claude_full_screen: number }
+      | undefined;
+    return { claudeFullScreen: row?.claude_full_screen === 1 };
+  }
+
+  setNativeSettings(s: NativeSettings): void {
+    this.db.prepare(`INSERT OR REPLACE INTO native_settings (id, claude_full_screen) VALUES (1,?)`).run(s.claudeFullScreen ? 1 : 0);
+  }
+
   // The projects «Посіпака» is activated for on this machine, in activation order.
   listMinionProjects(): string[] {
     const rows = this.db.prepare(`SELECT project_id FROM minion_projects ORDER BY activated_at, project_id`).all() as { project_id: string }[];
@@ -1216,5 +1294,53 @@ export class RegistryService {
   setMinionProject(projectId: string, active: boolean): void {
     if (active) this.db.prepare(`INSERT OR IGNORE INTO minion_projects (project_id, activated_at) VALUES (?,?)`).run(projectId, new Date().toISOString());
     else this.db.prepare(`DELETE FROM minion_projects WHERE project_id = ?`).run(projectId);
+  }
+
+  // ── The mobile device preview (local only, decisions 4 and 6) ────────────────
+
+  // An unknown project or a row without a choice reads as {} (the defaults).
+  getDeviceChoice(projectId: string): DeviceChoice {
+    const row = this.db.prepare(`SELECT device_choice FROM projects WHERE id = ?`).get(projectId) as { device_choice: string | null } | undefined;
+    return readDeviceChoice(row?.device_choice ?? null);
+  }
+
+  setDeviceChoice(projectId: string, choice: DeviceChoice): void {
+    this.db.prepare(`UPDATE projects SET device_choice = ? WHERE id = ?`).run(JSON.stringify(choice), projectId);
+  }
+
+  getSessionDevice(sessionId: string): SessionDevice | null {
+    const row = this.db.prepare(`SELECT device FROM sessions WHERE id = ?`).get(sessionId) as { device: string | null } | undefined;
+    return readSessionDevice(row?.device ?? null);
+  }
+
+  // `null` forgets the clone (it was deleted).
+  setSessionDevice(sessionId: string, device: SessionDevice | null): void {
+    this.db.prepare(`UPDATE sessions SET device = ? WHERE id = ?`).run(device ? JSON.stringify(device) : null, sessionId);
+  }
+
+  // ── «Тестувальник» settings (docs/specs/2026-11-04-qa-tester-agent.md, decision 4) ──────────
+
+  // No row yet reads as empty settings.
+  getTesterSettings(projectId: string): TesterSettings {
+    const s = this.db.prepare(`SELECT login_path, notes FROM tester_settings WHERE project_id = ?`).get(projectId) as
+      | { login_path: string; notes: string }
+      | undefined;
+    const accounts = this.db
+      .prepare(`SELECT id, name, login, password, note FROM tester_accounts WHERE project_id = ? ORDER BY position, rowid`)
+      .all(projectId) as TesterSettings["accounts"];
+    return { loginPath: s?.login_path ?? "", notes: s?.notes ?? "", accounts };
+  }
+
+  // Replaces the settings and the whole account list in one transaction; accounts keep the
+  // given order. Ids must be assigned by the caller.
+  setTesterSettings(projectId: string, settings: TesterSettings): void {
+    this.db.transaction(() => {
+      this.db
+        .prepare(`INSERT OR REPLACE INTO tester_settings (project_id, login_path, notes) VALUES (?,?,?)`)
+        .run(projectId, settings.loginPath, settings.notes);
+      this.db.prepare(`DELETE FROM tester_accounts WHERE project_id = ?`).run(projectId);
+      const insert = this.db.prepare(`INSERT INTO tester_accounts (id, project_id, name, login, password, note, position) VALUES (?,?,?,?,?,?,?)`);
+      settings.accounts.forEach((a, i) => insert.run(a.id, projectId, a.name, a.login, a.password, a.note, i));
+    })();
   }
 }

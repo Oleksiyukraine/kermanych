@@ -17,20 +17,53 @@
 // listed only while a browser host exists. A «Посіпака» run gets one more, `report_outcome`
 // (minion/outcome-tool.ts, docs/specs/2026-10-23-minion-auto-run.md), listed only for it. An
 // agent session also gets the live-preview tools (docs/specs/2026-11-03-session-browser-preview.md),
-// which need no host either. A back-end or mobile project has neither browser nor preview
-// (decision 9): the gate is here, in tools/list and in every call, not in bindingFor.
-import { Injectable, Optional } from "@nestjs/common";
+// which need no host either. A Mobile project's agent session gets the device tools instead of
+// the browser ones (docs/specs/2026-11-03-mobile-device-preview.md, decisions 8 and 10); they need
+// no host either, since the api drives the device. A back-end project has neither browser nor
+// preview (decision 9): the gate is here, in tools/list and in every call, not in bindingFor.
+import { Inject, Injectable, Optional } from "@nestjs/common";
 import { HttpAdapterHost } from "@nestjs/core";
 import { randomBytes } from "node:crypto";
 import { Subject } from "rxjs";
 import { mkdirSync, realpathSync, lstatSync, writeFileSync } from "node:fs";
 import { basename, dirname, isAbsolute, join, relative, sep } from "node:path";
+import { setTimeout as sleep } from "node:timers/promises";
 import { RegistryService } from "../registry/registry.service";
 import { PreviewService } from "../preview/preview.service";
 import { FINDING_TOOL_NAMES, callFindingTool, findingTools } from "../findings/findings-tools";
 import { resolveLanguage } from "../runtime/resolve-language";
 import { OUTCOME_TOOL, callOutcomeTool } from "../minion/outcome-tool";
-import { PREVIEW_CONFIG_PATH, platformHasBrowser, type MinionVerdictReport, type PreviewState } from "@kermanych/core";
+import { AuthService } from "../auth/auth.service";
+import {
+  CREDENTIAL_TOOL_DEF,
+  QA_CHECKLIST_TOOL_DEF,
+  QA_RESULT_TOOL_DEF,
+  TESTER_QA_TOOL_NAMES,
+  callTesterQaTool,
+  credentialValue,
+  isTesterSession,
+  maskSecret,
+} from "../tester/tester-tools";
+import {
+  CREDENTIAL_TOOL,
+  DEVICE_BUTTONS,
+  DEVICE_PLATFORM_BUTTONS,
+  PREVIEW_CONFIG_PATH,
+  PREVIEW_DEVICE_STEP,
+  isDevicePlatform,
+  platformHasBrowser,
+  platformHasDevice,
+  platformHasPreview,
+  type DeviceButton,
+  type DeviceElement,
+  type DeviceRect,
+  type DeviceRuntime,
+  type MinionVerdictReport,
+  type PreviewState,
+  type QaChecklist,
+  type Session,
+} from "@kermanych/core";
+import { DEVICE_API, type DeviceApi } from "../device/device.contract";
 import {
   browserHost,
   type BrowserActionResult,
@@ -249,52 +282,228 @@ const TOOLS = [
 
 // The live preview of this session (docs/specs/2026-11-03-session-browser-preview.md, «Agent
 // tools»). The descriptions are the agent's only guidance (decision 11): no prompt line tells it
-// to use them.
+// to use them. A Mobile project's preview runs on the session's device
+// (docs/specs/2026-11-03-mobile-device-preview.md, decision 10), so its descriptions say so and
+// preview_start takes the platform.
 const PREVIEW_SHARED =
   "The live preview runs THIS session's app from its worktree, as the repository's `.kermanych/preview.json` says (an optional `setup` command, then services started in order on free ports), and the operator watches it in the session browser's «Браузер» tab.";
+const DEVICE_PREVIEW_SHARED =
+  "The live preview runs THIS session's app from its worktree on the session's own virtual device (an iOS Simulator or an Android emulator), as the repository's `.kermanych/preview.json` says: step `device` boots the device, then the optional `setup`, the services in order and the platform's `install` run, and the app is launched. The operator watches the device in the session's «Пристрій» tab.";
 
-const PREVIEW_TOOLS = [
+const PREVIEW_START_PLATFORM = {
+  type: "string",
+  enum: ["ios", "android"],
+  description: "Which device to run on when the file configures both; it becomes this project's default on this machine. Omit to keep the session's device (or the project's default).",
+};
+
+function previewTools(device: boolean) {
+  const shared = device ? DEVICE_PREVIEW_SHARED : PREVIEW_SHARED;
+  return [
+    {
+      name: "preview_start",
+      description: device
+        ? `${shared} Start it: the file is read and validated first, then the steps run. Answers once the app runs on the device (drive it with the device_* tools), ` +
+          "or after 60 s with the step it is still waiting for — follow it with preview_status (booting a device and a first native build take minutes). A failure answers with the failed step and the last lines of its log. " +
+          "Already running → the running state; pass `restart: true` to stop the services and run setup, services, install and the launch again (the device keeps running). Passing another `platform` restarts on that device. " +
+          "A missing or invalid file is refused with the reason: write or fix `.kermanych/preview.json` by the preview-config skill."
+        : `${shared} Start it: the file is read and validated first, then \`setup\` and each service run until ready. Answers with the URL and the service ports once it runs (the session browser then opens the page; check your work there with the browser tools), ` +
+          "or after 60 s with the step it is still waiting for — follow it with preview_status. A failure answers with the failed step and the last lines of its log. Already running → the running state; pass `restart: true` to stop and start again (after you changed the code a running dev server does not reload, or the file). " +
+          "A missing or invalid file is refused with the reason: write or fix `.kermanych/preview.json` by the preview-config skill.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          restart: { type: "boolean", description: "Stop the running preview first and start it again (default false).", default: false },
+          ...(device ? { platform: PREVIEW_START_PLATFORM } : {}),
+        },
+        additionalProperties: false,
+      },
+    },
+    {
+      name: "preview_status",
+      description: device
+        ? `${shared} Its current state: starting (and the step it waits for), running (the device, and whether the app runs or has exited), stopped, crashed (a service or the device itself exited) or failed (which step, why).`
+        : `${shared} Its current state: starting (and the step it waits for), running (URL and ports), stopped, crashed (which service, its exit code) or failed (which step, why).`,
+      inputSchema: {
+        type: "object",
+        properties: { wait: { type: "number", description: "While it is starting, wait up to this many seconds (0–60) for it to run or fail (default 0).", minimum: 0, maximum: 60 } },
+        additionalProperties: false,
+      },
+    },
+    {
+      name: "preview_stop",
+      description: device
+        ? `${shared} Stop every process of it and shut the device down; the device keeps its data (sign-ins, installed apps) for the next start.`
+        : `${shared} Stop every process of it. The page stays open in the session browser, on a dead address.`,
+      inputSchema: { type: "object", properties: {}, additionalProperties: false },
+    },
+    {
+      name: "preview_logs",
+      description: device
+        ? `${shared} The output of one step of the latest start: \`device\` (the device's boot lines and the app's own log), \`setup\`, \`install\` or a service name. Read it when a start fails, a service crashes or the app exits.`
+        : `${shared} The output (stdout and stderr) of one step of the latest start: \`setup\` or a service name. Read it when a start fails or a service crashes.`,
+      inputSchema: {
+        type: "object",
+        properties: {
+          step: { type: "string", description: device ? "`device`, `setup`, `install` or a service name from the file." : "`setup` or a service name from the file." },
+          lines: { type: "integer", description: "How many of the last lines (1–1000, default 100).", minimum: 1, maximum: 1000, default: 100 },
+        },
+        required: ["step"],
+        additionalProperties: false,
+      },
+    },
+  ];
+}
+const PREVIEW_TOOL_NAMES = new Set(previewTools(false).map((t) => t.name));
+
+// The session's device (docs/specs/2026-11-03-mobile-device-preview.md, decision 10). Listed for
+// a Mobile project's agent session; they need no desktop app, since the api drives the device.
+const DEVICE_SHARED =
+  "This is THIS session's virtual device (an iOS Simulator or an Android emulator) in Kermanych's «Пристрій» tab, shared live with the operator: they see its screen and may be using it themselves. It runs while the live preview runs (preview_start boots it).";
+// Every tool that takes or gives coordinates says which space they are in.
+const DEVICE_UNITS =
+  "Coordinates are in the device's screen space that device_snapshot reports: points on iOS, pixels on Android, origin at the top left.";
+const DEVICE_REF = { type: "string", description: "A ref from the latest device_snapshot (e.g. e12)." };
+const DEVICE_X = { type: "number", description: "X in the device's screen space (points on iOS, pixels on Android)." };
+const DEVICE_Y = { type: "number", description: "Y in the device's screen space (points on iOS, pixels on Android)." };
+
+const DEVICE_TOOLS = [
   {
-    name: "preview_start",
+    name: "device_snapshot",
     description:
-      `${PREVIEW_SHARED} Start it: the file is read and validated first, then \`setup\` and each service run until ready. Answers with the URL and the service ports once it runs (the session browser then opens the page; check your work there with the browser tools), ` +
-      "or after 60 s with the step it is still waiting for — follow it with preview_status. A failure answers with the failed step and the last lines of its log. Already running → the running state; pass `restart: true` to stop and start again (after you changed the code a running dev server does not reload, or the file). " +
-      "A missing or invalid file is refused with the reason: write or fix `.kermanych/preview.json` by the preview-config skill.",
-    inputSchema: {
-      type: "object",
-      properties: { restart: { type: "boolean", description: "Stop the running preview first and start it again (default false).", default: false } },
-      additionalProperties: false,
-    },
-  },
-  {
-    name: "preview_status",
-    description: `${PREVIEW_SHARED} Its current state: starting (and the step it waits for), running (URL and ports), stopped, crashed (which service, its exit code) or failed (which step, why).`,
-    inputSchema: {
-      type: "object",
-      properties: { wait: { type: "number", description: "While it is starting, wait up to this many seconds (0–60) for it to run or fail (default 0).", minimum: 0, maximum: 60 } },
-      additionalProperties: false,
-    },
-  },
-  {
-    name: "preview_stop",
-    description: `${PREVIEW_SHARED} Stop every process of it. The page stays open in the session browser, on a dead address.`,
+      `${DEVICE_SHARED} The screen's accessibility tree as compact text, one element per line, nested by indentation: \`e12 Button "Sign in" [24,610 345×48] id=login value="…"\` — ` +
+      `a ref, the element's type, its label, its frame [x,y width×height], and its id and value when it has them. ${DEVICE_UNITS} ` +
+      "Refs are bound to this snapshot: an element that moved or went away is refused rather than tapped blind, so take a new snapshot after the screen changes. Prefer this to read the screen; use device_screenshot to check visuals.",
     inputSchema: { type: "object", properties: {}, additionalProperties: false },
   },
   {
-    name: "preview_logs",
-    description: `${PREVIEW_SHARED} The output (stdout and stderr) of one step of the latest start: \`setup\` or a service name. Read it when a start fails or a service crashes.`,
+    name: "device_screenshot",
+    description:
+      `${DEVICE_SHARED} A PNG of the device's screen. To find elements or read text, device_snapshot is cheaper and gives refs. With \`path\` the PNG is saved into this session's worktree ` +
+      "instead of being shown to you — use it to keep a screenshot as a file.",
     inputSchema: {
       type: "object",
       properties: {
-        step: { type: "string", description: "`setup` or a service name from the file." },
-        lines: { type: "integer", description: "How many of the last lines (1–1000, default 100).", minimum: 1, maximum: 1000, default: 100 },
+        path: {
+          type: "string",
+          description:
+            "Save the PNG to this worktree-relative path under `docs/` (e.g. `docs/screens/login-error.png`) and answer with the saved path instead of the image. Only in a session with its own worktree.",
+        },
       },
-      required: ["step"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "device_tap",
+    description:
+      `${DEVICE_SHARED} Tap once: an element by \`ref\`, the first element whose accessibility \`label\` or \`id\` equals the given one, or the point \`x\`,\`y\`. Give exactly one of ref, label, id, or x with y. ` +
+      `An element is tapped at the centre of its frame. ${DEVICE_UNITS}`,
+    inputSchema: {
+      type: "object",
+      properties: {
+        ref: DEVICE_REF,
+        label: { type: "string", description: "An element's exact accessibility label, as device_snapshot shows it in quotes." },
+        id: { type: "string", description: "An element's exact accessibility id (iOS) or resource-id (Android)." },
+        x: DEVICE_X,
+        y: DEVICE_Y,
+      },
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "device_swipe",
+    description:
+      `${DEVICE_SHARED} Swipe with one finger: from the point \`x\`,\`y\` (or the centre of \`ref\`, or the centre of the screen) either to \`to_x\`,\`to_y\` or in a \`direction\` ` +
+      "the finger moves for `distance` of the screen. A finger moving up scrolls the content down (to what is below). " +
+      `${DEVICE_UNITS}`,
+    inputSchema: {
+      type: "object",
+      properties: {
+        ref: { ...DEVICE_REF, description: "Start at the centre of this element: a ref from the latest device_snapshot." },
+        x: DEVICE_X,
+        y: DEVICE_Y,
+        to_x: { type: "number", description: "End X in the device's screen space." },
+        to_y: { type: "number", description: "End Y in the device's screen space." },
+        direction: { type: "string", enum: ["up", "down", "left", "right"], description: "The way the finger moves; instead of to_x/to_y." },
+        distance: { type: "number", minimum: 0.05, maximum: 1, default: 0.5, description: "With direction: how far, as a fraction of the screen's height (up/down) or width (left/right); default 0.5." },
+        duration_ms: { type: "integer", minimum: 50, maximum: 5000, default: 300, description: "How long the swipe takes; a slow one drags, a fast one flings (default 300)." },
+      },
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "device_type",
+    description:
+      `${DEVICE_SHARED} Type text into the focused field (tap the field first). Any text works: what a keyboard cannot type (Cyrillic, emoji) is pasted through the device's clipboard.`,
+    inputSchema: {
+      type: "object",
+      properties: {
+        text: { type: "string", description: "The text to type." },
+        submit: { type: "boolean", description: "Press Enter after typing (default false).", default: false },
+      },
+      required: ["text"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "device_press",
+    description: `${DEVICE_SHARED} Press a hardware button. An iOS simulator has no back or recents button: those are refused there.`,
+    inputSchema: {
+      type: "object",
+      properties: { button: { type: "string", enum: [...DEVICE_BUTTONS], description: "The button to press." } },
+      required: ["button"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "device_wait_for",
+    description:
+      `${DEVICE_SHARED} Wait until an element whose label or value contains \`text\`, or whose id equals \`id\`, appears in the accessibility tree (with \`gone\`, until none is left). ` +
+      "Give exactly one of `text` and `id`. Use it instead of sleeping after an action that loads a screen.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        text: { type: "string", description: "Text to look for in elements' labels and values." },
+        id: { type: "string", description: "An exact accessibility id (iOS) or resource-id (Android)." },
+        gone: { type: "boolean", description: "Wait for it to disappear instead (default false).", default: false },
+        timeout: { type: "number", description: "Seconds to wait (default 10, max 60).", default: 10, minimum: 0, maximum: 60 },
+      },
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "device_open_url",
+    description: `${DEVICE_SHARED} Open a URL on the device: a deep link into the app (\`myapp://orders/42\`) or a web page in the device's browser.`,
+    inputSchema: {
+      type: "object",
+      properties: { url: { type: "string", description: "A URL with a scheme, e.g. myapp://path or https://example.com." } },
+      required: ["url"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "device_app",
+    description:
+      `${DEVICE_SHARED} Launch, terminate or restart the app the preview file names, on the running preview's device. Use \`launch\` after the app exited (preview_status says so), ` +
+      "`restart` to start it from a clean process. This does not rebuild it: after a code change, restart the preview (preview_start with restart) or hot-reload as the preview-config skill says.",
+    inputSchema: {
+      type: "object",
+      properties: { action: { type: "string", enum: ["launch", "terminate", "restart"] } },
+      required: ["action"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "device_rotate",
+    description: `${DEVICE_SHARED} Rotate the device. The screen space of every other tool turns with it: take a new device_snapshot afterwards.`,
+    inputSchema: {
+      type: "object",
+      properties: { orientation: { type: "string", enum: ["portrait", "landscape"] } },
+      required: ["orientation"],
       additionalProperties: false,
     },
   },
 ];
-const PREVIEW_TOOL_NAMES = new Set(PREVIEW_TOOLS.map((t) => t.name));
+const DEVICE_TOOL_NAMES = new Set(DEVICE_TOOLS.map((t) => t.name));
 
 // How long preview_start waits for running before it hands over to preview_status.
 const PREVIEW_START_WAIT_MS = 60_000;
@@ -339,15 +548,79 @@ function describePreview(state: PreviewState | null): string {
   switch (state.phase) {
     case "starting":
       return `Starting: waiting for ${state.step}${state.services.length ? ` (ports: ${ports(state.services)})` : ""}. Call preview_status with \`wait\` to follow it.`;
-    case "running":
-      return `Running at ${state.url} (${ports(state.services)}). The session browser opens it; browser_navigate without a url returns to it.`;
+    case "running": {
+      if (!state.device) return `Running at ${state.url} (${ports(state.services)}). The session browser opens it; browser_navigate without a url returns to it.`;
+      const d = state.device;
+      const on = `Running on ${d.name} (${d.platform}, DEVICE_ID ${d.serial}, screen ${d.screen.width}×${d.screen.height} ${d.platform === "ios" ? "points" : "pixels"})${state.services.length ? `, ports: ${ports(state.services)}` : ""}.`;
+      return state.app === "exited"
+        ? `${on} The app has exited (it crashed or was closed); the services and the device keep running. Read preview_logs for \`device\`, then start it again with device_app launch.`
+        : `${on} The app is running: drive it with the device_* tools.`;
+    }
     case "stopped":
       return "The preview is stopped. Call preview_start to run it.";
     case "crashed":
+      if (state.step === PREVIEW_DEVICE_STEP)
+        return "Crashed: the device itself (simulator or emulator) exited while the preview was running, and the services were stopped. Read preview_logs for `device`, then call preview_start.";
       return `Crashed: ${state.step} ${state.code !== null ? `exited with code ${state.code}` : `was killed by ${state.signal}`} while the preview was running, and the other services were stopped. Read preview_logs for \`${state.step}\`, then call preview_start.`;
     case "failed":
       return `Failed at ${state.step}: ${state.error}\nRead preview_logs for \`${state.step}\`, fix the cause, then call preview_start.`;
   }
+}
+
+// What a device ref stands for: enough to find the same element in a fresh tree.
+type DeviceRef = { type: string; label: string | null; frame: DeviceRect };
+
+// How far a ref's element may have moved and still be the one the snapshot showed, as a share
+// of the screen's longer side: a few points of layout jitter, not another row of a list.
+const REF_TOLERANCE = 0.02;
+
+// device_wait_for polls the tree this often.
+const DEVICE_WAIT_POLL_MS = 500;
+
+const round = (n: number) => Math.round(n);
+
+function centre(f: DeviceRect): { x: number; y: number } {
+  return { x: f.x + f.width / 2, y: f.y + f.height / 2 };
+}
+
+// Depth-first, the order device_snapshot numbers refs in.
+function walk(tree: DeviceElement[], visit: (e: DeviceElement, depth: number) => void, depth = 0): void {
+  for (const e of tree) {
+    visit(e, depth);
+    walk(e.children, visit, depth + 1);
+  }
+}
+
+// One element the way device_snapshot shows it (without the ref).
+export function describeElement(e: Omit<DeviceElement, "children">): string {
+  const f = e.frame;
+  let line = `${e.type}${e.label ? ` ${JSON.stringify(e.label)}` : ""} [${round(f.x)},${round(f.y)} ${round(f.width)}×${round(f.height)}]`;
+  if (e.id) line += ` id=${e.id}`;
+  if (e.value) line += ` value=${JSON.stringify(e.value)}`;
+  if (!e.enabled) line += " disabled";
+  return line;
+}
+
+// device_snapshot's text (mobile decision 10): `e12 Button "Увійти" [24,610 345×48]`, nested by
+// indentation, refs numbered depth-first. Elements with no area are not on screen: skipped, their
+// children kept. Answers the refs the text names.
+export function formatDeviceTree(tree: DeviceElement[]): { text: string; refs: Map<string, DeviceRef> } {
+  const refs = new Map<string, DeviceRef>();
+  const lines: string[] = [];
+  walk(tree, (e, depth) => {
+    if (e.frame.width <= 0 || e.frame.height <= 0) return;
+    const ref = `e${refs.size + 1}`;
+    refs.set(ref, { type: e.type, label: e.label, frame: e.frame });
+    lines.push(`${"  ".repeat(depth)}${ref} ${describeElement(e)}`);
+  });
+  return { text: lines.join("\n"), refs };
+}
+
+function num(args: Record<string, unknown>, key: string): number | undefined {
+  const v = args[key];
+  if (v === undefined || v === null) return undefined;
+  if (typeof v !== "number" || !Number.isFinite(v)) throw new Error(`\`${key}\` must be a number`);
+  return v;
 }
 
 function networkLine(e: BrowserNetworkEntry): string {
@@ -454,16 +727,33 @@ export class BrowserMcpService {
   readonly findingReported$ = new Subject<string>();
   // A «Посіпака» run reported its verdict — the supervisor holds it for the turn's end.
   readonly outcomeReported$ = new Subject<{ sessionId: string; report: MinionVerdictReport }>();
+  // A «Тестувальник» run wrote its card's QA checklist (a verdict, or the checklist it composed) —
+  // the supervisor forwards it as `qa_checklist_update`.
+  readonly qaChecklistChanged$ = new Subject<{ taskId: string; checklist: QaChecklist }>();
   // The tail of each session's tool-call chain. Agents fire calls in parallel (a snapshot
   // beside the navigate it depends on — observed with omp), and one page cannot serve two
   // actions at once, so a session's calls run one after another in arrival order.
   private queues = new Map<string, Promise<unknown>>();
+  // The refs of each session's latest device_snapshot (mobile decision 10): a ref is bound to
+  // the snapshot that gave it.
+  private deviceRefs = new Map<string, Map<string, DeviceRef>>();
 
   constructor(
     private registry: RegistryService,
     private preview: PreviewService,
+    @Inject(DEVICE_API) private device: DeviceApi,
     @Optional() private http?: HttpAdapterHost,
+    // The cloud client for a tester run's checklist writes. Optional so specs construct the
+    // service without it — then those writes refuse.
+    @Optional() private auth?: AuthService,
   ) {}
+
+  // Whose live preview a session's preview tools act on: its own, or for a tester run the
+  // parent's (docs/specs/2026-11-04-qa-tester-agent.md, decision 6) — no second set of dev
+  // servers from the same worktree.
+  private previewOwner(session: Session): string {
+    return isTesterSession(session) && session.parentSessionId ? session.parentSessionId : session.id;
+  }
 
   tokenFor(sessionId: string): string {
     let token = this.tokens.get(sessionId);
@@ -480,6 +770,7 @@ export class BrowserMcpService {
   }
 
   revoke(sessionId: string): void {
+    this.deviceRefs.delete(sessionId);
     const token = this.tokens.get(sessionId);
     if (!token) return;
     this.tokens.delete(sessionId);
@@ -522,13 +813,23 @@ export class BrowserMcpService {
         return result({});
       case "tools/list": {
         const session = this.registry.listSessions().find((s) => s.id === sessionId);
-        const browserOk = platformHasBrowser(this.registry.listProjects().find((p) => p.id === session?.projectId)?.platform);
+        const platform = this.registry.listProjects().find((p) => p.id === session?.projectId)?.platform;
+        const agent = session?.kind === "agent";
         const findings = findingTools(resolveLanguage(process.env.KERMANYCH_LANGUAGE, this.registry.getAuthSession()?.agentLanguage));
+        // A tester run (a `review` child stamped `tester`) gets the agent's browser and preview
+        // plus its QA and credential tools; any other review or discussion fork is never handed
+        // this server at all.
+        const tester = isTesterSession(session);
         const tools = [
-          ...(browserHost() && browserOk ? TOOLS : []),
-          ...(session?.kind === "agent" && browserOk ? PREVIEW_TOOLS : []),
+          ...(browserHost() && platformHasBrowser(platform) ? TOOLS : []),
+          ...(browserHost() && platformHasBrowser(platform) && tester ? [CREDENTIAL_TOOL_DEF] : []),
+          // A tester run drives the parent's web preview only; a Mobile project's device belongs
+          // to the agent session.
+          ...((agent && platformHasPreview(platform)) || (tester && platformHasBrowser(platform)) ? previewTools(platformHasDevice(platform)) : []),
+          ...(agent && platformHasDevice(platform) ? DEVICE_TOOLS : []),
           ...findings,
           ...(session?.minion === true ? [OUTCOME_TOOL] : []),
+          ...(tester ? [QA_RESULT_TOOL_DEF, QA_CHECKLIST_TOOL_DEF] : []),
         ];
         return result({ tools });
       }
@@ -540,10 +841,27 @@ export class BrowserMcpService {
           run = Promise.resolve().then(() => this.callFinding(sessionId, name, args));
         else if (name === OUTCOME_TOOL.name)
           run = Promise.resolve().then(() => callOutcomeTool(this.registry, sessionId, args, (report) => this.outcomeReported$.next({ sessionId, report })));
+        else if (TESTER_QA_TOOL_NAMES.has(name))
+          run = callTesterQaTool(
+            {
+              registry: this.registry,
+              client: () => {
+                if (!this.auth) throw new Error("not signed in");
+                return this.auth.cloudClient();
+              },
+              changed: (taskId, checklist) => this.qaChecklistChanged$.next({ taskId, checklist }),
+              screenshotFile,
+            },
+            sessionId,
+            name,
+            args,
+          );
         else if (PREVIEW_TOOL_NAMES.has(name)) run = this.callPreview(sessionId, name, args);
         else if (UNQUEUED.has(name)) run = this.call(sessionId, name, args);
         else {
-          run = (this.queues.get(sessionId) ?? Promise.resolve()).then(() => this.call(sessionId, name, args));
+          // The device has one screen as the page has one view: its actions queue the same way.
+          const exec = DEVICE_TOOL_NAMES.has(name) ? () => this.callDevice(sessionId, name, args) : () => this.call(sessionId, name, args);
+          run = (this.queues.get(sessionId) ?? Promise.resolve()).then(exec);
           const tail = run.catch(() => undefined);
           this.queues.set(sessionId, tail);
           void tail.then(() => {
@@ -575,10 +893,12 @@ export class BrowserMcpService {
     // Tools listed before the project became back-end or mobile stay in the agent's list.
     const platform = this.registry.listProjects().find((p) => p.id === session.projectId)?.platform;
     if (!platformHasBrowser(platform)) throw new Error(`The session browser is off: this is a ${platform} project.`);
-    const target: BrowserTarget = { sessionId, projectId: session.projectId };
+    const target: BrowserTarget = { sessionId, projectId: session.projectId, ...(isTesterSession(session) ? { ephemeral: true } : {}) };
+    // A tester run writes screenshots into the tested session's worktree: it has none of its own.
+    const shotOwner = isTesterSession(session) ? this.registry.listSessions().find((s) => s.id === session.parentSessionId) : session;
     switch (name) {
       case "browser_navigate": {
-        const url = typeof args.url === "string" && args.url ? args.url : this.preview.urlOf(sessionId);
+        const url = typeof args.url === "string" && args.url ? args.url : this.preview.urlOf(this.previewOwner(session));
         if (!url)
           throw new Error(
             "No url given and this session's live preview is not running. Pass a url, or start the preview with preview_start.",
@@ -596,6 +916,18 @@ export class BrowserMcpService {
         const typed = typeof args.text === "string" ? args.text : undefined;
         if (typed === undefined) throw new Error("`text` is required");
         return text(acted(await host.type(target, str(args, "ref"), typed, { clear: bool(args, "clear", true), submit: bool(args, "submit", false) })));
+      }
+      case CREDENTIAL_TOOL: {
+        if (!isTesterSession(session)) throw new Error(`${CREDENTIAL_TOOL} is only for «Тестувальник» runs.`);
+        const ref = str(args, "ref");
+        const { account, field, value } = credentialValue(this.registry, session.projectId, args);
+        let r: BrowserActionResult;
+        try {
+          r = await host.type(target, ref, value, { clear: true, submit: bool(args, "submit", false) });
+        } catch (err) {
+          throw new Error(maskSecret((err as Error)?.message ?? String(err), value));
+        }
+        return text(acted(r, `\ntyped the ${field} of «${account.name}»`));
       }
       case "browser_press":
         return text(acted(await host.press(target, str(args, "key"))));
@@ -636,9 +968,9 @@ export class BrowserMcpService {
         if (fullPage && ref) throw new Error("`full_page` and `ref` cannot be combined.");
         // A chat in the operator's checkout has no worktree of its own: writing there would
         // change the operator's files behind their back.
-        if (path !== undefined && (!session.worktree || !session.worktreePath))
+        if (path !== undefined && (!shotOwner?.worktree || !shotOwner.worktreePath))
           throw new Error("`path` needs a session with its own worktree; this one works in the operator's checkout.");
-        const file = path === undefined ? undefined : screenshotFile(session.worktreePath, path);
+        const file = path === undefined ? undefined : screenshotFile(shotOwner!.worktreePath, path);
         const shot = await host.screenshot(target, ref ? { fullPage, ref } : { fullPage });
         if (!file) return { content: [{ type: "image", data: shot.data, mimeType: shot.mimeType }] };
         const bytes = Buffer.from(shot.data, "base64");
@@ -673,20 +1005,30 @@ export class BrowserMcpService {
   }
 
   // No queue and no host: the preview runs in the api (decision 8 — agent sessions of a project
-  // with a browser only).
+  // with a browser, or with a device: mobile decision 8).
   private async callPreview(sessionId: string, name: string, args: Record<string, unknown>): Promise<ToolResult> {
     const session = this.registry.listSessions().find((s) => s.id === sessionId);
     if (!session) throw new Error("This session no longer exists.");
-    if (session.kind !== "agent") throw new Error(`The live preview is only for agent sessions (this is a ${session.kind}).`);
+    if (session.kind !== "agent" && !isTesterSession(session)) throw new Error(`The live preview is only for agent sessions (this is a ${session.kind}).`);
     const platform = this.registry.listProjects().find((p) => p.id === session.projectId)?.platform;
-    if (!platformHasBrowser(platform)) throw new Error(`The live preview is off: this is a ${platform} project.`);
-    // The operator's «Агент» pause covers starting and stopping, not reading.
-    const paused = (name === "preview_start" || name === "preview_stop") && browserHost()?.isPaused(sessionId) === true;
-    if (paused) throw new Error("The operator paused your control of this session's browser and preview. Ask them to resume it, or wait.");
+    if (!platformHasPreview(platform)) throw new Error(`The live preview is off: this is a ${platform} project.`);
+    const onDevice = platformHasDevice(platform);
+    if (onDevice && isTesterSession(session)) throw new Error("A «Тестувальник» run has no device preview: it tests web projects.");
+    // The operator's «Агент» pause covers starting and stopping, not reading. A device's pause
+    // lives in the api, since the device exists in the web build too (mobile decision 9); a web
+    // preview's is the pause of the caller's own page.
+    if (name === "preview_start" || name === "preview_stop") {
+      if (onDevice && this.device.paused(sessionId)) throw new Error(DEVICE_PAUSED);
+      if (!onDevice && browserHost()?.isPaused(sessionId) === true)
+        throw new Error("The operator paused your control of this session's browser and preview. Ask them to resume it, or wait.");
+    }
+    sessionId = this.previewOwner(session);
     switch (name) {
       case "preview_start": {
+        const platformArg = args.platform ?? undefined;
+        if (platformArg !== undefined && !isDevicePlatform(platformArg)) throw new Error("`platform` must be ios or android");
         try {
-          this.preview.start(sessionId, { restart: bool(args, "restart", false) });
+          this.preview.start(sessionId, { restart: bool(args, "restart", false), ...(platformArg !== undefined ? { platform: platformArg } : {}) });
         } catch (err) {
           const message = (err as Error).message;
           throw new Error(message.includes(PREVIEW_CONFIG_PATH) ? `${message}. Write or fix the file by the preview-config skill, then call preview_start again.` : message);
@@ -707,7 +1049,11 @@ export class BrowserMcpService {
       }
       case "preview_stop":
         await this.preview.stop(sessionId);
-        return text("The preview is stopped. The page stays as it is in the session browser.");
+        return text(
+          onDevice
+            ? "The preview is stopped and the device shut down; it keeps its data for the next start."
+            : "The preview is stopped. The page stays as it is in the session browser.",
+        );
       case "preview_logs": {
         const step = str(args, "step");
         const n = int(args, "lines", 1, 1000) ?? 100;
@@ -721,4 +1067,202 @@ export class BrowserMcpService {
         throw new Error(`unknown tool: ${name}`);
     }
   }
+
+  // The session's device (mobile decision 10): an agent session of a Mobile project, on the
+  // session's queue, under the operator's pause. The gate is checked on every call: tools listed
+  // before the project left Mobile stay in the agent's list.
+  private async callDevice(sessionId: string, name: string, args: Record<string, unknown>): Promise<ToolResult> {
+    const session = this.registry.listSessions().find((s) => s.id === sessionId);
+    if (!session) throw new Error("This session no longer exists.");
+    if (session.kind !== "agent") throw new Error(`The device is only for agent sessions (this is a ${session.kind}).`);
+    const platform = this.registry.listProjects().find((p) => p.id === session.projectId)?.platform;
+    if (!platformHasDevice(platform)) throw new Error(`The device is off: this project's platform is ${platform ?? "not set"}, not Mobile.`);
+    if (this.device.paused(sessionId)) throw new Error(DEVICE_PAUSED);
+    const runtime = this.device.runtime(sessionId);
+    if (!runtime) throw new Error("The device is not running. Start the live preview with preview_start: it boots the device.");
+    switch (name) {
+      case "device_snapshot": {
+        const { text: body, refs } = formatDeviceTree(await this.device.tree(sessionId));
+        this.deviceRefs.set(sessionId, refs);
+        const head = `Device: ${runtime.name} (${runtime.platform}), screen ${runtime.screen.width}×${runtime.screen.height} ${unitsOf(runtime)}. The refs are valid for this snapshot only.`;
+        return text(`${head}\n\n${body || "(the accessibility tree is empty: the screen may still be loading — wait, or look with device_screenshot)"}`);
+      }
+      case "device_screenshot": {
+        const path = optStr(args, "path");
+        if (path !== undefined && (!session.worktree || !session.worktreePath))
+          throw new Error("`path` needs a session with its own worktree; this one works in the operator's checkout.");
+        const file = path === undefined ? undefined : screenshotFile(session.worktreePath, path);
+        const png = await this.device.screenshot(sessionId);
+        if (!file) return { content: [{ type: "image", data: png.toString("base64"), mimeType: "image/png" }] };
+        mkdirSync(dirname(file), { recursive: true });
+        writeFileSync(file, png);
+        return text(`saved ${path} (${png.length} bytes)`);
+      }
+      case "device_tap": {
+        const ref = optStr(args, "ref");
+        const label = optStr(args, "label");
+        const id = optStr(args, "id");
+        const x = num(args, "x");
+        const y = num(args, "y");
+        const point = x !== undefined || y !== undefined;
+        if ([ref, label, id].filter((v) => v !== undefined).length + (point ? 1 : 0) !== 1) throw new Error("Give exactly one of `ref`, `label`, `id`, or `x` with `y`.");
+        if (point) {
+          const at = onScreen(runtime, x, y);
+          await this.device.tap(sessionId, at.x, at.y);
+          return text(`tapped (${round(at.x)}, ${round(at.y)})`);
+        }
+        const el = ref !== undefined ? await this.refElement(sessionId, runtime, ref) : await this.findElement(sessionId, label, id);
+        const at = centre(el.frame);
+        await this.device.tap(sessionId, at.x, at.y);
+        return text(`tapped ${describeElement(el)}`);
+      }
+      case "device_swipe": {
+        const ref = optStr(args, "ref");
+        const x = num(args, "x");
+        const y = num(args, "y");
+        const toX = num(args, "to_x");
+        const toY = num(args, "to_y");
+        const direction = optStr(args, "direction");
+        const distance = num(args, "distance") ?? 0.5;
+        const duration = int(args, "duration_ms", 50, 5000) ?? 300;
+        if (ref !== undefined && (x !== undefined || y !== undefined)) throw new Error("Start at `ref` or at `x`,`y`, not both.");
+        if ((x === undefined) !== (y === undefined)) throw new Error("Give both `x` and `y`.");
+        if ((toX === undefined) !== (toY === undefined)) throw new Error("Give both `to_x` and `to_y`.");
+        if ((toX !== undefined) === (direction !== undefined)) throw new Error("Give exactly one of `to_x`,`to_y` and `direction`.");
+        if (direction !== undefined && !SWIPE_DIRECTIONS.includes(direction)) throw new Error("`direction` must be up, down, left or right");
+        if (!(distance >= 0.05 && distance <= 1)) throw new Error("`distance` must be a fraction of the screen from 0.05 to 1");
+        if (toX !== undefined && ref === undefined && x === undefined) throw new Error("Give the start: `x`,`y` or `ref`.");
+        const { width, height } = runtime.screen;
+        const from =
+          ref !== undefined ? centre((await this.refElement(sessionId, runtime, ref)).frame) : x !== undefined ? onScreen(runtime, x, y) : { x: width / 2, y: height / 2 };
+        let to: { x: number; y: number };
+        if (toX !== undefined) to = onScreen(runtime, toX, toY);
+        else {
+          const dx = direction === "left" ? -width * distance : direction === "right" ? width * distance : 0;
+          const dy = direction === "up" ? -height * distance : direction === "down" ? height * distance : 0;
+          to = { x: clamp(from.x + dx, 0, width), y: clamp(from.y + dy, 0, height) };
+        }
+        await this.device.swipe(sessionId, from, to, duration);
+        return text(`swiped from (${round(from.x)}, ${round(from.y)}) to (${round(to.x)}, ${round(to.y)}) in ${duration} ms`);
+      }
+      case "device_type": {
+        const typed = args.text;
+        if (typeof typed !== "string") throw new Error("`text` is required");
+        const submit = bool(args, "submit", false);
+        if (!typed && !submit) throw new Error("`text` is empty and `submit` is false: nothing to do.");
+        if (typed) await this.device.type(sessionId, typed);
+        if (submit) await this.device.press(sessionId, "enter");
+        return text(`typed ${[...typed].length} characters${submit ? " and pressed Enter" : ""}`);
+      }
+      case "device_press": {
+        const button = str(args, "button");
+        if (!(DEVICE_BUTTONS as readonly string[]).includes(button)) throw new Error(`\`button\` must be one of ${DEVICE_BUTTONS.join(", ")}`);
+        const has = DEVICE_PLATFORM_BUTTONS[runtime.platform];
+        if (!has.includes(button as DeviceButton)) throw new Error(`An ${runtime.platform} device has no ${button} button (it has: ${has.join(", ")}).`);
+        await this.device.press(sessionId, button as DeviceButton);
+        return text(`pressed ${button}`);
+      }
+      case "device_wait_for": {
+        const waitText = optStr(args, "text");
+        const id = optStr(args, "id");
+        if ((waitText === undefined) === (id === undefined)) throw new Error("Give exactly one of `text` and `id`.");
+        const timeout = args.timeout === undefined || args.timeout === null ? 10 : args.timeout;
+        if (typeof timeout !== "number" || !(timeout >= 0 && timeout <= 60)) throw new Error("`timeout` must be a number of seconds from 0 to 60");
+        const gone = bool(args, "gone", false);
+        const matches = (e: DeviceElement) =>
+          waitText !== undefined ? !!(e.label?.includes(waitText) || e.value?.includes(waitText)) : e.id === id;
+        const started = Date.now();
+        const deadline = started + timeout * 1000;
+        for (;;) {
+          const found = flatten(await this.device.tree(sessionId)).find(matches);
+          if (gone ? !found : found) return text(`${gone ? "gone" : `found ${describeElement(found!)}`} after ${Date.now() - started} ms`);
+          const left = deadline - Date.now();
+          if (left <= 0) throw new Error(`${gone ? "Still on the screen" : "Not on the screen"} after ${timeout} s: ${waitText !== undefined ? `text ${JSON.stringify(waitText)}` : `id ${id}`}.`);
+          await sleep(Math.min(DEVICE_WAIT_POLL_MS, left));
+        }
+      }
+      case "device_open_url": {
+        const url = str(args, "url");
+        if (!/^[a-z][a-z0-9+.-]*:/i.test(url)) throw new Error("`url` needs a scheme, e.g. myapp://path or https://example.com");
+        await this.device.openUrl(sessionId, url);
+        return text(`opened ${url}`);
+      }
+      case "device_app": {
+        const action = args.action;
+        if (action !== "launch" && action !== "terminate" && action !== "restart") throw new Error("`action` must be launch, terminate or restart");
+        const state = await this.preview.app(sessionId, action);
+        const running = state.phase === "running" && state.app === "running";
+        if (action !== "terminate" && !running) throw new Error("The app did not start. Read preview_logs for `device` to see why.");
+        return text(action === "terminate" ? (running ? "terminated the app, but it is running again" : "terminated the app") : `${action === "launch" ? "launched" : "restarted"} the app; it is running`);
+      }
+      case "device_rotate": {
+        const orientation = args.orientation;
+        if (orientation !== "portrait" && orientation !== "landscape") throw new Error("`orientation` must be portrait or landscape");
+        await this.device.rotate(sessionId, orientation);
+        // The screen space turned: every ref of the last snapshot points elsewhere now.
+        this.deviceRefs.delete(sessionId);
+        return text(`rotated to ${orientation}; take a new device_snapshot`);
+      }
+      default:
+        throw new Error(`unknown tool: ${name}`);
+    }
+  }
+
+  // A ref of the latest device_snapshot, in a fresh tree: the element of the same type and
+  // label nearest to where the snapshot saw it, within REF_TOLERANCE. Anything else is refused
+  // rather than tapped blind (mobile decision 10).
+  private async refElement(sessionId: string, runtime: DeviceRuntime, ref: string): Promise<DeviceElement> {
+    const seen = this.deviceRefs.get(sessionId)?.get(ref);
+    if (!seen) throw new Error(`Unknown ref ${ref}: use a ref from the latest device_snapshot (take one first).`);
+    const tolerance = Math.max(runtime.screen.width, runtime.screen.height) * REF_TOLERANCE;
+    const was = centre(seen.frame);
+    let best: DeviceElement | undefined;
+    let bestDistance = Infinity;
+    for (const e of flatten(await this.device.tree(sessionId))) {
+      if (e.type !== seen.type || e.label !== seen.label) continue;
+      const c = centre(e.frame);
+      const d = Math.hypot(c.x - was.x, c.y - was.y);
+      if (d <= tolerance && d < bestDistance) [best, bestDistance] = [e, d];
+    }
+    if (!best)
+      throw new Error(
+        `${ref} (${seen.type}${seen.label ? ` ${JSON.stringify(seen.label)}` : ""}) is no longer where device_snapshot saw it: the screen changed. Take a new device_snapshot.`,
+      );
+    return best;
+  }
+
+  // device_tap by label or id: the first match on screen, an enabled one first.
+  private async findElement(sessionId: string, label: string | undefined, id: string | undefined): Promise<DeviceElement> {
+    const all = flatten(await this.device.tree(sessionId)).filter(
+      (e) => e.frame.width > 0 && e.frame.height > 0 && (label !== undefined ? e.label === label : e.id === id),
+    );
+    const el = all.find((e) => e.enabled) ?? all[0];
+    if (!el) throw new Error(`No element with ${label !== undefined ? `label ${JSON.stringify(label)}` : `id ${id}`} on the screen. Take a device_snapshot to see what is there.`);
+    return el;
+  }
+}
+
+const DEVICE_PAUSED = "The operator paused your control of this session's device and preview. Ask them to resume it, or wait.";
+const SWIPE_DIRECTIONS = ["up", "down", "left", "right"];
+
+function unitsOf(runtime: DeviceRuntime): string {
+  return runtime.platform === "ios" ? "points" : "pixels";
+}
+
+function clamp(v: number, min: number, max: number): number {
+  return Math.min(max, Math.max(min, v));
+}
+
+function flatten(tree: DeviceElement[]): DeviceElement[] {
+  const out: DeviceElement[] = [];
+  walk(tree, (e) => out.push(e));
+  return out;
+}
+
+// A point the agent gave, refused when it is off the screen.
+function onScreen(runtime: DeviceRuntime, x: number | undefined, y: number | undefined): { x: number; y: number } {
+  const { width, height } = runtime.screen;
+  if (x === undefined || y === undefined) throw new Error("Give both `x` and `y`.");
+  if (x < 0 || y < 0 || x > width || y > height) throw new Error(`(${x}, ${y}) is off the screen: it is ${width}×${height} ${unitsOf(runtime)}.`);
+  return { x, y };
 }

@@ -42,6 +42,9 @@
     <!-- «Посіпака» in a project: switching it on for this project on this machine, and the
          machine's cap and pause. -->
     <MinionMachineBlock v-if="def.id === MINION_AGENT_ID && owner.scope === 'project'" :project-id="owner.id" />
+    <!-- «Тестувальник» in a project: this machine's test accounts, sign-in page and notes
+         (docs/specs/2026-11-04-qa-tester-agent.md, decision 14). -->
+    <TesterPanel v-if="def.id === TESTER_AGENT_ID && owner.scope === 'project'" :project-id="owner.id" />
 
     <!-- An automation involves no model of its own: there is no instruction to edit and no text
          for an assigned skill to be pasted into, so the page says why rather than offering either. -->
@@ -65,11 +68,12 @@
 // at the workspace scope and a read-only resolution at the project scope (decision 1).
 import { computed } from 'vue';
 import { useI18n } from 'vue-i18n';
-import { MINION_AGENT_ID, type AgentDef } from '@kermanych/core';
+import { MINION_AGENT_ID, TESTER_AGENT_ID, type AgentDef } from '@kermanych/core';
 import type { AiOwner } from '@kermanych/cloud';
 import AiAgentEditor from './AiAgentEditor.vue';
 import AiAgentReadonly from './AiAgentReadonly.vue';
 import MinionMachineBlock from './MinionMachineBlock.vue';
+import TesterPanel from './TesterPanel.vue';
 
 const props = defineProps<{ def: AgentDef; owner: AiOwner; workspaceId: string | undefined; workspaceName: string | undefined }>();
 const emit = defineEmits<{ 'open-workspace': [] }>();

@@ -5,22 +5,24 @@
       type="text"
       spellcheck="false"
       :value="query"
-      :placeholder="t('kit.fileView.find.placeholder')"
-      :aria-label="t('kit.fileView.find.placeholder')"
+      :placeholder="placeholder ?? t('kit.fileView.find.placeholder')"
+      :aria-label="placeholder ?? t('kit.fileView.find.placeholder')"
       @input="emit('update:query', ($event.target as HTMLInputElement).value)"
       @keydown.enter.prevent="emit('step', !$event.shiftKey)"
       @keydown.esc.prevent.stop="emit('close')"
     />
     <KIconButton
+      v-if="!plain"
       :title="t('kit.fileView.find.matchCase')"
-      :active="matchCase"
-      :aria-pressed="matchCase"
+      :active="!!matchCase"
+      :aria-pressed="!!matchCase"
       @click="emit('update:matchCase', !matchCase)"
     >Aa</KIconButton>
     <KIconButton
+      v-if="!plain"
       :title="t('kit.fileView.find.wholeWord')"
-      :active="wholeWord"
-      :aria-pressed="wholeWord"
+      :active="!!wholeWord"
+      :aria-pressed="!!wholeWord"
       @click="emit('update:wholeWord', !wholeWord)"
     ><span class="k-find-bar__word">ab</span></KIconButton>
     <span class="k-find-bar__count mono" aria-live="polite">{{ count }}</span>
@@ -31,14 +33,24 @@
 </template>
 
 <script setup lang="ts">
-// The find bar of a file viewer (state in composables/useFindInText.ts), drawn as the session
-// browser's: field, match case, whole word, `3 / 12`, ↑ ↓ ✕. The viewer focuses the field
+// The find bar: the file viewers' (state in composables/useFindInText.ts), the terminal's
+// (KTerminalView) and the session browser's — field, match case, whole word, `3 / 12`, ↑ ↓ ✕.
+// The viewer focuses the field
 // through its `.k-find-bar__input` class. Esc is stopped here too, so a viewer's own Esc (leave full
-// screen, close the file) waits for the next one.
+// screen, close the file) waits for the next one. `plain` drops the match case and whole
+// word toggles, for a searcher that has neither (the session browser's find in page).
 import { useI18n } from 'vue-i18n';
 import KIconButton from './KIconButton.vue';
 
-defineProps<{ query: string; matchCase: boolean; wholeWord: boolean; count: string; hasHits: boolean }>();
+defineProps<{
+  query: string;
+  matchCase?: boolean;
+  wholeWord?: boolean;
+  plain?: boolean;
+  count: string;
+  hasHits: boolean;
+  placeholder?: string;
+}>();
 const emit = defineEmits<{
   'update:query': [value: string];
   'update:matchCase': [value: boolean];
