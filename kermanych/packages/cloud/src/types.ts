@@ -119,7 +119,12 @@ export type Task = {
   // the filing dialog and frozen by tasks_guard(), so finding-born cards can be counted.
   findingKind?: FindingKind;
   kind?: string;
+  // `tasks.branch` is the BASE branch the agent forks from, not the agent's own branch.
   branch?: string;
+  // The agent's own branch, after the prefix (`feature/<branchSlug>`), when the launcher's
+  // «Гілка» box was filled in. Absent means the launch names it from the task with a model
+  // (docs/specs/2026-11-04-custom-branch-name.md). Taken as typed; the launch slugifies it.
+  branchSlug?: string;
   // Storage object paths in the `task-images` bucket (private). The board mints signed
   // URLs from these on demand; the row never carries a URL. Absent when the task has none.
   imagePaths?: string[];
@@ -165,6 +170,7 @@ export type TaskInsert = {
   design?: boolean;
   kind?: string;
   branch?: string;
+  branchSlug?: string;
   imagePaths?: string[];
   jiraKey?: string;
   linearKey?: string;
@@ -185,6 +191,7 @@ export type TaskPatch = {
   autoRun?: boolean;
   kind?: string;
   branch?: string;
+  branchSlug?: string; // "" clears the column: the launch names the branch again
   imagePaths?: string[];
   jiraKey?: string;
   linearKey?: string;

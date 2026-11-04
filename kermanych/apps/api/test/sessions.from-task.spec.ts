@@ -353,6 +353,19 @@ describe("createSessionFromTask", () => {
     expect(session.branch).toBe("feature/dodaty-vkhid");
   });
 
+  it("launches under the card's own branch name without asking the namer, slugified and de-duplicated", async () => {
+    const suggest = vi.fn(async () => "add-github-oauth");
+    const { sup, registry } = make({ suggest } as unknown as BranchNameService);
+    bind(registry);
+    registry.createSession({ projectId: PROJECT, name: "taken", task: "t", worktreePath: "", branch: "fix/kan-42-login", worktree: true });
+    task({ assigneeId: USER, prefix: "fix", branchSlug: " KAN-42 Login " });
+
+    const session = await sup.createSessionFromTask("task-1", USER);
+
+    expect(suggest).not.toHaveBeenCalled();
+    expect(session.branch).toBe("fix/kan-42-login-2");
+  });
+
   it("falls back to the task title and safe launch defaults", async () => {
     const { sup, registry } = make();
     bind(registry);

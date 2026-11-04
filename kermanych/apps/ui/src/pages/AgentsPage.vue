@@ -938,7 +938,6 @@
               :placeholder="t('agents.launcher.namePlaceholder')"
               @input="nameEdited = true"
             />
-            <div class="agents-launcher__hint mono">{{ t('agents.launcher.branchNameGenerated') }}</div>
           </div>
 
           <!-- «Модель» and «Рівень роздумів» — how the agent runs, not where it lands, so
@@ -1001,9 +1000,23 @@
 
         <!-- RIGHT — where it lands -->
         <div class="agents-launcher__side">
+          <!-- «Гілка»: the part after the prefix, the card's own (`tasks.branch_slug`). Left blank,
+               the launch names it from the task with a model
+               (docs/specs/2026-11-04-custom-branch-name.md); typed, it is slugified at launch, and
+               the hint shows the name that lands when that changes what was typed. -->
           <div>
             <div class="agents-launcher__label">{{ t('agents.session.branch') }}</div>
-            <div class="agents-launcher__branch mono">{{ branchPreview }}</div>
+            <label class="agents-launcher__branch agents-launcher__branch--edit mono">
+              <span class="agents-launcher__branch-prefix">{{ draftPrefix }}/</span>
+              <input
+                v-model="draftBranchSlug"
+                class="agents-launcher__branch-input"
+                :placeholder="t('agents.launcher.branchPlaceholder')"
+                spellcheck="false"
+                autocomplete="off"
+              />
+            </label>
+            <div class="agents-launcher__hint mono">{{ branchNameHint }}</div>
             <div class="agents-launcher__hint mono">{{ branchHint }}</div>
           </div>
 
@@ -1214,6 +1227,7 @@ import { confirmAction } from '../lib/confirm';
 import {
   buildChatBlocks,
   branchName,
+  slugify,
   taskNameFromText,
   skillsUsed,
   docsRead,
@@ -2816,9 +2830,17 @@ const editingTask = computed<Task | undefined>(() =>
 const draftAutoRunLocked = computed(() => autoRunSwitchLocked(draftAutoRun.value, editingTask.value, auth.user?.id ?? ''));
 // The switch as the launcher opened, so a save sends `autoRun` only when this form changed it.
 let openedAutoRun = false;
-// The slug is generated from the task by a model at launch (docs/specs/2026-10-26-branch-name-from-task.md),
-// so the launcher can only show the prefix it lands under.
-const branchPreview = computed(() => branchName('…', draftPrefix.value));
+// «Гілка»: the part after the prefix. Blank, a model names it from the task at launch
+// (docs/specs/2026-10-26-branch-name-from-task.md). Typed, the launch slugifies it
+// (docs/specs/2026-11-04-custom-branch-name.md), so the hint names the branch that lands whenever
+// slugify changes what was typed — a ref must not differ from the box without saying so.
+const draftBranchSlug = ref('');
+const branchNameHint = computed(() => {
+  const typed = draftBranchSlug.value.trim();
+  if (!typed) return t('agents.launcher.branchNameGenerated');
+  const slug = slugify(typed);
+  return slug === typed ? t('agents.launcher.branchNameOwn') : t('agents.launcher.branchNameSlugged', { branch: branchName(slug, draftPrefix.value) });
+});
 // Right-column summary line under the branch box.
 const branchHint = computed(() =>
   draftWorktree.value
@@ -2992,6 +3014,7 @@ function openLauncher(card?: Task, deepAnalysis = false): void {
     ? (card!.prefix as BranchPrefix)
     : 'feature';
   draftWorktree.value = card?.worktree ?? true;
+  draftBranchSlug.value = card?.branchSlug ?? '';
   draftHidden.value = card?.hidden ?? false;
   const modes = cardModesFromCard(card, deepAnalysis);
   draftDeep.value = modes.deepAnalysis;
@@ -3024,6 +3047,7 @@ function openTaskFromText(text: string): void {
   draftPrefix.value = 'feature';
   draftWorktree.value = true;
   draftHidden.value = false;
+  draftBranchSlug.value = '';
   draftDeep.value = false;
   draftAutoRun.value = false;
   void loadLaunchBranches(undefined);
@@ -3082,6 +3106,7 @@ async function submitLauncher(asTask: boolean): Promise<void> {
     deepAnalysis: draftDeep.value,
     autoRun: draftAutoRun.value,
     baseBranch: draftBaseBranch.value || undefined,
+    branchSlug: draftBranchSlug.value,
   };
   const images = launchImages.value.map((i) => ({ data: i.data, mimeType: i.mimeType }));
   launcherError.value = null;
@@ -4716,6 +4741,34 @@ function openDocTask(path: string): void {
   font-size: 13px;
   color: var(--k-text);
   word-break: break-all;
+}
+// The editable box: the prefix is the «Тип» pick, fixed text; the input is the rest of the name.
+.agents-launcher__branch--edit {
+  display: flex;
+  align-items: baseline;
+  cursor: text;
+  word-break: normal;
+}
+.agents-launcher__branch--edit:focus-within {
+  border-color: var(--k-accent);
+}
+.agents-launcher__branch-prefix {
+  flex: none;
+  color: var(--k-muted);
+}
+.agents-launcher__branch-input {
+  flex: 1;
+  min-width: 0;
+  background: transparent;
+  border: 0;
+  padding: 0;
+  outline: none;
+  color: inherit;
+  font: inherit;
+}
+.agents-launcher__branch-input::placeholder {
+  color: var(--k-muted);
+  font-weight: 400;
 }
 
 .agents-launcher__seg {

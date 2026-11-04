@@ -1,6 +1,6 @@
 // Resolves a project's skill library and lays it out on disk for one omp launch.
 // The ONLY component that touches the filesystem or decides precedence:
-//   repository skills  >  project_skills rows  >  Kermanych's DEFAULT_SKILLS
+//   repository skills  >  user  >  project  >  workspace ai_skills rows  >  Kermanych's DEFAULT_SKILLS
 // The materialised directory doubles as the offline cache — there is no SQLite mirror.
 import { Injectable } from "@nestjs/common";
 import { spawn } from "node:child_process";

@@ -81,7 +81,7 @@ export type SkillImportScan = { path: string; skills: SkillImportCandidate[] };
 
 // A skill name is also a directory name under ~/.kermanych/skills/<projectId>/, so this
 // pattern is a security boundary rather than cosmetics: no separators, no dots, no
-// traversal. The `check` constraint on project_skills.name is the same expression.
+// traversal. The `check` constraint on ai_skills.name is the same expression.
 export const SKILL_NAME_RE = /^[a-z0-9][a-z0-9-]{0,63}$/;
 
 export function isSkillName(v: string): boolean {
