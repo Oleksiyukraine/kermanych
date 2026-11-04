@@ -1,9 +1,9 @@
 <template>
   <!-- The assistant's character (docs/specs/2026-11-03-assistant-overlay.md, decision 1), one of
-       seven the operator picks in Settings → «Загальне» (docs/specs/2026-11-03-assistant-mascot-
+       ten the operator picks in Settings → «Загальне» (docs/specs/2026-11-03-assistant-mascot-
        choice.md). Every face sits in the right half and looks right, into the app, because the
        launcher hides the left 46 %. Drawn, not assets, so they scale without files. Gradient and
-       clip ids come from useId(): the picker renders all seven beside the launcher's. -->
+       clip ids come from useId(): the picker renders all ten beside the launcher's. -->
   <svg
     class="mascot"
     :class="{ 'mascot--busy': busy }"
@@ -130,6 +130,98 @@
           </g>
         </g>
         <rect class="mascot__mouth" x="65" y="63" width="13" height="4.4" rx="1" fill="#12110f" />
+      </g>
+    </template>
+
+    <!-- «Ковбой»: a round head under a wide-brimmed hat, a neckerchief in the accent. -->
+    <template v-else-if="variant === 'cowboy'">
+      <g class="mascot__body">
+        <circle cx="50" cy="60" r="32" fill="#1c1b19" stroke="#fff" stroke-opacity=".14" stroke-width="1.2" />
+        <g class="mascot__eyes">
+          <ellipse cx="60" cy="58" rx="6" ry="7.2" fill="#f3f2f2" />
+          <ellipse cx="77" cy="58" rx="5.3" ry="6.6" fill="#f3f2f2" />
+          <g class="mascot__pupils">
+            <circle cx="62.2" cy="59" r="3" fill="#12110f" />
+            <circle cx="79" cy="59" r="2.7" fill="#12110f" />
+          </g>
+        </g>
+        <rect class="mascot__mouth" x="62" y="73" width="13" height="4.4" rx="1" fill="#f3f2f2" />
+        <path d="M30 84 Q52 95 76 83 L60 99 Z" fill="#ff563c" />
+        <!-- The hat is outlined so it does not melt into the light theme's canvas. -->
+        <path
+          d="M28 38 C26 24 30 11 40 11 C45 11 47 16 50 16 C53 16 55 11 60 11 C70 11 74 24 72 38 Z"
+          fill="#7a5232"
+          stroke="#12110f"
+          stroke-opacity=".35"
+          stroke-width="1.2"
+        />
+        <path d="M27.6 31 C42 28.5 58 28.5 72.4 31 L72.3 36 C58 33.5 42 33.5 27.7 36 Z" fill="#3a2616" />
+        <path
+          d="M3 28 C9 36 28 39 50 39 C72 39 91 36 97 28 C95 40 76 46 50 46 C24 46 5 40 3 28 Z"
+          fill="#8f6440"
+          stroke="#12110f"
+          stroke-opacity=".35"
+          stroke-width="1.2"
+        />
+      </g>
+    </template>
+
+    <!-- «Козак»: a shaven head with an оселедець in the accent and a drooping moustache. -->
+    <template v-else-if="variant === 'cossack'">
+      <g class="mascot__body">
+        <circle cx="50" cy="56" r="34" fill="#1c1b19" stroke="#fff" stroke-opacity=".14" stroke-width="1.2" />
+        <path d="M46 24 C44 12 58 6 70 9 C81 12 89 23 86 40 C83 28 77 20 68 19 C60 18 55 20 54 24 Z" fill="#ff563c" />
+        <g class="mascot__eyes">
+          <ellipse cx="59" cy="48" rx="6" ry="7.2" fill="#f3f2f2" />
+          <ellipse cx="77" cy="48" rx="5.3" ry="6.6" fill="#f3f2f2" />
+          <g class="mascot__pupils">
+            <circle cx="61.2" cy="49" r="3" fill="#12110f" />
+            <circle cx="79" cy="49" r="2.7" fill="#12110f" />
+          </g>
+        </g>
+        <path
+          d="M68 60 C61 58 54 61 52 68 C51 72 51 76 53 81 C55 74 59 67 68 65 C77 67 81 74 83 81 C85 76 85 72 84 68 C82 61 75 58 68 60 Z"
+          fill="#f3f2f2"
+          stroke="#12110f"
+          stroke-opacity=".35"
+          stroke-width="1"
+        />
+        <rect class="mascot__mouth" x="63.5" y="70" width="9" height="3.8" rx="1" fill="#ff563c" />
+      </g>
+    </template>
+
+    <!-- «Дарт Вейдер»: a glossy black helmet turned to the right, dark lenses, an accent grille. -->
+    <template v-else-if="variant === 'vader'">
+      <defs>
+        <radialGradient :id="`${uid}-helmet`" cx="38%" cy="22%" r="85%">
+          <stop offset="0" stop-color="#4a4642" />
+          <stop offset=".4" stop-color="#1c1a18" />
+          <stop offset="1" stop-color="#050404" />
+        </radialGradient>
+      </defs>
+      <g class="mascot__body">
+        <path
+          d="M12 52 C12 26 30 9 52 9 C74 9 91 26 91 52 L91 62 L97 85 C90 91 80 92 72 90 L36 90 C24 92 12 91 5 85 L12 62 Z"
+          :fill="`url(#${uid}-helmet)`"
+          stroke="#fff"
+          stroke-opacity=".14"
+          stroke-width="1.2"
+        />
+        <ellipse cx="40" cy="21" rx="15" ry="5.5" fill="#fff" opacity=".18" />
+        <path d="M47 41 C58 37 80 37 91 41 L89 72 L80 89 L58 89 L49 72 Z" fill="#3a3834" />
+        <g class="mascot__eyes">
+          <path d="M52 44 L66 46.5 L65 55 L55 54 Z" fill="#0b0a09" />
+          <path d="M72 46.5 L87 44 L84 54 L73.5 55 Z" fill="#0b0a09" />
+          <g class="mascot__pupils">
+            <circle cx="62" cy="48.5" r="1.5" fill="#fff" opacity=".7" />
+            <circle cx="82.5" cy="48" r="1.4" fill="#fff" opacity=".7" />
+          </g>
+        </g>
+        <path d="M69.5 54 L69.5 65 M60 62 L54 72 M79 62 L85 72" stroke="#12110f" stroke-width="1.6" stroke-linecap="round" />
+        <g class="mascot__mouth">
+          <path d="M60 68 L79 68 L69.5 84 Z" fill="#0b0a09" />
+          <path d="M65 71 L65 76 M69.5 71 L69.5 80 M74 71 L74 76" stroke="#ff563c" stroke-width="1.6" stroke-linecap="round" />
+        </g>
       </g>
     </template>
 

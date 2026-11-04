@@ -8,6 +8,7 @@ import type { Task } from "@kermanych/cloud";
 import type { WorktreeService } from "../src/worktree/worktree.service";
 import type { AuthService } from "../src/auth/auth.service";
 import type { PreviewService } from "../src/preview/preview.service";
+import type { DeviceApi } from "../src/device/device.contract";
 import type { BrowserMcpService as BrowserMcp } from "../src/browser/browser-mcp.service";
 
 type RpcOpts = { cwd: string; tools?: string[] };
@@ -97,7 +98,7 @@ function make(opts: { platform?: "web" | "backend"; host?: boolean } = {}) {
     behindCount: vi.fn().mockResolvedValue(0),
   };
   const preview = { urlOf: vi.fn(() => undefined as string | undefined), start: vi.fn(), settled: vi.fn(async () => null) };
-  const browser = new BrowserMcpService(registry, preview as unknown as PreviewService, http, auth);
+  const browser = new BrowserMcpService(registry, preview as unknown as PreviewService, {} as DeviceApi, http, auth);
   const bindingFor = vi.spyOn(browser, "bindingFor");
   const sup = new SupervisorService(registry, worktree as unknown as WorktreeService, auth, stubSkills(), undefined as never, undefined, browser);
   const events: ServerEvent[] = [];

@@ -1,11 +1,11 @@
 // apps/api/src/http/sessions.controller.ts
 import { BadRequestException, Body, Controller, Delete, Get, NotFoundException, Param, Patch, Post, Query, Req, StreamableFile } from "@nestjs/common";
-import { isNativeHarness, isQaRunScope, isThinkingLevel, parseFindingTarget } from "@kermanych/core";
+import { isDevicePlatform, isNativeHarness, isQaRunScope, isThinkingLevel, parseFindingTarget } from "@kermanych/core";
 import type { BranchPrefix, DocsWriteKind, ImageInput, RpcExtensionUIResponse, ThinkingLevel } from "@kermanych/core";
 import { SupervisorService } from "../supervisor/supervisor.service";
 import { sessionFailure } from "./session-failure";
 import { RegistryService } from "../registry/registry.service";
-import { PreviewService } from "../preview/preview.service";
+import { PreviewService, type PreviewAppAction } from "../preview/preview.service";
 
 // A findings failure: an unknown session or finding is a 404, an already-decided one a 400.
 function findingFailure(err: unknown): Error {
@@ -180,7 +180,7 @@ export class SessionsController {
   }
 
   // The live preview (docs/specs/2026-11-03-session-browser-preview.md). Every refusal — not an
-  // agent session, a back-end or mobile project, no session directory, a missing or invalid
+  // agent session, a back-end project, no session directory, a missing or invalid
   // `.kermanych/preview.json` — is a plain 400 message.
   @Get(":id/preview")
   previewInfo(@Param("id") id: string) {
@@ -191,11 +191,31 @@ export class SessionsController {
     }
   }
 
-  // Answers at once, normally `starting`; progress arrives as `preview_update`.
+  // Answers at once, normally `starting`; progress arrives as `preview_update`. `platform` and
+  // `base` (a base device id) pick a Mobile project's device (docs/specs/2026-11-03-mobile-device-preview.md,
+  // decision 6): a different one restarts with a re-clone.
   @Post(":id/preview")
-  startPreview(@Param("id") id: string, @Body() b: { restart?: boolean } = {}) {
+  startPreview(@Param("id") id: string, @Body() b: { restart?: boolean; platform?: unknown; base?: unknown } = {}) {
+    if (b?.platform !== undefined && !isDevicePlatform(b.platform)) throw new BadRequestException(`unknown platform ${JSON.stringify(b.platform)}`);
+    if (b?.base !== undefined && (typeof b.base !== "string" || !b.base)) throw new BadRequestException("base must be a base device id");
     try {
-      return this.preview.start(id, { restart: b?.restart === true });
+      return this.preview.start(id, {
+        restart: b?.restart === true,
+        ...(b?.platform !== undefined ? { platform: b.platform } : {}),
+        ...(typeof b?.base === "string" ? { base: b.base } : {}),
+      });
+    } catch (err) {
+      throw sessionFailure(err);
+    }
+  }
+
+  // «Запустити застосунок» (mobile decision 11): the file's app on the running device.
+  @Post(":id/preview/app")
+  async previewApp(@Param("id") id: string, @Body() b: { action?: unknown } = {}) {
+    const action = b?.action;
+    if (action !== "launch" && action !== "terminate" && action !== "restart") throw new BadRequestException("action must be launch, terminate or restart");
+    try {
+      return await this.preview.app(id, action satisfies PreviewAppAction);
     } catch (err) {
       throw sessionFailure(err);
     }

@@ -55,9 +55,13 @@ import { MinionService } from "./minion/minion.service";
 import { BranchNameService } from "./supervisor/branch-name.service";
 import { VoiceController } from "./http/voice.controller";
 import { VoiceService } from "./voice/voice.service";
+import { DeviceService } from "./device/device.service";
+import { DEVICE_API } from "./device/device.contract";
+import { DeviceController } from "./http/device.controller";
+import { DeviceGateway } from "./ws/device.gateway";
 
 @Module({
-  controllers: [AuthController, ProjectsController, SessionsController, FsController, UsageController, CloudController, SkillsController, SkillImportController, ManagementController, ManagementMcpController, CukController, ModelsController, JiraController, LinearController, SlackController, AccountController, DocsController, NativeController, BrowserMcpController, MachineController, MinionController, TesterController, VoiceController],
+  controllers: [AuthController, ProjectsController, SessionsController, FsController, UsageController, CloudController, SkillsController, SkillImportController, ManagementController, ManagementMcpController, CukController, ModelsController, JiraController, LinearController, SlackController, AccountController, DocsController, NativeController, BrowserMcpController, MachineController, MinionController, TesterController, VoiceController, DeviceController],
   providers: [
     RegistryService, WorktreeService, SupervisorService, PreviewService, EnvFileService, EventsGateway,
     UsageService,
@@ -145,6 +149,14 @@ import { VoiceService } from "./voice/voice.service";
     // supervisor (launchMinion) and counts its runs' results (minionResult$); the supervisor
     // never knows it, and its `minion_update` rides the supervisor's `events$` to the socket.
     MinionService,
+    // The session's virtual device (docs/specs/2026-11-03-mobile-device-preview.md): clones of the
+    // machine's iOS simulators / AVDs, booted for the preview's `device` step. PreviewService,
+    // BrowserMcpService and the supervisor depend on the DeviceApi interface under DEVICE_API, so
+    // their specs pass a fake; DeviceService knows none of them. Its `/device` socket.io
+    // namespace streams the screen and takes the operator's input in both builds.
+    DeviceService,
+    { provide: DEVICE_API, useExisting: DeviceService },
+    DeviceGateway,
     // Global by design: the api binds 127.0.0.1 but was previously drivable by
     // anything on the machine, including GET /fs/list (arbitrary local directory
     // enumeration). Opt out per route with @Public(), never per module.

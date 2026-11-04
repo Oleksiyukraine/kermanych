@@ -121,7 +121,7 @@ tab itself does not change.
   as the mouth. It blinks; while a turn is in flight it breathes, its pupils read and the mouth
   blinks like a cursor; `prefers-reduced-motion` stills it. Chosen from seven drawn variants
   (a plain logo disc, the logo tile, double chevrons, and three refinements of the two-eyed drop).
-  Later made a choice of seven characters, the drop among them
+  Later made a choice of characters (now ten), the drop among them
   (`docs/specs/2026-11-03-assistant-mascot-choice.md`).
 - **`components/assistant/AssistantLauncher.vue`** — mounted once in `MainLayout.vue`: the
   character (fixed, left edge, z 5001 so it stays the overlay's toggle), the overlay (teleported,

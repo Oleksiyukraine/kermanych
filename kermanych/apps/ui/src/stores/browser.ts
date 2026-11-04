@@ -3,7 +3,8 @@
 // state main reported for each session's view, which sessions' agents are driving theirs right
 // now, where the shown view sits on screen, the «Поруч із логом» preference, and the operator's
 // picks tray per session. The views themselves live in Electron main; in the web build (no
-// `window.kermanych.browser`) this store stays empty and inert.
+// `window.kermanych.browser`) the browser part stays empty and inert, and only the tray is used
+// — by the «Пристрій» tab's device picks (docs/specs/2026-11-03-mobile-device-preview.md).
 import { platformHasBrowser } from '@kermanych/core';
 import { defineStore } from 'pinia';
 import { ref, watch } from 'vue';
@@ -163,7 +164,9 @@ export const useSessionBrowser = defineStore('sessionBrowser', () => {
     bridge?.close(sessionId);
   }
 
-  function addPick(sessionId: string, pick: KermanychBrowserPick): void {
+  // A device pick (KDevicePane) joins the same tray: the tray and «Надіслати агенту» live here
+  // whichever screen the element was pointed at, in both builds.
+  function addPick(sessionId: string, pick: TrayPick['pick']): void {
     const entry: TrayPick = { id: crypto.randomUUID(), pick, comment: '' };
     picks.value = { ...picks.value, [sessionId]: [...(picks.value[sessionId] ?? []), entry] };
     persistPicks();
