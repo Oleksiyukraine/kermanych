@@ -312,6 +312,13 @@ export type ManagementRejectionCode =
   | "todo_index_range" // a todo.update/delete index that is not a whole number ≥ 1 (params: { value })
   | "todo_update_empty" // a todo.update with no patch or an empty one (params: none)
   | "todo_done_type" // a todo.update done that is not a boolean (params: { value })
+  // validateCukAction — the ЦУК console's blocks (./cuk-actions):
+  | "cuk_place_missing" // a navigate without a place id (params: none)
+  | "cuk_select_empty" // a scope.select naming neither a workspace nor a project (params: none)
+  | "cuk_session_missing" // a session action without the session ref (params: { kind })
+  | "cuk_project_missing" // a task.create / agent.start without a project name (params: { kind })
+  | "cuk_task_missing" // a task.create / agent.start without the task text (params: { kind })
+  | "cuk_message_missing" // a session.message without the message text (params: none)
   // parseManagementReply — the block never parsed as JSON:
   | "block_unreadable"; // the fenced block was not readable JSON (params: { message })
 
@@ -370,6 +377,12 @@ export const MANAGEMENT_REJECTION_CODES = [
   "todo_index_range",
   "todo_update_empty",
   "todo_done_type",
+  "cuk_place_missing",
+  "cuk_select_empty",
+  "cuk_session_missing",
+  "cuk_project_missing",
+  "cuk_task_missing",
+  "cuk_message_missing",
   "block_unreadable",
 ] as const satisfies readonly ManagementRejectionCode[];
 

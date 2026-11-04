@@ -590,7 +590,7 @@ function capacityLines(c: ManagementCapacity | undefined): string {
 // One Action List row, prefixed with its 1-based position (`#N`) — the handle todo.update and
 // todo.delete address it by. Checklist rows print as checkboxes; a numbered run counts itself
 // and, like the tile, restarts after a checklist row — the two must read the same.
-function homeTodoLines(items: ManagementHomeTodoItem[]): string {
+export function homeTodoLines(items: ManagementHomeTodoItem[]): string {
   const out: string[] = [];
   let n = 0;
   items.forEach((it, i) => {

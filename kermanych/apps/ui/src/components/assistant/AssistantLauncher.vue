@@ -1,30 +1,29 @@
 <template>
-  <!-- The Менеджмент assistant from anywhere (docs/specs/2026-11-03-assistant-overlay.md). The
-       character peeks out of the window's left edge; it, ⌘K and a counter-clockwise mouse circle
-       all summon the assistant. On the Менеджмент tab none of this shows — the tab's own dock
-       answers the summons there (decision 7). -->
+  <!-- The avatar and its window (docs/specs/2026-11-04-cuk-control-console.md). The character
+       peeks out of the window's left edge on every tab; it, ⌘K and a counter-clockwise mouse
+       circle all open the window: ЦУК expanded, the Менеджмент assistant folded under its bar
+       for owners and managers, the notepad on the right. -->
   <button
-    v-if="!onManagement"
     type="button"
     class="asst-launch"
-    :class="{ 'asst-launch--out': overlay.open || overlay.unread || chat.busy }"
+    :class="{ 'asst-launch--out': overlay.open || overlay.unread || anyBusy }"
     v-tip="launcherTip"
     :aria-label="launcherTip"
     aria-haspopup="dialog"
     :aria-expanded="overlay.open"
     @click="overlay.summon()"
   >
-    <AssistantMascot :busy="chat.busy" :variant="assistantMascot" />
+    <AssistantMascot :busy="anyBusy" :variant="assistantMascot" />
     <span v-if="overlay.unread" class="asst-launch__dot" aria-hidden="true"></span>
   </button>
 
-  <!-- Kept mounted once opened and hidden with v-show, so a half-written question and its
-       attachments survive closing (decision 5). While hidden it has no client rects, so the
-       session browser's overlay check (composables/useOverlayOpen.ts) does not count it. -->
+  <!-- Kept mounted once opened and hidden with v-show, so half-written questions and their
+       attachments survive closing. While hidden it has no client rects, so the session
+       browser's overlay check (composables/useOverlayOpen.ts) does not count it. -->
   <Teleport to="body">
     <div
       v-if="everOpened"
-      v-show="overlay.open && !onManagement"
+      v-show="overlay.open"
       class="asst-ovl"
       @pointerdown.self="overlay.close()"
     >
@@ -34,10 +33,11 @@
         role="dialog"
         aria-modal="true"
         tabindex="-1"
+        :aria-label="t('cuk.title')"
       >
         <header class="asst-ovl__head">
-          <!-- Which workspace the conversation is about: off the Менеджмент tab nothing else on
-               screen says so, and the sidebar may be hidden in focus mode. -->
+          <!-- Which workspace the notepad and the Менеджмент panel are about: nothing else on
+               screen says so under the backdrop, and the sidebar may be hidden in focus mode. -->
           <span v-if="workspaceId" class="asst-ovl__scope mono">
             <span v-if="workspace?.icon" class="asst-ovl__emoji" aria-hidden="true">{{ workspace.icon }}</span>
             <span
@@ -48,21 +48,40 @@
             ></span>
             <span class="asst-ovl__scope-name">{{ workspace?.name ?? '' }}</span>
           </span>
+          <!-- Below ~900 px the notepad leaves the row and waits behind this button. -->
+          <button
+            class="asst-ovl__notes-toggle"
+            type="button"
+            :aria-pressed="notesOpen"
+            :aria-label="t('cuk.notes.toggle')"
+            v-tip="t('cuk.notes.toggle')"
+            @click="notesOpen = !notesOpen"
+          >📝</button>
           <span class="asst-ovl__hint mono">{{ t('management.assistant.overlayClose') }}</span>
         </header>
-        <div v-if="!workspaceId" class="asst-ovl__blank">
-          <div class="asst-ovl__blank-eyebrow mono">{{ t('management.blank.eyebrow') }}</div>
-          <p class="asst-ovl__blank-text">{{ t('management.blank.text') }}</p>
-          <p v-if="orchestrator.selectedProjectId" class="asst-ovl__blank-text asst-ovl__blank-note">
-            {{ t('management.blank.note') }}
-          </p>
+        <div class="asst-ovl__body">
+          <div class="asst-ovl__main">
+            <!-- The folded panel is ordered first, so its bar sits on top and the expanded
+                 panel's composer is always the window's last row. -->
+            <CukAssistant
+              ref="cukEl"
+              :class="{ 'asst-ovl__panel--folded': cukFolded }"
+              :folded="cukFolded"
+              :foldable="hasManagement"
+              @toggle="switchPanel"
+            />
+            <ManagementAssistant
+              v-if="hasManagement"
+              ref="mgmtEl"
+              :class="{ 'asst-ovl__panel--folded': !cukFolded }"
+              variant="overlay"
+              :folded="!cukFolded"
+              :section="MANAGEMENT_DEFAULT_SECTION"
+              @toggle="switchPanel"
+            />
+          </div>
+          <CukNotepad class="asst-ovl__notes" :class="{ 'asst-ovl__notes--open': notesOpen }" />
         </div>
-        <ManagementAssistant
-          v-else
-          ref="assistantEl"
-          variant="overlay"
-          :section="MANAGEMENT_DEFAULT_SECTION"
-        />
       </div>
     </div>
   </Teleport>
@@ -70,51 +89,68 @@
 
 <script setup lang="ts">
 // Mounted once by the shell (layouts/MainLayout.vue). Owns every way in — the character, ⌘K,
-// the circle gesture, ⌘K forwarded from the session browser — and the overlay itself. The
-// conversation is the Менеджмент tab's (stores/management-chat.ts); the overlay always asks as
-// the «Огляд» section (decision 6).
+// the circle gesture, ⌘K forwarded from the session browser — and the window itself: the
+// accordion of ЦУК (stores/cuk-chat.ts) and the Менеджмент assistant (stores/management-chat.ts,
+// always asked as «Огляд»), and the notepad.
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
-import { useRoute } from 'vue-router';
+import { useRouter } from 'vue-router';
 import { useI18n } from 'vue-i18n';
 import { MANAGEMENT_DEFAULT_SECTION } from '@kermanych/core';
 import { useOrchestrator } from 'stores/orchestrator';
 import { useProjects } from 'stores/projects';
 import { useManagementChat } from 'stores/management-chat';
+import { useCukChat } from 'stores/cuk-chat';
 import { assistantGestureOn, assistantMascot, useAssistantOverlay } from 'stores/assistant-overlay';
 import ManagementAssistant from 'components/management/ManagementAssistant.vue';
 import AssistantMascot from './AssistantMascot.vue';
+import CukAssistant from './CukAssistant.vue';
+import CukNotepad from './CukNotepad.vue';
 import { useCircleGesture } from '../../composables/useCircleGesture';
 
 const { t } = useI18n();
-const route = useRoute();
 const orchestrator = useOrchestrator();
 const projects = useProjects();
 const chat = useManagementChat();
+const cuk = useCukChat();
 const overlay = useAssistantOverlay();
 
-const onManagement = computed(() => route.matched.some((r) => r.name === 'management'));
+cuk.bindRouter(useRouter());
+
 const workspaceId = computed(() => orchestrator.selectedWorkspaceId);
 const workspace = computed(() => (workspaceId.value ? projects.workspaceById.get(workspaceId.value) : undefined));
+// Decision 9: the Менеджмент panel is the owner's and the managers' of the current workspace.
+const hasManagement = computed(() => !!workspaceId.value && projects.canManageWorkspace(workspaceId.value));
+const cukFolded = computed(() => hasManagement.value && overlay.panel !== 'cuk');
+
+const anyBusy = computed(() => chat.busy || cuk.busy);
 
 const launcherTip = computed(() =>
-  chat.busy
-    ? t('management.assistant.launcherBusy')
-    : overlay.unread
-      ? t('management.assistant.launcherUnread')
-      : t('management.assistant.launcherTip'),
+  anyBusy.value ? t('cuk.launcherBusy') : overlay.unread ? t('cuk.launcherUnread') : t('cuk.launcherTip'),
 );
 
 const everOpened = ref(false);
+const notesOpen = ref(false);
 const dialogEl = ref<HTMLElement | null>(null);
-const assistantEl = ref<InstanceType<typeof ManagementAssistant> | null>(null);
-// Where the keyboard was before the overlay took it, so closing hands it back.
+const cukEl = ref<InstanceType<typeof CukAssistant> | null>(null);
+const mgmtEl = ref<InstanceType<typeof ManagementAssistant> | null>(null);
+// Where the keyboard was before the window took it, so closing hands it back.
 let returnFocus: HTMLElement | null = null;
 
-// The summons is answered here only off the Менеджмент tab; on it the dock takes focus.
+function focusPanel(): void {
+  if (overlay.panel === 'management' && mgmtEl.value) mgmtEl.value.focus();
+  else if (cukEl.value) cukEl.value.focus();
+  else dialogEl.value?.focus();
+}
+
+// The accordion: one panel expanded, the other folded to its bar; either bar swaps them.
+function switchPanel(): void {
+  overlay.panel = overlay.panel === 'cuk' ? 'management' : 'cuk';
+  void nextTick(focusPanel);
+}
+
 watch(
   () => overlay.summons,
   () => {
-    if (onManagement.value) return;
     if (overlay.open) overlay.close();
     else overlay.show();
   },
@@ -126,9 +162,12 @@ watch(
     if (open) {
       everOpened.value = true;
       returnFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+      // The role decides whether the Менеджмент panel is there at all; a roster nobody has read
+      // yet is read now. A failed read leaves the window ЦУК-only, the least-privileged view.
+      const ws = workspaceId.value;
+      if (ws && !projects.members[ws]) void projects.loadMembers(ws).catch(() => {});
       await nextTick();
-      if (assistantEl.value) assistantEl.value.focus();
-      else dialogEl.value?.focus();
+      focusPanel();
       return;
     }
     returnFocus?.focus();
@@ -136,19 +175,17 @@ watch(
   },
 );
 
-// Entering Менеджмент — by the tab or by a citation clicked in the overlay (decision 8) —
-// closes the overlay: the tab's own dock is the chat there.
-watch(onManagement, (on) => {
-  if (on) overlay.close();
+// The Менеджмент panel can vanish while it is expanded (another workspace, another role):
+// the accordion then falls back to ЦУК.
+watch(hasManagement, (has) => {
+  if (!has) overlay.panel = 'cuk';
 });
 
-// An answer landing while nobody is looking marks the character until the overlay is opened.
-watch(
-  () => chat.busy,
-  (busy, was) => {
-    if (was && !busy && !overlay.open && !onManagement.value) overlay.unread = true;
-  },
-);
+// An answer landing while nobody is looking marks the character until the window is opened —
+// from either assistant.
+watch(anyBusy, (busy, was) => {
+  if (was && !busy && !overlay.open) overlay.unread = true;
+});
 
 // ⌘K / Ctrl+K, by physical key so the Ukrainian layout works, in fields too. Ctrl+K inside the
 // terminal stays the shell's (kill-line) — the same exception the focus-mode hotkey makes.
@@ -160,11 +197,11 @@ function onHotkey(e: KeyboardEvent): void {
   overlay.summon();
 }
 
-// Esc closes the overlay — in the bubble phase, so whatever inside it claims Esc first (the
+// Esc closes the window — in the bubble phase, so whatever inside it claims Esc first (the
 // Хелпери panel stops it) keeps it. A Quasar dialog on top (the «Новий чат» confirmation)
 // owns its Esc too.
 function onEscape(e: KeyboardEvent): void {
-  if (e.key !== 'Escape' || e.defaultPrevented || !overlay.open || onManagement.value) return;
+  if (e.key !== 'Escape' || e.defaultPrevented || !overlay.open) return;
   if (document.querySelector('.q-dialog')) return;
   e.preventDefault();
   overlay.close();
@@ -258,7 +295,7 @@ useCircleGesture(assistantGestureOn, () => overlay.summon());
   }
 }
 
-// ── The overlay ─────────────────────────────────────────────────────────────
+// ── The window ──────────────────────────────────────────────────────────────
 // Above a full-screen session browser (4000), below Quasar dialogs (6000) so the «Новий чат»
 // confirmation stacks on top, and below menus and toasts.
 .asst-ovl {
@@ -281,11 +318,14 @@ useCircleGesture(assistantGestureOn, () => overlay.summon());
   }
 }
 
+// Decision 7: one fixed size, whatever the conversation holds — the console is a workplace,
+// not a bubble that grows with each answer.
 .asst-ovl__dialog {
+  position: relative;
   display: flex;
   flex-direction: column;
-  width: min(760px, 100%);
-  max-height: 75vh;
+  width: min(1200px, 92vw);
+  height: min(780px, 84vh);
   min-height: 0;
   outline: none;
   animation: asst-ovl-rise 0.2s cubic-bezier(0.2, 0.9, 0.3, 1.1);
@@ -345,36 +385,78 @@ useCircleGesture(assistantGestureOn, () => overlay.summon());
   color: var(--k-faint);
 }
 
-// No workspace: the Менеджмент tab's invitation, on the same glass as the chat.
-.asst-ovl__blank {
+// Shown only where the notepad leaves the row (the narrow layout below).
+.asst-ovl__notes-toggle {
+  display: none;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: var(--k-rule-thin) solid var(--k-line);
+  border-radius: var(--k-r-pill);
+  background: color-mix(in srgb, var(--k-surface) 94%, transparent);
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+
+  &[aria-pressed='true'] {
+    border-color: var(--k-accent);
+  }
+}
+
+// The console on the left, the notepad on the right at the console's full height.
+.asst-ovl__body {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 300px;
+  gap: var(--k-sp-3);
+}
+
+.asst-ovl__main {
+  min-width: 0;
+  min-height: 0;
   display: flex;
   flex-direction: column;
-  gap: 10px;
-  padding: var(--k-sp-5);
-  background: color-mix(in srgb, var(--k-surface) 94%, transparent);
-  -webkit-backdrop-filter: blur(22px) saturate(150%);
-  backdrop-filter: blur(22px) saturate(150%);
-  border: var(--k-rule-thin) solid var(--k-line-strong);
-  border-radius: var(--k-r-lg);
-  box-shadow: var(--k-shadow-toast);
 }
 
-.asst-ovl__blank-eyebrow {
-  font-size: var(--k-fs-xs);
-  letter-spacing: 0.2em;
-  color: var(--k-muted);
+.asst-ovl__panel--folded {
+  order: -1;
 }
 
-.asst-ovl__blank-text {
-  margin: 0;
-  font-family: var(--k-font-ui);
-  font-size: var(--k-fs-md);
-  color: var(--k-muted);
+.asst-ovl__notes {
+  min-height: 0;
 }
 
-.asst-ovl__blank-note {
-  font-size: var(--k-fs-sm);
-  color: var(--k-faint);
+@media (max-width: 900px) {
+  .asst-ovl__body {
+    position: relative;
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .asst-ovl__notes-toggle {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  // Behind 📝: slides over ЦУК from the right when asked for.
+  .asst-ovl__notes {
+    position: absolute;
+    z-index: 2;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    width: min(300px, 100%);
+    transform: translateX(calc(100% + var(--k-sp-5)));
+    visibility: hidden;
+    transition: transform 0.2s ease, visibility 0s linear 0.2s;
+  }
+
+  .asst-ovl__notes--open {
+    transform: none;
+    visibility: visible;
+    transition: transform 0.2s ease;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -386,6 +468,10 @@ useCircleGesture(assistantGestureOn, () => overlay.summon());
   .asst-ovl,
   .asst-ovl__dialog {
     animation: none;
+  }
+
+  .asst-ovl__notes {
+    transition: none;
   }
 }
 </style>

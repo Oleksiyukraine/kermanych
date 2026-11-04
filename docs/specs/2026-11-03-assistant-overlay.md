@@ -8,6 +8,11 @@
   change.
 - **Status:** decisions agreed with the operator in the deep-analysis interview (2026-11-03),
   approved the same day; implemented on this branch (see «Verification»).
+- **Superseded in part** by `docs/specs/2026-11-04-cuk-control-console.md`: the avatar now opens
+  ЦУК, the Kermanych console, with the Менеджмент assistant as the second, folded panel for
+  owners and managers (replaces decisions 4 and 5); the window is the same on every tab, the
+  Менеджмент tab included (replaces decision 7). The launcher, the shortcut, the gesture and
+  decisions 6 and 8 stand.
 
 ## Goal
 
