@@ -2,7 +2,14 @@
 
 Task document: `docs/specs/2026-11-04-skill-self-improvement.md`. Paths below are under `kermanych/`.
 
-**Status:** started 2026-11-04, after the operator approved the task document.
+**Status:** steps 1–6 done (2026-11-05). The suites pass, and the migration was run on PGlite. The
+column, the entry view, the narrow layout and the switch were checked in the live preview, and a
+real omp chat called the tool. Two things are still open:
+
+- the operator's pick of the column's look (screenshots in
+  `docs/design/2026-11-04-cuk-notifications/`);
+- a successful write against a real cloud. The preview has no cloud, and there is no Docker
+  here for a local stack.
 
 ## Steps
 

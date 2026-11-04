@@ -623,6 +623,21 @@
           <!-- What the «English — ASD-STE100» entries mean. Always visible: the table is needed
                BEFORE a level is picked, not only after. -->
           <SteGuide />
+
+          <div class="set__rule"></div>
+
+          <!-- docs/specs/2026-11-04-skill-self-improvement.md: whether this account's sessions get
+               the improve_skill tool. Cloud profile first, then the api's cache; sessions launched
+               afterwards follow it. -->
+          <div class="set__group">
+            <KCheckbox
+              :model-value="skillImprovementPick.value"
+              :loading="skillImprovementPick.pending"
+              :label="t('settings.skillImprovement.label')"
+              @update:model-value="skillImprovementPick.set"
+            />
+            <p class="set__note">{{ t('settings.skillImprovement.note') }}</p>
+          </div>
         </div>
 
         <!-- ── APP · ГОЛОС ──────────────────────────────────────────────────── -->
@@ -1876,6 +1891,17 @@ const languagePick = reactive(
     async (next) => {
       if (!next || auth.language === next) return;
       await auth.chooseLanguage(next as AgentLanguage);
+    },
+  ),
+);
+
+// «Вдосконалювати навички». Unread (null) shows as on: the column defaults to true.
+const skillImprovementPick = reactive(
+  useOptimisticValue<boolean>(
+    () => auth.skillImprovement ?? true,
+    async (next) => {
+      if (auth.skillImprovement === next) return;
+      await auth.chooseSkillImprovement(next);
     },
   ),
 );

@@ -2,7 +2,17 @@
 import { defineStore } from 'pinia';
 import { markRaw, ref } from 'vue';
 import type { Session as SupabaseSession, SupabaseClient } from '@supabase/supabase-js';
-import { cloudEnv, createCloudClient, type Profile, getMyAgentRuntime, setMyAgentRuntime, getMyAgentLanguage, setMyAgentLanguage } from '@kermanych/cloud';
+import {
+  cloudEnv,
+  createCloudClient,
+  type Profile,
+  getMyAgentRuntime,
+  setMyAgentRuntime,
+  getMyAgentLanguage,
+  setMyAgentLanguage,
+  getMySkillImprovement,
+  setMySkillImprovement,
+} from '@kermanych/cloud';
 import type { AgentRuntimeKind, AgentLanguage } from '@kermanych/core';
 import { api, setAuthToken, setUnauthorizedHandler } from '../lib/api';
 import { IS_PREVIEW, PREVIEW_USER_ID } from '../lib/preview';
@@ -33,6 +43,8 @@ export const useAuth = defineStore('auth', () => {
   const accessToken = ref<string | null>(null);
   const runtime = ref<AgentRuntimeKind | null>(null);
   const language = ref<AgentLanguage | null>(null);
+  // «Вдосконалювати навички»; null until read (and in a preview, which has no cloud).
+  const skillImprovement = ref<boolean | null>(null);
   // True while the account's runtime is being read from the cloud after a fresh session.
   // `runtime === null` alone cannot tell «not chosen» from «not read yet», and the runtime
   // gate in MainLayout must not pop up for a returning user during that read.
@@ -116,6 +128,11 @@ export const useAuth = defineStore('auth', () => {
         language.value = await getMyAgentLanguage(client);
       } catch {
         language.value = null;
+      }
+      try {
+        skillImprovement.value = await getMySkillImprovement(client);
+      } catch {
+        skillImprovement.value = null;
       }
       return;
     }
@@ -268,5 +285,27 @@ export const useAuth = defineStore('auth', () => {
     // catalog dimension.
   }
 
-  return { client, user, profile, accessToken, runtime, runtimeLoading, language, ready, init, signInWithGithub, signOut, chooseRuntime, chooseLanguage };
+  async function chooseSkillImprovement(on: boolean): Promise<void> {
+    await setMySkillImprovement(client, on);    // cloud = source of truth
+    await api.setAccountSkillImprovement(on);    // refresh local API cache
+    skillImprovement.value = on;
+  }
+
+  return {
+    client,
+    user,
+    profile,
+    accessToken,
+    runtime,
+    runtimeLoading,
+    language,
+    skillImprovement,
+    ready,
+    init,
+    signInWithGithub,
+    signOut,
+    chooseRuntime,
+    chooseLanguage,
+    chooseSkillImprovement,
+  };
 });

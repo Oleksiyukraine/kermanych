@@ -6,7 +6,7 @@
   <button
     type="button"
     class="asst-launch"
-    :class="{ 'asst-launch--out': overlay.open || overlay.unread || anyBusy }"
+    :class="{ 'asst-launch--out': overlay.open || overlay.unread || notifications.unread || anyBusy }"
     v-tip="launcherTip"
     :aria-label="launcherTip"
     aria-haspopup="dialog"
@@ -14,7 +14,7 @@
     @click="overlay.summon()"
   >
     <AssistantMascot :busy="anyBusy" :variant="assistantMascot" />
-    <span v-if="overlay.unread" class="asst-launch__dot" aria-hidden="true"></span>
+    <span v-if="overlay.unread || notifications.unread" class="asst-launch__dot" aria-hidden="true"></span>
   </button>
 
   <!-- Kept mounted once opened and hidden with v-show, so half-written questions and their
@@ -48,6 +48,16 @@
             ></span>
             <span class="asst-ovl__scope-name">{{ workspace?.name ?? '' }}</span>
           </span>
+          <!-- Below ~1280 px the notification column leaves the row and waits behind this button;
+               its count rides on it, so news is not hidden with the column. -->
+          <button
+            class="asst-ovl__alerts-toggle"
+            type="button"
+            :aria-pressed="alertsOpen"
+            :aria-label="t('cuk.notifications.toggle')"
+            v-tip="t('cuk.notifications.toggle')"
+            @click="alertsOpen = !alertsOpen"
+          >🔔<span v-if="notifications.unread" class="asst-ovl__alerts-count mono">{{ notifications.unread }}</span></button>
           <!-- Below ~900 px the notepad leaves the row and waits behind this button. -->
           <button
             class="asst-ovl__notes-toggle"
@@ -60,6 +70,7 @@
           <span class="asst-ovl__hint mono">{{ t('management.assistant.overlayClose') }}</span>
         </header>
         <div class="asst-ovl__body">
+          <CukNotifications class="asst-ovl__alerts" :class="{ 'asst-ovl__alerts--open': alertsOpen }" />
           <div class="asst-ovl__main">
             <!-- The folded panel is ordered first, so its bar sits on top and the expanded
                  panel's composer is always the window's last row. -->
@@ -79,6 +90,15 @@
               :section="MANAGEMENT_DEFAULT_SECTION"
               @toggle="switchPanel"
             />
+            <!-- One notification opened from the column or its toast: over the console, which
+                 keeps its conversation and draft underneath. -->
+            <SkillImprovementView
+              v-if="notifications.openId"
+              :id="notifications.openId"
+              :key="notifications.openId"
+              class="asst-ovl__entry"
+              @close="closeEntry"
+            />
           </div>
           <CukNotepad class="asst-ovl__notes" :class="{ 'asst-ovl__notes--open': notesOpen }" />
         </div>
@@ -90,8 +110,9 @@
 <script setup lang="ts">
 // Mounted once by the shell (layouts/MainLayout.vue). Owns every way in — the character, ⌘K,
 // the circle gesture, ⌘K forwarded from the session browser — and the window itself: the
-// accordion of ЦУК (stores/cuk-chat.ts) and the Менеджмент assistant (stores/management-chat.ts,
-// always asked as «Огляд»), and the notepad.
+// «Центр сповіщень» column (stores/notification-center.ts), the accordion of ЦУК
+// (stores/cuk-chat.ts) and the Менеджмент assistant (stores/management-chat.ts, always asked as
+// «Огляд»), and the notepad.
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
 import { useRouter } from 'vue-router';
 import { useI18n } from 'vue-i18n';
@@ -101,10 +122,13 @@ import { useProjects } from 'stores/projects';
 import { useManagementChat } from 'stores/management-chat';
 import { useCukChat } from 'stores/cuk-chat';
 import { assistantGestureOn, assistantMascot, useAssistantOverlay } from 'stores/assistant-overlay';
+import { useNotificationCenter } from 'stores/notification-center';
 import ManagementAssistant from 'components/management/ManagementAssistant.vue';
 import AssistantMascot from './AssistantMascot.vue';
 import CukAssistant from './CukAssistant.vue';
 import CukNotepad from './CukNotepad.vue';
+import CukNotifications from './CukNotifications.vue';
+import SkillImprovementView from './SkillImprovementView.vue';
 import { useCircleGesture } from '../../composables/useCircleGesture';
 
 const { t } = useI18n();
@@ -113,8 +137,12 @@ const projects = useProjects();
 const chat = useManagementChat();
 const cuk = useCukChat();
 const overlay = useAssistantOverlay();
+const notifications = useNotificationCenter();
 
 cuk.bindRouter(useRouter());
+// The column follows the signed-in user from app start, not from the first opening: a change an
+// agent makes must raise its toast even if the window was never opened.
+notifications.start();
 
 const workspaceId = computed(() => orchestrator.selectedWorkspaceId);
 const workspace = computed(() => (workspaceId.value ? projects.workspaceById.get(workspaceId.value) : undefined));
@@ -125,11 +153,18 @@ const cukFolded = computed(() => hasManagement.value && overlay.panel !== 'cuk')
 const anyBusy = computed(() => chat.busy || cuk.busy);
 
 const launcherTip = computed(() =>
-  anyBusy.value ? t('cuk.launcherBusy') : overlay.unread ? t('cuk.launcherUnread') : t('cuk.launcherTip'),
+  anyBusy.value
+    ? t('cuk.launcherBusy')
+    : overlay.unread
+      ? t('cuk.launcherUnread')
+      : notifications.unread
+        ? t('cuk.launcherNotifications', { n: notifications.unread })
+        : t('cuk.launcherTip'),
 );
 
 const everOpened = ref(false);
 const notesOpen = ref(false);
+const alertsOpen = ref(false);
 const dialogEl = ref<HTMLElement | null>(null);
 const cukEl = ref<InstanceType<typeof CukAssistant> | null>(null);
 const mgmtEl = ref<InstanceType<typeof ManagementAssistant> | null>(null);
@@ -167,13 +202,21 @@ watch(
       const ws = workspaceId.value;
       if (ws && !projects.members[ws]) void projects.loadMembers(ws).catch(() => {});
       await nextTick();
-      focusPanel();
+      // An entry opened from a toast takes the keyboard itself (SkillImprovementView).
+      if (!notifications.openId) focusPanel();
       return;
     }
+    // A closed window reopens on the console, not on the entry last looked at.
+    notifications.close();
     returnFocus?.focus();
     returnFocus = null;
   },
 );
+
+function closeEntry(): void {
+  notifications.close();
+  void nextTick(focusPanel);
+}
 
 // The Менеджмент panel can vanish while it is expanded (another workspace, another role):
 // the accordion then falls back to ЦУК.
@@ -199,12 +242,13 @@ function onHotkey(e: KeyboardEvent): void {
 
 // Esc closes the window — in the bubble phase, so whatever inside it claims Esc first (the
 // Хелпери panel stops it) keeps it. A Quasar dialog on top (the «Новий чат» confirmation)
-// owns its Esc too.
+// owns its Esc too. An open notification entry is closed first, back to the console.
 function onEscape(e: KeyboardEvent): void {
   if (e.key !== 'Escape' || e.defaultPrevented || !overlay.open) return;
   if (document.querySelector('.q-dialog')) return;
   e.preventDefault();
-  overlay.close();
+  if (notifications.openId) closeEntry();
+  else overlay.close();
 }
 
 let offBrowserShortcut: (() => void) | undefined;
@@ -319,12 +363,13 @@ useCircleGesture(assistantGestureOn, () => overlay.summon());
 }
 
 // Decision 7: one fixed size, whatever the conversation holds — the console is a workplace,
-// not a bubble that grows with each answer.
+// not a bubble that grows with each answer. Wider since the notification column joined the row
+// (docs/specs/2026-11-04-skill-self-improvement.md, decision 6), so the console keeps its room.
 .asst-ovl__dialog {
   position: relative;
   display: flex;
   flex-direction: column;
-  width: min(1200px, 92vw);
+  width: min(1440px, 94vw);
   height: min(780px, 84vh);
   min-height: 0;
   outline: none;
@@ -385,9 +430,11 @@ useCircleGesture(assistantGestureOn, () => overlay.summon());
   color: var(--k-faint);
 }
 
-// Shown only where the notepad leaves the row (the narrow layout below).
-.asst-ovl__notes-toggle {
+// Shown only where their column leaves the row (the narrow layouts below).
+.asst-ovl__notes-toggle,
+.asst-ovl__alerts-toggle {
   display: none;
+  position: relative;
   width: 28px;
   height: 28px;
   padding: 0;
@@ -403,16 +450,32 @@ useCircleGesture(assistantGestureOn, () => overlay.summon());
   }
 }
 
-// The console on the left, the notepad on the right at the console's full height.
+.asst-ovl__alerts-count {
+  position: absolute;
+  top: -6px;
+  right: -6px;
+  min-width: 16px;
+  padding: 0 4px;
+  border-radius: var(--k-r-pill);
+  background: var(--k-accent);
+  color: var(--k-on-accent);
+  font-size: 10px;
+  line-height: 16px;
+}
+
+// Notifications on the left, the console in the middle, the notepad on the right — the two
+// side columns at the console's full height.
 .asst-ovl__body {
+  position: relative;
   flex: 1;
   min-height: 0;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 300px;
+  grid-template-columns: 300px minmax(0, 1fr) 300px;
   gap: var(--k-sp-3);
 }
 
 .asst-ovl__main {
+  position: relative;
   min-width: 0;
   min-height: 0;
   display: flex;
@@ -423,8 +486,47 @@ useCircleGesture(assistantGestureOn, () => overlay.summon());
   order: -1;
 }
 
-.asst-ovl__notes {
+.asst-ovl__notes,
+.asst-ovl__alerts {
   min-height: 0;
+}
+
+// An opened notification lies over the console, which keeps its conversation underneath.
+.asst-ovl__entry {
+  position: absolute;
+  z-index: 3;
+  inset: 0;
+}
+
+@media (max-width: 1279px) {
+  .asst-ovl__body {
+    grid-template-columns: minmax(0, 1fr) 300px;
+  }
+
+  .asst-ovl__alerts-toggle {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  // Behind 🔔: slides over the console from the left when asked for.
+  .asst-ovl__alerts {
+    position: absolute;
+    z-index: 4;
+    top: 0;
+    left: 0;
+    bottom: 0;
+    width: min(300px, 100%);
+    transform: translateX(calc(-100% - var(--k-sp-5)));
+    visibility: hidden;
+    transition: transform 0.2s ease, visibility 0s linear 0.2s;
+  }
+
+  .asst-ovl__alerts--open {
+    transform: none;
+    visibility: visible;
+    transition: transform 0.2s ease;
+  }
 }
 
 @media (max-width: 900px) {
@@ -470,7 +572,8 @@ useCircleGesture(assistantGestureOn, () => overlay.summon());
     animation: none;
   }
 
-  .asst-ovl__notes {
+  .asst-ovl__notes,
+  .asst-ovl__alerts {
     transition: none;
   }
 }

@@ -1579,6 +1579,11 @@ export const en: MessageSchema = {
       claudeFullScreen: 'Full-screen layout',
       claudeFullScreenNote: 'Full screen pins the input to the bottom, but keeps only the visible screen: find in the Лог reaches only what is on it. Off, the whole history stays in the terminal and can be searched. Applies when a session next starts or resumes.',
     },
+    // docs/specs/2026-11-04-skill-self-improvement.md, «Defaults»: the switch for the improve_skill tool.
+    skillImprovement: {
+      label: 'Improve skills',
+      note: 'Agents of managed sessions write general lessons straight into your personal copies of library skills. Teammates are not affected. Every change shows in ЦУК → «Notification center», where you can roll it back. Applies to sessions launched after the change.',
+    },
     language: {
       label: 'Agent communication language',
       note: 'New sessions reply in this language. Existing sessions are unchanged.',
@@ -3508,6 +3513,7 @@ export const en: MessageSchema = {
     launcherTip: 'ЦУК — Ctrl/⌘ K or a counter-clockwise mouse circle',
     launcherBusy: 'The assistant is thinking…',
     launcherUnread: 'The assistant has answered',
+    launcherNotifications: 'New notifications: {n}',
     places: {
       settings: 'Settings',
     },
@@ -3515,6 +3521,56 @@ export const en: MessageSchema = {
       title: 'Notepad',
       toggle: 'Notepad',
       noWorkspace: 'Pick a workspace in the switcher at the top — the notepad is its «Action List», the same one as on Management → Overview.',
+    },
+    // docs/specs/2026-11-04-skill-self-improvement.md, decisions 6 and 7.
+    notifications: {
+      title: 'Notification center',
+      toggle: 'Notification center',
+      count: 'New: {n}',
+      markAll: 'Mark all as read',
+      empty: 'Changes your agents make to your skills show up here. You can turn them off in Settings → AI provider.',
+      loadFailed: 'Could not read the notifications: {error}',
+      retry: 'Try again',
+      toast: 'I improved the skill «{skill}»: {summary}',
+      view: 'View',
+      gone: 'This record no longer exists.',
+      settled: 'This change has already been rolled back or shared.',
+      shareNoWorkspace: 'Nobody to share with: the session ran in a project without a workspace.',
+      shareNoCopy: 'Your personal copy of this skill is gone, so there is nothing to share.',
+      state: {
+        applied: 'applied',
+        rolled_back: 'rolled back',
+        promoted: 'shared with the team',
+      },
+      entry: {
+        title: 'Skill «{skill}»',
+        close: 'Back to the conversation',
+        session: 'session «{session}»',
+        reason: 'Why',
+        teamChanged: 'The team version of this skill changed after your copy was made. While the copy exists, those changes do not reach you.',
+        afterMissing: 'The text after the change could not be rebuilt: the change no longer applies to the stored text.',
+        loadFailed: 'Could not read the change: {error}',
+        rollback: 'Roll back',
+        share: 'Share with the team',
+      },
+      rollbackConfirm: {
+        title: 'Roll back the skill change?',
+        base: 'The skill «{skill}» goes back to the text it had before this change.',
+        later: 'Later changes of this skill are rolled back with it: {n}.',
+        deleteCopy: 'This change created your personal copy, so the copy goes and the team or default version applies again.',
+        none: 'Your personal copy is already gone, so only the records change state.',
+        handEdited: 'The text was edited by hand after the latest change. Those edits are lost too.',
+        confirm: 'Roll back',
+        done: 'The change to «{skill}» was rolled back.',
+      },
+      shareConfirm: {
+        title: 'Share with the team?',
+        workspace: 'The text of your copy of «{skill}» becomes the skill of the workspace «{target}» for the whole team. Your personal copy goes.',
+        project: 'The text of your copy of «{skill}» becomes the skill of the project «{target}» for the whole team. Your personal copy goes.',
+        teamChanged: 'The team version changed after your copy was made. Those changes are overwritten.',
+        confirm: 'Share',
+        done: 'The skill «{skill}» was shared with the team.',
+      },
     },
     card: {
       kind: {

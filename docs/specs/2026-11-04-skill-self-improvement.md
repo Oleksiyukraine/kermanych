@@ -7,8 +7,9 @@
   (the `improve_skill` tool on the session's `kermanych` MCP server and its write path),
   `apps/ui` (ЦУК's «Центр сповіщень» column, the entry view, the toast, the Settings switch,
   i18n `uk` / `en`), `kermanych/README.md`.
-- **Status:** decisions agreed with the operator in the deep-analysis interview (2026-11-04);
-  waiting for approval. No code is written before it.
+- **Status:** decisions agreed with the operator in the deep-analysis interview (2026-11-04),
+  approved the same day; implemented on this branch (see «Verification»). The column's look is
+  waiting for the operator's pick from the screenshots (decision 6).
 
 ## Goal
 
@@ -224,10 +225,17 @@ Researched in its docs ([skills](https://hermes-agent.nousresearch.com/docs/user
   right before writing, which catches a write from another machine in between. A `find` that no
   longer matches is refused, and the error carries the current text.
 - **The record.**
-  - The table `skill_improvements` has `id`, `user_id`, `skill_name`, `base_scope` (`default` |
-    `workspace` | `project` | `user`), `base_owner_id`, `created_copy`, `before_body`, `edits`
+  - The table `skill_improvements` has `id`, `user_id`, `skill_name`, `team_scope` (`default` |
+    `workspace` | `project` | `none`), `team_owner_id`, `created_copy`, `before_body`, `edits`
     (jsonb), `summary`, `reason`, `session_id`, `session_name`, `project_id`, `workspace_id`,
     `state` (`applied` | `rolled_back` | `promoted`), `state_at`, `seen_at` and `created_at`.
+  - `team_scope` / `team_owner_id` say what the skill resolves to WITHOUT the personal layer at the
+    time of the change (`none`: a skill that exists only as the operator's own row). Sharing writes
+    back there, and the entry view compares it with the text the copy started from. (The draft
+    named this `base_scope`; once a copy exists, the base of every later change is the copy
+    itself, which says nothing about where to share.)
+  - `project_id` and `workspace_id` carry no foreign keys: a session may belong to a local-only
+    project the cloud has never seen.
   - The text after a change is `before_body` with `edits` applied. It is computed, not stored.
   - RLS: the owner reads and writes their own rows only.
   - An insert trigger keeps the newest 100 records per user.
@@ -241,8 +249,8 @@ Researched in its docs ([skills](https://hermes-agent.nousresearch.com/docs/user
   - The binding is per user, not per workspace, because the personal layer is global, and so is
     the column.
 - **Unread.** An entry stays new (`seen_at` empty) until it is opened. «Позначити все
-  прочитаним» marks the rest. The header shows the count, and the mascot wears its dot while
-  anything is new.
+  прочитаним» (a ✓ in the column's header, so the title keeps its room) marks the rest. The header
+  shows the count, and the mascot wears its dot while anything is new.
 - **The toast.** Every new record that arrives through Realtime raises one, on every machine where
   the operator's Kermanych is open. It reads «Я вдосконалив навичку {name}: {summary}», carries
   the action «Переглянути» and stays 10 seconds. The first read after sign-in raises none.
@@ -267,10 +275,10 @@ Researched in its docs ([skills](https://hermes-agent.nousresearch.com/docs/user
 - **Layout.**
   - The window grows to `min(1440px, 94vw)`, with three columns: the notification column
     (300 px), the console, and the notepad (300 px).
-  - Below about 1180 px, the notification column hides behind a 🔔 button in the window's head
-    and slides over the console from the left.
+  - Below 1280 px of viewport width, the notification column hides behind a 🔔 button in the
+    window's head, which carries the count of new entries, and slides over the console from the
+    left. The column's board is opaque for that.
   - Below 900 px, the notepad behaves as it does today.
-  - The final sizes are settled on the screenshots.
 - **«Посіпака».** Its runs improve skills like any session, because they run as the operator.
   Their entries reach every machine through Realtime.
 
@@ -318,74 +326,86 @@ exists only there.
 
   It must be pushed to the hosted project before the client ships (README, «Applying a migration
   to the team's project»).
-- **core** gets `packages/core/src/skill-improvements.ts`:
-  - the record and argument types;
-  - `SKILL_IMPROVEMENTS_PER_SESSION` (5), `SKILL_IMPROVEMENTS_KEEP` (100) and
-    `SKILL_TEXT_MAX` (64 000);
-  - `validateImproveSkillArgs` and `applySkillEdits` (exact-once matching);
-  - `rollbackPlan` (the records rolled back with a given one, whether the copy goes, and the
-    text to restore);
-  - `promoteTarget`;
-  - `lineDiff`.
+- **core** — `packages/core/src/skill-improvements.ts`:
+  - the record, entry and argument types;
+  - `SKILL_IMPROVEMENTS_PER_SESSION` (5), `SKILL_IMPROVEMENTS_KEEP` (100), `SKILL_TEXT_MAX`
+    (64 000), `SKILL_EDITS_MAX` (5) and the summary and reason limits;
+  - `validateImproveSkillArgs`, `applySkillEdits` (exact-once matching) and `skillTextBytes`;
+  - `rollbackPlan` (the records rolled back with a given one, whether the copy goes, the text to
+    restore, and whether the copy was edited by hand), `appliedChain` and `copyOrigin`;
+  - `shareTarget`;
+  - `skillTextDiff`, a line diff shaped like the kit's paired diff rows.
 
   No new dependency.
-- **cloud** gets `packages/cloud/src/skill-improvements.ts`:
-  - insert without a returned body;
-  - a light list;
-  - a full read of one record;
-  - state and `seen_at` updates;
-  - a Realtime binding with `select`.
-
-  `account.ts` gets a read and a write for the switch.
+- **cloud** — `packages/cloud/src/skill-improvements.ts`: insert that returns only the id, the
+  per-session count, the light list, a full read of one record, the applied chain of one skill,
+  state and `seen_at` updates, and the Realtime binding with `select`. `skills.ts` gains
+  `getAiSkill`; `account.ts` gains a read and a write for the switch.
 - **api:**
-  - `apps/api/src/skills/improve-skill-tool.ts` holds the definition (in the operator's agent
-    language) and the call.
-  - `SkillsService.improveSkill` resolves the text fresh, refuses, applies the edits, and writes
-    the user row and the record.
-  - `browser-mcp.service.ts` lists the tool (for a managed `agent` or `chat` session with the
-    switch on) and dispatches calls to it.
-  - `auth.service.ts` caches the switch together with the agent language.
+  - `apps/api/src/skills/skill-improvement.service.ts` resolves the text fresh, refuses, applies
+    the edits (re-based once if the personal copy moved), writes the user row and the record, and
+    undoes the row when the record cannot be written. Improvements of one skill run one at a time.
+  - `apps/api/src/skills/improve-skill-tool.ts` holds the definition (fields asked in the
+    operator's agent language) and the call.
+  - `browser-mcp.service.ts` lists the tool (a managed `agent` or `chat` session, not a tester
+    run, the switch on) and dispatches calls to it unqueued.
+  - SQLite `auth_session.skill_improvement`, hydrated in `AuthService.setToken`;
+    `GET/POST /account/skill-improvement`.
 - **ui:**
-  - `stores/notification-center.ts` holds the entries, the unread count, the Realtime binding
-    and the toasts.
+  - `stores/notification-center.ts` holds the entries, the unread count, the Realtime binding,
+    the toasts, opening an entry, seen, rollback and sharing.
   - `components/assistant/CukNotifications.vue` is the column; `SkillImprovementView.vue` is the
-    entry view.
-  - `AssistantLauncher.vue` gets the third column and 🔔, and opens on a given entry.
-  - `stores/assistant-overlay.ts` gets the dot for new entries and opening on an entry.
-  - The Settings switch, and i18n `uk` / `en`.
-- **README:** the ЦУК section gains «Центр сповіщень»; the Skills section gains a
-  self-improvement paragraph and the migration note.
+    entry view over the console.
+  - `AssistantLauncher.vue` gets the third column, 🔔, the entry view, the dot for new entries
+    (`stores/assistant-overlay.ts` needed no change), and Esc that closes an open entry first.
+  - The auth store and «ШІ-провайдер» get the switch; i18n `uk` / `en`.
+- **README:** the ЦУК section gains «Центр сповіщень»; the Skills section gains «Agents improve
+  your skills» with the switch, the limits and the migration note.
 
-## Verification (planned)
+## Verification
 
-- **core:**
-  - edits: exactly once, missing, ambiguous, oversized;
-  - the rollback plan: later records, a created copy, a text edited by hand;
-  - the promote target;
-  - the line diff.
-- **api:**
-  - the tool is listed only for managed `agent` and `chat` sessions with the switch on;
-  - every refusal;
-  - a success writes the user row and the record;
-  - the per-session cap;
-  - a signed-out operator.
-- **cloud:**
-  - row mapping;
-  - RLS (own rows only, another user's rows invisible) and pruning at 100, both on a local stack
-    only.
-- **ui:** the store:
-  - the first read raises no toast;
-  - a Realtime insert raises exactly one toast;
-  - new and seen entries;
-  - opening an entry;
-  - rollback and promote states.
-- **Live:** a managed omp session in the preview, against a local Supabase stack if Docker runs
-  (the preview itself has no cloud).
-  - The agent is corrected on something a skill states wrongly and calls `improve_skill`.
-  - The toast appears, then the column and the diff.
-  - «Відкотити» removes the copy.
-- Screenshots of the column variants, for the operator to pick from.
-- Whatever cannot run is reported as not exercised.
+- **Migration** on a throwaway Postgres (PGlite 0.5, with stubs for `auth.uid()`, `profiles`,
+  the `authenticated` role and the Realtime publication):
+  - 105 inserts by one user leave the newest 100 (records 1–5 gone, 6–105 kept);
+  - a bad skill name, an empty or six-item `edits`, an unknown `team_scope` and an unknown
+    `state` are refused by their CHECKs;
+  - another user reads 0 of the first user's rows, cannot insert a row in their name (RLS), and
+    updates and deletes 0 of them;
+  - `profiles.skill_improvement` defaults to `true`; the table is in `supabase_realtime`; the four
+    `*_own` policies exist.
+- **Suites** (at most 4 workers, one at a time):
+  - `@kermanych/core` — 29 files, 348 tests, including `skill-improvements.spec.ts` (argument
+    rules, exact-once edits, rollback plans with later changes, a created copy, hand edits and a
+    gone copy, the share target, the line diff).
+  - `@kermanych/cloud` — 13 files passed, 2 skipped (the RLS suites need a local stack); 203 tests,
+    including `skill-improvements.spec.ts` (mapping, the light list, seen marks, the binding's
+    filter and `select`) and the switch in `account.spec.ts`.
+  - `@kermanych/api` — typecheck clean; 132 files passed, 1 skipped; 1401 tests, including
+    `skill-improvement.spec.ts` (every refusal, a write with the right team scope and copy flag,
+    re-basing, the undo when the record fails, the cap) and the tool's place in `tools/list`.
+  - `@kermanych/ui` — 86 files, 939 tests, including `notification-center.spec.ts` (bind before the
+    first read, no toast for old records, one toast per new record whose «Переглянути» opens and
+    marks it, updates from elsewhere, a refused seen mark, sign-out, both rollback paths).
+    `vue-tsc` reports only the unbuilt `@kermanych/api` in `src-electron`, as before.
+- **Live preview** (web build, cloudless, entries injected into the store):
+  - at 1440 × 900 the window shows the column, the console and the notepad; the mascot wears its
+    dot while an entry is new;
+  - a slip opens the entry view over the console: summary, session and project, the reason, the
+    «team text changed» line, the diff with the replaced line paired, «Відкотити»; Esc closes the
+    entry, keeps the window open and gives the keyboard back to ЦУК's composer;
+  - at 1180 px the column hides behind 🔔 with the count and slides over the console, opaque;
+  - dark and light themes; Settings → «ШІ-провайдер» shows «Вдосконалювати навички», on.
+- **Live agent:** a managed omp chat in the preview api, on a throwaway repository, was asked to
+  call the tool. It found `improve_skill` through the omp MCP bridge, called it, and got «Not
+  applied: Kermanych is not signed in to the cloud, where the skill library lives. Continue your
+  task.» — the preview api is not signed in.
+- **Not exercised:** a successful write against a real cloud — the user row, the record, the
+  Realtime toast on a second machine, a rollback and a share. The preview has no cloud, and Docker
+  is not running here for a local Supabase stack. Check them with a signed-in user once the
+  migration is applied.
+- **The column's look** (decision 6), saved in `docs/design/2026-11-04-cuk-notifications/`:
+  `notifications-a-clipboard@1440.png` (built; also `-light`), `notifications-b-tape@1440.png`
+  and `notifications-c-cork@1440.png` (drawn by overriding the CSS in the page, not in the code).
 
 ## Documentation impact
 
