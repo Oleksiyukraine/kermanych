@@ -178,6 +178,25 @@ describe("harness argv", () => {
   });
 });
 
+describe("claude's screen", () => {
+  it("claude starts off the alternate screen by default, so its history stays in scrollback", async () => {
+    const { native, create, opened } = make();
+    await native.start(create("claude-code"), { resume: false });
+    expect(opened[0].env).toMatchObject({ CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN: "1" });
+  });
+
+  it("full screen chosen: claude keeps its alternate screen; omp and codex never get the switch", async () => {
+    const { native, create, opened, registry } = make();
+    registry.setNativeSettings({ claudeFullScreen: true });
+    expect(registry.getNativeSettings()).toEqual({ claudeFullScreen: true });
+    await native.start(create("claude-code"), { resume: false });
+    registry.setNativeSettings({ claudeFullScreen: false });
+    await native.start(create("omp"), { resume: false });
+    await native.start(create("codex"), { resume: false });
+    for (const o of opened) expect(o.env).not.toHaveProperty("CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN");
+  });
+});
+
 describe("status mapping", () => {
   it("claude hooks", async () => {
     const { native, create, row } = make();

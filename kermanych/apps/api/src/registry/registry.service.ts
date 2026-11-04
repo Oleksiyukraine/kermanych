@@ -7,7 +7,7 @@ import { dirname, join } from "node:path";
 import { mkdirSync } from "node:fs";
 import { Subject } from "rxjs";
 import { isThinkingLevel, isAgentRuntime, isNativeHarness, isAgentLanguage, isFindingKind, isPlatform, parseFindingTarget, docsPolicy, combineReportWrites, readMinionResult, isMinionPauseCode, clampMinionCap, MINION_CAP_DEFAULT } from "@kermanych/core";
-import type { AgentFinding, DocsPolicy, FindingReport, FindingTarget, MinionPause, MinionResult, Platform, Project, ResourceDecision, Session, SessionStatus, ThinkingLevel, Usage, AgentRuntimeKind, AgentLanguage, TaskReportsWrite, TesterSettings } from "@kermanych/core";
+import type { AgentFinding, DocsPolicy, FindingReport, FindingTarget, MinionPause, MinionResult, NativeSettings, Platform, Project, ResourceDecision, Session, SessionStatus, ThinkingLevel, Usage, AgentRuntimeKind, AgentLanguage, TaskReportsWrite, TesterSettings } from "@kermanych/core";
 
 // The cached Supabase session. Lives in SQLite so a restarted api still knows who
 // its user is without a cloud round trip.
@@ -527,6 +527,11 @@ export class RegistryService {
       `CREATE TABLE IF NOT EXISTS minion_settings (id INTEGER PRIMARY KEY CHECK (id = 1), cap INTEGER NOT NULL, pause TEXT, failures INTEGER NOT NULL DEFAULT 0)`,
     );
     this.db.exec(`CREATE TABLE IF NOT EXISTS minion_projects (project_id TEXT PRIMARY KEY, activated_at TEXT NOT NULL)`);
+    // Native sessions' launch preferences (core NativeSettings), single-row and machine-local
+    // like the two above: how a TUI is drawn is this machine's operator's choice.
+    this.db.exec(
+      `CREATE TABLE IF NOT EXISTS native_settings (id INTEGER PRIMARY KEY CHECK (id = 1), claude_full_screen INTEGER NOT NULL DEFAULT 0)`,
+    );
     // «Тестувальник» settings (docs/specs/2026-11-04-qa-tester-agent.md, decision 4): per project,
     // THIS machine only and never synced — the Jira/Linear custody rule, passwords in plaintext.
     this.db.exec(`CREATE TABLE IF NOT EXISTS tester_settings (project_id TEXT PRIMARY KEY, login_path TEXT NOT NULL DEFAULT '', notes TEXT NOT NULL DEFAULT '')`);
@@ -1177,6 +1182,18 @@ export class RegistryService {
     this.db
       .prepare(`INSERT OR REPLACE INTO minion_settings (id, cap, pause, failures) VALUES (1,?,?,?)`)
       .run(row.cap, row.pause ? JSON.stringify(row.pause) : null, row.failures);
+  }
+
+  // No row yet reads as the defaults: claude inline, its history searchable.
+  getNativeSettings(): NativeSettings {
+    const row = this.db.prepare(`SELECT claude_full_screen FROM native_settings WHERE id = 1`).get() as
+      | { claude_full_screen: number }
+      | undefined;
+    return { claudeFullScreen: row?.claude_full_screen === 1 };
+  }
+
+  setNativeSettings(s: NativeSettings): void {
+    this.db.prepare(`INSERT OR REPLACE INTO native_settings (id, claude_full_screen) VALUES (1,?)`).run(s.claudeFullScreen ? 1 : 0);
   }
 
   // The projects «Посіпака» is activated for on this machine, in activation order.

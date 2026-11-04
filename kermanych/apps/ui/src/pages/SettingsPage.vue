@@ -588,6 +588,23 @@
 
           <div class="set__rule"></div>
 
+          <!-- Machine-local (api native_settings), applied when a native session next starts. -->
+          <div class="set__group">
+            <span class="set__label">{{ t('settings.runtime.nativeLabel') }}</span>
+            <KSkeleton v-if="nativePhase === 'skeleton'" variant="line" width="60%" />
+            <p v-else-if="nativeError" class="set__note" role="alert">{{ nativeError }}</p>
+            <KCheckbox
+              v-else-if="nativePhase === 'ready'"
+              :model-value="claudeFullScreenPick.value"
+              :loading="claudeFullScreenPick.pending"
+              :label="t('settings.runtime.claudeFullScreen')"
+              @update:model-value="claudeFullScreenPick.set"
+            />
+            <p class="set__note">{{ t('settings.runtime.claudeFullScreenNote') }}</p>
+          </div>
+
+          <div class="set__rule"></div>
+
           <div class="set__group">
             <span class="set__label">{{ t('settings.language.label') }}</span>
             <!-- Applies on selection: the language is written to the cloud immediately and
@@ -936,7 +953,7 @@ import { computed, effectScope, onBeforeUnmount, onMounted, reactive, ref, watch
 import { onBeforeRouteLeave, useRoute, useRouter } from 'vue-router';
 import { useI18n } from 'vue-i18n';
 import { confirmAction } from '../lib/confirm';
-import type { EnvFileView, ThinkingLevel, AgentLanguage, DocsPolicyKey, DocsRule, MachineResources, Platform } from '@kermanych/core';
+import type { EnvFileView, ThinkingLevel, AgentLanguage, DocsPolicyKey, DocsRule, MachineResources, NativeSettings, Platform } from '@kermanych/core';
 import { AGENT_LANGUAGES, AGENT_LANGUAGE_LABELS, DEFAULT_DOCS_POLICY, DOCS_LAYOUT, DOCS_RULES, VOICE_IDS } from '@kermanych/core';
 import type { AssignableRole, WorkspaceMember, WorkspaceRole } from '@kermanych/cloud';
 import type { KTheme } from '@kermanych/tokens';
@@ -1819,6 +1836,32 @@ const runtimePick = reactive(
       void checkRuntime(kind);
     },
   ),
+);
+
+// Native sessions' launch preference (api native_settings), read on entering this section.
+const nativeSettings = ref<NativeSettings | null>(null);
+const nativeError = ref('');
+const nativePhase = useLoadPhase(() => nativeSettings.value === null && !nativeError.value);
+const claudeFullScreenPick = reactive(
+  useOptimisticValue<boolean>(
+    () => nativeSettings.value?.claudeFullScreen ?? false,
+    async (next) => {
+      nativeSettings.value = await api.setNativeSettings({ claudeFullScreen: next });
+    },
+  ),
+);
+watch(
+  () => section.value.key,
+  async (key) => {
+    if (key !== 'app-runtime') return;
+    nativeError.value = '';
+    try {
+      nativeSettings.value = await api.nativeSettings();
+    } catch (e) {
+      nativeError.value = errorText(e);
+    }
+  },
+  { immediate: true },
 );
 
 // Endonym labels come from core so the picker reads the same in every app locale. The list is

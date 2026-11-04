@@ -5,13 +5,34 @@
 // omp extension's `fetch`), which holds no Supabase session; the bearer secret minted for that
 // session's current launch is its whole credential, as for management-mcp. The api listens on
 // 127.0.0.1 only (main.ts).
-import { Body, Controller, Headers, HttpCode, HttpException, Param, Post } from "@nestjs/common";
+//
+// GET / PUT /api/native/settings — how native TUIs launch on this machine (core NativeSettings),
+// read and changed by Налаштування → ШІ-провайдер. Signed-in like any settings route, and applied
+// at the next start or resume of a session: a running TUI keeps the screen it was started on.
+import { BadRequestException, Body, Controller, Get, Headers, HttpCode, HttpException, Param, Post, Put } from "@nestjs/common";
+import type { NativeSettings } from "@kermanych/core";
 import { Public } from "../auth/public.decorator";
 import { NativeSessionService } from "../native/native-session.service";
+import { RegistryService } from "../registry/registry.service";
 
 @Controller("native")
 export class NativeController {
-  constructor(private native: NativeSessionService) {}
+  constructor(
+    private native: NativeSessionService,
+    private registry: RegistryService,
+  ) {}
+
+  @Get("settings")
+  settings(): NativeSettings {
+    return this.registry.getNativeSettings();
+  }
+
+  @Put("settings")
+  updateSettings(@Body() b: { claudeFullScreen?: unknown }): NativeSettings {
+    if (typeof b?.claudeFullScreen !== "boolean") throw new BadRequestException("claudeFullScreen must be a boolean");
+    this.registry.setNativeSettings({ claudeFullScreen: b.claudeFullScreen });
+    return this.registry.getNativeSettings();
+  }
 
   @Public()
   @Post(":id/claude")
