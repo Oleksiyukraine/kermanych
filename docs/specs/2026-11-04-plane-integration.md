@@ -141,7 +141,7 @@ self-hosted instances must both work.
 
 ## Contracts
 
-### Database: `supabase/migrations/20261104090000_plane_integration.sql`
+### Database: `supabase/migrations/20261104100000_plane_integration.sql`
 
 The schema mirrors the Jira tables, the multi-board form included:
 
