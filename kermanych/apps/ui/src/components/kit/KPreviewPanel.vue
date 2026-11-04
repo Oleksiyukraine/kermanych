@@ -1,5 +1,5 @@
 <template>
-  <section ref="rootEl" class="k-preview-logs" :style="{ height: size + 'px' }" :aria-label="t('agents.preview.logsAria')">
+  <section ref="rootEl" class="k-preview-logs" :style="{ height: size + 'px' }" :aria-label="envOpen ? t('agents.preview.envAria') : t('agents.preview.logsAria')">
     <div
       class="k-preview-logs__seam"
       role="separator"
@@ -12,7 +12,10 @@
       @keydown="onKeydown"
     ></div>
     <div class="k-preview-logs__head">
-      <div class="k-preview-logs__tabs" role="tablist">
+      <div v-if="envOpen" class="k-preview-logs__tabs">
+        <span class="k-preview-logs__tab k-preview-logs__tab--on mono">.env</span>
+      </div>
+      <div v-else class="k-preview-logs__tabs" role="tablist">
         <button
           v-for="s in tabs"
           :key="s"
@@ -24,9 +27,12 @@
           @click="pickStep(s)"
         >{{ s }}</button>
       </div>
-      <KIconButton :title="t('agents.preview.logsClose')" @click="close">✕</KIconButton>
+      <KIconButton :title="envOpen ? t('agents.preview.envClose') : t('agents.preview.logsClose')" @click="closePanel">✕</KIconButton>
     </div>
-    <div ref="bodyEl" class="k-preview-logs__body" @scroll="onScroll">
+    <div v-if="envOpen" class="k-preview-logs__body">
+      <KSessionEnv :session="session" :preview="preview" />
+    </div>
+    <div v-else ref="bodyEl" class="k-preview-logs__body" @scroll="onScroll">
       <p v-if="error && !buffer" class="k-preview-logs__note k-preview-logs__note--error" role="alert">
         {{ t('agents.preview.logsFailed', { error }) }}
       </p>
@@ -40,17 +46,19 @@
 </template>
 
 <script setup lang="ts">
-// «Логи» of the live preview (docs/specs/2026-11-03-session-browser-preview.md, decisions 6–7):
-// a bottom panel INSIDE the browser pane, one tab per step of the current run (`setup`, then
-// each service). Never an overlay — the native page view sits above the whole DOM — so the page
-// box above shrinks behind the seam and the pane re-reports its bounds (its ResizeObserver);
-// while the seam is dragged the pane parks the page (`resizing`), or the pointer would vanish
-// into it. Polls the api every second with the step's cursor while open; a new run starts every
-// step's buffer over.
+// The bottom panel of the live preview, «Логи» or «Змінні» (docs/specs/2026-11-03-session-browser-
+// preview.md, decisions 6–7; docs/specs/2026-11-04-session-env-and-tester-preview-gate.md,
+// decision 2): INSIDE the pane, never an overlay — the native page view sits above the whole DOM
+// — so the page box above shrinks behind the seam and the pane re-reports its bounds (its
+// ResizeObserver); while the seam is dragged the pane parks the page (`resizing`), or the pointer
+// would vanish into it. «Логи»: one tab per step of the current run (`setup`, then each service),
+// polled every second with the step's cursor while shown; a new run starts every step's buffer
+// over. «Змінні»: the session's `.env` (KSessionEnv).
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
-import { PREVIEW_SETUP_STEP } from '@kermanych/core';
+import { PREVIEW_SETUP_STEP, type Session } from '@kermanych/core';
 import KIconButton from './KIconButton.vue';
+import KSessionEnv from './KSessionEnv.vue';
 import KSkeleton from './KSkeleton.vue';
 import { useOrchestrator } from 'stores/orchestrator';
 import { errorText } from '../../composables/useAsyncAction';
@@ -64,12 +72,12 @@ const MIN_HEIGHT = 96;
 // What the page keeps above the panel at the least.
 const MIN_PAGE = 120;
 
-const props = defineProps<{ sessionId: string; preview: SessionPreview }>();
+const props = defineProps<{ session: Session; preview: SessionPreview }>();
 const emit = defineEmits<{ resizing: [on: boolean] }>();
 
 const { t } = useI18n();
 const store = useOrchestrator();
-const { state, logsOpen, logsStep } = props.preview;
+const { state, logsOpen, envOpen, logsStep, closePanel } = props.preview;
 
 const rootEl = ref<HTMLElement | null>(null);
 const { size, resizing, startResize, onKeydown, refresh } = useResizablePanel({
@@ -104,11 +112,11 @@ const phase = useLoadPhase(() => !buffer.value && !error.value);
 
 let inFlight = false;
 async function poll(): Promise<void> {
-  if (inFlight) return;
+  if (inFlight || !logsOpen.value) return;
   inFlight = true;
   const asked = step.value;
   try {
-    const res = await store.previewLogs(props.sessionId, asked, buffers.value[asked]?.next ?? 0);
+    const res = await store.previewLogs(props.session.id, asked, buffers.value[asked]?.next ?? 0);
     // A new run: what the panel holds belongs to a preview that no longer exists. The cursor is
     // global (`seq` only grows), so this answer already carries the new run's lines in full.
     if (run.value !== undefined && res.run !== run.value) buffers.value = {};
@@ -131,9 +139,6 @@ let pinned = true;
 function pickStep(s: string): void {
   logsStep.value = s;
 }
-function close(): void {
-  logsOpen.value = false;
-}
 function onScroll(): void {
   const el = bodyEl.value;
   if (el) pinned = el.scrollHeight - el.scrollTop - el.clientHeight < 24;
@@ -143,7 +148,7 @@ function scrollToEnd(): void {
   if (el) el.scrollTop = el.scrollHeight;
 }
 
-watch(step, () => {
+watch([step, logsOpen], () => {
   pinned = true;
   void poll();
   void nextTick(scrollToEnd);

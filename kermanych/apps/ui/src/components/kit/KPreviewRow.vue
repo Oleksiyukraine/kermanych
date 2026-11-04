@@ -51,6 +51,16 @@
         :disabled="!configOk"
         @click="start()"
       >▶</KIconButton>
+      <!-- The session's `.env` (docs/specs/2026-11-04-session-env-and-tester-preview-gate.md,
+           decision 2): the back end this preview talks to is chosen here. -->
+      <button
+        type="button"
+        class="k-preview-row__btn"
+        :class="{ 'k-preview-row__btn--on': envOpen }"
+        :aria-pressed="envOpen"
+        :title="t('agents.preview.envTip')"
+        @click="toggleEnv"
+      >{{ t('agents.preview.env') }}</button>
       <button
         type="button"
         class="k-preview-row__btn"
@@ -68,10 +78,10 @@
 // The preview row of the «Браузер» and «Пристрій» tabs (docs/specs/2026-11-03-session-browser-
 // preview.md, decision 6; docs/specs/2026-11-03-mobile-device-preview.md, decisions 8, 11):
 // under the pane's toolbar, moving with the pane into «Поруч із логом» — and the whole tab in
-// the web build's Браузер. The status, the device and service chips, ▶ / ◼ / ↻, «Логи»,
-// «Запустити застосунок» after a Mobile app exited, and «Доручити агенту» while the file is
-// missing or broken (the row exists for `agent` sessions only, the ones that may be asked).
-// ◼ and a crash leave the page as it is.
+// the web build's Браузер. The status, the device and service chips, ▶ / ◼ / ↻, «Змінні» (the
+// session's `.env`), «Логи», «Запустити застосунок» after a Mobile app exited, and «Доручити
+// агенту» while the file is missing or broken (the row exists for `agent` sessions only, the ones
+// that may be asked). ◼ and a crash leave the page as it is.
 import { computed } from 'vue';
 import { useI18n } from 'vue-i18n';
 import KBtn from './KBtn.vue';
@@ -96,7 +106,9 @@ const {
   configPhase,
   configOk,
   logsOpen,
+  envOpen,
   toggleLogs,
+  toggleEnv,
   start,
   startAction,
   restartAction,

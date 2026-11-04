@@ -178,7 +178,7 @@
       <p v-if="!previewUrl && !canStart && !reopenUrl" class="k-browser__empty-hint">{{ t('agents.browser.emptyHint') }}</p>
     </div>
 
-    <KPreviewLogs v-if="preview && logsOpen" :session-id="session.id" :preview="preview" @resizing="logsResizing = $event" />
+    <KPreviewPanel v-if="preview && panelOpen" :session="session" :preview="preview" @resizing="panelResizing = $event" />
 
     <!-- HTTP sign-in (basic/digest, a proxy). A KModal is role="dialog", so opening it parks
          the view by itself (useOverlayOpen); closing it any way but «Увійти» cancels. -->
@@ -223,7 +223,7 @@ import { useI18n } from 'vue-i18n';
 import type { Session } from '@kermanych/core';
 import KBtn from './KBtn.vue';
 import KSkeleton from './KSkeleton.vue';
-import KPreviewLogs from './KPreviewLogs.vue';
+import KPreviewPanel from './KPreviewPanel.vue';
 import KPicksTray from './KPicksTray.vue';
 import KPreviewRow from './KPreviewRow.vue';
 import KChipSelect from './KChipSelect.vue';
@@ -263,9 +263,9 @@ const state = computed(() => browser.states[props.session.id]);
 // its kind never changes under it.
 const preview = props.session.kind === 'agent' ? useSessionPreview(() => props.session) : null;
 const previewUrl = computed(() => preview?.url.value ?? null);
-const logsOpen = computed(() => preview?.logsOpen.value ?? false);
-// The logs panel's seam is being dragged: the page is parked like for the parent's `hold`.
-const logsResizing = ref(false);
+const panelOpen = computed(() => !!preview?.panel.value);
+// The bottom panel's seam is being dragged: the page is parked like for the parent's `hold`.
+const panelResizing = ref(false);
 const agentLive = computed(() => browser.agentLive.has(props.session.id));
 const externalUrl = computed(() => (state.value && /^https?:/i.test(state.value.url) ? state.value.url : ''));
 
@@ -634,7 +634,7 @@ function park(freeze: boolean): void {
 function sync(): void {
   const el = viewEl.value;
   if (!el || failed.value) return park(false);
-  if (overlayOpen.value || props.hold || logsResizing.value) return park(true);
+  if (overlayOpen.value || props.hold || panelResizing.value) return park(true);
   const r = el.getBoundingClientRect();
   const bounds = { x: Math.round(r.left), y: Math.round(r.top), width: Math.round(r.width), height: Math.round(r.height) };
   if (bounds.width < 1 || bounds.height < 1) return park(false);
@@ -653,7 +653,7 @@ watch(viewEl, (el, old) => {
   if (el) resize.observe(el);
   sync();
 }, { flush: 'post' });
-watch([overlayOpen, () => props.hold, logsResizing, failed, fullscreen], () => sync(), { flush: 'post' });
+watch([overlayOpen, () => props.hold, panelResizing, failed, fullscreen], () => sync(), { flush: 'post' });
 
 let offShortcut: (() => void) | undefined;
 onMounted(() => {

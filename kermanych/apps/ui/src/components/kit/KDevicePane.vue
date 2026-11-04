@@ -113,7 +113,7 @@
       <KBtn variant="primary" :loading="preview.startAction.busy.value" @click="preview.start()">{{ t('agents.preview.start') }}</KBtn>
     </div>
 
-    <KPreviewLogs v-if="preview.logsOpen.value" :session-id="session.id" :preview="preview" />
+    <KPreviewPanel v-if="preview.panel.value" :session="session" :preview="preview" />
   </div>
 </template>
 
@@ -139,7 +139,7 @@ import KBtn from './KBtn.vue';
 import KChipSelect from './KChipSelect.vue';
 import KIconButton from './KIconButton.vue';
 import KPicksTray from './KPicksTray.vue';
-import KPreviewLogs from './KPreviewLogs.vue';
+import KPreviewPanel from './KPreviewPanel.vue';
 import KPreviewRow from './KPreviewRow.vue';
 import KSkeleton from './KSkeleton.vue';
 import KSpinner from './KSpinner.vue';

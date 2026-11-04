@@ -558,6 +558,19 @@ export const en: MessageSchema = {
       logsResize: 'Resize the logs',
       logsEmpty: 'No logs yet.',
       logsFailed: 'Couldn’t read the logs: {error}',
+      env: 'Variables',
+      envTip: 'This session’s environment variables (.env): e.g. the back end the preview talks to.',
+      envAria: 'Session environment variables',
+      envClose: 'Close variables',
+      envWorktree: 'The .env of this session’s working folder. New sessions take their values from the project’s .env (Settings → Project → “Environment variables”).',
+      envInPlace: 'This session works right in the project folder: changes go to the project’s .env and every new session.',
+      envLocal: 'A variable also set in .env.local is taken from there: Next.js and Vite prefer .env.local.',
+      envSave: 'Save',
+      envCancel: 'Cancel',
+      envSaved: 'Variables saved.',
+      envRestart: 'The preview runs with the old values — restart it to apply them.',
+      envRestartBtn: 'Restart preview',
+      envFailed: 'Couldn’t read .env: {error}',
     },
     // The Device tab of a Mobile project's agent session: the device picker, the toolbar, the
     // screen and its empty states.
@@ -826,6 +839,8 @@ export const en: MessageSchema = {
       busy: 'The agent is working — wait for its turn to end.',
       'no-browser': 'Needs the browser of the Kermanych desktop app — the web build has none.',
       platform: 'The project has no browser (back end or mobile) — nothing for the tester to open.',
+      'no-preview': 'Set up the preview in the Browser tab first: without .kermanych/preview.json the tester has nothing to open.',
+      previewInvalid: 'Fix the preview in the Browser tab first: .kermanych/preview.json is invalid — {error}',
     },
     verdict: {
       passed: 'passed',

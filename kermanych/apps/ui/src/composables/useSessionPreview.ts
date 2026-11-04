@@ -5,7 +5,8 @@
 // (stores/orchestrator.ts `previews`); the config status is read here, from the session
 // directory, whenever it may have changed: on mount, when the agent's turn ends (it may have
 // written `.kermanych/preview.json`), and after every state change. The preview row
-// (KPreviewRow), the logs panel (KPreviewLogs) and the pane around them share one instance.
+// (KPreviewRow), the bottom panel (KPreviewPanel: «Логи» or «Змінні») and the pane around them
+// share one instance.
 import { computed, ref, watch, type Ref } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { PREVIEW_DEVICE_STEP, type PreviewConfigStatus, type PreviewState, type Session } from '@kermanych/core';
@@ -70,24 +71,34 @@ export function useSessionPreview(session: () => Session, opts: SessionPreviewOp
   watch(state, () => void loadConfig());
   void loadConfig();
 
-  // ── Logs panel ───────────────────────────────────────────────────────────
-  // Open on demand, and by itself on the failed step when a run crashes or fails while the tab
-  // is mounted (a crash the operator was not here for still shows in the row, red) — and on the
-  // `device` step, which carries the app's log, when a Mobile app exits.
-  const logsOpen = ref(false);
+  // ── Bottom panel: «Логи» or «Змінні» ─────────────────────────────────────
+  // One panel under the page, showing either view (docs/specs/2026-11-04-session-env-and-tester-
+  // preview-gate.md, decision 2). Logs open on demand, and by themselves on the failed step when a
+  // run crashes or fails while the tab is mounted (a crash the operator was not here for still
+  // shows in the row, red) — and on the `device` step, which carries the app's log, when a Mobile
+  // app exits. Never over «Змінні»: unsaved edits there would be lost, and the row is red anyway.
+  const panel = ref<'logs' | 'env' | null>(null);
+  const logsOpen = computed(() => panel.value === 'logs');
+  const envOpen = computed(() => panel.value === 'env');
   const logsStep: Ref<string | null> = ref(null);
   watch(state, (s, before) => {
     if (s === before || !s) return;
     if (s.phase === 'crashed' || s.phase === 'failed') {
       logsStep.value = s.step;
-      logsOpen.value = true;
+      if (!envOpen.value) panel.value = 'logs';
     } else if (s.phase === 'running' && s.app === 'exited' && !(before?.phase === 'running' && before.app === 'exited')) {
       logsStep.value = PREVIEW_DEVICE_STEP;
-      logsOpen.value = true;
+      if (!envOpen.value) panel.value = 'logs';
     }
   });
   function toggleLogs(): void {
-    logsOpen.value = !logsOpen.value;
+    panel.value = logsOpen.value ? null : 'logs';
+  }
+  function toggleEnv(): void {
+    panel.value = envOpen.value ? null : 'env';
+  }
+  function closePanel(): void {
+    panel.value = null;
   }
 
   // ── Actions ──────────────────────────────────────────────────────────────
@@ -176,9 +187,13 @@ export function useSessionPreview(session: () => Session, opts: SessionPreviewOp
     configPhase,
     configOk,
     status,
+    panel,
     logsOpen,
+    envOpen,
     logsStep,
     toggleLogs,
+    toggleEnv,
+    closePanel,
     start,
     startAction,
     restartAction,

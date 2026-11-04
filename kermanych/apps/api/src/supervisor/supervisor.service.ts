@@ -106,6 +106,8 @@ import {
   voiceMessagePrompt,
   TESTER_AGENT_ID,
   testerRefusal,
+  PREVIEW_CONFIG_PATH,
+  type PreviewConfigStatus,
   qaItemsInScope,
   qaHandoffText,
   qaScreenshotDir,
@@ -144,6 +146,7 @@ const TESTER_REFUSALS: Record<TesterRefusal, string> = {
   busy: "wait for the agent to finish its turn before testing",
   "no-browser": "the session browser is not available: Kermanych is running without its desktop app",
   platform: "this project's platform has no browser to test in",
+  "no-preview": `set up the live preview first: ${PREVIEW_CONFIG_PATH} is missing in the session directory`,
 };
 
 // A failed merged-PR check, in the words the UI shows (docs/specs/2026-10-26-pr-merged-close-prompt.md,
@@ -1805,6 +1808,15 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     const g = this.boundProject(s.projectId);
     const live = this.map.get(parentId);
     const midTurn = live && (live.state.status === "thinking" || live.state.status === "tool") ? live.state.status : undefined;
+    // The doer's preview config (docs/specs/2026-11-04-session-env-and-tester-preview-gate.md,
+    // decision 3). A session the preview refuses (finished, not an agent, no browser) is refused
+    // by an earlier reason, so an unreadable one stays unknown here.
+    let previewConfig: PreviewConfigStatus | undefined;
+    try {
+      previewConfig = this.preview?.info(parentId).config;
+    } catch {
+      previewConfig = undefined;
+    }
     const refusal = testerRefusal({
       kind: s.kind,
       status: midTurn ?? s.status,
@@ -1814,7 +1826,9 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
       runningTester: this.registry.listSessions().some((x) => x.parentSessionId === parentId && x.tester === true && x.status !== "merged"),
       browserHost: !!browserHost(),
       platformHasBrowser: platformHasBrowser(g.platform),
+      previewConfig: previewConfig?.kind,
     });
+    if (refusal === "no-preview" && previewConfig?.kind === "invalid") throw new Error(`set up the live preview first: ${PREVIEW_CONFIG_PATH} is invalid: ${previewConfig.error}`);
     if (refusal) throw new Error(TESTER_REFUSALS[refusal]);
     const taskId = s.taskId!;
 

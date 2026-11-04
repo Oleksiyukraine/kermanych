@@ -32,13 +32,17 @@ function noCard(over: Partial<Session> = {}): Session {
 const item = (id: string, agent?: QaChecklistItem['agent']): QaChecklistItem => ({ id, text: id, checked: false, ...(agent ? { agent } : {}) });
 const verdict = { status: 'passed' as const, note: 'ok', sessionId: 'x', at: '2026-11-04T10:00:00Z' };
 
-const state = (s: Session, opts: { sessions?: Session[]; items?: QaChecklistItem[]; platform?: 'web' | 'backend'; browserHost?: boolean } = {}) =>
+const state = (
+  s: Session,
+  opts: { sessions?: Session[]; items?: QaChecklistItem[]; platform?: 'web' | 'backend'; browserHost?: boolean; previewConfig?: 'ok' | 'missing' | 'invalid' } = {},
+) =>
   qaRunState({
     session: s,
     sessions: opts.sessions ?? [s],
     items: opts.items ?? [],
     platform: opts.platform ?? 'web',
     browserHost: opts.browserHost ?? true,
+    previewConfig: opts.previewConfig ?? 'ok',
   });
 
 function lookup(catalog: unknown, key: string): unknown {
@@ -76,6 +80,8 @@ describe('«Виконати тестування» state', () => {
     expect(hint(session({ status: 'tool' }))).toBe('tester.refusal.busy');
     expect(hint(session(), { browserHost: false })).toBe('tester.refusal.no-browser');
     expect(hint(session(), { platform: 'backend' })).toBe('tester.refusal.platform');
+    expect(hint(session(), { previewConfig: 'missing' })).toBe('tester.refusal.no-preview');
+    expect(hint(session(), { previewConfig: 'invalid' })).toBe('tester.refusal.no-preview');
   });
 
   it('reads «Тестування триває» and points at the running tester, whatever else holds', () => {

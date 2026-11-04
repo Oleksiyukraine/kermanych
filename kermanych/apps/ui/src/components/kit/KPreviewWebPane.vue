@@ -6,7 +6,7 @@
       <KIconButton :title="t('agents.preview.openTab')" :disabled="!url" @click="openTab">⤤</KIconButton>
       <span v-if="url" class="k-preview-web__url mono" v-tip="url">{{ url }}</span>
     </div>
-    <KPreviewLogs v-if="logsOpen" :session-id="session.id" :preview="preview" />
+    <KPreviewPanel v-if="panel" :session="session" :preview="preview" />
   </div>
 </template>
 
@@ -18,7 +18,7 @@
 import { useI18n } from 'vue-i18n';
 import type { Session } from '@kermanych/core';
 import KIconButton from './KIconButton.vue';
-import KPreviewLogs from './KPreviewLogs.vue';
+import KPreviewPanel from './KPreviewPanel.vue';
 import KPreviewRow from './KPreviewRow.vue';
 import { useSessionPreview } from '../../composables/useSessionPreview';
 
@@ -26,7 +26,7 @@ const props = defineProps<{ session: Session }>();
 
 const { t } = useI18n();
 const preview = useSessionPreview(() => props.session);
-const { url, logsOpen } = preview;
+const { url, panel } = preview;
 
 function openTab(): void {
   if (url.value) window.open(url.value, '_blank');

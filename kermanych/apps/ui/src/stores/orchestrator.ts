@@ -594,6 +594,14 @@ export const useOrchestrator = defineStore('orchestrator', () => {
     return api.saveEnv(id, patch);
   }
 
+  function getSessionEnv(id: string) {
+    return api.getSessionEnv(id);
+  }
+
+  function saveSessionEnv(id: string, edits: { set?: Record<string, string>; remove?: string[] }) {
+    return api.saveSessionEnv(id, edits);
+  }
+
   function finishInfo(id: string) {
     return api.finishInfo(id);
   }
@@ -742,6 +750,8 @@ export const useOrchestrator = defineStore('orchestrator', () => {
     pullProject,
     getEnv,
     saveEnv,
+    getSessionEnv,
+    saveSessionEnv,
     finishInfo,
     prCheck,
     fileDiff,

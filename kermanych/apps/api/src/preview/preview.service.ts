@@ -219,6 +219,13 @@ export class PreviewService implements OnModuleInit, OnModuleDestroy {
     return { state: this.state(id), config: readConfig(dir, platform).status };
   }
 
+  // The directory the preview runs from, refused with the preview's own messages (not an agent
+  // session, a project without a preview, a finished session). The session's «Змінні» edit its
+  // `.env` (docs/specs/2026-11-04-session-env-and-tester-preview-gate.md, decision 2).
+  dirOf(id: string): string {
+    return this.resolve(id).dir;
+  }
+
   // The platforms the session's file configures, for the device row (GET /sessions/:id/device):
   // empty when the session has no preview or its file is missing, invalid or not a device one.
   platformsOf(id: string): DevicePlatform[] {

@@ -42,7 +42,7 @@ function make() {
     return reply.result;
   };
   const updates = () => events.flatMap((e) => (e.type === "session_update" ? [e.session] : []));
-  return { registry, s, other, sup, call, updates, ctl: new SessionsController(sup, registry, {} as PreviewService) };
+  return { registry, s, other, sup, call, updates, ctl: new SessionsController(sup, registry, {} as PreviewService, {} as never) };
 }
 
 describe("report_finding / list_findings", () => {

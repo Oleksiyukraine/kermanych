@@ -1150,7 +1150,7 @@ servers (spec: `docs/specs/2026-11-03-session-browser-preview.md`). Agent sessio
 «Не визначено» projects have it in the **Браузер** tab, Mobile projects in the
 [**Пристрій**](#mobile-device-preview) tab: a row under the toolbar shows its state
 (не налаштоване / setup… / запускається `web`… / працює / впало / зупинене), the services and
-their ports, ▶ / ◼, ↻ (restart), **Логи** and, while the config is missing or broken,
+their ports, ▶ / ◼, ↻ (restart), **Змінні**, **Логи** and, while the config is missing or broken,
 **Доручити агенту**. A finished session has no worktree, so it has no preview.
 
 - **The config is a file in the repository, `.kermanych/preview.json`**, read from the session
@@ -1185,6 +1185,15 @@ their ports, ▶ / ◼, ↻ (restart), **Логи** and, while the config is mis
   `preview_start`. Once it runs, the page opens it; a restart keeps the page's path on the new
   port, so `/settings` stays `/settings`. **Логи** opens a panel under the page with one tab per
   step (the last 2 000 lines each); after a failure it opens by itself on the failed step.
+- **Змінні** opens the same panel on the session directory's `.env`, in the table of Settings →
+  Проєкт → «Змінні середовища» (spec: `docs/specs/2026-11-04-session-env-and-tester-preview-gate.md`).
+  This is how a session picks its back end: the front end's own variable (`NEXT_PUBLIC_API_URL`,
+  `VITE_API_BASE`, …) set for this worktree only. A new session starts from the project's `.env`,
+  which Kermanych copies into its worktree; an in-place session edits the project's `.env` itself.
+  Dev servers read `.env` when they start, so a save under a running preview offers ↻ to apply
+  it; nothing restarts by itself. A key also set in `.env.local` keeps that value (Next.js and Vite
+  prefer `.env.local`). A «Тестувальник» run uses the preview of the session it tests, values
+  included.
 - **Stopping.** ◼, the agent's `preview_stop`, or by itself on «Завершити», closing a merged
   session, deleting or archiving the session, a switch of the project to a platform the preview
   does not fit (a web preview on Back-end or Mobile, a device preview off Mobile), and
@@ -1201,6 +1210,7 @@ their ports, ▶ / ◼, ↻ (restart), **Логи** and, while the config is mis
   the preview in a new tab, and ⤤ opens it again.
 - **API.** `GET` / `POST` (`{ restart?, platform?, base? }`) / `DELETE /api/sessions/:id/preview`,
   `GET /api/sessions/:id/preview/logs?step=&since=`, `POST /api/sessions/:id/preview/configure`,
+  `GET` / `PUT` (`{ set?, remove? }`) `/api/sessions/:id/env`,
   `POST /api/sessions/:id/preview/app` (`{ action: "launch" | "terminate" | "restart" }`, Mobile);
   the state is pushed on the socket (`preview_update`, and `previews` in the snapshot).
 
@@ -1670,17 +1680,20 @@ and records a verdict for each (spec: `docs/specs/2026-11-04-qa-tester-agent.md`
 - **Where it starts.** «Виконати тестування» on the «Завершити» sheet and in the header of the
   session's **QA** tab. It is a separate child session `тестування: <name>` next to the doer, like
   a review: it reads the code but never edits or commits it. It needs the desktop app, a project
-  whose platform has a browser, a session started from a card, and a doer that is not mid-turn;
-  otherwise the button is disabled with the reason. One tester per session at a time: while it runs,
-  the button reads «Тестування триває» and opens it. It takes an agent slot like any session.
+  whose platform has a browser, a session started from a card, a valid `.kermanych/preview.json` in
+  the doer's directory (the preview itself may be stopped: the tester starts it), and a doer that is
+  not mid-turn; otherwise the button is disabled with the reason. One tester per session at a time:
+  while it runs, the button reads «Тестування триває» and opens it. It takes an agent slot like any
+  session.
 - **Which items.** The first run checks every item. Once items carry verdicts, the button offers
   «Непройдені» (failed, blocked and untested — the default) or «Усі»; a run clears the old verdicts of
   the items it is about to check. When the card has no checklist yet, the tester composes one first
   (skill `qa-tester`), saves it to the card and walks it. A session without a card cannot be tested.
 - **The browser.** It drives the doer's live preview (starting it when it is not running) from a
   browser of its own: a temporary partition, signed out on every run, so it never signs you out of the
-  project's browser. Watch it in the tester session's «Браузер» tab. A sign-in the agent cannot pass
-  (OAuth, SSO) is yours to complete there.
+  project's browser. The back end it talks to is whatever the doer's **Змінні** (`.env`) say. Watch it
+  in the tester session's «Браузер» tab. A sign-in the agent cannot pass (OAuth, SSO) is yours to
+  complete there.
 - **Verdicts.** Each item gets ✓ passed, ✗ failed or ⏸ blocked with the agent's note (and a screenshot
   under `docs/qa/<date>-<branch>/` for a failure), next to the human checkbox, on the QA tab and in the
   board's card dialog. The checkbox keeps meaning «a person checked it»; the tester never ticks it.
