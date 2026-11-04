@@ -18,7 +18,7 @@
       <KBtn
         variant="secondary"
         :disabled="state.kind === 'refused'"
-        :loading="launch.busy.value || (state.kind === 'ready' && detailsPending)"
+        :loading="launch.busy.value || (state.kind === 'ready' && (detailsPending || previewPending))"
         :title="hint"
         @click="onRun"
       >{{ t('tester.run.label') }}</KBtn>
@@ -30,11 +30,13 @@
 <script setup lang="ts">
 // «Виконати тестування» (docs/specs/2026-11-04-qa-tester-agent.md, decisions 9, 11, 12), one control
 // for the FinishSheet and the QA tab. The state comes from lib/tester.ts (core's testerRefusal, the
-// same guard the api applies); the card's checklist decides whether a scope is offered. Emits
-// `select` with the tester's session id — the new one after a launch, or the running one.
-import { computed, ref } from 'vue';
+// same guard the api applies); the card's checklist decides whether a scope is offered, and the
+// doer's `.kermanych/preview.json` whether a run may start at all
+// (docs/specs/2026-11-04-session-env-and-tester-preview-gate.md, decision 3). Emits `select` with
+// the tester's session id — the new one after a launch, or the running one.
+import { computed, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
-import type { QaRunScope, Session } from '@kermanych/core';
+import type { PreviewConfigStatus, QaRunScope, Session } from '@kermanych/core';
 import { useOrchestrator } from 'stores/orchestrator';
 import { useBoard } from 'stores/board';
 import { useSessionBrowser } from 'stores/browser';
@@ -64,6 +66,29 @@ const detailsPending = computed(() => {
   return card.value ? !board.detailsLoaded(taskId) : !board.loaded;
 });
 
+// The doer's preview config, read again when its turn ends (it may have written the file) and on
+// every preview change. A session the preview refuses is refused by an earlier reason: unknown.
+const previewConfig = ref<PreviewConfigStatus | undefined>(undefined);
+const previewPending = ref(true);
+let previewSeq = 0;
+async function loadPreviewConfig(): Promise<void> {
+  const seq = ++previewSeq;
+  let config: PreviewConfigStatus | undefined;
+  try {
+    config = (await store.previewInfo(props.session.id)).config;
+  } catch {
+    config = undefined;
+  }
+  if (seq !== previewSeq) return;
+  previewConfig.value = config;
+  previewPending.value = false;
+}
+watch(
+  [() => props.session.id, () => props.session.status, () => store.previews[props.session.id]],
+  () => void loadPreviewConfig(),
+  { immediate: true },
+);
+
 const state = computed(() =>
   qaRunState({
     session: props.session,
@@ -71,10 +96,13 @@ const state = computed(() =>
     items: card.value?.qaChecklist?.items ?? [],
     platform: store.projects.find((p) => p.id === props.session.projectId)?.platform,
     browserHost: sessionBrowser.available,
+    previewConfig: previewConfig.value?.kind,
   }),
 );
 const hint = computed(() => {
   const st = state.value;
+  const config = previewConfig.value;
+  if (st.kind === 'refused' && config?.kind === 'invalid' && st.hintKey === 'tester.refusal.no-preview') return t('tester.refusal.previewInvalid', { error: config.error });
   if (st.kind === 'refused') return t(st.hintKey);
   return st.kind === 'ready' && st.allPassed ? t('tester.run.allPassed') : '';
 });
@@ -97,7 +125,7 @@ const launch = useAsyncAction(async (s: Session, chosen: QaRunScope) => {
 });
 
 function onRun(): void {
-  if (state.value.kind !== 'ready' || detailsPending.value) return;
+  if (state.value.kind !== 'ready' || detailsPending.value || previewPending.value) return;
   void launch.run(props.session, runScope.value);
 }
 </script>

@@ -207,7 +207,7 @@ describe("subagent endpoints", () => {
 describe("controller delegation", () => {
   test("forwards subagentTranscript to the supervisor", () => {
     const sup = { getSubagentTranscript: vi.fn().mockResolvedValue([]) };
-    const c = new SessionsController(sup as never, {} as never, {} as never);
+    const c = new SessionsController(sup as never, {} as never, {} as never, {} as never);
     c.subagentTranscript("s1", "Task");
     expect(sup.getSubagentTranscript).toHaveBeenCalledWith("s1", "Task");
   });

@@ -228,7 +228,9 @@ as the disabled button's hint, when:
 - the doer is mid-turn (`thinking` / `tool`), as for «Ревізор»;
 - a tester of this session is already running;
 - there is no browser host (web build, not the desktop app) or the project platform has no browser
-  (`backend`, `mobile`).
+  (`backend`, `mobile`);
+- the doer's `.kermanych/preview.json` is missing or invalid (added 2026-11-04 by
+  `docs/specs/2026-11-04-session-env-and-tester-preview-gate.md`, decision 3).
 
 While the tester runs, the doer can still be messaged; its header shows «Тестування триває». The tester
 takes an agent slot like any session and waits in the queue when none is free

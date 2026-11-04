@@ -48,7 +48,8 @@ export type TesterRefusal =
   | "no-card" // no taskId: nowhere to store the checklist
   | "busy" // the doer is mid-turn
   | "no-browser" // no desktop browser host (web build)
-  | "platform"; // backend / mobile project
+  | "platform" // backend / mobile project
+  | "no-preview"; // the doer's `.kermanych/preview.json` is missing or invalid
 
 export function testerRefusal(input: {
   kind: string;
@@ -59,6 +60,11 @@ export function testerRefusal(input: {
   runningTester: boolean;
   browserHost: boolean;
   platformHasBrowser: boolean;
+  /**
+   * The doer's preview config (docs/specs/2026-11-04-session-env-and-tester-preview-gate.md,
+   * decision 3); undefined while it is not known, which refuses nothing — the api always knows.
+   */
+  previewConfig?: "ok" | "missing" | "invalid" | undefined;
 }): TesterRefusal | null {
   if (input.runningTester) return "running";
   if (input.kind !== "agent") return "not-agent";
@@ -66,6 +72,7 @@ export function testerRefusal(input: {
   if (!input.taskId) return "no-card";
   if (!input.platformHasBrowser) return "platform";
   if (!input.browserHost) return "no-browser";
+  if (input.previewConfig === "missing" || input.previewConfig === "invalid") return "no-preview";
   if (input.status === "thinking" || input.status === "tool") return "busy";
   return null;
 }

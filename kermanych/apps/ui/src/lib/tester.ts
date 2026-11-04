@@ -21,6 +21,7 @@ export const TESTER_REFUSAL_KEYS: Record<TesterRefusal, string> = {
   busy: 'tester.refusal.busy',
   'no-browser': 'tester.refusal.no-browser',
   platform: 'tester.refusal.platform',
+  'no-preview': 'tester.refusal.no-preview',
 };
 
 /** The running tester child of a doer session (at most one, decision 11). A retired one is history. */
@@ -48,6 +49,8 @@ export function qaRunState(input: {
   items: readonly QaChecklistItem[];
   platform: Platform | null | undefined;
   browserHost: boolean;
+  /** The doer's `.kermanych/preview.json` status; undefined until read (refuses nothing). */
+  previewConfig?: 'ok' | 'missing' | 'invalid' | undefined;
 }): QaRunState {
   const { session: s } = input;
   const tester = runningTesterOf(input.sessions, s.id);
@@ -61,6 +64,7 @@ export function qaRunState(input: {
     runningTester: false,
     browserHost: input.browserHost,
     platformHasBrowser: platformHasBrowser(input.platform),
+    previewConfig: input.previewConfig,
   });
   if (refusal) return { kind: 'refused', hintKey: TESTER_REFUSAL_KEYS[refusal] };
   const offerScope = qaHasVerdicts(input.items);

@@ -1,7 +1,7 @@
 # Session `.env` in the «Браузер» tab; «Тестувальник» needs a preview config
 
-- **Status:** decisions settled with the operator on 2026-11-04 (deep analysis); awaiting the
-  go-ahead to implement.
+- **Status:** decisions settled with the operator on 2026-11-04 (deep analysis); approved and
+  implemented on this branch.
 - **Scope:** `apps/api` (session env endpoints, tester launch guard), `packages/core`
   (`testerRefusal`), `apps/ui` (preview row «Змінні», env panel, QA button hint), README.
 - **Builds on:** `docs/specs/2026-11-04-qa-tester-agent.md`,
@@ -61,8 +61,9 @@ Rejected:
   project's required-keys flags (cloud `envKeys`) are shown but locked: they are a project
   setting, not a session one.
 - **How it opens.** A bottom panel inside the tab, the same place and seam as «Логи» (never an
-  overlay: the native view sits above the DOM). «Змінні» and «Логи» share the panel; the
-  pressed button says which one is shown.
+  overlay: the native view sits above the DOM). «Змінні» and «Логи» share the panel
+  (`KPreviewPanel`, formerly `KPreviewLogs`); the pressed button says which one is shown. A crash
+  opens «Логи» by itself only while «Змінні» is not shown, so unsaved edits are not lost.
 - **Save.** «Зберегти» / «Скасувати», enabled while the table differs from the file. The write
   goes through `EnvFileService.write` (atomic, keeps comments and lines it did not touch).
 - **Apply.** Dev servers read `.env` at start, so a save while the preview is running or
@@ -80,7 +81,7 @@ Api, in `sessions.controller.ts`, next to `GET :id/preview`:
 - `PUT /api/sessions/:id/env` with `{ set?, remove? }` → the new `EnvFileView`.
 
 Both resolve the directory with the preview's own rule and refuse non-agent and finished
-sessions with its message. The supervisor exposes the directory resolution; the controller does
+sessions with its message. `PreviewService.dirOf` exposes that resolution; the controller does
 not duplicate it.
 
 Rejected:
@@ -91,15 +92,15 @@ Rejected:
 ### 3. «Виконати тестування» needs a valid `.kermanych/preview.json`
 
 `testerRefusal` gets a new reason `no-preview`, checked after `platform` / `no-browser` and before
-`busy`, fed by `readConfig(dir, platform).status.kind` of the **parent's** directory:
+`busy`, fed by the config status of the **parent's** directory (`PreviewService.info`):
 
-- `missing` → «Спершу налаштуйте превʼю у вкладці «Браузер»»;
-- `invalid` → «Файл превʼю з помилкою: <error>».
+- `missing` → «Спершу налаштуйте превʼю у вкладці «Браузер»…»;
+- `invalid` → the same code; the api message and the button hint carry the validation error.
 
 A running preview is not required (the tester starts it). The api guard (`runTester`) and the UI
-button (`lib/tester.ts`, from the session's preview info the pane already loads) use the same
-function, so they never disagree. The hint shows on the disabled button as the other refusals do;
-no new UI.
+button (`lib/tester.ts`; `QaRunButton` reads the doer's preview info again when its status or
+preview changes) use the same function, so they never disagree. The hint shows on the disabled
+button as the other refusals do; no new UI.
 
 Rejected: letting the tester start and stop at its first step (still takes a slot and tokens);
 today's behaviour (21 `blocked` items for a config that does not exist).

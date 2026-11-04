@@ -71,6 +71,7 @@ describe("testerRefusal", () => {
     runningTester: false,
     browserHost: true,
     platformHasBrowser: true,
+    previewConfig: "ok" as const,
   };
 
   test("an idle doer with a card, a worktree and a browser can be tested", () => {
@@ -91,8 +92,17 @@ describe("testerRefusal", () => {
     [{ browserHost: false }, "no-browser"],
     [{ status: "thinking" }, "busy"],
     [{ status: "tool" }, "busy"],
+    [{ previewConfig: "missing" }, "no-preview"],
+    [{ previewConfig: "invalid" }, "no-preview"],
+    // Named before a busy doer: waiting for its turn to end would not make the file appear.
+    [{ previewConfig: "missing", status: "thinking" }, "no-preview"],
+    [{ previewConfig: "missing", platformHasBrowser: false }, "platform"],
   ] as const)("%o → %s", (patch, reason) => {
     expect(testerRefusal({ ...ok, ...patch })).toBe(reason);
+  });
+
+  test("an unknown preview config refuses nothing", () => {
+    expect(testerRefusal({ ...ok, previewConfig: undefined })).toBeNull();
   });
 
   test("an in-place session (no worktree) is not finished for lacking a path", () => {

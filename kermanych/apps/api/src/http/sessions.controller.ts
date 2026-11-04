@@ -1,11 +1,12 @@
 // apps/api/src/http/sessions.controller.ts
-import { BadRequestException, Body, Controller, Delete, Get, NotFoundException, Param, Patch, Post, Query, Req, StreamableFile } from "@nestjs/common";
+import { BadRequestException, Body, Controller, Delete, Get, NotFoundException, Param, Patch, Post, Put, Query, Req, StreamableFile } from "@nestjs/common";
 import { isDevicePlatform, isNativeHarness, isQaRunScope, isThinkingLevel, parseFindingTarget } from "@kermanych/core";
 import type { BranchPrefix, DocsWriteKind, ImageInput, RpcExtensionUIResponse, ThinkingLevel } from "@kermanych/core";
 import { SupervisorService } from "../supervisor/supervisor.service";
 import { sessionFailure } from "./session-failure";
 import { RegistryService } from "../registry/registry.service";
 import { PreviewService, type PreviewAppAction } from "../preview/preview.service";
+import { EnvFileService } from "../env/env-file.service";
 
 // A findings failure: an unknown session or finding is a 404, an already-decided one a 400.
 function findingFailure(err: unknown): Error {
@@ -19,6 +20,7 @@ export class SessionsController {
     private sup: SupervisorService,
     private reg: RegistryService,
     private preview: PreviewService,
+    private env: EnvFileService,
   ) {}
 
   @Get()
@@ -238,6 +240,27 @@ export class SessionsController {
   async configurePreview(@Param("id") id: string) {
     try {
       return await this.sup.configurePreview(id);
+    } catch (err) {
+      throw sessionFailure(err);
+    }
+  }
+
+  // «Змінні» of the preview row (docs/specs/2026-11-04-session-env-and-tester-preview-gate.md,
+  // decision 2): the `.env` of the directory the preview runs from — the worktree, or the project
+  // checkout of an in-place session — refused with the preview's messages otherwise.
+  @Get(":id/env")
+  async getEnv(@Param("id") id: string) {
+    try {
+      return await this.env.read(this.preview.dirOf(id));
+    } catch (err) {
+      throw sessionFailure(err);
+    }
+  }
+
+  @Put(":id/env")
+  async putEnv(@Param("id") id: string, @Body() b: { set?: Record<string, string>; remove?: string[] } = {}) {
+    try {
+      return await this.env.write(this.preview.dirOf(id), ".env", { set: b?.set, remove: b?.remove });
     } catch (err) {
       throw sessionFailure(err);
     }

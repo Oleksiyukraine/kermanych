@@ -2,8 +2,9 @@
 // MCP tools a tester run gets, the credential tool's secrecy, the parent's preview, «Створити ПР»
 // keeping an existing checklist, and ⤴ of a run with nothing to hand over.
 import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from "vitest";
+import { Subject } from "rxjs";
 import type { HttpAdapterHost } from "@nestjs/core";
-import type { QaChecklist, QaChecklistItem, ServerEvent, Session } from "@kermanych/core";
+import type { PreviewConfigStatus, QaChecklist, QaChecklistItem, ServerEvent, Session } from "@kermanych/core";
 import type { Task } from "@kermanych/cloud";
 import type { WorktreeService } from "../src/worktree/worktree.service";
 import type { AuthService } from "../src/auth/auth.service";
@@ -97,17 +98,30 @@ function make(opts: { platform?: "web" | "backend"; host?: boolean } = {}) {
     refExists: vi.fn().mockResolvedValue(false),
     behindCount: vi.fn().mockResolvedValue(0),
   };
-  const preview = { urlOf: vi.fn(() => undefined as string | undefined), start: vi.fn(), settled: vi.fn(async () => null) };
+  // The doer's preview: its config decides whether a run may start (session-env spec, decision 3).
+  const config: { status: PreviewConfigStatus } = { status: { kind: "ok", services: ["web"], platforms: [] } };
+  const preview = {
+    urlOf: vi.fn(() => undefined as string | undefined),
+    start: vi.fn(),
+    settled: vi.fn(async () => null),
+    info: vi.fn(() => ({ state: null, config: config.status })),
+    changes$: new Subject(),
+    states: () => ({}),
+    stopUnfit: async () => {},
+    forget: async () => {},
+    stop: async () => {},
+    retire: async () => {},
+  };
   const browser = new BrowserMcpService(registry, preview as unknown as PreviewService, {} as DeviceApi, http, auth);
   const bindingFor = vi.spyOn(browser, "bindingFor");
-  const sup = new SupervisorService(registry, worktree as unknown as WorktreeService, auth, stubSkills(), undefined as never, undefined, browser);
+  const sup = new SupervisorService(registry, worktree as unknown as WorktreeService, auth, stubSkills(), undefined as never, undefined, browser, undefined, undefined, undefined, undefined, undefined, preview as unknown as PreviewService);
   const events: ServerEvent[] = [];
   sup.events$.subscribe((e) => events.push(e));
   const host = fakeHost();
   if (opts.host !== false) setBrowserHost(host);
   const doer = registry.createSession({ projectId: "p1", taskId: "t1", name: "Login", task: "Add login", worktreePath: "/tmp/kmq-tester-wt", branch: "feature/login" });
   registry.updateSession(doer.id, { ompSessionFile: "/tmp/doer.jsonl", status: "done" });
-  return { registry, sup, browser, bindingFor, preview, host, events, doer };
+  return { registry, sup, browser, bindingFor, preview, config, host, events, doer };
 }
 
 async function mcp(browser: BrowserMcp, sessionId: string, method: string, params: Record<string, unknown> = {}) {
@@ -144,6 +158,24 @@ describe("POST qa-run guard", () => {
 
     const backend = make({ platform: "backend" });
     await expect(backend.sup.runTester(backend.doer.id, "all")).rejects.toThrow(/no browser/);
+  });
+
+  // docs/specs/2026-11-04-session-env-and-tester-preview-gate.md, decision 3: a run whose preview
+  // cannot start would block every item, so it does not start at all.
+  it("refuses while the doer's .kermanych/preview.json is missing or invalid, and starts once it is valid", async () => {
+    const { sup, doer, registry, config, preview } = make();
+    cards.set("t1", card("t1", [{}]));
+
+    config.status = { kind: "missing" };
+    await expect(sup.runTester(doer.id, "all")).rejects.toThrow(/set up the live preview first: \.kermanych\/preview\.json is missing/);
+    config.status = { kind: "invalid", error: "services[0].command is required" };
+    await expect(sup.runTester(doer.id, "all")).rejects.toThrow(/is invalid: services\[0\]\.command is required/);
+    expect(preview.info).toHaveBeenCalledWith(doer.id);
+    expect(registry.listSessions().some((s) => s.tester === true)).toBe(false);
+    expect(patchQaItems).not.toHaveBeenCalled();
+
+    config.status = { kind: "ok", services: ["web"], platforms: [] };
+    await expect(sup.runTester(doer.id, "all")).resolves.toMatchObject({ tester: true });
   });
 
   it("launches a tester review child with the browser binding and clears in-scope verdicts", async () => {

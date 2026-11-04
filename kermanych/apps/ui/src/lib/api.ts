@@ -887,6 +887,11 @@ export const api = {
   configurePreview: (id: string): Promise<{ sent: true }> =>
     post<{ sent: true }>(`/sessions/${id}/preview/configure`, {}),
 
+  // «Змінні»: the `.env` of the directory the session's preview runs from (its worktree).
+  getSessionEnv: (id: string): Promise<EnvFileView> => get<EnvFileView>(`/sessions/${id}/env`),
+  saveSessionEnv: (id: string, edits: { set?: Record<string, string>; remove?: string[] }): Promise<EnvFileView> =>
+    put<EnvFileView>(`/sessions/${id}/env`, edits),
+
   // The session's device (docs/specs/2026-11-03-mobile-device-preview.md): the tooling, the
   // base devices of this machine, the project's choice, the session's clone and the pause.
   deviceInfo: (id: string): Promise<DeviceInfo> => get<DeviceInfo>(`/sessions/${id}/device`),
