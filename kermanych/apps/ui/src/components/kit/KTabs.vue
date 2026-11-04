@@ -187,8 +187,9 @@ const emit = defineEmits<{
   align-items: center;
   gap: var(--k-sp-3);
   flex: none;
-  // Clears the 1px the active tab's underline is pulled down onto, so trailing controls sit
-  // on the labels' baseline rather than on the rule.
-  padding-bottom: var(--k-sp-3);
+  // As tall as the tabs and centred in them, so a text link and a 28px icon button alike sit
+  // on the labels' middle; the padding is the tabs' 2px underline, which the labels sit above.
+  align-self: stretch;
+  padding-bottom: 2px;
 }
 </style>

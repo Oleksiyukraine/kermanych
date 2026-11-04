@@ -45,6 +45,7 @@ import type {
   MachineResources,
   ResourcesUpdate,
   MinionState,
+  NativeSettings,
   PrCheck,
   QaRunScope,
   TesterSettings,
@@ -564,6 +565,12 @@ export const api = {
 
   setMinionProject: (projectId: string, active: boolean): Promise<MinionState> =>
     put<MinionState>(`/minion/projects/${projectId}`, { active }),
+
+  // How native TUIs launch on this machine — local-only, applied at a session's next start.
+  nativeSettings: (): Promise<NativeSettings> => get<NativeSettings>('/native/settings'),
+
+  setNativeSettings: (s: NativeSettings): Promise<NativeSettings> =>
+    put<NativeSettings>('/native/settings', s),
 
   // «Тестувальник» settings of a project on this machine (docs/specs/2026-11-04-qa-tester-agent.md,
   // decisions 4 and 14). Local only and passwords included: the agent never gets them, the

@@ -384,3 +384,9 @@ export type TerminalOpenReply = { terminal: TerminalInfo } | TerminalError;
 // `replay` repaints the terminal as it stands — its scrollback, the alternate screen and
 // modes included — written before live data flows.
 export type TerminalAttachReply = { terminal: TerminalInfo; replay: string } | TerminalError;
+
+// How native sessions' TUIs are launched on this machine (machine-local, never synced).
+// `claudeFullScreen`: claude draws on the terminal's alternate screen — its full-screen layout,
+// input pinned at the bottom — which keeps no scrollback, so the Лог's find reaches only the
+// rows on screen. Off (the default), claude prints inline and its history stays searchable.
+export type NativeSettings = { claudeFullScreen: boolean };

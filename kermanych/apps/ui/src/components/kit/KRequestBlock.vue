@@ -32,8 +32,8 @@
         <div v-if="item.kind === 'group'" class="k-rb__group">
           <button type="button" class="k-rb__grow" :aria-expanded="opened.has(i)" @click="toggle(i)">
             <span class="k-rb__g" :class="`k-rb__g--${item.status}`" role="img" :aria-label="statusLabel(item.status)">{{ GLYPH[item.status] }}</span>
-            <span class="k-rb__gt">{{ item.tool }}</span>
-            <span class="k-rb__gtg">{{ item.members.map((m) => m.target).filter(Boolean).join(', ') }}</span>
+            <span v-tip.overflow="item.tool" class="k-rb__gt">{{ item.tool }}</span>
+            <span v-tip.overflow="groupTargets(item)" class="k-rb__gtg">{{ groupTargets(item) }}</span>
             <span class="k-rb__gx">×{{ item.members.length }}</span>
             <span class="k-rb__gst">{{ groupStatText(item.stat) }}</span>
             <span class="k-rb__gch" aria-hidden="true">{{ opened.has(i) ? '⌄' : '›' }}</span>
@@ -141,6 +141,10 @@ watch(
 const GLYPH = { pending: '◆', ok: '✓', error: '✗' } as const;
 function statusLabel(s: 'pending' | 'ok' | 'error'): string {
   return s === 'pending' ? t('kit.requestBlock.statusPending') : s === 'ok' ? t('kit.requestBlock.statusOk') : t('kit.requestBlock.statusError');
+}
+// A group row's targets, one after another — the cell clips them, its tooltip repeats them whole.
+function groupTargets(item: { members: ToolEntry[] }): string {
+  return item.members.map((m) => m.target).filter(Boolean).join(', ');
 }
 function gStatus(members: ToolEntry[]): 'pending' | 'ok' | 'error' {
   if (members.some((m) => m.status === 'error')) return 'error';

@@ -824,7 +824,12 @@ A task can also run in the harness's **own** interface instead of Kermanych's wr
 «Нова задача», set **Режим** to `omp`, `claude` or `codex` and press «Запустити»: Kermanych
 creates the worktree and branch as usual, then starts that harness's TUI there with the task
 text as its first prompt. The session's «Лог» tab is that terminal — type into it as you would
-in your own terminal. (Specs: `docs/specs/2026-10-05-native-sessions.md`,
+in your own terminal. <kbd>⌘F</kbd> (<kbd>Ctrl</kbd>+<kbd>F</kbd> off macOS) or the magnifier on
+the tab row searches its screen and scrollback: match case, whole word, <kbd>Enter</kbd> /
+<kbd>Shift</kbd>+<kbd>Enter</kbd> to step, <kbd>Esc</kbd> back to the shell. claude starts
+off its full-screen (alternate-screen) layout, which keeps no scrollback, so the whole history
+stays searchable; «Налаштування → ШІ-провайдер → Повноекранний вигляд» turns it back on, with
+find then reaching only the visible screen (from a session's next start or resume). (Specs: `docs/specs/2026-10-05-native-sessions.md`,
 `docs/specs/2026-10-16-native-codex.md`.) Each harness must be on your login shell's `PATH`;
 for codex that is `npm i -g @openai/codex` (or `brew install codex`) — the copy inside the
 ChatGPT app is not used. A missing binary shows `command not found` in the «Лог» tab.
@@ -1009,7 +1014,8 @@ instead. Switching a project away from Web stops its web previews and closes its
   search), the viewport (**За розміром панелі**, or a fixed width — 390 / 768 / 1280 / 1440;
   wider than the pane, the page is laid out at that width and drawn scaled, with the
   percentage shown), **◎ Вказати**, **Агент** (pause the agent's control), ⤤ open in the
-  system browser, `</>` devtools. A narrow pane wraps it into two rows and drops the labels.
+  system browser, `</>` devtools, the magnifier for find in page. A narrow pane wraps it into
+  two rows and drops the labels.
   Keys: <kbd>⌘L</kbd> address, <kbd>⌘F</kbd> find in page, <kbd>⌘R</kbd> reload (the page,
   not the app), <kbd>⌘[</kbd> / <kbd>⌘]</kbd> back / forward; <kbd>⌘W</kbd> and zoom keys do
   nothing in the page.
