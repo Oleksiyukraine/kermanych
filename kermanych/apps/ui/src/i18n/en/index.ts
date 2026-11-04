@@ -3684,7 +3684,7 @@ export const en: MessageSchema = {
       channelLabel: 'Channel',
       channelPlaceholder: 'pick a channel…',
       private: 'private',
-      channelHint: 'Every message in this channel is a question — Kermanych answers in a thread. In a thread it answers only when mentioned.',
+      channelHint: 'Kermanych answers only messages in this channel that mention it, in a thread under the message. Messages that tag another app or person are left alone.',
       noChannels: 'The bot is not in any channel yet.',
       inviteBefore: 'Only channels the bot is in are listed. Invite it in the channel with',
       inviteAfter: ', then press Refresh.',

@@ -7,14 +7,30 @@ const BOT = "UBOT";
 describe("classifyMessage", () => {
   const base = { type: "message", channel: "C1", user: "U1" };
 
-  it("treats a top-level message as a question answered in its own thread", () => {
-    expect(classifyMessage({ ...base, ts: "100.1", text: "How do refunds work?" }, BOT)).toEqual({
+  it("treats a mentioning top-level message as a question answered in its own thread, mention stripped", () => {
+    expect(classifyMessage({ ...base, ts: "100.1", text: "<@UBOT> How do refunds work?" }, BOT)).toEqual({
       kind: "question",
       channel: "C1",
       threadTs: "100.1",
       ts: "100.1",
       text: "How do refunds work?",
     });
+  });
+
+  it("ignores a top-level message that does not mention the bot", () => {
+    expect(classifyMessage({ ...base, ts: "100.1", text: "How do refunds work?" }, BOT)).toBeNull();
+  });
+
+  it("ignores a message that tags another app or person but not the bot", () => {
+    const toJira = "<@UJIRA>, for ticket PLAT-291 set priority to high";
+    expect(classifyMessage({ ...base, ts: "100.2", text: toJira }, BOT)).toBeNull();
+    expect(classifyMessage({ ...base, ts: "101.0", thread_ts: "100.1", text: toJira }, BOT)).toBeNull();
+    expect(classifyMessage({ ...base, ts: "100.3", text: "<@UBOTX> can you check?" }, BOT)).toBeNull();
+  });
+
+  it("answers when the bot is tagged alongside someone else", () => {
+    expect(classifyMessage({ ...base, ts: "100.4", text: "<@UJIRA> <@UBOT> is export documented?" }, BOT))
+      .toMatchObject({ kind: "question", text: "<@UJIRA> is export documented?" });
   });
 
   it("ignores a thread reply that does not mention the bot", () => {
@@ -32,20 +48,20 @@ describe("classifyMessage", () => {
   });
 
   it("ignores the bot's own messages and other bots", () => {
-    expect(classifyMessage({ ...base, user: BOT, ts: "103.0", text: "answer" }, BOT)).toBeNull();
-    expect(classifyMessage({ ...base, bot_id: "B9", ts: "103.0", text: "deploy done" }, BOT)).toBeNull();
-    expect(classifyMessage({ type: "message", channel: "C1", ts: "103.0", text: "no author" }, BOT)).toBeNull();
+    expect(classifyMessage({ ...base, user: BOT, ts: "103.0", text: "<@UBOT> answer" }, BOT)).toBeNull();
+    expect(classifyMessage({ ...base, bot_id: "B9", ts: "103.0", text: "<@UBOT> deploy done" }, BOT)).toBeNull();
+    expect(classifyMessage({ type: "message", channel: "C1", ts: "103.0", text: "<@UBOT> no author" }, BOT)).toBeNull();
   });
 
   it("ignores edits and other system subtypes", () => {
     expect(
-      classifyMessage({ ...base, subtype: "message_changed", ts: "104.0", message: { text: "edited" } }, BOT),
+      classifyMessage({ ...base, subtype: "message_changed", ts: "104.0", message: { text: "<@UBOT> edited" } }, BOT),
     ).toBeNull();
-    expect(classifyMessage({ ...base, subtype: "channel_join", ts: "104.0", text: "joined" }, BOT)).toBeNull();
+    expect(classifyMessage({ ...base, subtype: "channel_join", ts: "104.0", text: "<@UBOT> joined" }, BOT)).toBeNull();
   });
 
-  it("still answers a top-level file share", () => {
-    expect(classifyMessage({ ...base, subtype: "file_share", ts: "105.0", text: "is this screen documented?" }, BOT))
+  it("still answers a mentioning top-level file share", () => {
+    expect(classifyMessage({ ...base, subtype: "file_share", ts: "105.0", text: "<@UBOT> is this screen documented?" }, BOT))
       .toMatchObject({ kind: "question" });
   });
 
