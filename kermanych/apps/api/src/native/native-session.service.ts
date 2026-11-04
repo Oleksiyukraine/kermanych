@@ -35,6 +35,9 @@ export type NativeEvent =
   | { type: "transcript"; sessionId: string; transcript: Rehydrated }
   | { type: "settled"; sessionId: string; status: SessionStatus };
 
+// claude's switch off the alternate screen (core NativeSettings.claudeFullScreen).
+export const CLAUDE_INLINE_ENV = "CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN";
+
 // The live overlay the supervisor merges over a native row while its harness runs.
 export type NativeLive = Pick<Session, "status" | "currentTool" | "error" | "terminalId">;
 
@@ -355,6 +358,11 @@ export class NativeSessionService implements OnModuleInit, OnModuleDestroy {
           ...(mcp && session.runtime !== "claude-code" ? { [MCP_URL_ENV]: mcp.url, [MCP_TOKEN_ENV]: mcp.token } : {}),
           // claude's subagent/background limits, as a managed claude gets them through the SDK.
           ...(session.runtime === "claude-code" ? this.resources?.claudeEnv() : undefined),
+          // Off the alternate screen unless the operator chose claude's full-screen layout: that
+          // screen keeps no scrollback, so the Лог's find would reach only the rows on screen.
+          ...(session.runtime === "claude-code" && !this.registry.getNativeSettings().claudeFullScreen
+            ? { [CLAUDE_INLINE_ENV]: "1" }
+            : undefined),
         },
       });
       run.terminalId = info.id;

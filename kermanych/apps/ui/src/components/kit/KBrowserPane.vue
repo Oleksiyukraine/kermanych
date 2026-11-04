@@ -63,6 +63,13 @@
           <span class="k-browser__agent-dot" aria-hidden="true"></span><span class="k-browser__label">{{ agentLive ? t('agents.browser.agentLive') : t('agents.browser.agentIdle') }}</span>
         </template>
       </button>
+      <KIconButton
+        :title="t('agents.browser.find.open')"
+        :active="findOpen"
+        :aria-pressed="findOpen"
+        :disabled="!state"
+        @click="findOpen ? closeFind() : openFind()"
+      ><KIcon class="k-browser__icon" name="search" /></KIconButton>
       <KIconButton :title="t('agents.browser.external')" :disabled="!externalUrl" @click="openExternal(externalUrl)">⤤</KIconButton>
       <KIconButton :title="t('agents.browser.devtools')" :disabled="!state" @click="bridge.openDevTools(session.id)">
         <span class="mono">&lt;/&gt;</span>
@@ -82,22 +89,17 @@
     <!-- The live preview of an `agent` session (forks get the plain browser). -->
     <KPreviewRow v-if="preview" :preview="preview" />
 
-    <div v-if="findOpen" class="k-browser__find">
-      <input
-        ref="findEl"
-        v-model="findQuery"
-        class="k-browser__find-input"
-        type="text"
-        spellcheck="false"
-        :placeholder="t('agents.browser.find.placeholder')"
-        @keydown.enter.prevent="findStep(!$event.shiftKey)"
-        @keydown.esc.prevent="closeFind"
-      />
-      <span class="k-browser__find-count mono">{{ findCount }}</span>
-      <KIconButton :title="t('agents.browser.find.prev')" :disabled="!findQuery" @click="findStep(false)">↑</KIconButton>
-      <KIconButton :title="t('agents.browser.find.next')" :disabled="!findQuery" @click="findStep(true)">↓</KIconButton>
-      <KIconButton :title="t('agents.browser.find.close')" @click="closeFind">✕</KIconButton>
-    </div>
+    <KFindBar
+      v-if="findOpen"
+      ref="findBarEl"
+      v-model:query="findQuery"
+      plain
+      :placeholder="t('agents.browser.find.placeholder')"
+      :count="findCount"
+      :has-hits="!!findQuery && (state?.find?.matches ?? 0) > 0"
+      @step="findStep"
+      @close="closeFind"
+    />
 
     <!-- The page is blocked on alert/confirm until someone answers: the operator here, or the
          agent through its tools (the bar goes away when main reports it answered). -->
@@ -284,7 +286,9 @@ import KPreviewLogs from './KPreviewLogs.vue';
 import KPreviewRow from './KPreviewRow.vue';
 import KChipSelect from './KChipSelect.vue';
 import KField from './KField.vue';
+import KFindBar from './KFindBar.vue';
 import KFullscreenButton from './KFullscreenButton.vue';
+import KIcon from './KIcon.vue';
 import KIconButton from './KIconButton.vue';
 import KModal from './KModal.vue';
 import { useSessionBrowser } from 'stores/browser';
@@ -465,18 +469,20 @@ function sendOnModEnter(e: KeyboardEvent): void {
 // ── Find in page ─────────────────────────────────────────────────────────
 const findOpen = ref(false);
 const findQuery = ref('');
-const findEl = ref<HTMLInputElement | null>(null);
+const findBarEl = ref<{ $el: HTMLElement } | null>(null);
 const findCount = computed(() => {
   const f = state.value?.find;
-  return f && findQuery.value && f.query === findQuery.value ? `${f.active} / ${f.matches}` : '';
+  if (!f || !findQuery.value || f.query !== findQuery.value) return '';
+  return f.matches === 0 ? t('kit.fileView.find.none') : `${f.active} / ${f.matches}`;
 });
 // Reopened with the last query still in the field: its highlights come back with it.
 async function openFind(): Promise<void> {
   if (!findOpen.value && findQuery.value) bridge.find(props.session.id, findQuery.value, true);
   findOpen.value = true;
   await nextTick();
-  findEl.value?.focus();
-  findEl.value?.select();
+  const input = findBarEl.value?.$el.querySelector<HTMLInputElement>('.k-find-bar__input');
+  input?.focus();
+  input?.select();
 }
 function closeFind(): void {
   if (!findOpen.value) return;
@@ -901,38 +907,7 @@ onBeforeUnmount(() => {
   50% { opacity: 0.3; }
 }
 
-.k-browser__find {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  padding: 4px 6px 4px 12px;
-  border-bottom: 1px solid var(--k-line);
-  flex: none;
-}
-.k-browser__find-input {
-  flex: 1;
-  min-width: 0;
-  max-width: 320px;
-  height: 26px;
-  padding: 0 8px;
-  font-family: var(--k-font-ui);
-  font-size: var(--k-fs-sm);
-  color: var(--k-text);
-  background: var(--k-surface);
-  border: 1px solid var(--k-line);
-  border-radius: var(--k-r-sm);
-  outline: none;
-
-  &:focus {
-    border-color: var(--k-accent);
-  }
-}
-.k-browser__find-count {
-  min-width: 48px;
-  font-size: var(--k-fs-xs);
-  color: var(--k-muted);
-  text-align: center;
-}
+.k-browser__icon { --k-icon-size: var(--k-icon-md); }
 
 .k-browser__dialog {
   display: flex;

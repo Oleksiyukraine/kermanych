@@ -392,6 +392,14 @@
         </div>
         <KTabs v-model="detailTab" :tabs="detailTabs" class="agents__detail-tabs" @close="onDetailTabClose">
           <template #end>
+            <!-- The native Лог's find (KTerminalView): ⌘F inside the terminal does the same. -->
+            <KIconButton
+              v-if="detailTab === 'log' && selectedSession.native && selectedSession.terminalId"
+              :title="t('agents.detail.findLog')"
+              :active="!!logTermRef?.findOpen"
+              :aria-pressed="!!logTermRef?.findOpen"
+              @click="logTermRef?.toggleFind()"
+            ><KIcon name="search" /></KIconButton>
             <template v-if="detailTab === 'log' && !selectedSession.native">
               <button type="button" class="agents__log-ctl" @click="onExpandAll(true)">{{ t('agents.detail.expandAll') }}</button>
               <button type="button" class="agents__log-ctl" @click="onExpandAll(false)">{{ t('agents.detail.collapseAll') }}</button>
@@ -413,6 +421,7 @@
               <KTerminalView
                 v-if="selectedSession.terminalId"
                 :key="selectedSession.terminalId"
+                ref="logTermRef"
                 class="agents__native-term"
                 :terminal-id="selectedSession.terminalId"
                 :active="detailTab === 'log'"
@@ -3230,6 +3239,7 @@ function nextMode(s: Session): MessageMode {
 // The composer clears on send and the store shows the «надсилаю…» bubble at once; the panel
 // ref is how a refused message gets its text and images back.
 const panelRef = ref<InstanceType<typeof KPanel> | null>(null);
+const logTermRef = ref<InstanceType<typeof KTerminalView> | null>(null);
 async function onSend(text: string, images: ImageInput[]): Promise<void> {
   const s = selectedSession.value;
   if (!s) return;
