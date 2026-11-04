@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { createPinia, setActivePinia } from 'pinia';
 import type { Task, TaskChange, TaskVersion } from '@kermanych/cloud';
+import type { QaChecklist, ServerEvent } from '@kermanych/core';
 import { useBoard } from '../src/stores/board';
 
 // The board's reconcile reads `id, updated_at` and only the rows that moved, and the report
@@ -12,7 +13,11 @@ const listTasks = vi.fn<(client: unknown, projectIds: string[]) => Promise<Task[
 const listTaskVersions = vi.fn<(client: unknown, projectIds: string[]) => Promise<TaskVersion[]>>();
 const listTasksByIds = vi.fn<(client: unknown, ids: readonly string[]) => Promise<Task[]>>();
 const getTask = vi.fn<(client: unknown, id: string) => Promise<Task | undefined>>();
+const patchQaItems = vi.fn<
+  (client: unknown, taskId: string, itemIds: readonly string[], patch: Record<string, unknown>, drop: readonly string[]) => Promise<QaChecklist>
+>();
 let onChange: ((c: TaskChange) => void) | undefined;
+let onServer: ((e: ServerEvent) => void) | undefined;
 
 vi.mock('@kermanych/cloud', async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
@@ -20,6 +25,8 @@ vi.mock('@kermanych/cloud', async (importOriginal) => ({
   listTaskVersions: (c: unknown, p: string[]) => listTaskVersions(c, p),
   listTasksByIds: (c: unknown, ids: readonly string[]) => listTasksByIds(c, ids),
   getTask: (c: unknown, id: string) => getTask(c, id),
+  patchQaItems: (c: unknown, t: string, ids: readonly string[], p: Record<string, unknown>, d: readonly string[]) =>
+    patchQaItems(c, t, ids, p, d),
   subscribeTasks: (_c: unknown, _p: string[], cb: (c: TaskChange) => void) => {
     onChange = cb;
     return () => {};
@@ -29,7 +36,15 @@ vi.mock('../src/stores/auth', () => ({
   useAuth: () => ({ user: { id: 'u1' }, ready: Promise.resolve(), client: {} }),
 }));
 vi.mock('../src/stores/projects', () => ({ useProjects: () => ({ projects: [{ id: 'p1' }], load: vi.fn() }) }));
-vi.mock('../src/stores/orchestrator', () => ({ useOrchestrator: () => ({ notify: vi.fn() }) }));
+vi.mock('../src/stores/orchestrator', () => ({
+  useOrchestrator: () => ({
+    notify: vi.fn(),
+    onServerEvent: (fn: (e: ServerEvent) => void) => {
+      onServer = fn;
+      return () => {};
+    },
+  }),
+}));
 vi.mock('../src/boot/i18n', () => ({ globalTr: { t: (k: string) => k, te: () => false } }));
 
 function card(id: string, at: string, over: Partial<Task> = {}): Task {
@@ -184,5 +199,82 @@ describe('board card details', () => {
     expect(getTask).toHaveBeenCalledTimes(1);
     expect(board.tasks[0]!.qaChecklist?.items[0]!.text).toBe('late');
     board.unsubscribe();
+  });
+});
+
+// A human tick and a tester's verdict write the same column concurrently (spec
+// 2026-11-04-qa-tester-agent, decision 3): the tick patches one item, never the whole list.
+describe('board QA checklist', () => {
+  const verdict = { status: 'failed' as const, note: 'button does nothing', sessionId: 's9', at: T1 };
+
+  beforeEach(() => {
+    setActivePinia(createPinia());
+    for (const m of [listTasks, listTaskVersions, listTasksByIds, getTask, patchQaItems]) m.mockReset();
+    onChange = undefined;
+    onServer = undefined;
+  });
+
+  async function boardWithChecklist() {
+    const board = useBoard();
+    listTasks.mockResolvedValue([
+      card('t1', T0, {
+        qaChecklist: {
+          generatedAt: T0,
+          items: [
+            { id: 'q1', text: 'one', checked: false },
+            { id: 'q2', text: 'two', checked: false },
+          ],
+        },
+      }),
+    ]);
+    await board.load();
+    return board;
+  }
+
+  it('a tick patches only its item and keeps a verdict the tester wrote meanwhile', async () => {
+    const board = await boardWithChecklist();
+    const answer = Promise.withResolvers<QaChecklist>();
+    patchQaItems.mockReturnValueOnce(answer.promise);
+
+    const done = board.setQaItemChecked('t1', 'q1', true);
+    // Optimistic: the box is ticked before the cloud answers.
+    expect(board.tasks[0]!.qaChecklist?.items[0]).toMatchObject({ checked: true, checkedBy: 'u1' });
+    const [, taskId, ids, patch, drop] = patchQaItems.mock.calls[0]!;
+    expect([taskId, ids, drop]).toEqual(['t1', ['q1'], []]);
+    expect(patch).toMatchObject({ checked: true, checkedBy: 'u1' });
+    expect(patch).not.toHaveProperty('qaChecklist');
+
+    answer.resolve({
+      generatedAt: T0,
+      items: [
+        { id: 'q1', text: 'one', checked: true, checkedBy: 'u1', checkedAt: T1 },
+        { id: 'q2', text: 'two', checked: false, agent: verdict },
+      ],
+    });
+    expect(await done).toBe(true);
+    expect(board.tasks[0]!.qaChecklist?.items[1]!.agent).toEqual(verdict);
+  });
+
+  it('an untick drops the stamps; a refused write puts the item back', async () => {
+    const board = await boardWithChecklist();
+    patchQaItems.mockRejectedValueOnce(new Error('denied'));
+
+    expect(await board.setQaItemChecked('t1', 'q2', false)).toBe(false);
+    expect(patchQaItems.mock.calls[0]!.slice(3)).toEqual([{ checked: false }, ['checkedBy', 'checkedAt']]);
+    expect(board.tasks[0]!.qaChecklist?.items[1]).toEqual({ id: 'q2', text: 'two', checked: false });
+
+    patchQaItems.mockRejectedValueOnce(new Error('denied'));
+    expect(await board.setQaItemChecked('t1', 'q1', true)).toBe(false);
+    expect(board.tasks[0]!.qaChecklist?.items[0]).toEqual({ id: 'q1', text: 'one', checked: false });
+  });
+
+  it('a qa_checklist_update from the api shows on the card at once', async () => {
+    const board = await boardWithChecklist();
+    onServer?.({
+      type: 'qa_checklist_update',
+      taskId: 't1',
+      checklist: { generatedAt: T0, items: [{ id: 'q1', text: 'one', checked: false, agent: verdict }] },
+    });
+    expect(board.tasks[0]!.qaChecklist?.items).toEqual([{ id: 'q1', text: 'one', checked: false, agent: verdict }]);
   });
 });

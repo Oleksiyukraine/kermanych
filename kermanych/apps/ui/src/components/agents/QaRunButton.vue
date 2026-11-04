@@ -1,0 +1,124 @@
+<template>
+  <div class="qa-run">
+    <!-- A tester of this session runs: the control leads to it instead of starting a second. -->
+    <KBtn v-if="state.kind === 'running'" variant="secondary" :title="t('tester.run.runningTip')" @click="emit('select', state.testerId)">
+      <KSpinner :size="10" />{{ t('tester.run.running') }}
+    </KBtn>
+    <template v-else>
+      <!-- Every item passed: «Непройдені» would check nothing, so the chip is locked on «Усі». -->
+      <KChipSelect
+        v-if="state.kind === 'ready' && state.offerScope"
+        :model-value="runScope"
+        :options="scopeOptions"
+        :title="t('tester.run.scopeTitle')"
+        :disabled="launch.busy.value || state.allPassed"
+        placement="down"
+        @update:model-value="scope = $event"
+      />
+      <KBtn
+        variant="secondary"
+        :disabled="state.kind === 'refused'"
+        :loading="launch.busy.value || (state.kind === 'ready' && detailsPending)"
+        :title="hint"
+        @click="onRun"
+      >{{ t('tester.run.label') }}</KBtn>
+      <span v-if="hint" class="qa-run__hint">{{ hint }}</span>
+    </template>
+  </div>
+</template>
+
+<script setup lang="ts">
+// «Виконати тестування» (docs/specs/2026-11-04-qa-tester-agent.md, decisions 9, 11, 12), one control
+// for the FinishSheet and the QA tab. The state comes from lib/tester.ts (core's testerRefusal, the
+// same guard the api applies); the card's checklist decides whether a scope is offered. Emits
+// `select` with the tester's session id — the new one after a launch, or the running one.
+import { computed, ref } from 'vue';
+import { useI18n } from 'vue-i18n';
+import type { QaRunScope, Session } from '@kermanych/core';
+import { useOrchestrator } from 'stores/orchestrator';
+import { useBoard } from 'stores/board';
+import { useSessionBrowser } from 'stores/browser';
+import { useAsyncAction } from '../../composables/useAsyncAction';
+import { useTaskDetails } from '../../composables/useTaskDetails';
+import { qaRunState } from '../../lib/tester';
+import KBtn from 'components/kit/KBtn.vue';
+import KChipSelect from 'components/kit/KChipSelect.vue';
+import KSpinner from 'components/kit/KSpinner.vue';
+
+const props = defineProps<{ session: Session }>();
+const emit = defineEmits<{ select: [sessionId: string] }>();
+
+const { t } = useI18n();
+const store = useOrchestrator();
+const board = useBoard();
+const sessionBrowser = useSessionBrowser();
+
+// The card's checklist (verdicts included) — held here so the control works wherever it is put.
+useTaskDetails(() => props.session.taskId);
+const card = computed(() => (props.session.taskId ? board.tasks.find((x) => x.id === props.session.taskId) : undefined));
+// Whether verdicts exist is not known until the card's checklist is read: the button spins
+// meanwhile rather than starting a run whose scope the operator could not pick.
+const detailsPending = computed(() => {
+  const taskId = props.session.taskId;
+  if (!taskId) return false;
+  return card.value ? !board.detailsLoaded(taskId) : !board.loaded;
+});
+
+const state = computed(() =>
+  qaRunState({
+    session: props.session,
+    sessions: store.sessions,
+    items: card.value?.qaChecklist?.items ?? [],
+    platform: store.projects.find((p) => p.id === props.session.projectId)?.platform,
+    browserHost: sessionBrowser.available,
+  }),
+);
+const hint = computed(() => {
+  const st = state.value;
+  if (st.kind === 'refused') return t(st.hintKey);
+  return st.kind === 'ready' && st.allPassed ? t('tester.run.allPassed') : '';
+});
+
+// «Непройдені» is the default once verdicts exist; a first run checks everything, and so does a
+// run after every item passed (the api refuses «Непройдені» with nothing in it).
+const scope = ref<QaRunScope>('open');
+const runScope = computed<QaRunScope>(() => {
+  const st = state.value;
+  return st.kind === 'ready' && st.offerScope && !st.allPassed ? scope.value : 'all';
+});
+const scopeOptions = computed<{ value: QaRunScope; label: string }[]>(() => [
+  { value: 'open', label: t('tester.run.scope.open') },
+  { value: 'all', label: t('tester.run.scope.all') },
+]);
+
+const launch = useAsyncAction(async (s: Session, chosen: QaRunScope) => {
+  const child = await store.runTester(s.id, chosen);
+  emit('select', child.id);
+});
+
+function onRun(): void {
+  if (state.value.kind !== 'ready' || detailsPending.value) return;
+  void launch.run(props.session, runScope.value);
+}
+</script>
+
+<style scoped lang="scss">
+.qa-run {
+  display: inline-flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 8px;
+}
+
+// The reason sits on its own line under the button, never squeezing the header beside it.
+.qa-run__hint {
+  flex-basis: 100%;
+  max-width: 360px;
+  margin-left: auto;
+  text-align: right;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--k-muted);
+}
+</style>

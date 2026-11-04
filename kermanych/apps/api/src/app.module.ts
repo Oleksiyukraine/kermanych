@@ -48,13 +48,14 @@ import { MachineController } from "./http/machine.controller";
 import { MachineResourcesService } from "./machine/machine-resources.service";
 import { WatchdogService } from "./machine/watchdog.service";
 import { MinionController } from "./http/minion.controller";
+import { TesterController } from "./http/tester.controller";
 import { MinionService } from "./minion/minion.service";
 import { BranchNameService } from "./supervisor/branch-name.service";
 import { VoiceController } from "./http/voice.controller";
 import { VoiceService } from "./voice/voice.service";
 
 @Module({
-  controllers: [AuthController, ProjectsController, SessionsController, FsController, UsageController, CloudController, SkillsController, SkillImportController, ManagementController, ManagementMcpController, ModelsController, JiraController, LinearController, SlackController, AccountController, DocsController, NativeController, BrowserMcpController, MachineController, MinionController, VoiceController],
+  controllers: [AuthController, ProjectsController, SessionsController, FsController, UsageController, CloudController, SkillsController, SkillImportController, ManagementController, ManagementMcpController, ModelsController, JiraController, LinearController, SlackController, AccountController, DocsController, NativeController, BrowserMcpController, MachineController, MinionController, TesterController, VoiceController],
   providers: [
     RegistryService, WorktreeService, SupervisorService, PreviewService, EnvFileService, EventsGateway,
     UsageService,

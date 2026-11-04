@@ -249,6 +249,14 @@
             <KAnalysisMark v-if="selectedSession.deepAnalysis" />
             <KDesignMark v-if="selectedSession.designDir" />
             <KMinionMark v-if="selectedSession.minion" kind="running" />
+            <!-- A tester walks this session's QA checklist: the run is one click away. -->
+            <button
+              v-if="runningTester"
+              type="button"
+              class="agents__detail-tester mono"
+              v-tip="t('tester.run.runningTip')"
+              @click="store.selectSession(runningTester.id)"
+            ><KSpinner :size="9" />{{ t('tester.run.running') }}</button>
             <KDecisionMark v-if="selectedDecision" :reason="selectedDecision" />
             <KNotNeededMark v-else-if="selectedNotNeeded" :reason="selectedNotNeeded" />
           </div>
@@ -274,7 +282,7 @@
                 <KIconButton
                   v-if="selectedSession.status !== 'merged'"
                   :disabled="selectedPending"
-                  :title="selectedSession.kind === 'review' ? t('agents.merge.reviewTitle') : t('agents.actions.mergeTip')"
+                  :title="selectedSession.tester ? t('tester.handoff.title') : selectedSession.kind === 'review' ? t('agents.merge.reviewTitle') : t('agents.actions.mergeTip')"
                   @click="openMerge(selectedSession)"
                 >⤴</KIconButton>
               </template>
@@ -767,26 +775,31 @@
         </div>
         <!-- QA tab: the checklist lives on the linked cloud CARD, so it is read from the board
              store (not the transcript) and persists past this session's archive. A brand-new
-             task has none until a «Створити ПР» run generates it — hence the empty state. -->
+             task has none until «Створити ПР» or the tester composes it — hence the empty state.
+             «Виконати тестування» heads the tab either way; each item shows the tester's verdict
+             beside the human tick. -->
         <div v-if="detailTab === 'qa'" class="agents__tabpane agents__docs">
           <KSkeleton v-if="qaPhase === 'skeleton'" variant="rows" :rows="4" />
           <template v-else-if="qaPhase === 'blank'"></template>
-          <template v-else-if="qaChecklist?.items.length">
+          <template v-else>
             <div class="agents__qa-head">
               <h3 class="agents__docs-title">{{ t('agents.qa.title') }}</h3>
-              <span class="agents__qa-count mono">{{ qaDone }}/{{ qaChecklist.items.length }}</span>
+              <span v-if="qaChecklist?.items.length" class="agents__qa-count mono">{{ qaDone }}/{{ qaChecklist.items.length }}</span>
+              <!-- A tester child shows its doer's checklist; the doer's own tab and «Завершити» start runs. -->
+              <QaRunButton v-if="!selectedSession.tester" class="agents__qa-run" :session="selectedSession" @select="store.selectSession" />
             </div>
-            <ul class="agents__qa-list">
+            <ul v-if="qaChecklist?.items.length" class="agents__qa-list">
               <li v-for="item in qaChecklist.items" :key="item.id" class="agents__qa-item">
                 <KCheckbox
                   :model-value="item.checked"
                   :label="item.text"
                   @update:model-value="(v: boolean) => onQaToggle(item.id, v)"
                 />
+                <QaVerdict v-if="item.agent" :verdict="item.agent" />
               </li>
             </ul>
+            <p v-else class="agents__log-empty mono">{{ t('agents.qa.empty') }}</p>
           </template>
-          <p v-else class="agents__log-empty mono">{{ t('agents.qa.empty') }}</p>
         </div>
         </template>
         <div v-else class="agents__detail-blank mono">{{ t('agents.detail.blank') }}</div>
@@ -1091,27 +1104,31 @@
       </template>
     </KModal>
 
-    <!-- MERGE — pour a discussion branch's conclusion into its parent -->
-    <KModal v-model="mergeOpen" :title="mergeIsReview ? t('agents.merge.reviewTitle') : t('agents.merge.branchTitle')">
+    <!-- MERGE — pour a discussion branch's conclusion into its parent. A tester's run has no
+         summary to edit: the api builds the doer's message from this run's verdicts. -->
+    <KModal v-model="mergeOpen" :title="mergeTitle">
       <div class="agents__form">
-        <label class="agents__field">
-          <span class="agents__field-label">{{ t('agents.merge.summaryLabel') }}</span>
-          <textarea
-            v-model="mergeSummary"
-            class="agents__textarea mono"
-            rows="6"
-            :placeholder="mergeIsReview ? t('agents.merge.summaryPlaceholderReview') : t('agents.merge.summaryPlaceholder')"
-          />
-        </label>
-        <p class="agents__hint mono">
-          {{ t('agents.merge.hint') }}
-          (<code class="mono">merged</code>).
-        </p>
+        <p v-if="mergeIsTester" class="agents__hint">{{ t('tester.handoff.hint') }}</p>
+        <template v-else>
+          <label class="agents__field">
+            <span class="agents__field-label">{{ t('agents.merge.summaryLabel') }}</span>
+            <textarea
+              v-model="mergeSummary"
+              class="agents__textarea mono"
+              rows="6"
+              :placeholder="mergeIsReview ? t('agents.merge.summaryPlaceholderReview') : t('agents.merge.summaryPlaceholder')"
+            />
+          </label>
+          <p class="agents__hint mono">
+            {{ t('agents.merge.hint') }}
+            (<code class="mono">merged</code>).
+          </p>
+        </template>
         <p v-if="mergeError" class="agents__error" role="alert">{{ mergeError }}</p>
       </div>
       <template #controls>
         <KBtn variant="ghost" @click="mergeOpen = false">{{ t('agents.launcher.cancel') }}</KBtn>
-        <KBtn variant="primary" :loading="mergeBusy" @click="submitMerge">{{ mergeIsReview ? t('agents.merge.give') : t('agents.merge.pour') }}</KBtn>
+        <KBtn variant="primary" :loading="mergeBusy" @click="submitMerge">{{ mergeIsTester ? t('tester.handoff.action') : mergeIsReview ? t('agents.merge.give') : t('agents.merge.pour') }}</KBtn>
       </template>
     </KModal>
 
@@ -1270,6 +1287,10 @@ import KBrowserPane from 'components/kit/KBrowserPane.vue';
 import KPreviewWebPane from 'components/kit/KPreviewWebPane.vue';
 import { previewTabStatus } from '../lib/preview-view';
 import FinishSheet from 'components/agents/FinishSheet.vue';
+import QaRunButton from 'components/agents/QaRunButton.vue';
+import QaVerdict from 'components/agents/QaVerdict.vue';
+import KSpinner from 'components/kit/KSpinner.vue';
+import { runningTesterOf } from '../lib/tester';
 import { useSessionBrowser } from 'stores/browser';
 import { useSendPicks } from '../composables/useSendPicks';
 import { historyLoadFor } from '../lib/open-session-history';
@@ -1740,6 +1761,8 @@ const parentOfSelected = computed<Session | undefined>(() =>
     ? store.sessions.find((s) => s.id === selectedSession.value?.parentSessionId)
     : undefined,
 );
+// The tester walking the selected doer's QA checklist right now (docs/specs/2026-11-04-qa-tester-agent.md).
+const runningTester = computed(() => (selectedSession.value ? runningTesterOf(store.sessions, selectedSession.value.id) : undefined));
 
 // A plain load that failed leaves `transcripts[id]` unset; this ends the skeleton for it.
 const transcriptFailed = ref<string | null>(null);
@@ -1936,27 +1959,38 @@ const docsUsedHint = computed(() => t('agents.docs.usedHint'));
 
 // ── QA tab: the checklist off the linked cloud CARD ─────────────────────────
 // Like «Документація»'s reports, the QA checklist lives on the task and outlives the session,
-// so it is read off `linkedTask` (above) and ticked back through the same store method the
-// board dialog uses.
-const qaChecklist = computed(() => linkedTask.value?.qaChecklist);
+// so it is read off the card and ticked back through the same store method the board dialog
+// uses. A «Тестувальник» child has no card of its own on purpose (its status must never mirror
+// onto one): its QA tab shows the doer's card, where its verdicts land live.
+const qaTaskId = computed(() => {
+  const s = selectedSession.value;
+  return s?.tester ? parentOfSelected.value?.taskId : s?.taskId;
+});
+const qaTask = computed(() => (qaTaskId.value ? board.tasks.find((t) => t.id === qaTaskId.value) : undefined));
+// The selected session already holds its own card above; this hold covers the tester's parent.
+useTaskDetails(() => (selectedSession.value?.tester ? qaTaskId.value : undefined));
+const qaChecklist = computed(() => qaTask.value?.qaChecklist);
 const qaDone = computed(() => qaChecklist.value?.items.filter((i) => i.checked).length ?? 0);
 // Not loaded: the session has a card the board has not read yet, or whose checklist and
 // reports the store has not read yet. A session without a card is «loaded» at once — its empty
 // state is the true answer.
-const qaNotLoaded = computed(() => {
-  const taskId = selectedSession.value?.taskId;
+function cardNotLoaded(taskId: string | undefined, task: unknown): boolean {
   if (!taskId) return false;
-  return linkedTask.value ? !board.detailsLoaded(taskId) : board.loading;
-});
+  return task ? !board.detailsLoaded(taskId) : board.loading;
+}
+const qaNotLoaded = computed(() => cardNotLoaded(qaTaskId.value, qaTask.value));
 const qaPhase = useLoadPhase(() => qaNotLoaded.value);
-// «Документація» joins the transcript, the Зміни listing and the card; until the first two
-// have answered its lists are incomplete, so it is a skeleton rather than «немає документів».
+// «Документація» joins the transcript, the Зміни listing and the session's own card; until the
+// first two have answered its lists are incomplete, so it is a skeleton rather than «немає документів».
 const docsNotLoaded = computed(
-  () => !transcriptLoaded.value || (changesLoading.value && changesInfo.value === null) || qaNotLoaded.value,
+  () =>
+    !transcriptLoaded.value ||
+    (changesLoading.value && changesInfo.value === null) ||
+    cardNotLoaded(selectedSession.value?.taskId, linkedTask.value),
 );
 
 function onQaToggle(itemId: string, checked: boolean): void {
-  const task = linkedTask.value;
+  const task = qaTask.value;
   if (task) void board.setQaItemChecked(task.id, itemId, checked);
 }
 
@@ -1967,9 +2001,10 @@ function onQaToggle(itemId: string, checked: boolean): void {
 const sessionBrowser = useSessionBrowser();
 // Whether the selected session has a Браузер tab (docs/specs/2026-11-03-session-browser-
 // preview.md, decisions 8–9): never in a back-end or mobile project; in the desktop app for
-// every session here (a discussion or review fork gets the plain browser, no preview); in the
-// web build, which cannot embed the page, only for an `agent` session — its tab is the preview
-// row and logs.
+// every session here (a discussion or review fork gets the plain browser, no preview — a
+// «Тестувальник» child included: its tab is where the operator watches the run and passes an
+// SSO login by hand); in the web build, which cannot embed the page, only for an `agent`
+// session — its tab is the preview row and logs.
 const browserTab = computed(() => {
   const s = selectedSession.value;
   if (!s) return false;
@@ -3385,6 +3420,13 @@ const mergeSummary = ref('');
 const mergeBusy = ref(false);
 const mergeError = ref<string | null>(null);
 const mergeIsReview = computed(() => mergeFor.value?.kind === 'review');
+// ⤴ «Передати виконавцю» of a tester (docs/specs/2026-11-04-qa-tester-agent.md, decision 13): the
+// same merge, sent with no summary — the api writes the message from this run's verdicts, or
+// sends nothing when every item passed.
+const mergeIsTester = computed(() => mergeFor.value?.tester === true);
+const mergeTitle = computed(() =>
+  mergeIsTester.value ? t('tester.handoff.title') : mergeIsReview.value ? t('agents.merge.reviewTitle') : t('agents.merge.branchTitle'),
+);
 
 function openMerge(s: Session): void {
   mergeFor.value = s;
@@ -3404,7 +3446,7 @@ async function submitMerge(): Promise<void> {
   mergeBusy.value = true;
   mergeError.value = null;
   try {
-    await store.mergeBranch(s.id, mergeSummary.value.trim() || undefined);
+    await store.mergeBranch(s.id, s.tester ? undefined : mergeSummary.value.trim() || undefined);
     mergeOpen.value = false;
     if (s.parentSessionId) store.selectSession(s.parentSessionId);
   } catch (e) {
@@ -3862,6 +3904,24 @@ function openDocTask(path: string): void {
   white-space: nowrap;
 }
 
+// «Тестування триває» on a doer whose tester runs: opens the tester's session.
+.agents__detail-tester {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  flex: none;
+  padding: 1px 6px;
+  border: 1px solid var(--k-line-strong);
+  border-radius: var(--k-r);
+  background: transparent;
+  color: var(--k-muted);
+  font-size: 11px;
+  cursor: pointer;
+
+  &:hover { color: var(--k-accent); border-color: var(--k-accent); }
+  &:focus-visible { outline: 1px solid var(--k-accent); outline-offset: 2px; }
+}
+
 // The session's own name — the bar's title, so it carries the UI face at full text colour,
 // not the muted mono the old path label wore.
 // The name's own box while it is edited: same type, an accent underline for the field.
@@ -4232,8 +4292,10 @@ function openDocTask(path: string): void {
 }
 
 // ── QA tab: checklist off the linked card ──────────────────────────────────
-.agents__qa-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+.agents__qa-head { display: flex; align-items: baseline; gap: 8px; }
+.agents__qa-head .agents__docs-title { white-space: nowrap; }
 .agents__qa-count { font-size: 11.5px; color: var(--k-muted); }
+.agents__qa-run { margin-left: auto; }
 .agents__qa-list { margin: 8px 0 0; padding: 0; list-style: none; display: grid; gap: 8px; }
 
 // ── Task brief (full description + creation images) ────────────────────────

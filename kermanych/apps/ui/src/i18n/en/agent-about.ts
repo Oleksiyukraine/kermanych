@@ -65,6 +65,21 @@ export const agentAbout: typeof uk = {
     adds: '',
     ends: 'An APPROVE or NEEDS CHANGES answer with findings by priority, as text in the review session. The “⤴ Hand over” button passes the verdict to the doer and closes the review.',
   },
+  tester: {
+    tagline: 'Walks the card’s QA checklist in the live browser and gives each item a verdict',
+    when: 'The “Run testing” button in the finish sheet or on the session’s QA tab, while the agent is idle. Needs the desktop app, a project with a browser and a session started from a card. A trigger cannot run it.',
+    steps:
+      'Opens a separate “тестування: …” session in the same worktree, with read-only tools, the browser and the doer’s preview.\nClears the old verdicts of the items it will check; when there is no checklist yet, composes one first and saves it to the card.\nStarts or opens the preview in a clean browser of its own and signs in with a test account.\nWalks the items in order, as a user would, and records a verdict after each; takes a screenshot of every failure.\nChanges no code and commits nothing.',
+    inputs: {
+      loginPath: 'The sign-in page from this project’s tester settings.',
+      task: 'The task of the session under test.',
+      accounts: 'The project’s test accounts on this machine: names, logins and notes — no passwords.',
+      notes: 'The notes for the tester from the project settings.',
+      items: 'The QA checklist items to check, with their ids — or the ask to compose a checklist first.',
+    },
+    adds: 'The reporting rules: a verdict per item through report_qa_result, a screenshot for every failure, passwords only through browser_type_credential, change nothing. The qa-tester skill when there is no checklist yet.',
+    ends: '✓ / ✗ / ⏸ verdicts beside the items on the QA tab and on the card. “⤴ Hand over to the doer” sends the failed items to the doer and closes the session; “Discard” closes it without a message.',
+  },
   'pull-request': {
     tagline: 'Commits, pushes the branch and opens a pull request',
     when: 'The “Create PR” button in the finish sheet or on the Design page, while the branch has no PR. Also started by a trigger, and by the Minion after a ready verdict.',

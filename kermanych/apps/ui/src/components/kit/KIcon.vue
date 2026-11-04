@@ -55,7 +55,8 @@ export type KIconName =
   | 'agentCommit'
   | 'agentResolveConflict'
   | 'agentFinish'
-  | 'agentSummary';
+  | 'agentSummary'
+  | 'agentTester';
 </script>
 
 <script setup lang="ts">
@@ -246,6 +247,12 @@ const ICONS: Record<KIconName, readonly string[]> = {
     'M15 8h-5',
     'M19 17V5a2 2 0 0 0-2-2H4',
     'M8 21h12a2 2 0 0 0 2-2v-1a1 1 0 0 0-1-1H11a1 1 0 0 0-1 1v1a2 2 0 1 1-4 0V5a2 2 0 1 0-4 0v2a1 1 0 0 0 1 1h3',
+  ],
+  // Тестувальник — a lab flask (Lucide's flask-conical): checks the change by trying it.
+  agentTester: [
+    'M14 2v6a2 2 0 0 0 .245.96l5.51 10.08A2 2 0 0 1 18 22H6a2 2 0 0 1-1.755-2.96l5.51-10.08A2 2 0 0 0 10 8V2',
+    'M6.453 15h11.094',
+    'M8.5 2h7',
   ],
 };
 

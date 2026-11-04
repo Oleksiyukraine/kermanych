@@ -42,6 +42,8 @@ import type {
   ResourcesUpdate,
   MinionState,
   PrCheck,
+  QaRunScope,
+  TesterSettings,
 } from '@kermanych/core';
 import type {
   CloudProject,
@@ -559,6 +561,15 @@ export const api = {
   setMinionProject: (projectId: string, active: boolean): Promise<MinionState> =>
     put<MinionState>(`/minion/projects/${projectId}`, { active }),
 
+  // «Тестувальник» settings of a project on this machine (docs/specs/2026-11-04-qa-tester-agent.md,
+  // decisions 4 and 14). Local only and passwords included: the agent never gets them, the
+  // operator's own settings form does. The PUT answers with what the api stored (trimmed, ids).
+  getTesterSettings: (projectId: string): Promise<TesterSettings> =>
+    get<TesterSettings>(`/tester/projects/${projectId}`),
+
+  putTesterSettings: (projectId: string, settings: TesterSettings): Promise<TesterSettings> =>
+    put<TesterSettings>(`/tester/projects/${projectId}`, settings),
+
   // The watchdog's «Зупинити команду»: the api kills only a subtree that session started
   // after it became ready, never the agent or its MCP servers.
   killAgentCommand: (sessionId: string, pid: number): Promise<{ ok: boolean }> =>
@@ -818,6 +829,10 @@ export const api = {
 
   reviewSession: (id: string): Promise<Session> =>
     post<Session>(`/sessions/${id}/review`, {}),
+
+  // «Виконати тестування»: starts a tester child of a doer session; answers with the child.
+  runTester: (id: string, scope: QaRunScope): Promise<Session> =>
+    post<Session>(`/sessions/${id}/qa-run`, { scope }),
 
   mergeBranch: (id: string, summary?: string): Promise<{ merged: boolean }> =>
     post<{ merged: boolean }>(`/sessions/${id}/merge`, { summary }),
