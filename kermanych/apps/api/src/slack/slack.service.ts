@@ -27,7 +27,7 @@ import { AuthService } from "../auth/auth.service";
 import { RegistryService, type SlackTokenRow } from "../registry/registry.service";
 import { runOneShot } from "../runtime/one-shot";
 import { resolveRuntime } from "../runtime/resolve-runtime";
-import { DOCS_MODEL } from "../management/management-chat.service";
+import { FAST_MODEL } from "../assistant/models";
 import { CodedError } from "../management/coded-error";
 import { SlackClient, type SlackChannel, type SlackIdentity } from "./slack-client";
 import { SlackSocket } from "./slack-socket";
@@ -273,7 +273,7 @@ export class SlackService implements OnModuleInit, OnModuleDestroy {
         cwd: homedir(),
         prompt,
         noTools: true,
-        model: DOCS_MODEL,
+        model: FAST_MODEL,
         startedAt,
       });
       // The placeholder becomes the first part; a longer answer continues in the thread,

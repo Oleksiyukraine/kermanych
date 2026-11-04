@@ -26,3 +26,13 @@ export function badRequest(code: ApiErrorCode, message: string, params?: ApiErro
   const body: ApiErrorBody = { code, message, ...(params && Object.keys(params).length ? { params } : {}) };
   return new BadRequestException(body);
 }
+
+// A service failure relayed as a 400. A missing `omp`, a start timeout, an unbound project,
+// an unknown branch or an empty range are all operator-actionable sentences already; a 500
+// would hide every one of them behind "Internal Server Error" and the screen would have
+// nothing to show. A `CodedError` carries its stable code on to the body so the UI can
+// localize it; anything else keeps its prose.
+export function relay(err: unknown): never {
+  if (err instanceof CodedError) throw badRequest(err.code, err.message, err.params);
+  throw new BadRequestException((err as Error).message);
+}

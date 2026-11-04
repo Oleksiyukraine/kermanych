@@ -1,5 +1,5 @@
 // apps/api/src/http/management.controller.ts
-import { BadRequestException, Body, Controller, Post, Req } from "@nestjs/common";
+import { Body, Controller, Post, Req } from "@nestjs/common";
 import {
   isReleaseDate,
   isReleaseGrouping,
@@ -8,7 +8,6 @@ import {
   isRiskKind,
   isRiskResponse,
   isRiskStatus,
-  type ManagementAttachment,
   type ManagementCapacity,
   type ManagementCapacityPerson,
   type ManagementCapacityWeek,
@@ -24,7 +23,6 @@ import {
   type ManagementHomeTask,
   type ManagementHomeTaskGroup,
   type ManagementHomeTile,
-  type ManagementHomeTodoItem,
   type ManagementMember,
   type ManagementRiskRow,
   type ReleaseNotesAsk,
@@ -35,7 +33,8 @@ import {
 } from "@kermanych/core";
 import { ManagementChatService } from "../management/management-chat.service";
 import { ReleaseNotesService } from "../management/release-notes.service";
-import { CodedError, badRequest } from "../management/coded-error";
+import { badRequest, relay } from "../management/coded-error";
+import { attachmentRows, todoRows } from "./chat-input";
 
 // The register as the browser sent it, kept only where every field is one this build knows.
 // `project_risks` is behind RLS and the api has no credentials for it, so this list cannot be
@@ -94,16 +93,6 @@ function releaseRange(b: Partial<ReleaseNotesAuthorsAsk> | undefined): ReleaseNo
   return { sources, rangeFrom, rangeTo };
 }
 
-// A service failure relayed as a 400. A missing `omp`, a start timeout, an unbound project,
-// an unknown branch or an empty range are all operator-actionable sentences already; a 500
-// would hide every one of them behind "Internal Server Error" and the screen would have
-// nothing to show. A `CodedError` carries its stable code on to the body so the UI can
-// localize it; anything else keeps its prose.
-function relay(err: unknown): never {
-  if (err instanceof CodedError) throw badRequest(err.code, err.message, err.params);
-  throw new BadRequestException((err as Error).message);
-}
-
 // The roster as the browser sent it. Same reasoning as `riskRows`: `workspace_members` is
 // behind RLS and the api has no credentials for it, so the list cannot be re-derived here —
 // but it is printed into the prompt as the set of people a ticket may be assigned to, and a
@@ -116,34 +105,6 @@ function memberRows(v: unknown): ManagementMember[] {
     const x = m as Record<string, unknown>;
     if (typeof x.name !== "string" || x.name.trim() === "") continue;
     rows.push({ name: x.name.trim(), role: typeof x.role === "string" ? x.role : "" });
-  }
-  return rows;
-}
-
-// The operator's files, bounded before a byte lands anywhere. The caps are refusals rather
-// than silent drops — a dropped register row is a cosmetic loss, a dropped attachment is
-// context the operator is actively relying on, and «відповів без файлу» must never look
-// like an answer. 20 MiB of binary is omp's own image cap; base64 puts it at 4/3.
-const MAX_ATTACHMENTS = 10;
-const MAX_ATTACHMENT_B64 = Math.ceil((20 * 1024 * 1024 * 4) / 3);
-
-function attachmentRows(v: unknown): ManagementAttachment[] {
-  if (!Array.isArray(v)) return [];
-  if (v.length > MAX_ATTACHMENTS)
-    throw badRequest("attachments_too_many", `забагато файлів: ${v.length} (максимум ${MAX_ATTACHMENTS})`, {
-      count: v.length,
-      max: MAX_ATTACHMENTS,
-    });
-  const rows: ManagementAttachment[] = [];
-  for (const a of v) {
-    if (!a || typeof a !== "object") continue;
-    const { name, mimeType, data } = a as Record<string, unknown>;
-    if (typeof name !== "string" || typeof data !== "string" || typeof mimeType !== "string") continue;
-    const trimmed = name.trim();
-    if (!trimmed || !data) continue;
-    if (data.length > MAX_ATTACHMENT_B64)
-      throw badRequest("attachment_too_large", `файл «${trimmed}» завеликий (максимум 20 МіБ)`, { name: trimmed });
-    rows.push({ name: trimmed, mimeType, data });
   }
   return rows;
 }
@@ -316,8 +277,6 @@ function capacityDigest(v: unknown): ManagementCapacity | undefined {
 // pathological blob from turning every turn into pages of text; junk rows are dropped,
 // never repaired into something the screen does not show.
 const MAX_HOME_TILES = 10;
-const MAX_HOME_TODO = 200;
-const MAX_HOME_TODO_TEXT = 500;
 const MAX_HOME_TASK_GROUPS = 30;
 const MAX_HOME_TASKS = 30;
 const MAX_HOME_RELEASES = 5;
@@ -334,19 +293,7 @@ function homeOverview(v: unknown): ManagementHome | undefined {
       tiles.push({ id: y.id.trim(), w: countNum(y.w) || 1, h: countNum(y.h) || 1 });
     }
   }
-  const todo: ManagementHomeTodoItem[] = [];
-  if (Array.isArray(x.todo)) {
-    for (const t of x.todo.slice(0, MAX_HOME_TODO)) {
-      if (!t || typeof t !== "object") continue;
-      const y = t as Record<string, unknown>;
-      if (typeof y.text !== "string") continue;
-      todo.push({
-        text: y.text.slice(0, MAX_HOME_TODO_TEXT),
-        kind: y.kind === "number" ? "number" : "check",
-        done: y.done === true,
-      });
-    }
-  }
+  const todo = todoRows(x.todo);
   const tasksToday: ManagementHomeTaskGroup[] = [];
   if (Array.isArray(x.tasksToday)) {
     for (const g of x.tasksToday.slice(0, MAX_HOME_TASK_GROUPS)) {

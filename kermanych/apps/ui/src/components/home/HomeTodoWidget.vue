@@ -1,5 +1,5 @@
 <template>
-  <div class="todow">
+  <div class="todow" :class="{ 'todow--notebook': variant === 'notebook' }">
     <!-- The format bar. `pointerdown.prevent` (and the mousedown fallback) keeps the browser
          from moving focus here, so the selection the command acts on stays in the row being
          edited — the classic contenteditable-toolbar contract. -->
@@ -48,47 +48,52 @@
       </KIconButton>
     </div>
 
-    <ol v-if="items.length" class="todow__list">
-      <li
-        v-for="(item, i) in items"
-        :key="item.id"
-        class="todow__item"
-        :class="{ 'todow__item--done': item.done }"
-      >
-        <button
-          v-if="item.kind === 'check'"
-          class="todow__box"
-          type="button"
-          role="checkbox"
-          :aria-checked="item.done"
-          :aria-label="t('management.home.todo.toggle')"
-          @click="toggleDone(item)"
-        ></button>
-        <span v-else class="todow__num mono" aria-hidden="true">{{ numberOf(items, i) }}.</span>
-        <p
-          :ref="(el) => bindEditor(item, el)"
-          class="todow__text"
-          contenteditable="true"
-          :data-placeholder="t('management.home.todo.placeholder')"
-          @focus="activeId = item.id"
-          @input="onInput(item, $event)"
-          @keydown="onKeydown(item, i, $event)"
-          @blur="onBlur(item, $event)"
-        ></p>
-        <button
-          class="todow__remove"
-          type="button"
-          v-tip="t('management.home.todo.remove')"
-          :aria-label="t('management.home.todo.remove')"
-          @click="askRemove(item)"
-        >✕</button>
-      </li>
-    </ol>
-    <p v-else class="todow__empty mono">{{ t('management.home.todo.empty') }}</p>
+    <!-- The sheet the rows sit on. In the notebook skin (ЦУК's notepad) it is the ruled page:
+         its lines are drawn at the row height, so every row — and every wrapped line of one —
+         sits on a rule. -->
+    <div class="todow__sheet">
+      <ol v-if="items.length" class="todow__list">
+        <li
+          v-for="(item, i) in items"
+          :key="item.id"
+          class="todow__item"
+          :class="{ 'todow__item--done': item.done }"
+        >
+          <button
+            v-if="item.kind === 'check'"
+            class="todow__box"
+            type="button"
+            role="checkbox"
+            :aria-checked="item.done"
+            :aria-label="t('management.home.todo.toggle')"
+            @click="toggleDone(item)"
+          ></button>
+          <span v-else class="todow__num mono" aria-hidden="true">{{ numberOf(items, i) }}.</span>
+          <p
+            :ref="(el) => bindEditor(item, el)"
+            class="todow__text"
+            contenteditable="true"
+            :data-placeholder="t('management.home.todo.placeholder')"
+            @focus="activeId = item.id"
+            @input="onInput(item, $event)"
+            @keydown="onKeydown(item, i, $event)"
+            @blur="onBlur(item, $event)"
+          ></p>
+          <button
+            class="todow__remove"
+            type="button"
+            v-tip="t('management.home.todo.remove')"
+            :aria-label="t('management.home.todo.remove')"
+            @click="askRemove(item)"
+          >✕</button>
+        </li>
+      </ol>
+      <p v-else class="todow__empty mono">{{ t('management.home.todo.empty') }}</p>
 
-    <button class="todow__add mono" type="button" @click="addItem()">
-      {{ t('management.home.todo.add') }}
-    </button>
+      <button class="todow__add mono" type="button" @click="addItem()">
+        {{ t('management.home.todo.add') }}
+      </button>
+    </div>
   </div>
 </template>
 
@@ -110,7 +115,9 @@ import KIconButton from 'components/kit/KIconButton.vue';
 import { useHomeTodo } from 'stores/home-todo';
 import { newTodoItem, numberOf, sanitizeInline, todoPlainText, type TodoItem, type TodoKind } from '../../lib/home-todo';
 
-const props = defineProps<{ workspaceId: string }>();
+// `variant` is the skin only: the Огляд tile, or the notebook page beside ЦУК
+// (docs/specs/2026-11-04-cuk-control-console.md, decision 8). One editor, one store, two looks.
+const props = withDefaults(defineProps<{ workspaceId: string; variant?: 'tile' | 'notebook' }>(), { variant: 'tile' });
 
 const { t } = useI18n();
 const store = useHomeTodo();
@@ -176,6 +183,21 @@ function bindEditor(item: TodoItem, el: Element | ComponentPublicInstance | null
     el.dataset.ready = '1';
   }
 }
+
+// Two views can show the same list at once — the Огляд tile under the window and the notepad
+// in it. A row edited in one must read the same in the other, so a row whose element is not
+// being typed into is re-written when its html moved. The element being typed into is left
+// alone: its DOM is the source of that html.
+watch(
+  items,
+  (list) => {
+    for (const item of list) {
+      const el = editors.get(item.id);
+      if (el && el !== document.activeElement && el.innerHTML !== item.html) el.innerHTML = item.html;
+    }
+  },
+  { deep: true, flush: 'post' },
+);
 
 // ── editing ───────────────────────────────────────────────────────────────────
 function format(cmd: 'bold' | 'italic' | 'underline'): void {
@@ -301,6 +323,16 @@ onUnmounted(() => {
   display: block;
   width: var(--k-icon-sm);
   height: var(--k-icon-sm);
+}
+
+// The rows and the «+ add» under them. In the tile it is the rest of the column; `min-height`
+// lets the tile's own scroll take over when the list outgrows it.
+.todow__sheet {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--k-sp-2);
 }
 
 .todow__list {
@@ -450,6 +482,83 @@ onUnmounted(() => {
   outline: 1px solid var(--k-accent);
   outline-offset: 1px;
   border-radius: var(--k-r-sm);
+}
+
+// ── Notebook — the ruled page beside ЦУК ────────────────────────────────────
+// Every metric hangs off one rule height, so the drawn lines, the rows and each wrapped line
+// of a row agree. The page is the surface colour with the theme's own line colour for the
+// ruling and the accent for the margin: built from tokens, it is a notebook in all four themes.
+.todow--notebook {
+  --nb-rule: 28px;
+  --nb-margin: 34px;
+  gap: 0;
+
+  .todow__bar {
+    padding: var(--k-sp-1) var(--k-sp-2) var(--k-sp-1) calc(var(--nb-margin) + var(--k-sp-2));
+    border-bottom: var(--k-rule-thin) solid var(--k-line);
+  }
+
+  .todow__sheet {
+    gap: 0;
+    overflow-y: auto;
+    padding: 0 var(--k-sp-3) var(--nb-rule) calc(var(--nb-margin) + var(--k-sp-2));
+    // The margin rule, then the ruling. `local` so the lines scroll with the rows instead of
+    // staying painted behind them.
+    background-image:
+      linear-gradient(
+        to right,
+        transparent calc(var(--nb-margin) - 1px),
+        color-mix(in srgb, var(--k-accent) 55%, transparent) calc(var(--nb-margin) - 1px),
+        color-mix(in srgb, var(--k-accent) 55%, transparent) var(--nb-margin),
+        transparent var(--nb-margin)
+      ),
+      repeating-linear-gradient(
+        to bottom,
+        transparent 0,
+        transparent calc(var(--nb-rule) - 1px),
+        color-mix(in srgb, var(--k-line) 80%, transparent) calc(var(--nb-rule) - 1px),
+        color-mix(in srgb, var(--k-line) 80%, transparent) var(--nb-rule)
+      );
+    background-attachment: local;
+  }
+
+  .todow__item {
+    padding: 0;
+    min-height: var(--nb-rule);
+  }
+
+  // The ruling separates the rows; a second rule between them would double every line.
+  .todow__item + .todow__item {
+    border-top: none;
+  }
+
+  .todow__text {
+    line-height: var(--nb-rule);
+  }
+
+  .todow__box {
+    margin-top: calc((var(--nb-rule) - 16px) / 2);
+  }
+
+  .todow__num {
+    margin-top: 0;
+    line-height: var(--nb-rule);
+  }
+
+  .todow__remove {
+    margin-top: calc((var(--nb-rule) - 20px) / 2);
+  }
+
+  .todow__empty,
+  .todow__add {
+    margin: 0;
+    padding: 0;
+    line-height: var(--nb-rule);
+  }
+
+  .todow__add {
+    margin-top: 0;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {

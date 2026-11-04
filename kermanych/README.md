@@ -1906,29 +1906,59 @@ corrects the board — it
 cannot stop a session on a machine you do not control, and if that machine is still alive
 it will simply push its real status again.
 
+## ЦУК — the avatar's control console
+
+A small character — the logo's `›_` as a face — peeks out of the window's left edge on every tab.
+Click it, press <kbd>Ctrl</kbd>/<kbd>⌘</kbd>+<kbd>K</kbd> (matched by the physical key, so the
+Ukrainian layout works; also inside a session's browser page), or draw a counter-clockwise circle
+with the mouse, no button held, and a large window opens in the middle of the screen:
+**ЦУК — «Центр управління Керманича»**, a console for Kermanych itself, with a notepad on its
+right. (Spec: `docs/specs/2026-11-04-cuk-control-console.md`.)
+
+- **One conversation for the whole app.** ЦУК sees every workspace, project and session on this
+  machine and the open board cards; whatever the header has selected is its default target
+  («запусти агента» means the selected project). Switching workspace does not end the
+  conversation; it lives until the app restarts, and «×» starts a new one.
+- **What it does.** Answers about the state («хто чекає на мою відповідь?», «що впало?», «що на
+  дошці?»); opens a tab, a Менеджмент section or any settings pane; selects a workspace or a
+  project; opens a session; files a card into the backlog or launches an agent on a task (plain or
+  «Глибокий аналіз», with the project's defaults and your launch mode); sends a message to an
+  agent; stops, resumes, restarts, archives or unarchives a session; starts or stops its preview;
+  writes to the notepad. It has no file tools — it answers from the app's state, and the agent it
+  launches reads the code — and runs on `claude-sonnet-5` for speed. It sees attached images, not
+  documents.
+- **What waits for you.** Navigation, selection and the notepad happen at once (opening a screen
+  also steps the window aside). Everything that spends the subscription or touches an agent — a
+  launch, a card, a message, stop, resume, restart, archive, unarchive, preview — appears as a card
+  under the answer: what will happen, the text editable, «Виконати» / «Скасувати». The line that
+  says what happened is written by the app after the call answered, never by the model.
+- **What it does not do.** Nothing irreversible: deleting a session or a card, finish, a pull
+  request, a merge, risks, release notes, Jira. Asked for one, it opens the screen with the button
+  and names it.
+- **The notepad is «Список дій».** The ruled page on the right is the current workspace's Action
+  List — the same list, on this machine, as the Менеджмент → Огляд tile, so a line written in one
+  is in the other. Without a workspace it asks you to pick one. Below ~900 px of window width it
+  hides behind 📝.
+- **The Менеджмент assistant is the second panel.** For the owner and managers of the current
+  workspace the window is an accordion: ЦУК expanded (every opening starts there), «Асистент
+  менеджменту» folded to its bar above it. Clicking a bar swaps them; the one composer at the
+  bottom writes to the expanded panel, and each keeps its own draft and attachments. It is the same
+  conversation as the Менеджмент tab's dock, asked as the «Огляд» section. Developers see ЦУК only.
+
+Esc, a click outside, <kbd>⌘K</kbd>, the character or another circle closes the window; a question
+in flight keeps running, the character shows it is thinking, then wears a dot until you look at
+the answer. The circle can be switched off in Settings → «Загальне» if it fires by accident; it
+does not work over a session's browser page, which the app cannot see the mouse over. The
+character is yours to pick in the same pane, under «Персонаж ЦУК»: ten drawings, from the
+terminal bot (the default) to the original glossy drop, a cowboy, a Cossack and Darth Vader; the
+choice is kept on this computer. (docs/specs/2026-11-03-assistant-mascot-choice.md)
+
 ## The Менеджмент tab and its assistant
 
 Менеджмент is the non-code half of the product: seven workspace-scoped sections
 (`packages/core/src/management.ts` is the one table that names them) plus a chat
-field docked to the foot of the page.
-
-**The same chat, from any tab.** A small character — the logo's `›_` as a face — peeks out of
-the window's left edge everywhere except the Менеджмент tab. Click it, press
-<kbd>Ctrl</kbd>/<kbd>⌘</kbd>+<kbd>K</kbd> (matched by the physical key, so the Ukrainian layout
-works; also inside a session's browser page), or draw a counter-clockwise circle with the mouse,
-no button held, and the chat opens as an overlay in the middle of the screen. It is the same
-conversation as the tab's, with the same composer — helpers, attachments, the plan chip, «Новий
-чат». Every turn sent from the overlay is asked as the «Огляд» section, so documentation search
-stays on the Документація section. Esc, a click outside, <kbd>⌘K</kbd>, the character or another
-circle closes it; a question in flight keeps running, the character shows it is thinking, then
-wears a dot until you look at the answer. A half-written question and its attachments wait for
-the next opening. On the Менеджмент tab the same keys and gesture put the cursor in the tab's own
-field instead. The circle can be switched off in Settings → «Загальне» if it fires by accident;
-it does not work over a session's browser page, which the app cannot see the mouse over. The
-character itself is yours to pick in the same pane, under «Персонаж асистента»: ten drawings,
-from the terminal bot (the default) to the original glossy drop, a cowboy, a Cossack and Darth
-Vader; the choice is kept on this computer. (docs/specs/2026-11-03-assistant-overlay.md,
-docs/specs/2026-11-03-assistant-mascot-choice.md)
+field docked to the foot of the page. Owners and managers also reach the same conversation as
+the second panel of the ЦУК window (above).
 
 Wherever it is opened, that chat is a real assistant, and it is deliberately narrow:
 

@@ -1335,11 +1335,21 @@ export function validateManagementAction(raw: unknown): ManagementAction | { err
   return { error: { text: `невідома дія ${JSON.stringify(o.kind)}`, code: "action_kind_unknown", params: { value: JSON.stringify(o.kind) } } };
 }
 
-// Split an assistant answer into the prose the user reads and the actions the app runs.
-// Pure and total: unparseable JSON and an unknown `kind` both land in `rejected` and
-// NOTHING is executed on a guess.
-export function parseManagementReply(raw: string): ParsedManagementReply {
-  const actions: ManagementAction[] = [];
+// A validator's refusal, told apart from an action by shape: every action has a `kind` and
+// no `error`, every refusal the reverse.
+function isRejection(v: unknown): v is { error: ManagementRejection } {
+  return isObj(v) && "error" in v && !("kind" in v);
+}
+
+// Split an assistant answer into the prose the user reads and the blocks the app runs, each
+// block validated by `validate`. Pure and total: unparseable JSON and an unknown `kind` both
+// land in `rejected` and NOTHING is executed on a guess. Shared by every assistant that speaks
+// this fence (the Менеджмент chat here, ЦУК in ./cuk-actions), so the fence grammar is one.
+export function parseActionBlocks<A extends { kind: string }>(
+  raw: string,
+  validate: (block: unknown) => A | { error: ManagementRejection },
+): { text: string; actions: A[]; rejected: ManagementRejection[] } {
+  const actions: A[] = [];
   const rejected: ManagementRejection[] = [];
   const text = raw
     .replace(BLOCK_RE, (_m, body: string) => {
@@ -1357,8 +1367,8 @@ export function parseManagementReply(raw: string): ParsedManagementReply {
       }
       // A model that batches two refusals into one block is being helpful, not wrong.
       for (const one of Array.isArray(parsed) ? parsed : [parsed]) {
-        const res = validateManagementAction(one);
-        if ("error" in res) rejected.push(res.error);
+        const res = validate(one);
+        if (isRejection(res)) rejected.push(res.error);
         else actions.push(res);
       }
       return "";
@@ -1368,4 +1378,8 @@ export function parseManagementReply(raw: string): ParsedManagementReply {
     .replace(/\n{3,}/g, "\n\n")
     .trim();
   return { text, actions, rejected };
+}
+
+export function parseManagementReply(raw: string): ParsedManagementReply {
+  return parseActionBlocks(raw, validateManagementAction);
 }

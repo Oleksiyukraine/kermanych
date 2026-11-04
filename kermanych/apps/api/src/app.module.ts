@@ -9,6 +9,7 @@ import { UsageController } from "./http/usage.controller";
 import { SkillsController } from "./http/skills.controller";
 import { SkillImportController } from "./http/skill-import.controller";
 import { ManagementController } from "./http/management.controller";
+import { CukController } from "./http/cuk.controller";
 import { ModelsController } from "./http/models.controller";
 import { RegistryService } from "./registry/registry.service";
 import { WorktreeService } from "./worktree/worktree.service";
@@ -24,6 +25,7 @@ import { CloudSyncService } from "./cloud/cloud-sync.service";
 import { SkillsService } from "./skills/skills.service";
 import { ManagementChatService } from "./management/management-chat.service";
 import { ReleaseNotesService } from "./management/release-notes.service";
+import { CukChatService } from "./cuk/cuk-chat.service";
 import { ModelsService } from "./models/models.service";
 import { RuntimeCheckService } from "./runtime/runtime-check.service";
 import { JiraController } from "./http/jira.controller";
@@ -62,7 +64,7 @@ import { DeviceController } from "./http/device.controller";
 import { DeviceGateway } from "./ws/device.gateway";
 
 @Module({
-  controllers: [AuthController, ProjectsController, SessionsController, FsController, UsageController, CloudController, SkillsController, SkillImportController, ManagementController, ManagementMcpController, ModelsController, JiraController, LinearController, PlaneController, SlackController, AccountController, DocsController, NativeController, BrowserMcpController, MachineController, MinionController, TesterController, VoiceController, DeviceController],
+  controllers: [AuthController, ProjectsController, SessionsController, FsController, UsageController, CloudController, SkillsController, SkillImportController, ManagementController, ManagementMcpController, CukController, ModelsController, JiraController, LinearController, PlaneController, SlackController, AccountController, DocsController, NativeController, BrowserMcpController, MachineController, MinionController, TesterController, VoiceController, DeviceController],
   providers: [
     RegistryService, WorktreeService, SupervisorService, PreviewService, EnvFileService, EventsGateway,
     UsageService,
@@ -87,6 +89,10 @@ import { DeviceGateway } from "./ws/device.gateway";
     JiraToolsService,
     PlaneToolsService,
     ManagementMcpService,
+    // ЦУК, the console behind the avatar (docs/specs/2026-11-04-cuk-control-console.md): one
+    // tool-less child per user on the same chat pool as the Менеджмент assistant. Knows only
+    // the runtime preference (RegistryService) and the renice (MachineResourcesService).
+    CukChatService,
     // The Release Notes generator: one one-shot omp child per request, reading the bound
     // repo's git history through { RegistryService, WorktreeService }. Like the chat it
     // knows nothing about SupervisorService — a generation has no session and no worktree.
