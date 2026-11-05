@@ -44,9 +44,17 @@ import { useOrchestrator } from './orchestrator';
 import { useAssistantOverlay } from './assistant-overlay';
 import { IS_PREVIEW } from '../lib/preview';
 import { globalTr } from '../boot/i18n';
+import { useAppUpdate, type AppUpdateEntry } from './app-update';
 
-/** One row of the column. A union of one kind today: the column is meant for several (decision 6). */
-export type NotificationItem = { kind: 'skill-improvement'; entry: SkillImprovementEntry };
+/**
+ * One row of the column (decision 6: a column for several kinds). Skill improvements come from
+ * the cloud; app updates are this machine's own (stores/app-update.ts,
+ * docs/specs/2026-10-12-desktop-releases-and-updates.md, decision 2).
+ */
+export type NotificationItem =
+  | { kind: 'skill-improvement'; entry: SkillImprovementEntry }
+  | { kind: 'app-update'; entry: AppUpdateEntry };
+type SkillItem = Extract<NotificationItem, { kind: 'skill-improvement' }>;
 
 export type NotificationPhase = 'idle' | 'loading' | 'ready' | 'error';
 
@@ -72,9 +80,10 @@ export const useNotificationCenter = defineStore('notification-center', () => {
   const auth = useAuth();
   const ui = useOrchestrator();
   const overlay = useAssistantOverlay();
+  const appUpdate = useAppUpdate();
 
   // Newest first, at most SKILL_IMPROVEMENTS_KEEP: the cloud keeps no more, so neither does the column.
-  const items = ref<NotificationItem[]>([]);
+  const items = ref<SkillItem[]>([]);
   const phase = ref<NotificationPhase>('idle');
   const error = ref('');
   // The entry the view over the console shows; undefined while it is closed.
@@ -82,7 +91,13 @@ export const useNotificationCenter = defineStore('notification-center', () => {
   // Opened entries, by id. A record's text never changes; its state is patched from Realtime.
   const details = ref<Record<string, SkillImprovementDetail>>({});
 
-  const unread = computed(() => items.value.filter((i) => !i.entry.seenAt).length);
+  // What the column lists: both kinds, newest first. ISO timestamps compare as text.
+  const feed = computed<NotificationItem[]>(() =>
+    [...items.value, ...appUpdate.updates.map((entry) => ({ kind: 'app-update' as const, entry }))].sort((a, b) =>
+      a.entry.createdAt === b.entry.createdAt ? 0 : a.entry.createdAt < b.entry.createdAt ? 1 : -1,
+    ),
+  );
+  const unread = computed(() => items.value.filter((i) => !i.entry.seenAt).length + appUpdate.unseenUpdates);
 
   let started = false;
   // Bumped by every (re)bind, so a read that lands after a sign-out or a user switch is dropped.
@@ -195,6 +210,7 @@ export const useNotificationCenter = defineStore('notification-center', () => {
   }
 
   function markAllSeen(): Promise<void> {
+    appUpdate.markUpdatesSeen(appUpdate.updates.map((u) => u.id));
     return markSeen(items.value.map((i) => i.entry.id));
   }
 
@@ -302,6 +318,7 @@ export const useNotificationCenter = defineStore('notification-center', () => {
 
   return {
     items,
+    feed,
     phase,
     error,
     openId,

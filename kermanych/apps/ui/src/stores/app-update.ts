@@ -1,7 +1,8 @@
 // apps/ui/src/stores/app-update.ts
 //
 // The renderer half of desktop releases (docs/specs/2026-10-12-desktop-releases-and-updates.md):
-// the update banner's state, the cloud's minimum version gate, and «What's new».
+// the update banner's state, the cloud's minimum version gate, «What's new», and the updates this
+// machine received, which ЦУК's «Центр сповіщень» lists beside the skill improvements.
 // Main owns electron-updater (src-electron/updater.ts); this store only mirrors its state.
 import { defineStore } from 'pinia';
 import { computed, ref } from 'vue';
@@ -16,17 +17,46 @@ import {
 // The changelog as of THIS build: «What's new» after an update works offline.
 import bundledChangelog from '../../../../CHANGELOG.md?raw';
 import { useAuth } from './auth';
+import { useOrchestrator } from './orchestrator';
+import { globalTr } from '../boot/i18n';
 
 export const APP_VERSION = process.env.APP_VERSION;
-// The version whose «What's new» this machine has already shown. Device-local on purpose:
-// it tracks what this install has displayed, not anything about the account.
+// The version whose «What's new» this machine has already recorded. Device-local on purpose:
+// it tracks what this install has received, not anything about the account.
 const LAST_SEEN_KEY = 'kermanych.lastSeenVersion';
+// The updates this machine received, newest first: «Центр сповіщень» entries of their own kind.
+// Local, not cloud: an update happens to one install, and the column is the place to reread it.
+const UPDATES_KEY = 'kermanych.appUpdates';
+const UPDATES_KEEP = 10;
+// Long enough to read «Оновлено до X» and reach for «Що нового», like the skill toast.
+const TOAST_MS = 10_000;
 const POLICY_EVERY_MS = 4 * 60 * 60 * 1000;
 export const RELEASES_URL = 'https://github.com/Oleksiyukraine/kermanych/releases/latest';
 
 // What the «What's new» dialog shows. `entries: null` while the notes of a downloaded version
 // are being fetched; an empty list when they could not be (the dialog links the release page).
 export type WhatsNew = { title: 'installed' | 'ready' | 'all'; version: string; entries: ChangelogEntry[] | null };
+
+// One update this machine received: from `from` to `version`. Shaped like a skill-improvement
+// entry where the column reads both (`id`, ISO `createdAt`, `seenAt` once opened).
+export type AppUpdateEntry = { id: string; version: string; from: string; createdAt: string; seenAt?: string };
+
+function isAppUpdateEntry(v: unknown): v is AppUpdateEntry {
+  if (!v || typeof v !== 'object') return false;
+  if (!('id' in v) || !('version' in v) || !('from' in v) || !('createdAt' in v)) return false;
+  const seenOk = !('seenAt' in v) || typeof v.seenAt === 'string';
+  return typeof v.id === 'string' && typeof v.version === 'string' && typeof v.from === 'string' && typeof v.createdAt === 'string' && seenOk;
+}
+
+// A missing or hand-edited value reads as no updates rather than breaking the column.
+function readUpdates(): AppUpdateEntry[] {
+  try {
+    const parsed: unknown = JSON.parse(localStorage.getItem(UPDATES_KEY) ?? '[]');
+    return Array.isArray(parsed) ? parsed.filter(isAppUpdateEntry) : [];
+  } catch {
+    return [];
+  }
+}
 
 export const useAppUpdate = defineStore('app-update', () => {
   const bridge = window.kermanych?.updates;
@@ -37,6 +67,8 @@ export const useAppUpdate = defineStore('app-update', () => {
   const whatsNew = ref<WhatsNew | null>(null);
   // The banner's ✕ hides it for this run; the next quit installs the update anyway.
   const bannerDismissed = ref(false);
+  const updates = ref<AppUpdateEntry[]>(readUpdates());
+  const unseenUpdates = computed(() => updates.value.filter((u) => !u.seenAt).length);
 
   const unsupported = computed(() => packaged && isBelowMinimumVersion(APP_VERSION, minVersion.value));
   const readyVersion = computed(() => (state.value.phase === 'ready' ? state.value.version : null));
@@ -62,14 +94,40 @@ export const useAppUpdate = defineStore('app-update', () => {
     if (unsupported.value && state.value.phase === 'idle') await bridge?.check();
   }
 
-  // First launch of a newer version on this machine: show every section since the last one
-  // shown here. A fresh install (nothing recorded) only records its version.
+  // First launch of a newer version on this machine: a «Центр сповіщень» entry and a toast whose
+  // «Що нового» opens every section since the last version recorded here. A fresh install
+  // (nothing recorded) only records its version.
   function showAfterUpdate(): void {
     const seen = localStorage.getItem(LAST_SEEN_KEY);
     localStorage.setItem(LAST_SEEN_KEY, APP_VERSION);
     if (!seen || compareAppVersions(APP_VERSION, seen) !== 1) return;
-    const entries = changelogBetween(bundledChangelog, seen, APP_VERSION);
-    if (entries.length) whatsNew.value = { title: 'installed', version: APP_VERSION, entries };
+    const entry: AppUpdateEntry = { id: `app-update:${APP_VERSION}`, version: APP_VERSION, from: seen, createdAt: new Date().toISOString() };
+    saveUpdates([entry, ...updates.value.filter((u) => u.id !== entry.id)].slice(0, UPDATES_KEEP));
+    useOrchestrator().notify(globalTr.t('appUpdate.toast', { version: APP_VERSION }), 'info', TOAST_MS, {
+      label: globalTr.t('appUpdate.whatsNew'),
+      run: () => openUpdate(entry.id),
+    });
+  }
+
+  function saveUpdates(next: AppUpdateEntry[]): void {
+    updates.value = next;
+    localStorage.setItem(UPDATES_KEY, JSON.stringify(next));
+  }
+
+  function markUpdatesSeen(ids: readonly string[]): void {
+    const set = new Set(ids);
+    if (!updates.value.some((u) => set.has(u.id) && !u.seenAt)) return;
+    const at = new Date().toISOString();
+    saveUpdates(updates.value.map((u) => (set.has(u.id) && !u.seenAt ? { ...u, seenAt: at } : u)));
+  }
+
+  // A «Центр сповіщень» slip or the toast: that update's notes, from the bundled changelog (this
+  // build carries every earlier section too), and the entry is no longer new.
+  function openUpdate(id: string): void {
+    const u = updates.value.find((x) => x.id === id);
+    if (!u) return;
+    markUpdatesSeen([id]);
+    whatsNew.value = { title: 'installed', version: u.version, entries: changelogBetween(bundledChangelog, u.from, u.version) };
   }
 
   // The banner's «What's new»: the downloaded version's CHANGELOG.md, cut to the versions
@@ -100,9 +158,13 @@ export const useAppUpdate = defineStore('app-update', () => {
     readyVersion,
     whatsNew,
     bannerDismissed,
+    updates,
+    unseenUpdates,
     init,
     openReadyNotes,
     openAllNotes,
+    openUpdate,
+    markUpdatesSeen,
     install,
   };
 });

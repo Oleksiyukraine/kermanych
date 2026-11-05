@@ -64,10 +64,11 @@ that tell them what changed.
      `UpdateInfo.releaseNotes` with `fullChangelog: true`: that field carries the HTML GitHub
      rendered for the release page, which would go into `v-html` from a remote source, while
      the changelog file is the same markdown the app already renders with `html: false`;
-   - **after updating**: on the first launch of a new version a «What's new in X» dialog shows
-     that version's section from the bundled file (it works offline). Settings → «Загальне»
-     shows the running version and a «What's new» entry that opens the bundled changelog.
-   The first launch after a fresh install shows no dialog: it only records the version.
+   - **after updating**: on the first launch of a new version a toast «Kermanych оновлено до X»
+     with «Що нового», and an entry in ЦУК's «Центр сповіщень» (decision 12). Both open that
+     update's sections from the bundled file (it works offline). Settings → «Загальне» shows the
+     running version and a «What's new» entry that opens the bundled changelog.
+   The first launch after a fresh install shows nothing: it only records the version.
    Rejected: notes written only in the GitHub web UI (outside review, not available offline,
    a manual release step); notes only before installing (anyone who restarts without reading
    never sees them).
@@ -162,6 +163,17 @@ that tell them what changed.
     changed after merging `dev`, where the team had been seeing a hand-written `v1.1.0` → `v1.1.2`
     label in the app: a first release below that would read as a step back. Rejected: `1.1.3`
     (a patch number for the change that brings updates); keeping `0.1.0`; CalVer.
+
+12. **After an update: a toast and a «Центр сповіщень» entry, not a dialog.** Decided after
+    merging `dev`, which added ЦУК's «Центр сповіщень» as the column for notifications of several
+    kinds. The first launch of a new version raises a toast «Kermanych оновлено до X» with
+    «Що нового» and adds an `app-update` entry to the column. The entry is this machine's own
+    (`localStorage` `kermanych.appUpdates`, the last 10), not cloud data: an update happens to one
+    install. It counts as new until opened or «Позначити все прочитаним»; opening it shows that
+    update's sections. The banner for a downloaded update stays as decided in 7: restarting is an
+    action that must be seen, and ЦУК is not always open. Rejected: the one-time dialog at start
+    (now competes with `dev`'s splash and onboarding); moving the banner into ЦУК too (a ready
+    update is easy to miss there; it would still install on quit, only later).
 
 ## Release procedure (what the operator does)
 
@@ -290,7 +302,13 @@ What `dev` brought that touches this plan, and how the merge handled it:
   `app.asar.unpacked`, the microphone text in `Info.plist`); the packaged app started with
   launchd's `PATH` found `omp` and `xcrun simctl` and drew the app; tests (after the last 10 commits
   of `dev` as well) `core` 359, `cloud` 203, `ui` 945, `api` 1406 passed; `vue-tsc` clean.
-
+- Decisions 11 and 12, taken after the merge: the version is `1.2.0` (`release:notes 1.2.0`
+  prints the notes, `release:prepare 1.1.9` refuses). Against a preview api with a stand-in
+  updates bridge and `kermanych.lastSeenVersion` = `1.1.9`: no dialog at start; the toast
+  «Kermanych оновлено до 1.2.0 · Що нового»; ЦУК's column showed «Kermanych 1.2.0 · Оновлено з
+  1.1.9» as new with the count 1; opening it showed «Що нового у 1.2.0» over ЦУК and cleared the
+  count; after a reload there was no toast and the entry stayed, read. `apps/ui` tests 949 passed
+  (`notification-center.spec.ts` stubs the update store), `vue-tsc` clean.
 
 ## Documentation impact
 

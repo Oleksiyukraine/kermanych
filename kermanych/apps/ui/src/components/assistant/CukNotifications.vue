@@ -2,7 +2,8 @@
   <!-- ЦУК's «Центр сповіщень» (docs/specs/2026-11-04-skill-self-improvement.md, decision 6): the
        window's left column, built like the notepad on the right — a physical object drawn from
        theme tokens. A clipboard: a board with a clip at its head and the notifications as slips
-       held on it, newest on top. One kind of slip today, a skill an agent improved. -->
+       held on it, newest on top. Two kinds of slip: a skill an agent improved, and an update of
+       Kermanych itself this machine received (stores/app-update.ts). -->
   <aside class="nc" :aria-label="t('cuk.notifications.title')">
     <div class="nc__clip" aria-hidden="true"><span class="nc__clip-ring"></span></div>
     <div class="nc__board">
@@ -30,10 +31,25 @@
           <p>{{ t('cuk.notifications.loadFailed', { error: store.error }) }}</p>
           <KBtn variant="ghost" :loading="retry.busy.value" @click="retry.run()">{{ t('cuk.notifications.retry') }}</KBtn>
         </div>
-        <p v-else-if="!store.items.length" class="nc__blank">{{ t('cuk.notifications.empty') }}</p>
+        <p v-else-if="!store.feed.length" class="nc__blank">{{ t('cuk.notifications.empty') }}</p>
         <ul v-else class="nc__list">
-          <li v-for="item in store.items" :key="item.entry.id">
+          <li v-for="item in store.feed" :key="item.entry.id">
+            <!-- An update opens its «What's new» (AppWhatsNew.vue), not the entry view. -->
             <button
+              v-if="item.kind === 'app-update'"
+              class="nc__slip"
+              :class="{ 'nc__slip--new': !item.entry.seenAt }"
+              type="button"
+              @click="appUpdate.openUpdate(item.entry.id)"
+            >
+              <span class="nc__slip-top">
+                <span class="nc__skill mono">{{ t('cuk.notifications.update.title', { version: item.entry.version }) }}</span>
+                <span class="nc__when mono">{{ renderTime(t, relativeTime(item.entry.createdAt, now)) }}</span>
+              </span>
+              <span class="nc__summary">{{ t('cuk.notifications.update.summary', { from: item.entry.from }) }}</span>
+            </button>
+            <button
+              v-else
               class="nc__slip"
               :class="{
                 'nc__slip--new': !item.entry.seenAt,
@@ -68,6 +84,7 @@
 import { useI18n } from 'vue-i18n';
 import type { SkillImprovementEntry } from '@kermanych/core';
 import { useNotificationCenter } from 'stores/notification-center';
+import { useAppUpdate } from 'stores/app-update';
 import { useProjects } from 'stores/projects';
 import { useOrchestrator } from 'stores/orchestrator';
 import { useAsyncAction } from '../../composables/useAsyncAction';
@@ -78,6 +95,7 @@ import KSkeleton from 'components/kit/KSkeleton.vue';
 
 const { t } = useI18n();
 const store = useNotificationCenter();
+const appUpdate = useAppUpdate();
 const projects = useProjects();
 const local = useOrchestrator();
 const now = useNow(60_000);

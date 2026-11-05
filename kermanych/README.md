@@ -887,8 +887,9 @@ in the background. A banner then says «Версія X готова» with **Щ�
 version between the running one and the new one) and **Перезапустити**. A normal quit installs
 the update too. The app never restarts on its own; «Перезапустити» while agents are working
 asks first, because the restart stops them (their conversations can be continued afterwards).
-On the first launch of a new version a «Що нового у X» dialog shows the notes once, and
-Settings → Застосунок → «Загальне» shows the version and opens the whole changelog. On Linux
+On the first launch of a new version a toast «Kermanych оновлено до X» offers **Що нового**, and
+the update stays as an entry in ЦУК's «Центр сповіщень» (see [ЦУК](#цук--the-avatars-control-console))
+to reread later. Settings → Застосунок → «Загальне» shows the version and opens the whole changelog. On Linux
 only the AppImage updates itself. A dev run (`pnpm dev:app`) and the browser build never check.
 
 The cloud names the oldest version it still serves (`app_release_policy.min_app_version`, see
@@ -2107,8 +2108,8 @@ its left and a notepad on its right. (Specs: `docs/specs/2026-11-04-cuk-control-
   is in the other. Without a workspace it asks you to pick one. Below ~900 px of window width it
   hides behind 📝.
 - **«Центр сповіщень» is the left column.** Built like the notepad — a clipboard with the
-  notifications as slips on it, newest on top. Today it lists one kind: changes agents made to your
-  skills (see «Agents improve your skills» above). A new one also raises a toast in the bottom-right
+  notifications as slips on it, newest on top. It lists two kinds. Changes agents made to your
+  skills (see «Agents improve your skills» above): a new one also raises a toast in the bottom-right
   corner, «Я вдосконалив навичку X: …», with «Переглянути», on every machine where your Kermanych
   is open; the character wears its dot until you look. Opening an entry shows over the console the
   before / after diff, the agent's reason and the session, and two buttons:
@@ -2118,6 +2119,10 @@ its left and a notepad on its right. (Specs: `docs/specs/2026-11-04-cuk-control-
   - **«Поширити на команду»** (the workspace owner only) writes your copy's text to the scope the
     skill came from — that project or that workspace; a default goes to the workspace — and deletes
     your copy. The confirmation warns when the team text changed after your copy was made.
+
+  Updates of Kermanych itself (see [Updates and «What's new»](#updates-and-whats-new)): one entry
+  per update this machine received, «Kermanych X · Оновлено з Y», kept in this machine's
+  `localStorage` (the last 10), not in the cloud. Opening it shows that update's «Що нового».
 
   Below ~1280 px of window width the column hides behind 🔔, which carries the count of new entries.
 - **The Менеджмент assistant is the second panel.** For the owner and managers of the current

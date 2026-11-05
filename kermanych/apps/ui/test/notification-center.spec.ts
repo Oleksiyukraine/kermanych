@@ -45,6 +45,10 @@ const notify = vi.fn();
 vi.mock('../src/stores/orchestrator', () => ({ useOrchestrator: () => ({ notify }) }));
 const show = vi.fn();
 vi.mock('../src/stores/assistant-overlay', () => ({ useAssistantOverlay: () => ({ show }) }));
+// This machine's app updates, the column's other kind: none here, so these tests see skills only.
+vi.mock('../src/stores/app-update', () => ({
+  useAppUpdate: () => ({ updates: [], unseenUpdates: 0, markUpdatesSeen: vi.fn() }),
+}));
 vi.mock('../src/lib/preview', () => ({ IS_PREVIEW: false, PREVIEW_USER_ID: 'preview' }));
 vi.mock('../src/boot/i18n', () => ({
   globalTr: { t: (k: string, p?: Record<string, unknown>) => (p ? `${k} ${JSON.stringify(p)}` : k) },
