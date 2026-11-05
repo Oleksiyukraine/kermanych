@@ -51,8 +51,9 @@ export interface BootedDevice {
   touch(phase: "begin" | "move" | "end", x: number, y: number): Promise<void>;
   // A wheel step at (x, y); dx/dy in screen units, positive = the content moves up/left.
   scroll(x: number, y: number, dx: number, dy: number): Promise<void>;
-  // ASCII as keys, anything else through the device clipboard and a paste (decision 9).
-  typeText(text: string): Promise<void>;
+  // ASCII as keys, anything else through the device clipboard and a paste (decision 9). A
+  // `secret` (a tester credential) empties the clipboard after a paste.
+  typeText(text: string, opts?: { secret?: boolean }): Promise<void>;
   // A non-text key of DeviceInput `key` ("Enter", "Backspace", "ArrowLeft", …).
   key(key: string): Promise<void>;
   // Only buttons of DEVICE_PLATFORM_BUTTONS[platform]; DeviceService refuses the others.
@@ -63,6 +64,9 @@ export interface BootedDevice {
   launch(app: string): Promise<void>;
   terminate(app: string): Promise<void>;
   appRunning(app: string): Promise<boolean>;
+  // Drops the app's data so its next start is a first one (the tester's clean start): `pm clear`
+  // on Android; on iOS the app is uninstalled and the keychain reset — the preview reinstalls it.
+  clearApp(app: string): Promise<void>;
   appLogs(app: string, onLine: (line: string) => void): () => void;
 
   // The device's screen, frames no bigger than `size` where the driver can scale. One upstream

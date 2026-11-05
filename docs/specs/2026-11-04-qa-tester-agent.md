@@ -167,6 +167,9 @@ tester's «Браузер» tab on every run.
 Rejected: the shared project partition (dirty state, logouts hit the operator); a per-project
 switch (one more setting before anyone needs it).
 
+A Mobile project has no browser: the run starts the doer's device with the app's data cleared
+instead (`docs/specs/2026-11-04-tester-mobile-device.md`, decision 1).
+
 ### 8. What the tester session gets
 
 `tools/list` for a session with `tester === true` (and `kind === "review"`):
@@ -183,6 +186,10 @@ switch (one more setting before anyone needs it).
 The launch path gives the tester child the MCP binding (`browser.bindingFor(child.id)`), unlike other
 review forks, both at first launch and on resume (`:3796-3799`). The operator's «Агент» pause applies
 to the tester's own page as to any session.
+
+In a Mobile project the run gets `device_*`, `device_type_credential` and `preview_*`, all on the
+doer's device and preview, and no `browser_*` (`docs/specs/2026-11-04-tester-mobile-device.md`,
+decision 7).
 
 ### 9. No checklist yet
 
@@ -227,8 +234,9 @@ as the disabled button's hint, when:
 - the session has no `taskId` (decision 9);
 - the doer is mid-turn (`thinking` / `tool`), as for «Ревізор»;
 - a tester of this session is already running;
-- there is no browser host (web build, not the desktop app) or the project platform has no browser
-  (`backend`, `mobile`);
+- there is no browser host (web build, not the desktop app) for a project with a browser, or the
+  project platform has neither a browser nor a device (`backend`). A Mobile project is tested on the
+  doer's device in both builds (`docs/specs/2026-11-04-tester-mobile-device.md`, decision 7);
 - the doer's `.kermanych/preview.json` is missing or invalid (added 2026-11-04 by
   `docs/specs/2026-11-04-session-env-and-tester-preview-gate.md`, decision 3).
 

@@ -1,15 +1,16 @@
 // «Тестувальник» (docs/specs/2026-11-04-qa-tester-agent.md): the qa-run guard and launch, the
 // MCP tools a tester run gets, the credential tool's secrecy, the parent's preview, «Створити ПР»
-// keeping an existing checklist, and ⤴ of a run with nothing to hand over.
+// keeping an existing checklist, and ⤴ of a run with nothing to hand over. A Mobile project's run
+// on the doer's device: docs/specs/2026-11-04-tester-mobile-device.md.
 import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from "vitest";
 import { Subject } from "rxjs";
 import type { HttpAdapterHost } from "@nestjs/core";
-import type { PreviewConfigStatus, QaChecklist, QaChecklistItem, ServerEvent, Session } from "@kermanych/core";
+import type { DeviceRuntime, PreviewConfigStatus, PreviewState, QaChecklist, QaChecklistItem, ServerEvent, Session } from "@kermanych/core";
 import type { Task } from "@kermanych/cloud";
 import type { WorktreeService } from "../src/worktree/worktree.service";
 import type { AuthService } from "../src/auth/auth.service";
 import type { PreviewService } from "../src/preview/preview.service";
-import type { DeviceApi } from "../src/device/device.contract";
+import { fakeDevice } from "./fake-device";
 import type { BrowserMcpService as BrowserMcp } from "../src/browser/browser-mcp.service";
 
 type RpcOpts = { cwd: string; tools?: string[] };
@@ -88,7 +89,7 @@ function card(id: string, items: Partial<QaChecklistItem>[] = []): Task {
   return t;
 }
 
-function make(opts: { platform?: "web" | "backend"; host?: boolean } = {}) {
+function make(opts: { platform?: "web" | "backend" | "mobile"; host?: boolean } = {}) {
   const registry = new RegistryService(":memory:");
   registry.upsertProject({ id: "p1", name: "p", localRepoPath: "/tmp/kmq-tester", ...(opts.platform ? { platform: opts.platform } : {}) });
   const worktree = {
@@ -102,6 +103,7 @@ function make(opts: { platform?: "web" | "backend"; host?: boolean } = {}) {
   const config: { status: PreviewConfigStatus } = { status: { kind: "ok", services: ["web"], platforms: [] } };
   const preview = {
     urlOf: vi.fn(() => undefined as string | undefined),
+    state: vi.fn((): PreviewState | null => null),
     start: vi.fn(),
     settled: vi.fn(async () => null),
     info: vi.fn(() => ({ state: null, config: config.status })),
@@ -112,7 +114,8 @@ function make(opts: { platform?: "web" | "backend"; host?: boolean } = {}) {
     stop: async () => {},
     retire: async () => {},
   };
-  const browser = new BrowserMcpService(registry, preview as unknown as PreviewService, {} as DeviceApi, http, auth);
+  const fake = fakeDevice();
+  const browser = new BrowserMcpService(registry, preview as unknown as PreviewService, fake.device, http, auth);
   const bindingFor = vi.spyOn(browser, "bindingFor");
   const sup = new SupervisorService(registry, worktree as unknown as WorktreeService, auth, stubSkills(), undefined as never, undefined, browser, undefined, undefined, undefined, undefined, undefined, preview as unknown as PreviewService);
   const events: ServerEvent[] = [];
@@ -121,7 +124,7 @@ function make(opts: { platform?: "web" | "backend"; host?: boolean } = {}) {
   if (opts.host !== false) setBrowserHost(host);
   const doer = registry.createSession({ projectId: "p1", taskId: "t1", name: "Login", task: "Add login", worktreePath: "/tmp/kmq-tester-wt", branch: "feature/login" });
   registry.updateSession(doer.id, { ompSessionFile: "/tmp/doer.jsonl", status: "done" });
-  return { registry, sup, browser, bindingFor, preview, config, host, events, doer };
+  return { registry, sup, browser, bindingFor, preview, config, host, events, doer, fake };
 }
 
 async function mcp(browser: BrowserMcp, sessionId: string, method: string, params: Record<string, unknown> = {}) {
@@ -157,7 +160,7 @@ describe("POST qa-run guard", () => {
     await expect(noHost.sup.runTester(noHost.doer.id, "all")).rejects.toThrow(/desktop app/);
 
     const backend = make({ platform: "backend" });
-    await expect(backend.sup.runTester(backend.doer.id, "all")).rejects.toThrow(/no browser/);
+    await expect(backend.sup.runTester(backend.doer.id, "all")).rejects.toThrow(/neither a browser nor a device/);
   });
 
   // docs/specs/2026-11-04-session-env-and-tester-preview-gate.md, decision 3: a run whose preview
@@ -259,6 +262,91 @@ describe("tester MCP tools", () => {
     expect(events.filter((e) => e.type === "qa_checklist_update").length).toBeGreaterThanOrEqual(2);
     expect((await call(browser, tester.id, "report_qa_result", { itemId: "q9", status: "passed", note: "x" })).isError).toBe(true);
     expect((await call(browser, tester.id, "set_qa_checklist", { items: ["a"] })).isError).toBe(true);
+  });
+});
+
+describe("a Mobile project's tester (docs/specs/2026-11-04-tester-mobile-device.md)", () => {
+  const runtime: DeviceRuntime = { platform: "ios", serial: "SIM-UDID-1", name: "iPhone 16", screen: { width: 393, height: 852 } };
+  const runningOnDevice = { phase: "running", url: null, services: [], device: runtime, app: "running" } as unknown as PreviewState;
+
+  it("starts without a browser host and gets the doer's device and preview, never the browser", async () => {
+    const { sup, browser, doer } = make({ platform: "mobile", host: false });
+    cards.set("t1", card("t1", [{}]));
+
+    const tester = await sup.runTester(doer.id, "all");
+
+    expect(prompts.at(-1)).toContain("device_type_credential");
+    const t = await list(browser, tester.id);
+    expect(t).toEqual(expect.arrayContaining(["device_snapshot", "device_tap", "device_type_credential", "preview_start", "report_qa_result"]));
+    expect(t.some((n) => n.startsWith("browser_"))).toBe(false);
+    expect(await list(browser, doer.id)).not.toContain("device_type_credential");
+  });
+
+  it("the first preview_start restarts the doer's preview clean; device tools wait for it, then drive the doer's device", async () => {
+    const { sup, browser, doer, preview, fake } = make({ platform: "mobile" });
+    cards.set("t1", card("t1", [{}]));
+    const tester = await sup.runTester(doer.id, "all");
+    fake.boot(doer.id, runtime);
+    preview.state.mockReturnValue(runningOnDevice);
+
+    const early = await call(browser, tester.id, "device_snapshot", {});
+    expect(early.isError).toBe(true);
+    expect(early.content[0].text).toMatch(/preview_start first/);
+
+    await call(browser, tester.id, "preview_start", { restart: false });
+    expect(preview.start).toHaveBeenLastCalledWith(doer.id, { restart: true, clean: true });
+    // Still starting: the clean start is followed, not started again.
+    preview.state.mockReturnValue({ phase: "starting", step: "device", services: [] } as unknown as PreviewState);
+    await call(browser, tester.id, "preview_start", {});
+    expect(preview.start).toHaveBeenCalledTimes(1);
+    expect((await call(browser, tester.id, "device_snapshot", {})).isError).toBe(true);
+
+    preview.state.mockReturnValue(runningOnDevice);
+    expect((await call(browser, tester.id, "device_snapshot", {})).isError).toBeFalsy();
+    expect(fake.device.tree).toHaveBeenLastCalledWith(doer.id);
+    await call(browser, tester.id, "preview_start", {});
+    expect(preview.start).toHaveBeenLastCalledWith(doer.id, { restart: false });
+    expect((await call(browser, tester.id, "preview_start", { platform: "android" })).isError).toBe(true);
+
+    // A failed clean start is retried clean by the next run's first start.
+    const next = make({ platform: "mobile" });
+    cards.set("t1", card("t1", [{}]));
+    const again = await next.sup.runTester(next.doer.id, "all");
+    await call(next.browser, again.id, "preview_start", {});
+    next.preview.state.mockReturnValue({ phase: "failed", step: "device", error: "could not clear the data" } as unknown as PreviewState);
+    await call(next.browser, again.id, "preview_start", {});
+    expect(next.preview.start.mock.calls).toEqual([
+      [next.doer.id, { restart: true, clean: true }],
+      [next.doer.id, { restart: true, clean: true }],
+    ]);
+  });
+
+  it("locks the doer out of the device until the run is handed over, and types a credential without answering it", async () => {
+    const { sup, browser, doer, preview, fake, registry } = make({ platform: "mobile" });
+    cards.set("t1", card("t1", [{}]));
+    registry.setTesterSettings("p1", { loginPath: "myapp://login", notes: "", accounts: [{ id: "a1", name: "Адмін", login: "admin@x.io", password: "s3cret-pw", note: "" }] });
+    const tester = await sup.runTester(doer.id, "all");
+    expect(prompts.at(-1)).toContain("`myapp://login` — open it with `device_open_url`");
+    fake.boot(doer.id, runtime);
+    preview.state.mockReturnValue(runningOnDevice);
+
+    expect((await call(browser, doer.id, "device_tap", { x: 10, y: 10 })).content[0].text).toMatch(/busy with a «Тестувальник» run/);
+    expect((await call(browser, doer.id, "preview_stop", {})).isError).toBe(true);
+    expect((await call(browser, doer.id, "preview_status", {})).isError).toBeFalsy();
+
+    await call(browser, tester.id, "preview_start", {});
+    const out = await call(browser, tester.id, "device_type_credential", { account: "Адмін", field: "password" });
+    expect(out.isError).toBeFalsy();
+    expect(fake.device.type).toHaveBeenCalledWith(doer.id, "s3cret-pw", { secret: true });
+    expect(JSON.stringify(out)).not.toContain("s3cret-pw");
+    fake.device.type.mockRejectedValueOnce(new Error("paste of s3cret-pw failed"));
+    const failed = await call(browser, tester.id, "device_type_credential", { account: "Адмін", field: "password" });
+    expect(failed.isError).toBe(true);
+    expect(JSON.stringify(failed)).not.toContain("s3cret-pw");
+
+    await sup.mergeDiscussion(tester.id);
+    expect((await call(browser, doer.id, "device_tap", { x: 10, y: 10 })).isError).toBeFalsy();
+    expect(fake.device.tap).toHaveBeenLastCalledWith(doer.id, 10, 10);
   });
 });
 

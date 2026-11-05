@@ -34,7 +34,7 @@ const verdict = { status: 'passed' as const, note: 'ok', sessionId: 'x', at: '20
 
 const state = (
   s: Session,
-  opts: { sessions?: Session[]; items?: QaChecklistItem[]; platform?: 'web' | 'backend'; browserHost?: boolean; previewConfig?: 'ok' | 'missing' | 'invalid' } = {},
+  opts: { sessions?: Session[]; items?: QaChecklistItem[]; platform?: 'web' | 'mobile' | 'backend'; browserHost?: boolean; previewConfig?: 'ok' | 'missing' | 'invalid' } = {},
 ) =>
   qaRunState({
     session: s,
@@ -82,6 +82,17 @@ describe('«Виконати тестування» state', () => {
     expect(hint(session(), { platform: 'backend' })).toBe('tester.refusal.platform');
     expect(hint(session(), { previewConfig: 'missing' })).toBe('tester.refusal.no-preview');
     expect(hint(session(), { previewConfig: 'invalid' })).toBe('tester.refusal.no-preview');
+  });
+
+  // docs/specs/2026-11-04-tester-mobile-device.md, decision 7: the device runs in the api.
+  it('lets a Mobile project through in the web build too, still gated on its preview', () => {
+    expect(state(session(), { platform: 'mobile', browserHost: false }).kind).toBe('ready');
+    expect(state(session(), { platform: 'mobile', previewConfig: 'missing' })).toEqual({ kind: 'refused', hintKey: 'tester.refusal.no-preview' });
+    for (const catalog of [uk, en]) {
+      for (const key of ['tester.run.deviceClean', 'tester.refusal.noPreviewDevice', 'tester.refusal.previewInvalidDevice', 'tester.device.busy', 'tester.device.open']) {
+        expect(typeof lookup(catalog, key)).toBe('string');
+      }
+    }
   });
 
   it('reads «Тестування триває» and points at the running tester, whatever else holds', () => {
