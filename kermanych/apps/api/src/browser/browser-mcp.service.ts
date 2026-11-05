@@ -21,6 +21,8 @@
 // the browser ones (docs/specs/2026-11-03-mobile-device-preview.md, decisions 8 and 10); they need
 // no host either, since the api drives the device. A back-end project has neither browser nor
 // preview (decision 9): the gate is here, in tools/list and in every call, not in bindingFor.
+// A managed agent or chat session also gets `improve_skill` (skills/improve-skill-tool.ts,
+// docs/specs/2026-11-04-skill-self-improvement.md) while the operator's switch is not off.
 import { Inject, Injectable, Optional } from "@nestjs/common";
 import { HttpAdapterHost } from "@nestjs/core";
 import { randomBytes } from "node:crypto";
@@ -34,6 +36,8 @@ import { FINDING_TOOL_NAMES, callFindingTool, findingTools } from "../findings/f
 import { resolveLanguage } from "../runtime/resolve-language";
 import { OUTCOME_TOOL, callOutcomeTool } from "../minion/outcome-tool";
 import { AuthService } from "../auth/auth.service";
+import { IMPROVE_SKILL_TOOL_NAME, callImproveSkillTool, improveSkillTool } from "../skills/improve-skill-tool";
+import { SkillImprovementService } from "../skills/skill-improvement.service";
 import {
   CREDENTIAL_TOOL_DEF,
   QA_CHECKLIST_TOOL_DEF,
@@ -746,6 +750,9 @@ export class BrowserMcpService {
     // The cloud client for a tester run's checklist writes. Optional so specs construct the
     // service without it — then those writes refuse.
     @Optional() private auth?: AuthService,
+    // improve_skill's work. Optional and last so specs construct the service positionally
+    // without it — then the tool is not listed.
+    @Optional() private improvements?: SkillImprovementService,
   ) {}
 
   // Whose live preview a session's preview tools act on: its own, or for a tester run the
@@ -815,11 +822,17 @@ export class BrowserMcpService {
         const session = this.registry.listSessions().find((s) => s.id === sessionId);
         const platform = this.registry.listProjects().find((p) => p.id === session?.projectId)?.platform;
         const agent = session?.kind === "agent";
-        const findings = findingTools(resolveLanguage(process.env.KERMANYCH_LANGUAGE, this.registry.getAuthSession()?.agentLanguage));
+        const authRow = this.registry.getAuthSession();
+        const language = resolveLanguage(process.env.KERMANYCH_LANGUAGE, authRow?.agentLanguage);
+        const findings = findingTools(language);
         // A tester run (a `review` child stamped `tester`) gets the agent's browser and preview
         // plus its QA and credential tools; any other review or discussion fork is never handed
         // this server at all.
         const tester = isTesterSession(session);
+        // Only a managed agent or chat session improves skills: a native TUI or a review fork
+        // never read the library's skills through Kermanych, and the switch off means off.
+        const improve =
+          !!this.improvements && !!session && !session.native && (agent || session.kind === "chat") && !tester && authRow?.skillImprovement !== false;
         const tools = [
           ...(browserHost() && platformHasBrowser(platform) ? TOOLS : []),
           ...(browserHost() && platformHasBrowser(platform) && tester ? [CREDENTIAL_TOOL_DEF] : []),
@@ -830,6 +843,7 @@ export class BrowserMcpService {
           ...findings,
           ...(session?.minion === true ? [OUTCOME_TOOL] : []),
           ...(tester ? [QA_RESULT_TOOL_DEF, QA_CHECKLIST_TOOL_DEF] : []),
+          ...(improve ? [improveSkillTool(language)] : []),
         ];
         return result({ tools });
       }
@@ -839,7 +853,10 @@ export class BrowserMcpService {
         let run: Promise<ToolResult>;
         if (FINDING_TOOL_NAMES.has(name))
           run = Promise.resolve().then(() => this.callFinding(sessionId, name, args));
-        else if (name === OUTCOME_TOOL.name)
+        else if (name === IMPROVE_SKILL_TOOL_NAME && this.improvements) {
+          const improvements = this.improvements;
+          run = Promise.resolve().then(() => callImproveSkillTool(improvements, sessionId, args));
+        } else if (name === OUTCOME_TOOL.name)
           run = Promise.resolve().then(() => callOutcomeTool(this.registry, sessionId, args, (report) => this.outcomeReported$.next({ sessionId, report })));
         else if (TESTER_QA_TOOL_NAMES.has(name))
           run = callTesterQaTool(

@@ -7,8 +7,10 @@ import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { AiAgentSkill, AiOwner, AiSkill, AiTrigger } from "@kermanych/cloud";
+import type { AiAgentSkill, AiOwner, AiSkill, AiSkillInsert, AiTrigger } from "@kermanych/cloud";
+import { RegistryService } from "../src/registry/registry.service";
 import { SkillsService } from "../src/skills/skills.service";
+import { SkillImprovementService, type SkillImprovementCloud } from "../src/skills/skill-improvement.service";
 
 const { listAiSkills } = vi.hoisted(() => ({
   listAiSkills: vi.fn<(client: unknown, owner: AiOwner) => Promise<AiSkill[]>>(),
@@ -103,4 +105,47 @@ test("the editor's view always reads fresh, and the next launch of that project 
   expect(listAiSkills).toHaveBeenCalledTimes(4); // the editor reads the project's own rows only
   await launch(svc, "s-2");
   expect(listAiSkills).toHaveBeenCalledTimes(7);
+});
+
+// Skill self-improvement (docs/specs/2026-11-04-skill-self-improvement.md) writes the operator's own
+// row. Its edits must apply to the cloud's text, not to a launch's cached read, and the operator's
+// next launch must use the improved text at once — the tool tells the agent it does.
+test("an improvement applies to the cloud's text and reaches the next launch at once", async () => {
+  const svc = service();
+  // The operator's own rows in the cloud; the improvement's writes change them.
+  const mine = new Map<string, AiSkill>();
+  const own = (body: string): AiSkill => ({
+    owner: { scope: "user", id: U }, id: "mine-house", name: "house", description: "d", body, enabled: true, updatedAt: "t",
+  });
+  listAiSkills.mockImplementation(async (_c, owner) =>
+    owner.scope === "project" ? [skill("house", "HOUSE BODY"), skill("pr-rules", "PR BODY")] : owner.scope === "user" ? [...mine.values()] : [],
+  );
+  const cloud: SkillImprovementCloud = {
+    getAiSkill: async (_c, _o, name) => mine.get(name),
+    upsertAiSkill: async (_c, i: AiSkillInsert) => {
+      mine.set(i.name, own(i.body));
+      return own(i.body);
+    },
+    deleteAiSkill: async (_c, _o, name) => {
+      mine.delete(name);
+    },
+    insertSkillImprovement: async () => "rec-1",
+    countSessionSkillImprovements: async () => 0,
+  };
+  const registry = new RegistryService(":memory:");
+  registry.upsertProject({ id: P, name: "p", localRepoPath: repo, workspaceId: W });
+  const session = registry.createSession({ projectId: P, name: "s", task: "t", worktreePath: "", branch: "b" });
+  const improvements = new SkillImprovementService(registry, svc, { current: () => ({ userId: U }), cloudClient: () => ({}) } as never, cloud);
+
+  await launch(svc, "s-1"); // the library is cached with no personal copy in it
+  mine.set("house", own("HOUSE BODY, amended on another machine"));
+
+  const r = await improvements.improve(session.id, {
+    skill: "house",
+    edits: [{ find: "amended on another machine", replace: "amended twice" }],
+    summary: "s",
+    reason: "r",
+  });
+  expect(r.text).toMatch(/^Improved skill "house"/);
+  expect((await svc.assignedForNames(SCOPE, ["house"], repo)).block).toContain("HOUSE BODY, amended twice");
 });
