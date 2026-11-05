@@ -707,7 +707,7 @@
               <dt
                 v-tip="engineSessionIdHint"
                 class="agents__meta-label"
-              >{{ selectedSession?.native && selectedSession.runtime === 'codex' ? t('agents.native.engineIdCodex') : t('agents.session.engineId') }}</dt>
+              >{{ t(engineIdLabelKey(selectedSession)) }}</dt>
               <dd class="agents__meta-value mono agents__meta-value--id">{{ engineSessionId }}</dd>
             </div>
           </dl>
@@ -1325,7 +1325,7 @@ import { EFFORT_OPTIONS } from '../lib/effort';
 import { modelOptions, effortOptions } from '../lib/models';
 import { useResizablePanel } from '../composables/useResizablePanel';
 import { useVirtualList } from '../composables/useVirtualList';
-import { nativeHarnessName, nativeRuntimeFor, sessionCostKnown, sessionLaunchMode, LAUNCH_MODES, readLaunchMode, writeLaunchMode, type LaunchMode } from '../lib/native-session';
+import { engineIdLabelKey, nativeHarnessName, nativeRuntimeFor, sessionCostKnown, sessionLaunchMode, LAUNCH_MODES, readLaunchMode, writeLaunchMode, type LaunchMode } from '../lib/native-session';
 import KTerminalView from 'components/kit/KTerminalView.vue';
 import KBrowserPane from 'components/kit/KBrowserPane.vue';
 import KPreviewWebPane from 'components/kit/KPreviewWebPane.vue';

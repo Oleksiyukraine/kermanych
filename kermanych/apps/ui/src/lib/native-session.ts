@@ -69,3 +69,16 @@ export function panelTerminals(list: readonly TerminalInfo[], projectId: string 
 export function sessionCostKnown(s: Pick<Session, 'native' | 'runtime'>): boolean {
   return !(s.native && (s.runtime === 'claude-code' || s.runtime === 'codex'));
 }
+
+// The label of the Сесія tab's engine-id row: the harness whose `--resume` the id feeds. A
+// managed session's row shows a Claude Code conversation id, as does a native claude one.
+const ENGINE_ID_LABEL: Record<LaunchMode, string> = {
+  managed: 'agents.session.engineId',
+  claude: 'agents.session.engineId',
+  omp: 'agents.native.engineIdOmp',
+  codex: 'agents.native.engineIdCodex',
+};
+
+export function engineIdLabelKey(s: Pick<Session, 'native' | 'runtime'>): string {
+  return ENGINE_ID_LABEL[sessionLaunchMode(s)];
+}
