@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { AGENTS } from '@kermanych/core';
-import type { AiAgent, AiAgentSkill, AiOwner } from '@kermanych/cloud';
+import { AGENTS, DEFAULT_SKILLS } from '@kermanych/core';
+import type { AiAgent, AiAgentSkill, AiOwner, AiSkill } from '@kermanych/cloud';
 import {
   AGENT_ICONS,
   AI_TEAM_AGENT_GROUPS,
@@ -8,8 +8,10 @@ import {
   AI_TEAM_SECTIONS,
   aiTeamAgent,
   aiTeamSection,
+  blanksDefaultSkill,
   importNameProblem,
   resolveAgent,
+  skillEditorDraft,
 } from '../src/lib/ai-team';
 
 // The pure half of the «ШІ-команда» screen: the rail registry. The page cannot restate any of
@@ -92,6 +94,42 @@ describe('importNameProblem', () => {
   // `constructor` is a legal skill name and an Object.prototype member: a bare `in` would find it.
   it('does not mistake an inherited property for a repository skill', () => {
     expect(importNameProblem('constructor', base)).toEqual({});
+  });
+});
+
+// «Редагувати» on a Kermanych default at workspace scope. The editor used to open such a default
+// on an empty body when the workspace had no row for it, so a description-only edit saved an
+// empty override that every session in the workspace then got instead of the default.
+describe('skillEditorDraft and blanksDefaultSkill', () => {
+  const ws = { scope: 'workspace' as const, id: 'w' };
+  const stored = (name: string, body: string, enabled = true): AiSkill => ({
+    id: name,
+    owner: ws,
+    name,
+    description: 'd',
+    body,
+    enabled,
+    createdAt: '',
+    updatedAt: '',
+  });
+  const taskSpec = DEFAULT_SKILLS.find((d) => d.name === 'task-spec')!;
+
+  it('opens a default the workspace has not overridden on its own text, which is what gets saved', () => {
+    const draft = skillEditorDraft('task-spec', [stored('house', 'H')]);
+    expect(taskSpec.body.trim()).not.toBe('');
+    expect(draft).toEqual({ body: taskSpec.body, enabled: true });
+    // Saved untouched, the body goes through with no question.
+    expect(blanksDefaultSkill('task-spec', draft.body)).toBe(false);
+  });
+
+  it('opens on the stored row once the workspace has one', () => {
+    expect(skillEditorDraft('task-spec', [stored('task-spec', 'Ours')])).toEqual({ body: 'Ours', enabled: true });
+    expect(skillEditorDraft('house', [stored('house', 'H', false)])).toEqual({ body: 'H', enabled: false });
+  });
+
+  it('asks before an empty body replaces a default, and only then', () => {
+    for (const body of ['', '  \n ']) expect(blanksDefaultSkill('task-spec', body)).toBe(true);
+    expect(blanksDefaultSkill('house', '')).toBe(false);
   });
 });
 

@@ -1877,7 +1877,10 @@ managed runtimes. A repository skill with the same name always wins over a libra
   badged `бібліотека` for a default and `користувач`, `проєкт` or `воркспейс` for a library row.
   A row that replaces a default adds `· замість дефолту`, so you know which scope's row to delete
   to get the default back. The `SKILL.md` Kermanych writes for a library row opens with a comment
-  that names the same scope, so the agent reading `skill://<name>` sees it too.
+  that names the same scope, so the agent reading `skill://<name>` sees it too. «Редагувати» on a
+  default you have not replaced yet opens on the default's own text; saving creates the row that
+  replaces it. Saving a default's name with an empty text asks first, because every session would
+  then get an empty skill under that name.
 - **Routes.** `GET /api/skills/import/roots`, `GET /api/skills/import/scan?path=`,
   `GET /api/skills/import/read?dir=` (reads only `SKILL.md`), and `GET /api/fs/list?hidden=1`.
   Spec: `docs/specs/2026-10-22-skill-import.md`.
