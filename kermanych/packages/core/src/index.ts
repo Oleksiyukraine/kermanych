@@ -261,6 +261,8 @@ export {
   designDirOf,
   designScreenshots,
   designCommitMessage,
+  designReferenceLink,
+  designBrief,
 } from "./design";
 export {
   FINDING_KINDS,

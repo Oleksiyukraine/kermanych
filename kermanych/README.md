@@ -1317,12 +1317,18 @@ repository is a folder that people and implementing agents read.
   `docs/design/YYYY-MM-DD-<slug>/`. Commit, PR, finish and resume work as for any agent.
   Designs are hidden from «Агенти» but stay on «Карта агентів», and their card on the board
   carries the design mark. «Посіпака» never takes a design card.
+- **References.** The modal's «Референси» block takes images (paste anywhere in the form, drop
+  on the block, or «⛶ Зображення») and links (`http`/`https`; a bare host gets `https://`,
+  `localhost` gets `http://`; a typed link not yet added is added on «Створити»). The images go
+  to the Дизайнер with its first message and then onto the card; the links go into the card's
+  description under `References:`. The Дизайнер studies every reference before it builds and
+  records in the README what it took from each (spec: `docs/specs/2026-11-05-design-references.md`).
 - **«Дизайнер»** (`designer` in «ШІ-команда → Агенти», editable) opens the session: reuse kit
   components only (a missing one is a kit gap in the README), one dev-only route per screen
   (`/__design/<design>/<screen>`), every state (data, empty, loading, error, long content,
   narrow), and a `browser_screenshot` check at 390 and 1280 after each change. Its method and
   README template are the default skill `design-spec`.
-- **The folder.** `README.md` (purpose, screens, states, decisions, open questions,
+- **The folder.** `README.md` (purpose, references, screens, states, decisions, open questions,
   acceptance criteria, prototype files and routes, kit gaps) and
   `screens/<screen>-<state>@<width>.png`. The prototype code stays in the app's source and is
   merged with the design; the task that implements the screen turns it into the real one and
