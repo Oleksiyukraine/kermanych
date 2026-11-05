@@ -75,7 +75,7 @@ test("reopenSession brings the worktree back on the session's own branch and re-
   const id = await seedMerged();
 
   const re = await sup.reopenSession(id);
-  trash.push(re.worktreePath); // worktreeDir lives under $HOME/.kermanych — clean it up
+  trash.push(re.worktreePath); // worktreeDir lives under the repo's .gitworktree/ — clean it up
 
   expect(re.worktreePath).not.toBe("");
   expect(existsSync(re.worktreePath)).toBe(true); // worktree re-created
@@ -107,14 +107,14 @@ test("reopenSession forks the branch afresh off the base when the session's bran
 // the reopen with "'<path>' already exists".
 test("reopenSession clears what was written back into the retired worktree's path", async () => {
   const id = await seedMerged();
-  const leftover = join(worktreeDir(id), "apps", "ui", "node_modules", ".q-cache");
-  trash.push(worktreeDir(id));
+  const leftover = join(worktreeDir(repo, id), "apps", "ui", "node_modules", ".q-cache");
+  trash.push(worktreeDir(repo, id));
   mkdirSync(leftover, { recursive: true });
   writeFileSync(join(leftover, "dev-spa"), "cache\n");
 
   const re = await sup.reopenSession(id);
 
-  expect(re.worktreePath).toBe(worktreeDir(id));
+  expect(re.worktreePath).toBe(worktreeDir(repo, id));
   expect(re.branch).toBe("feature/task-one");
   expect(existsSync(join(re.worktreePath, "feature.txt"))).toBe(true);
   expect(existsSync(leftover)).toBe(false);

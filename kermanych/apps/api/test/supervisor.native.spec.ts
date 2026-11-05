@@ -124,7 +124,7 @@ describe("a native launch", () => {
     expect(s).toMatchObject({ native: true, runtime: "claude-code", status: "queued", terminalId: "t1" });
     expect(s.model).toBeUndefined();
     expect(s.effort).toBeUndefined();
-    const wt = join(process.env.HOME ?? "", ".kermanych", "worktrees", s.id);
+    const wt = join("/tmp/proj", ".gitworktree", s.id);
     // No base on the card or the project: the branch the project checkout is on (decision 4).
     expect(worktree.addWorktree).toHaveBeenCalledWith("/tmp/proj", wt, s.branch, "main");
     expect(terminal.openSession).toHaveBeenCalledTimes(1);

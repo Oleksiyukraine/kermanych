@@ -12,3 +12,6 @@ dist/
 # SQLite journal files of the docs-harness index — present only while the MCP server has it open
 *.sqlite-shm
 *.sqlite-wal
+
+# Session git worktrees (packages/core worktreeDir): one folder per session, inside the project repo
+.gitworktree/

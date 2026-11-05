@@ -1474,7 +1474,7 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     let staleFrom = "";
     try {
       if (worktree) {
-        wtDir = worktreeDir(id);
+        wtDir = worktreeDir(project.localRepoPath, id);
         // docs/specs/2026-10-14-create-pr-base-sync.md, decision 4: the fresher of `<base>` and
         // `origin/<base>`, after asking origin.
         const start = baseBranch ? await this.worktree.forkStart(project.localRepoPath, baseBranch) : undefined;
@@ -3460,7 +3460,7 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     const { branch, baseBranch } = kept
       ? { branch: s.branch, baseBranch: s.baseBranch }
       : await this.resolveLaunchParams(g, { title: s.name, description: s.task }, s.prefix ?? "feature", true, id, s.baseBranch);
-    const wtDir = worktreeDir(id);
+    const wtDir = worktreeDir(g.localRepoPath, id);
     // The row owns no worktree, so anything at its path is what the retirement left behind — a
     // tree from before removeWorktree cleaned up after itself, or one a stray process (a dev
     // server the agent started) wrote back into. `git worktree add` refuses an existing path.
