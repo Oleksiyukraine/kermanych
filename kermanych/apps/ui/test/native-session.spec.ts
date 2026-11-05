@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { TerminalInfo } from '@kermanych/core';
-import { defaultLaunchMode, nativeRuntimeFor, panelTerminals, sessionCostKnown, sessionLaunchMode } from '../src/lib/native-session';
+import { defaultLaunchMode, engineIdLabelKey, nativeRuntimeFor, panelTerminals, sessionCostKnown, sessionLaunchMode } from '../src/lib/native-session';
 
 describe('nativeRuntimeFor', () => {
   it('maps the launcher mode to from-task `native`', () => {
@@ -63,5 +63,19 @@ describe('sessionCostKnown', () => {
     expect(sessionCostKnown({ native: true, runtime: 'claude-code' })).toBe(false);
     expect(sessionCostKnown({ native: true, runtime: 'omp' })).toBe(true);
     expect(sessionCostKnown({ runtime: 'omp' })).toBe(true);
+  });
+});
+
+describe('engineIdLabelKey', () => {
+  it('names the harness whose session the engine id row shows', () => {
+    expect(engineIdLabelKey({ native: true, runtime: 'omp' })).toBe('agents.native.engineIdOmp');
+    // A native row written before `runtime` was stamped ran omp.
+    expect(engineIdLabelKey({ native: true })).toBe('agents.native.engineIdOmp');
+    expect(engineIdLabelKey({ native: true, runtime: 'codex' })).toBe('agents.native.engineIdCodex');
+    expect(engineIdLabelKey({ native: true, runtime: 'claude-code' })).toBe('agents.session.engineId');
+  });
+
+  it('keeps the Claude Code label for a managed session', () => {
+    expect(engineIdLabelKey({ runtime: 'claude-code' })).toBe('agents.session.engineId');
   });
 });

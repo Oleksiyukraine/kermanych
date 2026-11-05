@@ -211,7 +211,7 @@
          and persistent with «Створити» spinning, and a failure shows inside it. The preview that
          follows is long and shows on the canvas instead. -->
     <KModal v-model="newOpen" :title="t('design.new.title')" width="560px" :persistent="creating">
-      <div class="design__form" :inert="creating">
+      <div class="design__form" :inert="creating" @paste="onNewPaste">
         <KField
           ref="topicField"
           v-model="newTopic"
@@ -225,7 +225,7 @@
             v-model="newDescription"
             multiline
             :rows="5"
-            :label="`${t('design.new.description')} · ${t('agents.launcher.optional')}`"
+            :label="`${t('design.new.description')} · ${t('design.new.optional')}`"
             :placeholder="t('design.new.descriptionPlaceholder')"
             @keydown="newDictation.onKeydown"
           />
@@ -238,10 +238,55 @@
             @toggle="newDictation.toggle"
           />
         </div>
+        <!-- Референси (docs/specs/2026-11-05-design-references.md): images go with the launch and
+             onto the card, links into the card's description — the same paste / drop / ⛶ as the
+             «Агенти» launcher. -->
+        <section class="design__refs" :aria-label="t('design.new.references')" @dragover.prevent @drop.prevent="onNewDrop">
+          <span class="design__refs-label">{{ `${t('design.new.references')} · ${t('design.new.optional')}` }}</span>
+          <div class="design__refs-row">
+            <button type="button" class="design__refs-btn mono" @click="newImageInput?.click()">{{ t('design.new.image') }}</button>
+            <input
+              ref="newImageInput"
+              type="file"
+              accept="image/png,image/jpeg,image/gif,image/webp"
+              multiple
+              class="design__refs-file"
+              @change="onNewImagePick"
+            />
+            <span class="design__refs-note mono">{{ t('design.new.imageHint') }}</span>
+          </div>
+          <KAttachStrip :images="newImages" @remove="removeNewImage" />
+          <p v-if="newImageError" class="design__error" role="alert">{{ newImageError }}</p>
+          <!-- The placeholder is the field's accessible name; the section label says what it is for. -->
+          <div class="design__refs-row">
+            <KField
+              v-model="newLinkDraft"
+              class="design__refs-link"
+              :placeholder="t('design.new.linkPlaceholder')"
+              @keydown.enter.prevent="addNewLink()"
+            />
+            <button type="button" class="design__refs-btn mono" :disabled="!newLinkDraft.trim()" @click="addNewLink()">
+              {{ t('design.new.addLink') }}
+            </button>
+          </div>
+          <p v-if="newLinkError" class="design__error" role="alert">{{ newLinkError }}</p>
+          <ul v-if="newLinks.length" class="design__refs-links">
+            <li v-for="(link, i) in newLinks" :key="link" class="design__refs-item">
+              <a class="design__refs-href mono" :href="link" target="_blank" rel="noopener noreferrer">{{ link }}</a>
+              <button
+                type="button"
+                class="design__refs-remove"
+                v-tip="t('design.new.removeLink')"
+                :aria-label="t('design.new.removeLink')"
+                @click="newLinks.splice(i, 1)"
+              >✕</button>
+            </li>
+          </ul>
+        </section>
         <!-- `searchable`, as in the launcher: a long-lived repo has hundreds of branches. -->
         <KSelect
           v-model="newBase"
-          :label="`${t('design.new.base')} · ${t('agents.launcher.optional')}`"
+          :label="`${t('design.new.base')} · ${t('design.new.optional')}`"
           :options="newBranches"
           :loading="newBranchesLoading"
           searchable
@@ -250,7 +295,7 @@
       </div>
       <template #controls>
         <KBtn variant="ghost" :disabled="creating" @click="newOpen = false">{{ t('agents.launcher.cancel') }}</KBtn>
-        <KBtn variant="primary" :loading="creating" :disabled="!newTopic.trim()" @click="createAction.run()">
+        <KBtn variant="primary" :loading="creating" :disabled="!newTopic.trim() || newImagesReading > 0" @click="createAction.run()">
           {{ t('design.new.create') }}
         </KBtn>
       </template>
@@ -273,7 +318,7 @@
 import { computed, nextTick, onMounted, ref, watch, type ComponentPublicInstance } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { useI18n } from 'vue-i18n';
-import { buildChatBlocks, designReadmePath, platformHasBrowser, taskNameFromText } from '@kermanych/core';
+import { buildChatBlocks, designBrief, designReadmePath, designReferenceLink, platformHasBrowser, taskNameFromText } from '@kermanych/core';
 import type { ImageInput, RpcExtensionUIResponse, Session, ThinkingLevel } from '@kermanych/core';
 import { useOrchestrator } from 'stores/orchestrator';
 import { useBoard } from 'stores/board';
@@ -285,6 +330,7 @@ import { api, type MessageMode } from '../lib/api';
 import { taskInsertFromDraft } from '../lib/tasks-view';
 import { EXPAND_ALL_NONE, nextExpandAll, type ExpandAllCommand } from '../lib/expand-all';
 import { relativeTime, renderTime } from '../lib/time';
+import { imageToFile } from '../lib/images';
 import { sessionLaunchMode } from '../lib/native-session';
 import { historyLoadFor } from '../lib/open-session-history';
 import { useNow } from '../composables/useNow';
@@ -293,6 +339,7 @@ import { useResizablePanel } from '../composables/useResizablePanel';
 import { errorText, useAsyncAction, useKeyedAction } from '../composables/useAsyncAction';
 import { useVoicePanel } from '../composables/useVoicePanel';
 import { useDictationField } from '../composables/useDictationField';
+import { useImageAttach } from '../composables/useImageAttach';
 import { nextMode as modeFor } from '../lib/message-mode';
 import { useOptimisticValue } from '../composables/useOptimisticValue';
 import { useLoadPhase } from '../composables/useLoadPhase';
@@ -307,6 +354,7 @@ import KTag from 'components/kit/KTag.vue';
 import KModal from 'components/kit/KModal.vue';
 import KField from 'components/kit/KField.vue';
 import KDictation from 'components/kit/KDictation.vue';
+import KAttachStrip from 'components/kit/KAttachStrip.vue';
 import KSelect from 'components/kit/KSelect.vue';
 import KSkeleton from 'components/kit/KSkeleton.vue';
 import KBrowserPane from 'components/kit/KBrowserPane.vue';
@@ -723,6 +771,46 @@ watch(newOpen, (open) => {
 });
 let branchesRun = 0;
 
+// Референси (docs/specs/2026-11-05-design-references.md). Images: pasted anywhere in the form,
+// dropped on the block or picked with ⛶; the launch sends them to the Дизайнер, then they go on
+// the card. Links: checked one by one, kept in order, and written into the card's description.
+const {
+  images: newImages,
+  error: newImageError,
+  reading: newImagesReading,
+  onPaste: onNewPaste,
+  onDrop: onNewDrop,
+  remove: removeNewImage,
+  clear: clearNewImages,
+  addFiles: addNewImageFiles,
+} = useImageAttach();
+const newImageInput = ref<HTMLInputElement | null>(null);
+const newLinks = ref<string[]>([]);
+const newLinkDraft = ref('');
+const newLinkError = ref<string | null>(null);
+
+function onNewImagePick(e: Event): void {
+  const input = e.target as HTMLInputElement;
+  if (input.files) void addNewImageFiles(input.files);
+  input.value = '';
+}
+
+// False when the draft is not a web address; the error line then names it. A link already in
+// the list is not added twice.
+function addNewLink(): boolean {
+  const raw = newLinkDraft.value.trim();
+  if (!raw) return true;
+  const link = designReferenceLink(raw);
+  if (!link) {
+    newLinkError.value = t('design.new.linkInvalid', { text: raw });
+    return false;
+  }
+  if (!newLinks.value.includes(link)) newLinks.value.push(link);
+  newLinkDraft.value = '';
+  newLinkError.value = null;
+  return true;
+}
+
 // The fork base, as the launcher offers it: the project's default first, then every branch
 // once the repo answers. A reopened modal drops an older reply.
 async function loadBranches(projectId: string): Promise<void> {
@@ -749,6 +837,10 @@ function openNew(): void {
   newTopic.value = '';
   newDescription.value = '';
   newError.value = null;
+  clearNewImages();
+  newLinks.value = [];
+  newLinkDraft.value = '';
+  newLinkError.value = null;
   newCardId.value = null;
   void loadBranches(pid);
   newOpen.value = true;
@@ -768,7 +860,11 @@ async function createDesign(): Promise<void> {
   await newDictation.beforeSubmit();
   const pid = store.selectedProjectId;
   const title = newTopic.value.trim();
-  if (!pid || !title) return;
+  // Enter in «Тема» bypasses the disabled button: an image still being read would go missing.
+  if (!pid || !title || newImagesReading.value > 0) return;
+  // A link typed but not yet added is a reference too; one that is not an address stops here
+  // with its error line rather than vanishing.
+  if (!addNewLink()) return;
   const userId = auth.user?.id;
   if (!userId) {
     newError.value = t('agents.launcher.loginFirst');
@@ -785,7 +881,7 @@ async function createDesign(): Promise<void> {
     return;
   }
   newError.value = null;
-  const description = newDescription.value.trim();
+  const description = designBrief(newDescription.value, newLinks.value);
   const base = newBase.value.trim();
   let cardId = newCardId.value;
   if (cardId) {
@@ -811,7 +907,13 @@ async function createDesign(): Promise<void> {
     cardId = card.id;
     newCardId.value = card.id;
   }
-  const session = await api.createSessionFromTask(cardId);
+  // Rebuilt before the await: exactly the images the Дизайнер receives also go on the card —
+  // after the session exists, best-effort, as the «Агенти» launcher does (a storage failure is
+  // the store's toast, never a failed design).
+  const images = newImages.value.map((i) => ({ data: i.data, mimeType: i.mimeType }));
+  const cardFiles = newImages.value.map(imageToFile);
+  const session = await api.createSessionFromTask(cardId, images.length ? images : undefined);
+  if (cardFiles.length) void board.addTaskImages(cardId, cardFiles);
   newOpen.value = false;
   if (store.selectedProjectId === pid) select(session.id);
 }
@@ -1135,6 +1237,89 @@ onMounted(() => {
 }
 .design__dictate {
   margin-top: 6px;
+}
+
+// Референси: the label repeats KField's, the buttons the «Агенти» launcher's ⛶ row.
+.design__refs {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.design__refs-label {
+  font-family: var(--k-font-ui);
+  font-size: 13px;
+  color: var(--k-text);
+}
+.design__refs-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.design__refs-btn {
+  padding: 6px 10px;
+  background: transparent;
+  border: 1px solid var(--k-line);
+  border-radius: var(--k-r);
+  color: var(--k-muted);
+  font-size: 12px;
+  cursor: pointer;
+
+  &:hover:not(:disabled) {
+    border-color: var(--k-accent);
+    color: var(--k-text);
+  }
+  &:disabled {
+    opacity: 0.5;
+    cursor: default;
+  }
+}
+.design__refs-file {
+  display: none;
+}
+.design__refs-note {
+  font-size: 11.5px;
+  color: var(--k-muted);
+}
+.design__refs-link {
+  flex: 1;
+  min-width: 0;
+}
+.design__refs-links {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.design__refs-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.design__refs-href {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  color: var(--k-accent);
+}
+.design__refs-remove {
+  flex: none;
+  padding: 0 4px;
+  background: transparent;
+  border: 0;
+  color: var(--k-muted);
+  font-size: var(--k-icon-xs);
+  cursor: pointer;
+
+  &:hover {
+    color: var(--k-accent);
+  }
 }
 
 .design__error {

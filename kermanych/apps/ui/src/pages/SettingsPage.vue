@@ -619,6 +619,21 @@
           <!-- What the «English — ASD-STE100» entries mean. Always visible: the table is needed
                BEFORE a level is picked, not only after. -->
           <SteGuide />
+
+          <div class="set__rule"></div>
+
+          <!-- docs/specs/2026-11-04-skill-self-improvement.md: whether this account's sessions get
+               the improve_skill tool. Cloud profile first, then the api's cache; sessions launched
+               afterwards follow it. -->
+          <div class="set__group">
+            <KCheckbox
+              :model-value="skillImprovementPick.value"
+              :loading="skillImprovementPick.pending"
+              :label="t('settings.skillImprovement.label')"
+              @update:model-value="skillImprovementPick.set"
+            />
+            <p class="set__note">{{ t('settings.skillImprovement.note') }}</p>
+          </div>
         </div>
 
         <!-- ── APP · ГОЛОС ──────────────────────────────────────────────────── -->
@@ -670,6 +685,16 @@
             <!-- Applies on selection, to the next conversation: GPT-Live fixes the voice at start. -->
             <KSelect v-model="voiceChoice" :options="VOICE_OPTIONS" searchable />
             <p class="set__note">{{ t('settings.voice.voiceNote') }}</p>
+          </div>
+
+          <div class="set__rule"></div>
+
+          <div class="set__group">
+            <span class="set__label">{{ t('settings.voice.gate') }}</span>
+            <!-- docs/specs/2026-11-04-voice-background-noise.md, decision 4: applies at once,
+                 to a running conversation too. -->
+            <KSelect v-model="voiceGateChoice" :options="VOICE_GATE_OPTIONS" />
+            <p class="set__note">{{ t('settings.voice.gateNote') }}</p>
           </div>
 
           <div class="set__rule"></div>
@@ -971,7 +996,8 @@ import { useLoadPhase } from '../composables/useLoadPhase';
 import { dockBadgeOn, dockBounceOn } from '../lib/dock';
 import { ASSISTANT_MASCOTS, assistantGestureOn, assistantMascot } from 'stores/assistant-overlay';
 import AssistantMascot from 'components/assistant/AssistantMascot.vue';
-import { voicePick } from '../lib/voice';
+import { voiceGatePick, voicePick } from '../lib/voice';
+import { VOICE_GATE_LEVELS, type VoiceGateLevel } from '../lib/voice-gate';
 import { locale } from '../lib/locale';
 import { isMoveRefusal, memberErrorText, moveRefusalText, NO_ROWS } from '../lib/cloud-errors';
 import {
@@ -1848,6 +1874,17 @@ const languagePick = reactive(
   ),
 );
 
+// «Вдосконалювати навички». Unread (null) shows as on: the column defaults to true.
+const skillImprovementPick = reactive(
+  useOptimisticValue<boolean>(
+    () => auth.skillImprovement ?? true,
+    async (next) => {
+      if (auth.skillImprovement === next) return;
+      await auth.chooseSkillImprovement(next);
+    },
+  ),
+);
+
 // The app version shown under «Загальне». The one place it is written: a release bumps it
 // here (it used to be the header's label, beside the logo).
 const APP_VERSION = 'v1.1.2';
@@ -1982,6 +2019,10 @@ const checkVoiceKey = useAsyncAction(async () => {
 });
 const voiceChoice = voicePick;
 const VOICE_OPTIONS: readonly KSelectOption[] = VOICE_IDS.map((id) => ({ value: id, label: id }));
+const voiceGateChoice = voiceGatePick;
+const VOICE_GATE_OPTIONS = computed<readonly KSelectOption[]>(() =>
+  (Object.keys(VOICE_GATE_LEVELS) as VoiceGateLevel[]).map((level) => ({ value: level, label: t(`settings.voice.gateLevels.${level}`) })),
+);
 // The conversation speaks the agent's language, or the screen's when none is set (decision 11).
 const voiceLanguageLabel = computed(() =>
   auth.language ? AGENT_LANGUAGE_LABELS[auth.language] : locale.value === 'en' ? 'English' : 'Українська',

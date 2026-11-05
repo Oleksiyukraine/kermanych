@@ -2,7 +2,17 @@
 import { defineStore } from 'pinia';
 import { markRaw, ref } from 'vue';
 import type { Session as SupabaseSession, SupabaseClient } from '@supabase/supabase-js';
-import { cloudEnv, createCloudClient, type Profile, getMyAgentProvider, setMyAgentProvider, getMyAgentLanguage, setMyAgentLanguage } from '@kermanych/cloud';
+import {
+  cloudEnv,
+  createCloudClient,
+  type Profile,
+  getMyAgentProvider,
+  setMyAgentProvider,
+  getMyAgentLanguage,
+  setMyAgentLanguage,
+  getMySkillImprovement,
+  setMySkillImprovement,
+} from '@kermanych/cloud';
 import type { AgentProvider, AgentLanguage } from '@kermanych/core';
 import { api, setAuthToken, setUnauthorizedHandler } from '../lib/api';
 import { IS_PREVIEW, PREVIEW_USER_ID } from '../lib/preview';
@@ -35,6 +45,8 @@ export const useAuth = defineStore('auth', () => {
   // harness's own TUI). null when unset or not read.
   const provider = ref<AgentProvider | null>(null);
   const language = ref<AgentLanguage | null>(null);
+  // «Вдосконалювати навички»; null until read (and in a preview, which has no cloud).
+  const skillImprovement = ref<boolean | null>(null);
   // True only when the cloud read succeeded and no provider is stored: the one case the
   // onboarding gate in MainLayout asks. A failed read leaves it false — «Керманич» is the
   // default and no gate is raised over a cloud hiccup.
@@ -132,6 +144,11 @@ export const useAuth = defineStore('auth', () => {
         language.value = await getMyAgentLanguage(client);
       } catch {
         language.value = null;
+      }
+      try {
+        skillImprovement.value = await getMySkillImprovement(client);
+      } catch {
+        skillImprovement.value = null;
       }
       return;
     }
@@ -282,5 +299,28 @@ export const useAuth = defineStore('auth', () => {
     // catalog dimension.
   }
 
-  return { client, user, profile, accessToken, provider, providerUnset, providerLoading, language, ready, init, signInWithGithub, signOut, chooseProvider, chooseLanguage };
+  async function chooseSkillImprovement(on: boolean): Promise<void> {
+    await setMySkillImprovement(client, on);    // cloud = source of truth
+    await api.setAccountSkillImprovement(on);    // refresh local API cache
+    skillImprovement.value = on;
+  }
+
+  return {
+    client,
+    user,
+    profile,
+    accessToken,
+    provider,
+    providerUnset,
+    providerLoading,
+    language,
+    skillImprovement,
+    ready,
+    init,
+    signInWithGithub,
+    signOut,
+    chooseProvider,
+    chooseLanguage,
+    chooseSkillImprovement,
+  };
 });

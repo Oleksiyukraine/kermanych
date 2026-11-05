@@ -543,11 +543,12 @@
             ></div>
             <div class="agents__split-browser" :style="{ width: splitWidth + 'px' }">
               <KDevicePane
-                v-if="deviceTab"
+                v-if="deviceSession"
                 :key="selectedSession.id"
-                :session="selectedSession"
+                :session="deviceSession"
                 :sending="sendingPicks"
-                @send="onSendPicks(selectedSession)"
+                :busy-banner="!selectedSession.tester"
+                @send="onSendDevicePicks"
               />
               <KBrowserPane
                 v-else
@@ -574,14 +575,16 @@
           />
           <KPreviewWebPane v-else :key="selectedSession.id" :session="selectedSession" />
         </div>
-        <!-- A Mobile project's agent session, both builds: mounted only while shown, so the
-             device's screen is watched (and streamed by the api) only then. -->
-        <div v-if="detailTab === 'device' && deviceTab && !paneSplit" class="agents__tabpane">
+        <!-- A Mobile project's agent session and its tester (the doer's device), both builds:
+             mounted only while shown, so the device's screen is watched (and streamed by the
+             api) only then. -->
+        <div v-if="detailTab === 'device' && deviceSession && !paneSplit" class="agents__tabpane">
           <KDevicePane
             :key="selectedSession.id"
-            :session="selectedSession"
+            :session="deviceSession"
             :sending="sendingPicks"
-            @send="onSendPicks(selectedSession)"
+            :busy-banner="!selectedSession.tester"
+            @send="onSendDevicePicks"
           />
         </div>
         <div v-if="detailTab === 'changes'" class="agents__tabpane agents__changes">
@@ -738,7 +741,7 @@
               <dt
                 v-tip="engineSessionIdHint"
                 class="agents__meta-label"
-              >{{ selectedSession?.native && selectedSession.runtime === 'codex' ? t('agents.native.engineIdCodex') : t('agents.session.engineId') }}</dt>
+              >{{ t(engineIdLabelKey(selectedSession)) }}</dt>
               <dd class="agents__meta-value mono agents__meta-value--id">{{ engineSessionId }}</dd>
             </div>
           </dl>
@@ -1384,7 +1387,7 @@ import { EFFORT_OPTIONS } from '../lib/effort';
 import { modelOptions, effortOptions } from '../lib/models';
 import { useResizablePanel } from '../composables/useResizablePanel';
 import { useVirtualList } from '../composables/useVirtualList';
-import { defaultLaunchMode, nativeHarnessName, nativeRuntimeFor, sessionCostKnown, sessionLaunchMode, LAUNCH_MODES, type LaunchMode } from '../lib/native-session';
+import { defaultLaunchMode, engineIdLabelKey, nativeHarnessName, nativeRuntimeFor, sessionCostKnown, sessionLaunchMode, LAUNCH_MODES, type LaunchMode } from '../lib/native-session';
 import KTerminalView from 'components/kit/KTerminalView.vue';
 import KBrowserPane from 'components/kit/KBrowserPane.vue';
 import KPreviewWebPane from 'components/kit/KPreviewWebPane.vue';
@@ -2119,8 +2122,23 @@ const browserTab = computed(() => {
   return platformHasBrowser(selectedPlatform.value) && (sessionBrowser.available || s.kind === 'agent');
 });
 // A Mobile project's `agent` session has a Пристрій tab in its place, in both builds
-// (docs/specs/2026-11-03-mobile-device-preview.md, decision 8): forks and chats have no device.
-const deviceTab = computed(() => selectedSession.value?.kind === 'agent' && platformHasDevice(selectedPlatform.value));
+// (docs/specs/2026-11-03-mobile-device-preview.md, decision 8). Its «Тестувальник» child gets one
+// too, showing the doer's device: the pane is bound to the doer's session, so the preview row,
+// the pause and the screen are the device's own (docs/specs/2026-11-04-tester-mobile-device.md,
+// decision 3). Other forks and chats have no device.
+const deviceSession = computed(() => {
+  const s = selectedSession.value;
+  if (!s || !platformHasDevice(selectedPlatform.value)) return undefined;
+  if (s.kind === 'agent') return s;
+  return s.tester === true ? parentOfSelected.value : undefined;
+});
+const deviceTab = computed(() => deviceSession.value !== undefined);
+// «Надіслати агенту» from the device's picks tray: the picks are the device session's, so they go
+// to the doer, also from its tester's tab.
+function onSendDevicePicks(): void {
+  const s = deviceSession.value;
+  if (s) void onSendPicks(s);
+}
 // The tab of the pane that can go beside the Лог: the browser's in the desktop app only (the
 // web build's is a note and a link), the device's in both.
 const paneTab = computed<'browser' | 'device' | null>(() =>
@@ -2161,9 +2179,10 @@ const detailTabs = computed(() => {
       });
   }
   // The Пристрій tab's mark is the preview's too, an app that exited counting as red. It has no
-  // ✕: the device belongs to the preview, which ◼ stops.
-  if (deviceTab.value && s) {
-    const status = previewTabStatus(store.previews[s.id]);
+  // ✕: the device belongs to the preview, which ◼ stops. A tester's tab reads the doer's preview.
+  const device = deviceSession.value;
+  if (device) {
+    const status = previewTabStatus(store.previews[device.id]);
     const marks = status ? { status } : {};
     if (paneSplit.value) Object.assign(tabs[0]!, marks);
     else tabs.push({ value: 'device', label: t('agents.tabs.device'), ...marks });

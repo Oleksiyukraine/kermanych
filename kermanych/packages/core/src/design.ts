@@ -48,3 +48,37 @@ export function designScreenshots(designDir: string, paths: readonly string[]): 
 export function designCommitMessage(topic: string): string {
   return `design: ${topic}`;
 }
+
+// «+ Новий дизайн» takes references: images, which travel with the launch, and links, which
+// travel in the card's description under this line, so the Дизайнер, the board and a relaunch
+// all read them from the card.
+const DESIGN_REFERENCES_HEADING = "References:";
+
+// A typed reference link as the card keeps it, or undefined for something that is not a web
+// address. A bare host gets a scheme: `http://` for a local dev server («localhost:5173/orders»),
+// `https://` otherwise («dribbble.com/shots/1»). Any scheme but http(s) is refused.
+export function designReferenceLink(raw: string): string | undefined {
+  const text = raw.trim();
+  if (!text || /\s/.test(text)) return undefined;
+  // «localhost:5173» parses as scheme `localhost:`; a host:port is a host.
+  const hasScheme = /^[a-z][a-z\d+.-]*:/i.test(text) && !/^[^/:]+:\d+(?:[/?#]|$)/.test(text);
+  const local = /^(?:localhost|127\.0\.0\.1)(?:[:/?#]|$)/i.test(text);
+  let url: URL;
+  try {
+    url = new URL(hasScheme ? text : `${local ? "http" : "https"}://${text}`);
+  } catch {
+    return undefined;
+  }
+  if (url.protocol !== "http:" && url.protocol !== "https:") return undefined;
+  // A host needs a dot or is localhost: «foo» alone is a typo, not a site.
+  if (!url.hostname.includes(".") && url.hostname !== "localhost") return undefined;
+  return url.href;
+}
+
+// The card description of a new design: the operator's text, then the reference links.
+export function designBrief(description: string, links: readonly string[]): string {
+  const text = description.trim();
+  if (!links.length) return text;
+  const list = [DESIGN_REFERENCES_HEADING, ...links.map((l) => `- ${l}`)].join("\n");
+  return text ? `${text}\n\n${list}` : list;
+}

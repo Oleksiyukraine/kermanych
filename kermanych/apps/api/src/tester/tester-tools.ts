@@ -9,6 +9,7 @@ import { existsSync } from "node:fs";
 import { patchQaItems, setQaChecklistIfEmpty } from "@kermanych/cloud";
 import {
   CREDENTIAL_TOOL,
+  DEVICE_CREDENTIAL_TOOL,
   QA_CHECKLIST_TOOL,
   QA_RESULT_TOOL,
   QA_VERDICT_STATUSES,
@@ -81,11 +82,39 @@ export const CREDENTIAL_TOOL_DEF = {
   },
 };
 
+// The device counterpart (docs/specs/2026-11-04-tester-mobile-device.md, decision 4): a Mobile
+// project's tester types into the focused field of the doer's device.
+export const DEVICE_CREDENTIAL_TOOL_DEF = {
+  name: DEVICE_CREDENTIAL_TOOL,
+  description:
+    "Type the login or the password of a configured test account into the focused field of the device, like device_type (tap the field first). You are never given a password: name the account and the field, and Kermanych types the value. " +
+    "The answer never repeats the value; do not read it back from the screen.",
+  inputSchema: {
+    type: "object",
+    properties: {
+      account: { type: "string", description: "The account's name exactly as listed in your instructions." },
+      field: { type: "string", enum: ["login", "password"] },
+      submit: { type: "boolean", default: false, description: "Press Enter after typing (default false)." },
+    },
+    required: ["account", "field"],
+    additionalProperties: false,
+  },
+};
+
 export const TESTER_QA_TOOL_NAMES = new Set([QA_RESULT_TOOL, QA_CHECKLIST_TOOL]);
 
 /** A tester run: a `review` child stamped `tester`. */
 export function isTesterSession(s: Session | undefined): s is Session & { kind: "review"; tester: true } {
   return s?.kind === "review" && s.tester === true;
+}
+
+/**
+ * The tester run of `parentId` that is not retired yet, if any: at most one (tester spec,
+ * decision 11). While it exists the doer's device is the tester's
+ * (docs/specs/2026-11-04-tester-mobile-device.md, decision 2).
+ */
+export function activeTesterOf(sessions: readonly Session[], parentId: string): Session | undefined {
+  return sessions.find((s) => s.parentSessionId === parentId && isTesterSession(s) && s.status !== "merged");
 }
 
 export type TesterToolDeps = {
@@ -167,7 +196,7 @@ async function setChecklist(deps: TesterToolDeps, session: Session, taskId: stri
 }
 
 /**
- * The value `browser_type_credential` types: the named account's login or password from this
+ * The value a credential tool (`browser_type_credential`, `device_type_credential`) types: the named account's login or password from this
  * machine's tester settings of the project. Throws a message that names the account, never a value.
  */
 export function credentialValue(registry: RegistryService, projectId: string, args: Record<string, unknown>): { account: TesterAccount; field: "login" | "password"; value: string } {

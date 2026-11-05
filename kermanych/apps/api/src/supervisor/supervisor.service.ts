@@ -57,7 +57,6 @@ import {
   deepAnalysisPrompt,
   DEEP_ANALYSIS_SKILL,
   BRANCH_PREFIXES,
-  platformHasBrowser,
   platformHasDevice,
   type BranchPrefix,
   type StatusState,
@@ -132,6 +131,7 @@ import { EnvFileService } from "../env/env-file.service";
 import { GithubClient, GithubHttpError, parseGithubPrUrl, parseGithubRemote, type GithubPull } from "../github/github-client";
 import { PreviewService } from "../preview/preview.service";
 import { PREVIEW_CONFIG_SKILL, previewConfigPrompt } from "../preview/preview-prompt";
+import { activeTesterOf } from "../tester/tester-tools";
 
 // Why «Виконати тестування» cannot start (core testerRefusal), in the words the api answers with.
 const TESTER_REFUSALS: Record<TesterRefusal, string> = {
@@ -141,7 +141,7 @@ const TESTER_REFUSALS: Record<TesterRefusal, string> = {
   "no-card": "testing works only for sessions started from a task card",
   busy: "wait for the agent to finish its turn before testing",
   "no-browser": "the session browser is not available: Kermanych is running without its desktop app",
-  platform: "this project's platform has no browser to test in",
+  platform: "this project's platform has neither a browser nor a device to test on",
   "no-preview": `set up the live preview first: ${PREVIEW_CONFIG_PATH} is missing in the session directory`,
 };
 
@@ -1808,9 +1808,9 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
       worktree: s.worktree,
       worktreePath: s.worktreePath,
       taskId: s.taskId,
-      runningTester: this.registry.listSessions().some((x) => x.parentSessionId === parentId && x.tester === true && x.status !== "merged"),
+      runningTester: !!activeTesterOf(this.registry.listSessions(), parentId),
       browserHost: !!browserHost(),
-      platformHasBrowser: platformHasBrowser(g.platform),
+      platform: g.platform,
       previewConfig: previewConfig?.kind,
     });
     if (refusal === "no-preview" && previewConfig?.kind === "invalid") throw new Error(`set up the live preview first: ${PREVIEW_CONFIG_PATH} is invalid: ${previewConfig.error}`);
@@ -1837,14 +1837,14 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
         agentById(TESTER_AGENT_ID)!,
         {
           task: s.task,
-          loginPath: testerLoginPathLine(settings.loginPath),
+          loginPath: testerLoginPathLine(settings.loginPath, g.platform),
           accounts: testerAccountsBlock(settings.accounts),
           notes: testerNotesBlock(settings.notes),
           items: testerItemsBlock(inScope),
         },
         template,
       ) +
-      `\n\n${testerContract(qaScreenshotDir(new Date(), s.branch))}` +
+      `\n\n${testerContract(qaScreenshotDir(new Date(), s.branch), g.platform)}` +
       block;
 
     const child = this.registry.createSession({
@@ -1934,12 +1934,14 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
       // A card that cannot be read throws here and leaves the child intact.
       const card = taskId ? await getTask(this.auth.cloudClient(), taskId) : undefined;
       const handoff = qaHandoffText(c.name, c.id, card?.qaChecklist?.items ?? []);
+      // Retired first: the doer's first turn on the failures may need the device the run held
+      // (docs/specs/2026-11-04-tester-mobile-device.md, decision 2). The verdicts stay on the card.
+      await this.retireTester(childId);
       if (handoff) {
         const parentLive = this.map.get(parentId);
         const busy = parentLive && (parentLive.state.status === "thinking" || parentLive.state.status === "tool");
         await this.sendAsKermanych(parentId, handoff, busy ? "follow_up" : "prompt");
       }
-      await this.retireTester(childId);
       return { merged: true };
     }
     const live = this.map.get(childId);

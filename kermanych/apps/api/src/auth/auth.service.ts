@@ -1,5 +1,5 @@
 import { Injectable, Optional } from "@nestjs/common";
-import { cloudEnv, createCloudClient, getMyAgentLanguage } from "@kermanych/cloud";
+import { cloudEnv, createCloudClient, getMyAgentLanguage, getMySkillImprovement } from "@kermanych/cloud";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { RegistryService, type AuthSessionRow } from "../registry/registry.service";
 
@@ -119,6 +119,16 @@ export class AuthService {
         if (cur) this.registry.setAuthSession({ ...cur, agentLanguage: language });
       }
     } catch { /* offline or profile unreadable — cache stays, no directive is injected */ }
+
+    // And for the skill self-improvement switch (docs/specs/2026-11-04-skill-self-improvement.md),
+    // so the improve_skill gate reads it locally.
+    try {
+      const on = await getMySkillImprovement(this.cloudClient());
+      if (on !== null) {
+        const cur = this.registry.getAuthSession();
+        if (cur) this.registry.setAuthSession({ ...cur, skillImprovement: on });
+      }
+    } catch { /* offline or profile unreadable — cache stays; unknown counts as on */ }
 
     return { userId: row.userId, githubUsername: row.githubUsername };
   }

@@ -17,6 +17,9 @@ export type AuthSessionRow = {
   expiresAt?: string;
   githubUsername?: string;
   agentLanguage?: AgentLanguage;
+  // The operator's «skill self-improvement» switch (profiles.skill_improvement), cached so the
+  // improve_skill gate needs no cloud read. Unknown (never hydrated) = undefined, treated as on.
+  skillImprovement?: boolean;
 };
 
 // This machine's resource-profile row. `overrides` stays JSON text here; the profile service
@@ -398,6 +401,13 @@ export class RegistryService {
     // round trip.
     try {
       this.db.exec(`ALTER TABLE auth_session ADD COLUMN agent_language TEXT`);
+    } catch {
+      /* column already exists */
+    }
+    // Additive migration: the cached skill self-improvement switch
+    // (docs/specs/2026-11-04-skill-self-improvement.md); 1/0, NULL = not yet known.
+    try {
+      this.db.exec(`ALTER TABLE auth_session ADD COLUMN skill_improvement INTEGER`);
     } catch {
       /* column already exists */
     }
@@ -1238,12 +1248,14 @@ export class RegistryService {
   getAuthSession(): AuthSessionRow | undefined {
     const row = this.db
       .prepare(
-        `SELECT user_id as userId, access_token as accessToken, expires_at as expiresAt, github_username as githubUsername, agent_language as agentLanguage FROM auth_session WHERE id = 1`,
+        `SELECT user_id as userId, access_token as accessToken, expires_at as expiresAt, github_username as githubUsername, agent_language as agentLanguage, skill_improvement as skillImprovement FROM auth_session WHERE id = 1`,
       )
-      .get() as (AuthSessionRow & { agentLanguage: string | null }) | undefined;
+      .get() as (Omit<AuthSessionRow, "skillImprovement"> & { agentLanguage: string | null; skillImprovement: number | null }) | undefined;
     if (!row) return undefined;
+    const { skillImprovement, ...rest } = row;
     return {
-      ...row,
+      ...rest,
+      ...(skillImprovement === null ? {} : { skillImprovement: skillImprovement !== 0 }),
       expiresAt: row.expiresAt ?? undefined,
       githubUsername: row.githubUsername ?? undefined,
       agentLanguage: isAgentLanguage(row.agentLanguage) ? row.agentLanguage : undefined,
@@ -1253,9 +1265,9 @@ export class RegistryService {
   setAuthSession(row: AuthSessionRow): void {
     this.db
       .prepare(
-        `INSERT OR REPLACE INTO auth_session (id, user_id, access_token, expires_at, github_username, agent_language) VALUES (1,?,?,?,?,?)`,
+        `INSERT OR REPLACE INTO auth_session (id, user_id, access_token, expires_at, github_username, agent_language, skill_improvement) VALUES (1,?,?,?,?,?,?)`,
       )
-      .run(row.userId, row.accessToken, row.expiresAt ?? null, row.githubUsername ?? null, row.agentLanguage ?? null);
+      .run(row.userId, row.accessToken, row.expiresAt ?? null, row.githubUsername ?? null, row.agentLanguage ?? null, row.skillImprovement === undefined ? null : row.skillImprovement ? 1 : 0);
   }
 
   clearAuthSession(): void {

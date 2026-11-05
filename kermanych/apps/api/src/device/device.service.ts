@@ -310,6 +310,10 @@ export class DeviceService implements DeviceApi, OnModuleInit, OnModuleDestroy {
     return this.booted(sessionId).booted.appRunning(app);
   }
 
+  async clearApp(sessionId: string, app: string): Promise<void> {
+    return this.booted(sessionId).booted.clearApp(app);
+  }
+
   appLogs(sessionId: string, app: string, onLine: (line: string) => void): () => void {
     return this.booted(sessionId).booted.appLogs(app, onLine);
   }
@@ -343,8 +347,8 @@ export class DeviceService implements DeviceApi, OnModuleInit, OnModuleDestroy {
     await booted.touch("end", to.x, to.y);
   }
 
-  async type(sessionId: string, text: string): Promise<void> {
-    return this.booted(sessionId).booted.typeText(text);
+  async type(sessionId: string, text: string, opts?: { secret?: boolean }): Promise<void> {
+    return this.booted(sessionId).booted.typeText(text, opts);
   }
 
   async press(sessionId: string, button: DeviceButton): Promise<void> {

@@ -96,7 +96,14 @@ export {
   isTerminalTaskStatus,
 } from "./status";
 
-export { getMyAgentProvider, setMyAgentProvider, getMyAgentLanguage, setMyAgentLanguage } from "./account";
+export {
+  getMyAgentProvider,
+  setMyAgentProvider,
+  getMyAgentLanguage,
+  setMyAgentLanguage,
+  getMySkillImprovement,
+  setMySkillImprovement,
+} from "./account";
 
 export type { CloudProjectPatch, CloudProjectInsert } from "./projects";
 export {
@@ -172,9 +179,24 @@ export {
 export {
   toAiSkill,
   listAiSkills,
+  getAiSkill,
   upsertAiSkill,
   deleteAiSkill,
 } from "./skills";
+
+export type { SkillImprovementChange, SkillImprovementChannelState } from "./skill-improvements";
+export {
+  toSkillImprovementEntry,
+  toSkillImprovement,
+  insertSkillImprovement,
+  countSessionSkillImprovements,
+  listSkillImprovementEntries,
+  getSkillImprovement,
+  listAppliedSkillImprovements,
+  setSkillImprovementState,
+  markSkillImprovementsSeen,
+  subscribeSkillImprovements,
+} from "./skill-improvements";
 
 export { toAiAgentSkill, listAiAgentSkills, setAiAgentSkills } from "./agent-skills";
 

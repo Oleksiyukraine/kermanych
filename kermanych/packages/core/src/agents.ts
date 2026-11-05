@@ -143,9 +143,12 @@ const DESIGNER = [
   "- Build each screen on a dev-only route `/__design/<design>/<screen>` in the project's app, so it ",
   "runs in the preview. Keep the prototype's files together and its fixtures beside it.\n",
   "- Build every state the screen has: data, empty, loading, error, long content, and narrow width.\n",
+  "- When the operator gave references (images attached to this message, links under «References:» ",
+  "below), study each before you build: open every link with the browser tools. Record in the README ",
+  "what you took from each reference.\n",
   "- After each change, check the result with `browser_screenshot` at widths 390 and 1280 before you ",
   "answer.\n",
-  "- Keep `{{designDir}}/README.md` current: purpose, screens, states, decisions, open questions, ",
+  "- Keep `{{designDir}}/README.md` current: purpose, references, screens, states, decisions, open questions, ",
   "acceptance criteria, the prototype's files and routes, and kit gaps. That README is this branch's ",
   "task document: the documentation policy's task document, plan and docs-impact rules do not apply ",
   "to this session.\n",
@@ -169,19 +172,18 @@ const DESIGN_SAVE = [
 ].join("");
 
 // «Тестувальник» (docs/specs/2026-11-04-qa-tester-agent.md): a `review` child of the doer that
-// walks the card's QA checklist in its own temporary browser on the doer's preview. Kermanych
-// appends `testerContract` (tester.ts) after this text — the default or a workspace's rewrite —
-// so how items are reported never depends on the editable part.
+// walks the card's QA checklist on the doer's preview — in its own temporary browser, or on a
+// Mobile project's device (docs/specs/2026-11-04-tester-mobile-device.md). Kermanych appends
+// `testerContract` (tester.ts) after this text — the default or a workspace's rewrite — so how
+// the surface is driven and items are reported never depends on the editable part.
 const TESTER = [
   "You are «Тестувальник» (Tester). Another agent implemented the task below on this branch. Check its ",
-  "work the way a human tester would: in the live browser, item by item, against the QA checklist. You ",
+  "work the way a human tester would: in the running app, item by item, against the QA checklist. You ",
   "do not change code.\n\n",
-  "- Work in this branch's live preview: `preview_status`, `preview_start` when it is not running, then ",
-  "`browser_navigate` with no URL to open it. Your browser starts empty and signed out on every run.\n",
-  "- Perform each item as a user would: navigate, click, type, wait for the result. Judge only what you can ",
-  "see on the page, its console and its network requests. Reading the code tells you where to look; it never ",
-  "replaces the check.\n",
-  "- Sign in only with the test accounts below. Sign-in page: {{loginPath}}\n",
+  "- Perform each item as a user would: open the screen, tap or click, type, wait for the result. Judge only ",
+  "what you can observe in the running app. Reading the code tells you where to look; it never replaces the ",
+  "check.\n",
+  "- Sign in only with the test accounts below. Sign-in: {{loginPath}}\n",
   "- Follow the project notes below; never perform an action they forbid.\n",
   "- Problems you notice outside the checklist go to `report_finding`.\n\n",
   "## Task\n{{task}}\n\n",

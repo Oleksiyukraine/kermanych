@@ -33,4 +33,21 @@ export class AccountController {
     this.registry.setAuthSession({ ...cur, agentLanguage: b.language });
     return { language: b.language };
   }
+
+  // The skill self-improvement switch (docs/specs/2026-11-04-skill-self-improvement.md): the UI
+  // writes profiles.skill_improvement first, then POSTs here so the improve_skill gate sees it.
+  // Unknown counts as on, the cloud column's default.
+  @Get("skill-improvement")
+  getSkillImprovement(): { on: boolean } {
+    return { on: this.registry.getAuthSession()?.skillImprovement ?? true };
+  }
+
+  @Post("skill-improvement")
+  setSkillImprovement(@Body() b: { on?: unknown }): { on: boolean } {
+    if (typeof b?.on !== "boolean") throw new BadRequestException(`on must be a boolean, got ${JSON.stringify(b?.on)}`);
+    const cur = this.registry.getAuthSession();
+    if (!cur) throw new BadRequestException("not signed in");
+    this.registry.setAuthSession({ ...cur, skillImprovement: b.on });
+    return { on: b.on };
+  }
 }

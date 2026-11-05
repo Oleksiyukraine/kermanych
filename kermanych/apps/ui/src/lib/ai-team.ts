@@ -181,6 +181,26 @@ export function ownerLibraryView(rows: readonly AiSkill[]): SkillView[] {
 }
 
 /**
+ * What the skill editor opens on for `name`, given the owner's stored rows: that owner's row when
+ * it has one, otherwise — a Kermanych default this owner has not overridden yet — the default's
+ * own text. Opening a default on an empty body made a description-only edit save an empty
+ * override that beats the default for every session at this scope.
+ */
+export function skillEditorDraft(name: string, stored: readonly AiSkill[]): { body: string; enabled: boolean } {
+  const row = stored.find((s) => s.name === name);
+  if (row) return { body: row.body, enabled: row.enabled };
+  return { body: DEFAULT_SKILLS.find((d) => d.name === name)?.body ?? '', enabled: true };
+}
+
+/**
+ * True when saving `body` under `name` would replace a Kermanych default with an empty skill: the
+ * session would still get a SKILL.md under that name, with no text. The editor asks first.
+ */
+export function blanksDefaultSkill(name: string, body: string): boolean {
+  return body.trim() === '' && DEFAULT_SKILLS.some((d) => d.name === name);
+}
+
+/**
  * WHAT STANDS IN THE WAY OF SAVING AN IMPORTED SKILL under `name` at `scope` (spec
  * 2026-10-22-skill-import, decision 6). Two refusals and two warnings, in this order:
  *
