@@ -1,32 +1,22 @@
 <template>
   <q-layout view="hHh Lpr fFf" class="shell">
-    <!-- LEFT SIDEBAR — bucket nav + projects + folder binding + account (v3 section 07) -->
-    <q-drawer model-value side="left" :width="collapsed ? 76 : 264" :breakpoint="0" class="shell__sidebar">
+    <!-- LEFT SIDEBAR — first-run checklist + workspaces/projects + collapse toggle (v3 section 07).
+         Focus mode takes it off screen entirely (the header's ⛶ / ⌘\); «« / »» only changes its
+         width, and leaving focus mode brings back whichever width was set. -->
+    <q-drawer :model-value="!focusMode" side="left" :width="collapsed ? 76 : 264" :breakpoint="0" class="shell__sidebar">
       <div class="shell__side-inner" :class="{ 'shell--min': minified }">
-        <nav class="shell__buckets">
-          <KNavItem
-            v-for="b in buckets"
-            :key="b.key"
-            :label="t(b.label)"
-            :icon="b.icon"
-            :count="bucketCounts[b.key]"
-            :tip="minified ? t(b.label) : undefined"
-            :active="store.selectedBucket === b.key"
-            @click="onBucket(b.key)"
-          />
-        </nav>
         <!-- FIRST-RUN CHECKLIST — stays until the account dismisses it (stores/onboarding.ts).
              Its hint doubles as a progress read (done/total); the row opens the modal. -->
         <KNavItem
           v-if="onb.sidebarVisible"
           :label="t('onboarding.checklist.navLabel')"
           icon="start"
-          :hint="t('onboarding.checklist.stepCount', { done: onb.doneCount, total: onb.totalCount })"
+          :hint="onbCountKnown ? t('onboarding.checklist.stepCount', { done: onb.doneCount, total: onb.totalCount }) : '\u00a0'"
           :tip="minified ? t('onboarding.checklist.navLabel') : undefined"
           :active="onb.open"
           @click="onb.show()"
         />
-        <div class="shell__divider"></div>
+        <div v-if="onb.sidebarVisible" class="shell__divider"></div>
         <div class="shell__side-label shell__side-label--row">
           <span>{{ t('common.nav.workspaces') }}</span>
           <button
@@ -44,7 +34,8 @@
              does not say whose. KWorkspaceRow's chevron cannot carry aria-controls
              (fallthrough attributes land on the row's root element, not on the button),
              so the containment is what supplies the relationship. -->
-        <ul class="shell__projects">
+        <KSkeleton v-if="sidebarPhase === 'skeleton'" class="shell__projects-skeleton" variant="rows" :rows="4" />
+        <ul v-else-if="sidebarPhase === 'ready'" class="shell__projects">
           <!-- The drop target is the whole GROUP, not just its header row. Groups are
                expanded by default, so an open workspace's projects occupy most of what the
                user reads as «that workspace» and the thin header is the smaller part of it;
@@ -80,13 +71,19 @@
               class="shell__group-items"
               :aria-label="t('common.nav.workspaceProjects', { name: group.workspace.name })"
             >
-              <li v-for="p in sidebarProjects.byWorkspace.get(group.workspace.id) ?? []" :key="p.id">
+              <li
+                v-for="p in sidebarProjects.byWorkspace.get(group.workspace.id) ?? []"
+                :key="p.id"
+                :class="{ 'shell__item--pending': moving.busyFor(p.id) }"
+                :aria-busy="moving.busyFor(p.id) || undefined"
+              >
                 <KRailItem
                   :project="p"
                   indent
                   :active="p.id === store.selectedProjectId"
                   :attention="attentionOf(p.id)"
-                  :draggable="hasCloudList"
+                  :minion="minionProjects.has(p.id)"
+                  :draggable="hasCloudList && !moving.busyFor(p.id)"
                   @click="selectProject(p.id)"
                   @dragstart="draggingProjectId = $event"
                   @dragend="onDragEnd"
@@ -105,43 +102,14 @@
                   indent
                   :active="p.id === store.selectedProjectId"
                   :attention="attentionOf(p.id)"
+                  :minion="minionProjects.has(p.id)"
                   @click="selectProject(p.id)"
                 />
               </li>
             </ul>
           </li>
         </ul>
-        <div class="shell__user">
-          <KUserButton
-            class="shell__account"
-            :label="accountLabel"
-            :avatar-url="auth.profile?.avatarUrl"
-            :title="accountHint"
-            @click="goSettings('app-account')"
-          />
-          <!-- Name and plan spend stack, so the name rides up and the windows sit under it.
-               One row per authenticated provider (in practice one), each window a percent of
-               its rolling quota — the only unit providers meter plans in. -->
-          <div class="shell__account-meta">
-            <span class="shell__account-name">{{ accountName }}</span>
-            <div
-              v-for="p in planLines"
-              :key="p.provider"
-              v-tip="p.hint"
-              class="shell__account-plan mono"
-            >
-              <span v-if="planLines.length > 1" class="shell__plan-provider">{{ p.provider }}</span>
-              <span
-                v-for="w in p.windows"
-                :key="w.id"
-                class="shell__plan-window"
-                :class="{
-                  'shell__plan-window--warn': w.used >= 80 && w.used < 95,
-                  'shell__plan-window--hot': w.used >= 95,
-                }"
-              >{{ w.short }} {{ w.percent }}</span>
-            </div>
-          </div>
+        <div class="shell__side-foot">
           <button
             class="shell__toggle"
             v-tip="collapsed ? t('common.nav.expandPanel') : t('common.nav.collapsePanel')"
@@ -152,7 +120,9 @@
       </div>
     </q-drawer>
 
-    <!-- TOP BAR — brand + segmented view nav + project actions (v3) -->
+    <!-- TOP BAR — brand, focus toggle, project switcher + segmented view nav + app actions (v3).
+         The version lives under Settings → «Загальне», not here: this row is where the
+         operator reads where they are, and the switcher needs the room. -->
     <q-header class="shell__header">
       <div class="shell__brand">
         <svg class="shell__mark" viewBox="0 0 1024 1024" aria-hidden="true">
@@ -161,7 +131,35 @@
           <rect x="636" y="726" width="300" height="84" fill="#f3f2f2" />
         </svg>
         <span class="shell__logo">{{ t('common.nav.logo') }}</span>
-        <span class="shell__ver mono">v{{ APP_VERSION }}</span>
+        <!-- FOCUS MODE — hides the left sidebar so the work area takes the screen; the footer
+             stays. Here rather than in the sidebar because the sidebar is what it hides: the
+             way back has to be where the way in was. Ctrl/⌘ \ does the same. -->
+        <KIconButton
+          class="shell__focus"
+          :active="focusMode"
+          :aria-pressed="focusMode"
+          :title="t('common.nav.focusMode')"
+          @click="toggleFocusMode"
+        ><KIcon name="focus" /></KIconButton>
+        <!-- Where the operator is, and the way to anywhere else — always on screen, the only
+             project list in focus mode (spec docs/specs/2026-10-29-agents-tab-and-focus-mode.md). -->
+        <KProjectSwitcher
+          :groups="switcherGroups"
+          :ungrouped="sidebarProjects.ungrouped"
+          :ungrouped-label="localOnlyLabel"
+          :project-id="store.selectedProjectId"
+          :workspace-id="store.selectedWorkspaceId"
+          :attention-of="attentionOf"
+          :workspace-attention="workspaceAttention"
+          :minion="minionProjects"
+          :outside="outsideAttention"
+          :empty-label="t('common.nav.switcherEmpty')"
+          :all-projects-label="(name: string) => t('common.nav.switcherAllProjects', { name })"
+          :menu-label="t('common.nav.switcher')"
+          :outside-hint="outsideHint"
+          @select-project="selectProject"
+          @select-workspace="selectWorkspace"
+        />
       </div>
       <KTopNav
         class="shell__nav"
@@ -170,6 +168,40 @@
         @update:model-value="goView"
       />
       <div class="shell__actions">
+        <!-- The voice conversation, wherever the operator is (docs/specs/2026-11-02-voice-conversation.md,
+             decision 8): its session and time, the session one click away, 🔇 and «Завершити». -->
+        <div v-if="voice.bar" class="shell__voice mono" role="status">
+          <button
+            type="button"
+            class="shell__voice-open"
+            v-tip="t('voice.pillOpen')"
+            :aria-label="t('voice.pill', { name: voiceSessionName })"
+            @click="openVoiceSession"
+          >
+            <KIcon class="shell__voice-icon" :name="voice.bar.muted ? 'micOff' : 'mic'" />
+            <span class="shell__voice-name">{{ voiceSessionName }}</span>
+            <span class="shell__voice-time">{{ voiceClock }}</span>
+          </button>
+          <KIconButton
+            :active="voice.bar.muted"
+            :disabled="voice.bar.phase !== 'live'"
+            :title="voice.bar.muted ? t('kit.voiceBar.unmute') : t('kit.voiceBar.mute')"
+            @click="voice.toggleMute()"
+          ><KIcon class="shell__voice-icon" name="micOff" /></KIconButton>
+          <KIconButton :loading="voice.bar.phase === 'ending'" :title="t('kit.voiceBar.end')" @click="void voice.end()">✕</KIconButton>
+        </div>
+        <!-- AI LOGIN REQUIRED — the provider CLI behind the operator's runtime is signed out on
+             this machine (composables/useProviderSignIn.ts). Present only then; its tooltip
+             names the command, a click asks again after the operator has logged in. -->
+        <button
+          v-if="signInCode"
+          type="button"
+          class="shell__signin mono"
+          role="alert"
+          v-tip="signInHint"
+          :aria-label="`${t('common.nav.aiLoginRequired')}. ${signInHint}`"
+          @click="recheckSignIn"
+        ><span aria-hidden="true">⚠</span> {{ t('common.nav.aiLoginRequired') }}</button>
         <!-- ONE gear, into pages/SettingsPage.vue. It used to be three controls —
              a workspace ⚙, a project ⚙ and a `$` for the `.env` — each opening its
              own modal; the settings screen holds all three behind a scope switcher,
@@ -197,6 +229,7 @@
           @click="onLangToggle"
         >{{ locale === 'uk' ? 'EN' : 'UK' }}</KIconButton>
       </div>
+      <KProgressBar :active="activity.barVisible" />
     </q-header>
 
     <!-- PAGE -->
@@ -208,27 +241,84 @@
       <div class="shell__main">
         <!-- A downloaded app update: «What's new» and «Restart». Empty otherwise. -->
         <AppUpdateBanner />
-        <div class="shell__workarea">
-          <KFileManager
-            v-if="store.fileManagerVisible && store.fileManagerSide === 'left'"
-            class="shell__fm shell__fm--left"
-          />
+        <div ref="workareaEl" class="shell__workarea">
+          <template v-if="store.fileManagerVisible && store.fileManagerSide === 'left'">
+            <KFileManager class="shell__fm shell__fm--left" :style="{ width: `${fmLeft.size.value}px` }" />
+          <div
+            class="shell__fm-resizer shell__fm-resizer--left"
+            :class="{ 'shell__fm-resizer--on': fmLeft.resizing.value }"
+            role="separator"
+            aria-orientation="vertical"
+            :aria-label="t('common.nav.fileManagerResize')"
+            :aria-valuenow="Math.round(fmLeft.size.value)"
+            :aria-valuemin="FM_MIN"
+            tabindex="0"
+            v-tip="t('common.nav.fileManagerResizeTip')"
+            @pointerdown="fmLeft.startResize"
+            @keydown="fmLeft.onKeydown"
+          ></div>
+          </template>
           <div class="shell__page">
             <router-view />
           </div>
-          <KFileManager
-            v-if="store.fileManagerVisible && store.fileManagerSide === 'right'"
-            class="shell__fm shell__fm--right"
-          />
+          <template v-if="store.fileManagerVisible && store.fileManagerSide === 'right'">
+          <div
+            class="shell__fm-resizer shell__fm-resizer--right"
+            :class="{ 'shell__fm-resizer--on': fmRight.resizing.value }"
+            role="separator"
+            aria-orientation="vertical"
+            :aria-label="t('common.nav.fileManagerResize')"
+            :aria-valuenow="Math.round(fmRight.size.value)"
+            :aria-valuemin="FM_MIN"
+            tabindex="0"
+            v-tip="t('common.nav.fileManagerResizeTip')"
+            @pointerdown="fmRight.startResize"
+            @keydown="fmRight.onKeydown"
+          ></div>
+            <KFileManager class="shell__fm shell__fm--right" :style="{ width: `${fmRight.size.value}px` }" />
+          </template>
         </div>
         <KTerminalPanel v-if="terminal.panelVisible" />
       </div>
     </q-page-container>
 
-    <!-- STATUS BAR — a VS Code-style footer: git pull and the current branch for the selected
-         repo. There is deliberately no Push: work leaves the machine through the PR flow only,
-         never as a blind push of whatever branch the project repo sits on. -->
+    <!-- STATUS BAR — a VS Code-style footer: the account with its plan spend, then git pull and
+         the current branch for the selected repo. There is deliberately no Push: work leaves the
+         machine through the PR flow only, never as a blind push of whatever branch the project
+         repo sits on. -->
     <q-footer class="shell__footer">
+      <!-- Account, at the bar's left edge under the sidebar it used to close: avatar, name over
+           plan spend. One row per authenticated provider (in practice one), each window a
+           percent of its rolling quota — the only unit providers meter plans in. -->
+      <div class="shell__user">
+        <KUserButton
+          class="shell__account"
+          :label="accountLabel"
+          :avatar-url="auth.profile?.avatarUrl"
+          :title="accountHint"
+          @click="goSettings('app-account')"
+        />
+        <div class="shell__account-meta">
+          <span class="shell__account-name">{{ accountName }}</span>
+          <div
+            v-for="p in planLines"
+            :key="p.provider"
+            v-tip="p.hint"
+            class="shell__account-plan mono"
+          >
+            <span v-if="planLines.length > 1" class="shell__plan-provider">{{ p.provider }}</span>
+            <span
+              v-for="w in p.windows"
+              :key="w.id"
+              class="shell__plan-window"
+              :class="{
+                'shell__plan-window--warn': w.used >= 80 && w.used < 95,
+                'shell__plan-window--hot': w.used >= 95,
+              }"
+            >{{ w.short }} {{ w.percent }}</span>
+          </div>
+        </div>
+      </div>
       <!-- File-manager dock, left: shows the selected session's files between the sidebar and
            the page. Clicking it again collapses the dock. -->
       <button
@@ -254,10 +344,11 @@
         type="button"
         class="shell__foot-btn"
         :disabled="!isBound || syncing"
+        :aria-busy="syncing || undefined"
         v-tip="pullHint"
         :aria-label="isBound && incoming > 0 ? `Pull — ${t('common.nav.pullIncoming', { count: incoming })}` : 'Pull'"
-        @click="gitPull"
-      ><span class="k-glyph" aria-hidden="true">↓</span> Pull<span
+        @click="gitPull()"
+      ><KSpinner v-if="syncing" :size="10" /><span v-else class="k-glyph" aria-hidden="true">↓</span> Pull<span
         v-if="isBound && incoming > 0"
         class="shell__foot-badge"
         aria-hidden="true"
@@ -277,10 +368,11 @@
         type="button"
         class="shell__foot-btn"
         :disabled="!isBound || refreshing"
+        :aria-busy="refreshing || fetchingGit || undefined"
         v-tip="t('common.nav.refreshTip')"
         :aria-label="t('common.nav.refreshTip')"
-        @click="refreshGitNow"
-      ><span class="k-glyph" aria-hidden="true">↻</span></button>
+        @click="refreshGitNow()"
+      ><span class="k-glyph" :class="{ 'shell__foot-spin': refreshing || fetchingGit }" aria-hidden="true">↻</span></button>
       <span class="shell__foot-spacer"></span>
       <!-- The path is a STATUS read-out that doubles as the way to change it. It
            used to open the directory picker straight from here, which put the
@@ -313,7 +405,7 @@
     <!-- CREATE-WORKSPACE MODAL — the sidebar's two «+» buttons create different things, so
          they get two modals. A workspace is the group AND the team: membership hangs off it,
          which is what the hint below says out loud. -->
-    <KModal v-model="createWorkspaceOpen" :title="t('common.nav.newWorkspace')">
+    <KModal v-model="createWorkspaceOpen" :title="t('common.nav.newWorkspace')" :persistent="createWorkspaceBusy">
       <div class="shell__form">
         <KField v-model="createWorkspaceName" :label="t('common.nav.nameLabel')" placeholder="AAA" />
         <p class="shell__hint">
@@ -322,13 +414,14 @@
         <p v-if="createError" class="shell__error" role="alert">{{ createError }}</p>
       </div>
       <template #controls>
-        <KBtn variant="ghost" @click="createWorkspaceOpen = false">{{ t('common.nav.cancel') }}</KBtn>
+        <KBtn variant="ghost" :disabled="createWorkspaceBusy" @click="createWorkspaceOpen = false">{{ t('common.nav.cancel') }}</KBtn>
         <KBtn
           variant="primary"
-          :disabled="!canCreateWorkspace || createBusy"
-          @click="submitCreateWorkspace"
+          :disabled="!canCreateWorkspace"
+          :loading="createWorkspaceBusy"
+          @click="submitCreateWorkspace()"
         >
-          {{ createBusy ? t('common.nav.creating') : t('common.nav.create') }}
+          {{ createWorkspaceBusy ? t('common.nav.creating') : t('common.nav.create') }}
         </KBtn>
       </template>
     </KModal>
@@ -340,7 +433,8 @@
     <KModal
       :model-value="createProjectFor !== undefined"
       :title="t('common.nav.newProjectIn', { name: projects.workspaceById.get(createProjectFor ?? '')?.name ?? '' })"
-      @update:model-value="createProjectFor = undefined"
+      :persistent="createProjectBusy"
+      @update:model-value="createProjectBusy || (createProjectFor = undefined)"
     >
       <div class="shell__form">
         <KField v-model="createName" :label="t('common.nav.nameLabel')" placeholder="my-project" />
@@ -349,15 +443,23 @@
           :label="t('common.nav.gitRemoteLabel')"
           placeholder="git@github.com:org/repo.git"
         />
+        <!-- What the project ships (docs/specs/2026-11-03-session-browser-preview.md, decision
+             9): back-end and mobile get no session browser and no preview. Defaults to
+             «Не визначено»; Settings → Проєкт → «Основне» changes it later. -->
+        <KSelect
+          v-model="createPlatform"
+          :label="t('settings.project.platform')"
+          :options="platformPickOptions"
+        />
         <p class="shell__hint">
           {{ t('common.nav.projectFormHint') }}
         </p>
         <p v-if="createError" class="shell__error" role="alert">{{ createError }}</p>
       </div>
       <template #controls>
-        <KBtn variant="ghost" @click="createProjectFor = undefined">{{ t('common.nav.cancel') }}</KBtn>
-        <KBtn variant="primary" :disabled="!canCreate || createBusy" @click="submitCreate">
-          {{ createBusy ? t('common.nav.creating') : t('common.nav.create') }}
+        <KBtn variant="ghost" :disabled="createProjectBusy" @click="createProjectFor = undefined">{{ t('common.nav.cancel') }}</KBtn>
+        <KBtn variant="primary" :disabled="!canCreate" :loading="createProjectBusy" @click="submitCreate()">
+          {{ createProjectBusy ? t('common.nav.creating') : t('common.nav.create') }}
         </KBtn>
       </template>
     </KModal>
@@ -401,8 +503,9 @@
       <template #controls>
         <KBtn
           variant="primary"
-          :disabled="!onboardingChoice || onboardingBusy"
-          @click="submitOnboarding"
+          :disabled="!onboardingChoice"
+          :loading="onboardingBusy"
+          @click="submitOnboarding()"
         >
           {{ t('onboarding.runtime.confirm') }}
         </KBtn>
@@ -417,37 +520,80 @@
       @create-project="onOnboardingCreateProject"
       @bind-folder="onOnboardingBindFolder"
     />
-    <KDirPicker v-model="onbPickerOpen" :start="onbPickerStart" @select="onOnboardingFolderChosen" />
+    <KDirPicker v-model="onbPickerOpen" :start="onbPickerStart" @select="onOnboardingFolderChosen($event)" />
+
+    <!-- MACHINE RESOURCES CONSENT (spec decision 2). Dismissible, unlike the runtime gate:
+         Керманич runs without limits, so closing it any way other than the three buttons
+         stores nothing and it simply comes back on the next start. -->
+    <KModal
+      :model-value="!!consent.offer.value"
+      :title="t('resourcesConsent.title')"
+      width="520px"
+      @update:model-value="(v: boolean) => { if (!v) consent.close(); }"
+    >
+      <div v-if="consent.offer.value" class="shell__form">
+        <p class="shell__hint">{{ t('resourcesConsent.blurb') }}</p>
+        <p class="shell__hint mono">{{ hardwareLine(t, consent.offer.value) }}</p>
+        <table class="shell__limits">
+          <tbody>
+            <tr v-for="row in consentRows" :key="row.label">
+              <td>{{ row.label }}</td>
+              <td class="mono">
+                {{ row.value }}<span v-if="row.note" class="shell__limits-note"> · {{ row.note }}</span>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <template #controls>
+        <KBtn variant="ghost" :disabled="consentBusy" @click="decideResources('declined')">
+          {{ t('resourcesConsent.notNow') }}
+        </KBtn>
+        <KBtn variant="secondary" :disabled="consentBusy" @click="configureResources">
+          {{ t('resourcesConsent.configure') }}
+        </KBtn>
+        <KBtn variant="primary" :disabled="consentBusy" @click="decideResources('applied')">
+          {{ t('resourcesConsent.apply') }}
+        </KBtn>
+      </template>
+    </KModal>
 
     <!-- TOAST STACK — transient notifications (errors etc.) -->
     <KToast :toasts="store.toasts" @dismiss="store.dismissToast" />
+    <!-- Every destructive action asks here first (lib/confirm.ts). -->
+    <KConfirmDialog />
 
-    <!-- JIRA MERGE PROMPT — global on purpose: a shadow task reaches `merged` wherever
+    <!-- TRACKER MERGE PROMPTS — global on purpose: a shadow task reaches `merged` wherever
          the user happens to be, and the «куди перенести тікет?» question must not depend
          on the board page being open. Renders nothing until such a merge happens. -->
     <JiraMergePrompt />
     <LinearMergePrompt />
+    <PlaneMergePrompt />
+    <!-- The Менеджмент assistant from anywhere: the character at the left edge, ⌘K, the
+         mouse circle, and the overlay they open (docs/specs/2026-11-03-assistant-overlay.md). -->
+    <AssistantLauncher />
   </q-layout>
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, onUnmounted, ref, watch } from 'vue';
+import { computed, nextTick, onBeforeUnmount, onMounted, onUnmounted, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { useI18n } from 'vue-i18n';
-import type { Session } from '@kermanych/core';
+import type { MachineResources, ResourceDecision } from '@kermanych/core';
 import { useOrchestrator } from 'stores/orchestrator';
 import { useProjects } from 'stores/projects';
 import { useAuth } from 'stores/auth';
 import { useBoard } from 'stores/board';
 import { useProjectDocs } from 'stores/project-docs';
 import { useSeen } from 'stores/seen';
+import { useMinion } from 'stores/minion';
 import { IS_PREVIEW } from '../lib/preview';
 import { api } from '../lib/api';
-import { MANAGEMENT_DEFAULT_SECTION } from '@kermanych/core';
+import { isPlatform, MANAGEMENT_DEFAULT_SECTION } from '@kermanych/core';
 import { canDropProject, sessionScopedProjectIds } from '../lib/scope';
-import { myBacklogTasks } from '../lib/tasks-view';
-import { bucketOf, type Bucket } from '../lib/buckets';
-import { attentionByProject, sumAttention, NO_ATTENTION, type Attention } from '../lib/attention';
+import { PLATFORM_CHOICES } from '../lib/settings';
+import { attentionByProject, attentionOutside, describeAttention, levelOf, sumAttention, yourTurnCount, NO_ATTENTION, type Attention } from '../lib/attention';
+import { dockBadgeOn } from '../lib/dock';
 import { theme, toggleTheme } from '../lib/theme';
 import type { KTheme } from '@kermanych/tokens';
 import { locale, toggleLocale } from '../lib/locale';
@@ -457,24 +603,38 @@ import { percent, planWindow, renderWindow } from '../lib/format';
 import { until, renderTime } from '../lib/time';
 import { useNow } from '../composables/useNow';
 import { useSubscriptionUsage } from '../composables/useSubscriptionUsage';
+import { hardwareLine, useResourcesConsent } from '../composables/useResourcesConsent';
+import { useProviderSignIn } from '../composables/useProviderSignIn';
 import KRailItem, { type RailProject } from 'components/kit/KRailItem.vue';
 import KWorkspaceRow from 'components/kit/KWorkspaceRow.vue';
 import KTopNav from 'components/kit/KTopNav.vue';
+import KProjectSwitcher from 'components/kit/KProjectSwitcher.vue';
 import KNavItem from 'components/kit/KNavItem.vue';
 import KModal from 'components/kit/KModal.vue';
 import KField from 'components/kit/KField.vue';
+import KSelect from 'components/kit/KSelect.vue';
 import KBtn from 'components/kit/KBtn.vue';
 import KToast from 'components/kit/KToast.vue';
 import AppUpdateBanner from 'components/AppUpdateBanner.vue';
-import { APP_VERSION } from 'stores/app-update';
+import KConfirmDialog from 'components/kit/KConfirmDialog.vue';
+import KProgressBar from 'components/kit/KProgressBar.vue';
+import { useActivity } from '../stores/activity';
 import KIconButton from 'components/kit/KIconButton.vue';
+import { useResizablePanel } from '../composables/useResizablePanel';
 import KUserButton from 'components/kit/KUserButton.vue';
 import KFileManager from 'components/kit/KFileManager.vue';
 import KTerminalPanel from 'components/kit/KTerminalPanel.vue';
 import KIcon from 'components/kit/KIcon.vue';
+import KSkeleton from 'components/kit/KSkeleton.vue';
+import KSpinner from 'components/kit/KSpinner.vue';
+import { useAsyncAction, useKeyedAction, errorText } from '../composables/useAsyncAction';
+import { useLoadPhase } from '../composables/useLoadPhase';
 import { useTerminal } from 'stores/terminal';
+import { useVoice } from 'stores/voice';
 import JiraMergePrompt from 'components/jira/JiraMergePrompt.vue';
 import LinearMergePrompt from 'components/linear/LinearMergePrompt.vue';
+import PlaneMergePrompt from 'components/plane/PlaneMergePrompt.vue';
+import AssistantLauncher from 'components/assistant/AssistantLauncher.vue';
 import KDirPicker from 'components/kit/KDirPicker.vue';
 import OnboardingChecklist from 'components/onboarding/OnboardingChecklist.vue';
 import { useOnboarding } from 'stores/onboarding';
@@ -486,19 +646,67 @@ import { useOnboarding } from 'stores/onboarding';
 const store = useOrchestrator();
 const terminal = useTerminal();
 const projects = useProjects();
+// ── VOICE CONVERSATION PILL ─────────────────────────────────────────────────
+const voice = useVoice();
+const voiceSessionName = computed(() => store.sessions.find((s) => s.id === voice.sessionId)?.name ?? '');
+const voiceClock = computed(() => {
+  const s = Math.floor((voice.bar?.elapsedMs ?? 0) / 1000);
+  return `${String(Math.floor(s / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`;
+});
+function openVoiceSession(): void {
+  const s = store.sessions.find((x) => x.id === voice.sessionId);
+  if (!s) return;
+  store.selectProject(s.projectId);
+  store.selectSession(s.id);
+  void router.push({ name: s.kind === 'chat' ? 'chat' : 'agents' });
+}
 const auth = useAuth();
+// Foreground work started through useAsyncAction / trackLoad — drives the top progress bar.
+const activity = useActivity();
 const board = useBoard();
 const projectDocs = useProjectDocs();
 const onb = useOnboarding();
+// Created with the shell, before the socket connects: it listens for the first `snapshot` to
+// read «Посіпака»'s state, and for every `minion_update` after it (a pause is announced from any
+// screen, so the store cannot wait for the map or «ШІ-команда» to be opened). The sidebar marks
+// the projects it is activated for on this machine.
+const minion = useMinion();
+const minionProjects = computed(() => new Set(minion.state?.projects ?? []));
 const route = useRoute();
 const router = useRouter();
 const { t, te } = useI18n();
 
-// The left sidebar collapses to give the board full width; the choice persists so a reload
-// keeps the operator's layout. breakpoint:0 means the drawer never self-closes, so this
-// model-value is the only thing that shows/hides it.
+// The left sidebar narrows to a 76px rail to give the board more width; the choice persists
+// so a reload keeps the operator's layout. breakpoint:0 means the drawer never self-closes, so
+// its model-value — `!focusMode` — is the only thing that shows/hides it.
 const collapsed = ref(localStorage.getItem('kermanych.sidebar-collapsed') === '1');
 watch(collapsed, (v) => localStorage.setItem('kermanych.sidebar-collapsed', v ? '1' : '0'));
+
+// FOCUS MODE — the sidebar off screen entirely, on every route; the footer stays (account
+// limits, terminal, file manager and git are needed mid-task). Independent of `collapsed`:
+// leaving focus mode brings back whichever width the operator had. The header switcher is the
+// project list meanwhile. Persisted like the width.
+// Spec: docs/specs/2026-10-29-agents-tab-and-focus-mode.md, decisions 11–12.
+const FOCUS_KEY = 'kermanych.focus-mode';
+const focusMode = ref(localStorage.getItem(FOCUS_KEY) === '1');
+watch(focusMode, (v) => localStorage.setItem(FOCUS_KEY, v ? '1' : '0'));
+function toggleFocusMode(): void {
+  focusMode.value = !focusMode.value;
+}
+// Ctrl/⌘ \ — matched on the PHYSICAL key (`code`), so the Ukrainian layout, where that key
+// types «ґ», works too. Unlike ⌘B it fires inside text fields: the composer is where a
+// focused operator types, and the chord types nothing there. The one exception is Ctrl+\
+// inside the integrated terminal, which is the shell's SIGQUIT and stays the shell's; ⌘\
+// never reaches a shell. Capture phase, so the terminal's own keydown handling cannot
+// swallow the chord first.
+function onFocusHotkey(e: KeyboardEvent): void {
+  if (e.code !== 'Backslash' || !(e.metaKey || e.ctrlKey) || e.altKey || e.shiftKey) return;
+  if (!e.metaKey && (e.target as HTMLElement | null)?.closest?.('.xterm')) return;
+  e.preventDefault();
+  toggleFocusMode();
+}
+onMounted(() => window.addEventListener('keydown', onFocusHotkey, true));
+onBeforeUnmount(() => window.removeEventListener('keydown', onFocusHotkey, true));
 
 // The rail's WIDTH tweens (css/app.scss transitions the drawer's inline width), but the
 // content swap between labels and icons is a `display` switch that no transition can carry,
@@ -628,6 +836,20 @@ watch(
   },
 );
 
+// A design's one view is «Дизайн» (docs/specs/2026-10-29-design-tab.md): «Агенти» has no row
+// for it. Whatever selects one — a desktop notification, a machine alert, a card on «Карта
+// агентів» — lands on that page with the design open, and «Агенти» keeps no selection it cannot
+// draw. The page itself switches to the design's project (its `session` query watcher).
+watch(
+  () => store.selectedSessionId,
+  (id) => {
+    const s = id ? store.sessions.find((x) => x.id === id) : undefined;
+    if (!s?.designDir) return;
+    store.selectSession(undefined);
+    void router.push({ name: 'design', query: { session: s.id } });
+  },
+);
+
 // A sidebar click changes SCOPE and never navigates (Requirement 5). It used to push
 // /agents from any non-project-scoped view, which meant the team board threw the operator
 // out the moment they touched the tree; both the board and Агенти read the scope, so there
@@ -660,6 +882,17 @@ function onWorkspaceSelect(id: string): void {
 // leaving an authoritative list in hand and unusable.
 const hasCloudList = computed(() => projects.listRead);
 
+// SIDEBAR LOAD PHASE. Local rows arrive with the socket snapshot and the cloud tree with
+// projects.load(); until both have answered, an empty or half-built tree would read as «no
+// projects». A cached tree is shown as soon as the snapshot is in (refresh, not a load). A
+// preview never calls load(), so only the snapshot counts there.
+const sidebarPhase = useLoadPhase(
+  () => !store.snapshotReceived || (!IS_PREVIEW && !projects.loadSettled && !projects.projectsByWorkspace.length),
+);
+// «Розпочати» done/total: both inputs (cloud list, local rows) must be in, or the count
+// would start low and climb as the reads land.
+const onbCountKnown = computed(() => store.snapshotReceived && (IS_PREVIEW || projects.loadSettled));
+
 onMounted(async () => {
   // Socket first: the snapshot, and the project_update events the sync inside load() emits,
   // are how LOCAL rows reach the rail. Connecting afterwards would race those events.
@@ -691,11 +924,14 @@ onMounted(async () => {
   // Now the cloud list is in, decide whether a fresh account needs the checklist. Skipped
   // while the runtime gate is still up (auth.runtime === null): the gate is answered first,
   // and its watcher above opens the checklist the moment it is.
-  if (auth.runtime !== null) onb.maybeAutoOpen();
+  if (auth.runtime !== null) {
+    onb.maybeAutoOpen();
+    void offerResources();
+  }
 });
 
-// The board store is app-wide now: Агенти renders my backlog cards from it and the sidebar
-// counts them, so it must be live on every route, not only on /#/board. subscribe() is
+// The board store is app-wide now: Агенти renders my backlog cards from it and its «Задачі»
+// tab counts them, so it must be live on every route, not only on /#/board. subscribe() is
 // idempotent — BoardPage no longer owns this.
 onMounted(() => void board.subscribe());
 onUnmounted(() => board.unsubscribe());
@@ -716,6 +952,36 @@ function onFileManagerHotkey(e: KeyboardEvent): void {
 onMounted(() => window.addEventListener('keydown', onFileManagerHotkey));
 onBeforeUnmount(() => window.removeEventListener('keydown', onFileManagerHotkey));
 
+// The dock's width, dragged from the seam it shares with the page (or nudged with the arrows
+// once the seam has focus). One remembered width per side, since the seam sits on the dock's
+// inner edge: the right dock grows leftwards, the left one rightwards. The page always keeps
+// FM_PAGE_MIN, so a wide dock cannot squeeze it away.
+const FM_MIN = 240;
+const FM_PAGE_MIN = 420;
+const workareaEl = ref<HTMLElement | null>(null);
+const fmMax = (): number =>
+  workareaEl.value ? workareaEl.value.clientWidth - FM_PAGE_MIN : Number.POSITIVE_INFINITY;
+const fmLeft = useResizablePanel({
+  storageKey: 'kermanych.fileManager.width.left',
+  defaultSize: 340,
+  min: FM_MIN,
+  max: fmMax,
+  edge: 'right',
+});
+const fmRight = useResizablePanel({
+  storageKey: 'kermanych.fileManager.width.right',
+  defaultSize: 340,
+  min: FM_MIN,
+  max: fmMax,
+  edge: 'left',
+});
+// Re-clamp once the work area can be measured, and whenever the dock opens or moves.
+watch(
+  () => [store.fileManagerVisible, store.fileManagerSide] as const,
+  () => void nextTick(() => { fmLeft.refresh(); fmRight.refresh(); }),
+  { immediate: true },
+);
+
 // The integrated terminal (KTerminalPanel). Opening the panel on a bound project that has no
 // shell starts one, as VS Code does — the click means «give me a terminal», not «show me an
 // empty box». Only once the api's list has answered: before that, «no shell» is unknown.
@@ -727,9 +993,12 @@ function toggleTerminal(): void {
   terminal.setPanel(true);
   const p = selectedProject.value;
   if (p?.localRepoPath && terminal.loaded && !terminal.projectTerminals(p.id).length) {
-    void terminal.open(p.id);
+    void spawnFromToggle(p.id);
   }
 }
+// Through the store's per-project spawn guard, so the toggle and the panel's «+» never start
+// two shells; the panel draws the pending tab while this runs.
+const { run: spawnFromToggle } = useAsyncAction((projectId: string) => terminal.open(projectId));
 
 // Ctrl+` — VS Code's terminal toggle, on every platform (⌘` is macOS's window cycling).
 // Matched on the physical key, so it works on a Ukrainian layout too. Not skipped inside
@@ -768,6 +1037,14 @@ function attentionOf(projectId: string): Attention {
   return attentionById.value.get(projectId) ?? NO_ATTENTION;
 }
 
+// The Dock icon's number (docs/specs/2026-11-01-dock-attention.md): «ваш хід» summed over every
+// project — questions, failures and unread results, the sidebar's marks without «працює». Sent on
+// every change and when «Число на іконці» flips; 0 once this shell unmounts (sign-out). The web
+// build has no Dock, and no bridge to send it through.
+const dockCount = computed(() => (dockBadgeOn.value ? yourTurnCount(sumAttention(attentionById.value.values())) : 0));
+watch(dockCount, (n) => window.kermanych?.dock?.setBadge(n), { immediate: true });
+onBeforeUnmount(() => window.kermanych?.dock?.setBadge(0));
+
 // Segmented view nav. One table drives the labels, the active segment and the
 // push target, so a new view is one row here plus its route record. `section` is
 // the record the URL must match — for the nested Менеджмент tab that is the
@@ -778,6 +1055,7 @@ const VIEWS = [
   { value: 'agents', label: 'common.nav.viewAgents', route: 'agents', section: 'agents' },
   { value: 'board', label: 'common.nav.viewBoard', route: 'board', section: 'board' },
   { value: 'chat', label: 'common.nav.viewChat', route: 'chat', section: 'chat' },
+  { value: 'design', label: 'common.nav.viewDesign', route: 'design', section: 'design' },
   {
     value: 'management',
     label: 'common.nav.viewManagement',
@@ -818,16 +1096,17 @@ function onThemeToggle(e: MouseEvent): void {
   toggleTheme(el instanceof HTMLElement ? el.getBoundingClientRect() : null);
 }
 
-// The shell toggle steps through every theme (dark → light → matrix); the glyph
-// and title name the DESTINATION — the theme the next click moves TO. Half-width
-// katakana ﾏ stands in for the Matrix rain, keeping the celestial ☾/☀ pair for
-// the two plain themes.
-const NEXT_THEME: Record<KTheme, KTheme> = { dark: 'light', light: 'matrix', matrix: 'dark' };
-const THEME_GLYPH: Record<KTheme, string> = { dark: '☾', light: '☀', matrix: 'ﾏ' };
+// The shell toggle steps through every theme (dark → light → matrix → hermes); the
+// glyph and title name the DESTINATION — the theme the next click moves TO. Half-width
+// katakana ﾏ stands in for the Matrix rain; ☿ (Mercury, Hermes' Roman name) extends the
+// celestial ☾/☀ pair for Hermes.
+const NEXT_THEME: Record<KTheme, KTheme> = { dark: 'light', light: 'matrix', matrix: 'hermes', hermes: 'dark' };
+const THEME_GLYPH: Record<KTheme, string> = { dark: '☾', light: '☀', matrix: 'ﾏ', hermes: '☿' };
 const THEME_TITLE_KEY: Record<KTheme, string> = {
   dark: 'common.nav.themeDark',
   light: 'common.nav.themeLight',
   matrix: 'common.nav.themeMatrix',
+  hermes: 'common.nav.themeHermes',
 };
 const themeToggleGlyph = computed(() => THEME_GLYPH[NEXT_THEME[theme.value]]);
 const themeToggleTitle = computed(() => t(THEME_TITLE_KEY[NEXT_THEME[theme.value]]));
@@ -839,55 +1118,6 @@ function onLangToggle(e: MouseEvent): void {
   const el = e.currentTarget;
   toggleLocale(locale.value === 'uk' ? 'en' : 'uk', el instanceof HTMLElement ? el.getBoundingClientRect() : null);
 }
-
-// The marks are drawn (KIcon), not typed. They only ever show while the rail is minified,
-// which is precisely where the label is gone and the mark alone has to say which bucket it
-// opens — a job the text glyphs this replaced could not do: ◉ read as a radio button, ☰ as a
-// menu, ⤓ as a download and ↺ as a reload.
-const buckets = [
-  { key: 'active', label: 'common.nav.bucketActive', icon: 'activity' },
-  { key: 'waiting', label: 'common.nav.bucketWaiting', icon: 'waiting' },
-  { key: 'completed', label: 'common.nav.bucketCompleted', icon: 'done' },
-  { key: 'errors', label: 'common.nav.bucketErrors', icon: 'alert' },
-  { key: 'tasks', label: 'common.nav.bucketTasks', icon: 'tasks' },
-] as const;
-function onBucket(key: Bucket): void {
-  store.setBucket(key);
-  if (route.name !== 'agents') void router.push({ name: 'agents' });
-}
-// Fleet tally per sidebar bucket (replaces the old footer KStatusBar). Uses bucketOf so the
-// rail count and the Агенти list can never disagree about which bucket a session lands in.
-//
-// Scoped by ASKING the Агенти page's predicate, not by re-deriving it. It used to test
-// `s.projectId !== store.selectedProjectId`, which was true while a workspace-only selection
-// rendered a blank page and became a falsehood the moment that page started listing a whole
-// workspace: every session was skipped and the rail printed «Активні 0 / Задачі 0» two
-// columns from a header counting real cards. «Задачі 0» is the costly one — an operator
-// scanning the rail concludes the workspace has no backlog and never opens it. One answer in
-// one place is the only version of this that stays true.
-const bucketCounts = computed(() => {
-  const inScope = new Set(
-    sessionScopedProjectIds(
-      { workspaceId: store.selectedWorkspaceId, projectId: store.selectedProjectId },
-      { projects: projects.projects, listRead: projects.listRead },
-      store.projectWorkspace,
-    ),
-  );
-  const byId = new Map(store.sessions.map((s) => [s.id, s]));
-  const parent = (id: string): Session | undefined => byId.get(id);
-  const c: Record<Bucket, number> = { active: 0, waiting: 0, completed: 0, errors: 0, tasks: 0 };
-  for (const s of store.sessions) {
-    if (!inScope.has(s.projectId)) continue;
-    if (s.kind === 'chat') continue;
-    c[bucketOf(s, parent)]++;
-  }
-  // «Задачі» shows two things now: my cloud backlog cards, and any stranded pre-cutover
-  // local row. The badge counts both, because a count that disagrees with the list it counts
-  // is worse than no count (lib/buckets.ts:2-4). myBacklogTasks applies the same scope, so
-  // the set is passed to it rather than re-tested here.
-  c.tasks += myBacklogTasks(board.tasks, auth.user?.id ?? '', [...inScope]).length;
-  return c;
-});
 
 // The tree: cloud workspaces, each with its own cloud projects, in cloud order.
 // `groupProjectsByWorkspace` DROPS a project whose workspace is not in the list — RLS
@@ -990,6 +1220,30 @@ function workspaceAttention(workspaceId: string): Attention {
   return sumAttention((sidebarProjects.value.byWorkspace.get(workspaceId) ?? []).map((p) => attentionOf(p.id)));
 }
 
+// THE HEADER SWITCHER reads the same tree, tiles and marks as the sidebar — one copy of
+// each — so a project looks the same in both places.
+const switcherGroups = computed(() =>
+  tree.value.map((g) => ({ workspace: g.workspace, projects: sidebarProjects.value.byWorkspace.get(g.workspace.id) ?? [] })),
+);
+// Its mark: what needs the operator in the projects outside the current scope — the scope
+// the Агенти list shows (lib/scope.ts), so nothing on screen is counted twice.
+const outsideAttention = computed(() => {
+  const inScope = new Set(
+    sessionScopedProjectIds(
+      { workspaceId: store.selectedWorkspaceId, projectId: store.selectedProjectId },
+      { projects: projects.projects, listRead: projects.listRead },
+      store.projectWorkspace,
+    ),
+  );
+  const listed = [...sidebarProjects.value.byWorkspace.values()].flat().concat(sidebarProjects.value.ungrouped);
+  return attentionOutside(attentionById.value, listed.map((p) => p.id), inScope);
+});
+const outsideHint = computed(() =>
+  levelOf(outsideAttention.value) === 'idle'
+    ? ''
+    : ` · ${t('common.nav.switcherElsewhere')}${describeAttention(outsideAttention.value, t)}`,
+);
+
 // DRAG A PROJECT INTO ANOTHER WORKSPACE — hand-rolled HTML5 DnD. It is one gesture, and a
 // drag-and-drop library would bring its own reactivity model along for it.
 //
@@ -1062,13 +1316,20 @@ async function onDrop(workspaceId: string): Promise<void> {
     return;
   }
   if (!projectId || !canDropProject(projectId, workspaceId, projects.projects)) return;
+  await moving.run(projectId, workspaceId);
+}
+
+// The moved row stays dimmed (and undraggable) until the cloud patch — or, on a refusal,
+// the re-read — resolves: the tile does not move until then, and without this the drop read
+// as ignored. The refusal is handled inside, so the keyed action's own toast never fires.
+const moving = useKeyedAction(async (projectId: string, workspaceId: string) => {
   const name = projects.byId.get(projectId)?.name ?? projectId;
   const target = projects.workspaceById.get(workspaceId)?.name ?? '';
   try {
     await projects.moveProject(projectId, workspaceId);
     store.notify(t('common.nav.notifyMoved', { name, target }));
   } catch (e) {
-    const raw = e instanceof Error ? e.message : String(e);
+    const raw = errorText(e);
     // 6000 like every other full-sentence refusal here (the bind error, both member
     // errors): moveRefusalText() is a full sentence, and it is the one message a user
     // reads mid-gesture, with their attention on the pointer rather than on the corner of
@@ -1080,7 +1341,7 @@ async function onDrop(workspaceId: string): Promise<void> {
     // into offlineError rather than throwing, so this cannot reject.
     await projects.load();
   }
-}
+});
 
 // The LOCAL row carries this machine's binding and the offline config cache; the CLOUD
 // project is the source of truth for config. Same id, two lookups.
@@ -1119,7 +1380,8 @@ const contextLabel = computed(() => {
 // Two create modals, because the sidebar's two «+» buttons create different things. The
 // project one is keyed by the workspace it will create INSIDE — an id rather than a
 // boolean, since «new project» is not a question that can be asked without a group — and
-// `createError` / `createBusy` are shared: only one of the two can be open at a time.
+// `createError` is shared: only one of the two can be open at a time. Each has its own busy
+// (submitCreateWorkspace / submitCreate below).
 //
 // Neither has a directory field: creating a project and binding a repo are different acts
 // on different machines (Requirement 3).
@@ -1128,8 +1390,10 @@ const createWorkspaceName = ref('');
 const createProjectFor = ref<string | undefined>(undefined);
 const createName = ref('');
 const createRemote = ref('');
+// '' is «Не визначено». KSelect speaks plain strings, so the value is narrowed at submit.
+const createPlatform = ref('');
+const platformPickOptions = computed(() => PLATFORM_CHOICES.map((p) => ({ value: p.value, label: t(p.labelKey) })));
 const createError = ref<string | null>(null);
-const createBusy = ref(false);
 
 const canCreateWorkspace = computed(() => createWorkspaceName.value.trim() !== '');
 const canCreate = computed(() => createName.value.trim() !== '');
@@ -1137,15 +1401,14 @@ const canCreate = computed(() => createName.value.trim() !== '');
 function openCreateWorkspace(): void {
   createWorkspaceName.value = '';
   createError.value = null;
-  createBusy.value = false;
   createWorkspaceOpen.value = true;
 }
 
 function openCreateProject(workspaceId: string): void {
   createName.value = '';
   createRemote.value = '';
+  createPlatform.value = '';
   createError.value = null;
-  createBusy.value = false;
   createProjectFor.value = workspaceId;
 }
 
@@ -1154,9 +1417,10 @@ function openCreateProject(workspaceId: string): void {
 // picks which backend their agents run on (omp or claude-code), and the choice is persisted
 // through auth.chooseRuntime. Not dismissible: the modal has no cancel, and the
 // @update:model-value handler is a no-op, so the only way out is to make a choice.
-const showOnboarding = computed(() => !!auth.user && auth.runtime === null);
+// Held back while the account's runtime is still being read: for a returning user `runtime`
+// is null only until that read lands, and the gate must not flash up in between.
+const showOnboarding = computed(() => !!auth.user && !auth.runtimeLoading && auth.runtime === null);
 const onboardingChoice = ref<'omp' | 'claude-code' | null>(null);
-const onboardingBusy = ref(false);
 
 // PREFLIGHT state for the picked backend. The whole point is timing: the operator learns their
 // claude is signed out while they are choosing it, instead of after creating a chat that never
@@ -1167,13 +1431,18 @@ const runtimeChecking = ref(false);
 const runtimeOk = ref(false);
 const runtimeProblem = ref('');
 
+// Bumped on every pick: a slow check for the previous option must not overwrite the verdict
+// (or clear «перевіряю») of the one the operator picked after it.
+let pickGeneration = 0;
 async function pickRuntime(kind: 'omp' | 'claude-code'): Promise<void> {
+  const mine = ++pickGeneration;
   onboardingChoice.value = kind;
   runtimeChecking.value = true;
   runtimeOk.value = false;
   runtimeProblem.value = '';
   try {
     const verdict = await api.checkAccountRuntime(kind);
+    if (mine !== pickGeneration) return;
     if (verdict.ok) {
       runtimeOk.value = true;
       return;
@@ -1188,26 +1457,18 @@ async function pickRuntime(kind: 'omp' | 'claude-code'): Promise<void> {
   } catch {
     // The check itself could not run (api still booting). Not the operator's problem to solve,
     // and not a reason to claim the backend is broken — say nothing and let them proceed.
-    runtimeProblem.value = '';
+    if (mine === pickGeneration) runtimeProblem.value = '';
   } finally {
-    runtimeChecking.value = false;
+    if (mine === pickGeneration) runtimeChecking.value = false;
   }
 }
 
-async function submitOnboarding(): Promise<void> {
-  if (!onboardingChoice.value || onboardingBusy.value) return;
-  onboardingBusy.value = true;
-  try {
-    await auth.chooseRuntime(onboardingChoice.value);
-    // Runtime is now set, showOnboarding becomes false, modal auto-hides.
-  } catch (e) {
-    // If chooseRuntime throws, the error surfaces through auth or as a network failure;
-    // we keep the modal open and the operator can retry. No local error display needed.
-    console.error('Failed to set runtime:', e);
-  } finally {
-    onboardingBusy.value = false;
-  }
-}
+// A failure keeps the modal open for a retry and toasts the reason.
+const { run: submitOnboarding, busy: onboardingBusy } = useAsyncAction(async () => {
+  if (!onboardingChoice.value) return;
+  // Runtime is now set, showOnboarding becomes false, modal auto-hides.
+  await auth.chooseRuntime(onboardingChoice.value);
+});
 
 // FIRST-RUN CHECKLIST — the open/dismiss/ack state lives in stores/onboarding.ts; this layout
 // only supplies the three setup acts (create workspace, create project, bind a folder) that
@@ -1239,19 +1500,17 @@ function onOnboardingBindFolder(): void {
   onbPickerOpen.value = true;
 }
 
-async function onOnboardingFolderChosen(path: string): Promise<void> {
+// Through useAsyncAction: the picker has already closed, so the top bar is the feedback that
+// the binding is being written, and a failure toasts.
+const { run: onOnboardingFolderChosen } = useAsyncAction(async (path: string) => {
   const projectId = onbBindProjectId.value;
   const trimmed = path.trim();
   if (!projectId || !trimmed) return;
-  try {
-    // The api emits a project_update over the socket, so the local row — and the checklist's
-    // «folder» tick, which reads it — refresh on their own.
-    await store.setProjectBinding(projectId, trimmed);
-    store.notify(t('settings.binding.bound', { path: trimmed }));
-  } catch (e) {
-    store.notify(e instanceof Error ? e.message : String(e), 'error');
-  }
-}
+  // The api emits a project_update over the socket, so the local row — and the checklist's
+  // «folder» tick, which reads it — refresh on their own.
+  await store.setProjectBinding(projectId, trimmed);
+  store.notify(t('settings.binding.bound', { path: trimmed }));
+});
 
 // Auto-open once the runtime gate is answered (null → chosen). A returning account whose
 // runtime is already set sees no change here and is handled by the onMounted call below,
@@ -1259,49 +1518,124 @@ async function onOnboardingFolderChosen(path: string): Promise<void> {
 watch(
   () => auth.runtime,
   (kind) => {
-    if (kind !== null) onb.maybeAutoOpen();
+    if (kind !== null) {
+      onb.maybeAutoOpen();
+      void offerResources();
+    }
   },
 );
-async function submitCreateWorkspace(): Promise<void> {
-  if (!canCreateWorkspace.value) return;
-  createError.value = null;
-  createBusy.value = true;
+
+// ── MACHINE RESOURCES CONSENT ───────────────────────────────────────────────
+// Asked once per window, after the runtime gate (never stacked over it: both call sites gate
+// on `auth.runtime`) and AFTER the first-run checklist: a fresh account sets up its first
+// project before being asked about limits, and two modals never stack.
+const consent = useResourcesConsent();
+const consentBusy = ref(false);
+let resourcesOffered = false;
+
+async function offerResources(): Promise<void> {
+  if (resourcesOffered) return;
+  resourcesOffered = true;
+  let r: MachineResources;
   try {
+    r = await api.machineResources();
+  } catch {
+    return; // an older api without the endpoint, or a restart: ask on the next start
+  }
+  if (!r.askConsent) return;
+  if (!onb.open) {
+    consent.open(r);
+    return;
+  }
+  const stop = watch(
+    () => onb.open,
+    (open) => {
+      if (open) return;
+      stop();
+      consent.open(r);
+    },
+  );
+}
+
+// The EFFECTIVE values (profile ⊕ overrides kept from before), because that is what
+// «Застосувати» turns on. A row the operator once changed says so and shows the profile value.
+const consentRows = computed(() => {
+  const r = consent.offer.value;
+  if (!r) return [];
+  const e = r.effective;
+  const p = r.profile;
+  const onOff = (v: boolean) => t(v ? 'resourcesConsent.on' : 'resourcesConsent.off');
+  const row = (key: 'agents' | 'subagents' | 'background' | 'testWorkers' | 'lowerPriority' | 'watchdog') => {
+    const show = (v: number | boolean) => (typeof v === 'boolean' ? onOff(v) : String(v));
+    if (key === 'watchdog' && !r.watchdogSupported) {
+      return { label: t('settings.resources.watchdog'), value: t('resourcesConsent.unsupported'), note: '' };
+    }
+    return {
+      label: t('settings.resources.' + key),
+      value: show(e[key]),
+      note: e[key] !== p[key] ? t('resourcesConsent.yours', { profile: show(p[key]) }) : '',
+    };
+  };
+  return (['agents', 'subagents', 'background', 'testWorkers', 'lowerPriority', 'watchdog'] as const).map(row);
+});
+
+async function decideResources(decision: ResourceDecision): Promise<void> {
+  consentBusy.value = true;
+  try {
+    await api.updateMachineResources({ decision });
+    consent.close();
+    consent.markDecided();
+  } catch (e) {
+    store.notify(e instanceof Error ? e.message : String(e), 'error');
+  } finally {
+    consentBusy.value = false;
+  }
+}
+
+// Stores nothing: the pane opens with the profile as an unsaved draft (switch on), and the
+// operator's save there is the decision.
+function configureResources(): void {
+  consent.close();
+  void router.push({ name: 'settings', params: { section: 'app-resources' }, query: { draft: 'profile' } });
+}
+
+// One busy per modal; the error renders inside the modal (onError), which stays open and
+// persistent until the create returns.
+const { run: submitCreateWorkspace, busy: createWorkspaceBusy } = useAsyncAction(
+  async () => {
+    if (!canCreateWorkspace.value) return;
+    createError.value = null;
     const created = await projects.createWorkspace(createWorkspaceName.value.trim());
     createWorkspaceOpen.value = false;
     // Scope moves to the new group, so the next «+» on its row is the obvious next step.
     store.selectWorkspace(created.id);
     store.notify(t('common.nav.notifyWorkspaceCreated', { name: created.name }));
-  } catch (e) {
-    createError.value = e instanceof Error ? e.message : String(e);
-  } finally {
-    createBusy.value = false;
-  }
-}
+  },
+  { onError: (e) => (createError.value = errorText(e)) },
+);
 
-async function submitCreate(): Promise<void> {
-  const workspaceId = createProjectFor.value;
-  if (!workspaceId || !canCreate.value) return;
-  createError.value = null;
-  createBusy.value = true;
-  try {
+// Keep the modal open on failure. The two real refusals are `not signed in` (the session
+// expired between the router guard and this click) and an RLS refusal on a workspace this
+// user has just lost access to; both are fixable without retyping the name.
+const { run: submitCreate, busy: createProjectBusy } = useAsyncAction(
+  async () => {
+    const workspaceId = createProjectFor.value;
+    if (!workspaceId || !canCreate.value) return;
+    createError.value = null;
     const remote = createRemote.value.trim();
     // create() inserts under the user's JWT (projects_insert_member checks membership of
     // the destination workspace) and mirrors the one new project into the local registry,
     // so its tile appears under this group without a second full sync.
-    const created = await projects.create(workspaceId, createName.value.trim(), remote || undefined);
+    const created = await projects.create(workspaceId, createName.value.trim(), {
+      gitRemoteUrl: remote || undefined,
+      platform: isPlatform(createPlatform.value) ? createPlatform.value : undefined,
+    });
     createProjectFor.value = undefined;
     store.selectProject(created.id);
     store.notify(t('common.nav.notifyProjectCreated', { name: created.name }));
-  } catch (e) {
-    // Keep the modal open. The two real refusals are `not signed in` (the session expired
-    // between the router guard and this click) and an RLS refusal on a workspace this user
-    // has just lost access to; both are fixable without retyping the name.
-    createError.value = e instanceof Error ? e.message : String(e);
-  } finally {
-    createBusy.value = false;
-  }
-}
+  },
+  { onError: (e) => (createError.value = errorText(e)) },
+);
 
 // SETTINGS ENTRY. Five modals used to live in this layout — the workspace's name,
 // colour and team, the project's config, its `.env`, the project delete and the
@@ -1369,8 +1703,15 @@ const accountName = computed(() =>
 // PLAN SPEND — what the provider subscription behind this machine's agents has left. The
 // figure is a percent of a rolling window (`5h`, `7d`), because that is the only unit
 // providers meter a plan in; there is no token count to show and none is invented.
-const planUsage = useSubscriptionUsage();
+const { usage: planUsage } = useSubscriptionUsage();
 const planNow = useNow(30_000);
+
+// AI LOGIN REQUIRED — the top-bar pill. The tooltip reuses the launch-refusal sentence, which
+// names the provider and the command that signs it back in.
+const { code: signInCode, recheck: recheckSignIn } = useProviderSignIn();
+const signInHint = computed(() =>
+  signInCode.value ? `${t(`errors.runtime_${signInCode.value}`)}. ${t('common.nav.aiLoginRecheck')}` : '',
+);
 
 const planLines = computed(() =>
   (planUsage.value?.providers ?? []).map((p) => ({
@@ -1396,8 +1737,8 @@ const planLines = computed(() =>
   })),
 );
 
-// The collapsed rail hides the row, and the tile is a bare picture either way — so its
-// tooltip carries the identity, the same figures in short form, and the action.
+// The tile is a bare picture, so its tooltip (and aria-label) carries the identity, the
+// same figures in short form, and the action.
 const accountHint = computed(() => {
   const spend = planLines.value
     .flatMap((p) => p.windows.map((w) => `${w.short} ${w.percent}`))
@@ -1405,13 +1746,12 @@ const accountHint = computed(() => {
   return [accountName.value, ...(spend ? [spend] : []), t('common.nav.accountSettings')].join(' · ');
 });
 
-// Footer git pull for the selected project's bound repo. `syncing` gates the button so a
-// double-click cannot fire two operations; git's own output (or refusal) surfaces as a toast.
-const syncing = ref(false);
-async function gitPull(): Promise<void> {
+// Footer git pull for the selected project's bound repo, through useAsyncAction so a
+// double-click cannot fire two operations and the button spins; git's own output (or
+// refusal) surfaces as a toast — caught here, because it carries the «Pull:» prefix.
+const { run: gitPull, busy: syncing } = useAsyncAction(async () => {
   const id = store.selectedProjectId;
-  if (!id || !isBound.value || syncing.value) return;
-  syncing.value = true;
+  if (!id || !isBound.value) return;
   try {
     const r = await store.pullProject(id);
     if (r.ok) {
@@ -1419,13 +1759,11 @@ async function gitPull(): Promise<void> {
       projectDocs.refreshIfActive(id);
     } else store.notify(`Pull: ${r.out.trim() || t('common.nav.pullFailed')}`, 'error', 7000);
   } catch (e) {
-    store.notify(`Pull: ${e instanceof Error ? e.message : String(e)}`, 'error', 7000);
-  } finally {
-    syncing.value = false;
+    store.notify(`Pull: ${errorText(e)}`, 'error', 7000);
   }
   // The pull fetched on its own, so a local recount is enough to clear (or keep) the badge.
   void refreshGitStatus(false);
-}
+});
 
 // Footer git read-out for the selected project: its current branch, and the Pull badge —
 // commits waiting upstream for that branch, GitHub Desktop-style. The api fetches the remote
@@ -1452,12 +1790,23 @@ async function refreshGitStatus(fetch: boolean): Promise<void> {
     // Local API unreachable or the binding just went away: keep the last known values.
   }
 }
+// The remote fetch on a project switch can take seconds, and the branch is a purely local
+// read: ask fetch-less first so the branch shows at once, then fetch for the Pull badge.
+// `fetchingGit` spins the footer ↻ for that fetch; the generation keeps a fetch for the
+// previous project from stopping the spin of the current one.
+const fetchingGit = ref(false);
+let fetchGeneration = 0;
 watch(
   () => [store.selectedProjectId, selectedProject.value?.localRepoPath] as const,
-  () => {
+  async () => {
     incoming.value = 0;
     branch.value = null;
-    void refreshGitStatus(true);
+    const mine = ++fetchGeneration;
+    fetchingGit.value = isBound.value;
+    await refreshGitStatus(false);
+    if (mine !== fetchGeneration) return;
+    await refreshGitStatus(true);
+    if (mine === fetchGeneration) fetchingGit.value = false;
   },
   { immediate: true },
 );
@@ -1485,18 +1834,9 @@ onUnmounted(() => {
   stopBranchPoll?.();
 });
 
-// Footer refresh: the same local read the branch poll does, on demand. `refreshing` gates
-// the button against piling up requests on a double-click.
-const refreshing = ref(false);
-async function refreshGitNow(): Promise<void> {
-  if (refreshing.value) return;
-  refreshing.value = true;
-  try {
-    await refreshGitStatus(false);
-  } finally {
-    refreshing.value = false;
-  }
-}
+// Footer refresh: the same local read the branch poll does, on demand. useAsyncAction gates
+// the button against piling up requests on a double-click. refreshGitStatus never throws.
+const { run: refreshGitNow, busy: refreshing } = useAsyncAction(() => refreshGitStatus(false));
 
 const pullHint = computed(() => {
   if (!isBound.value) return BIND_HINT.value;
@@ -1523,15 +1863,12 @@ const pullHint = computed(() => {
 .shell__side-inner:not(.shell--min) :deep(.k-nav-item__icon) {
   display: none;
 }
-// A 76px rail has room for the tile and nothing else; the account tooltip carries the name
-// and the plan figures while the sidebar is minified.
-.shell--min .shell__side-label,
-.shell--min .shell__account-meta {
+// A 76px rail has room for the icons and the toggle, nothing else.
+.shell--min .shell__side-label {
   display: none;
 }
-.shell--min .shell__user {
+.shell--min .shell__side-foot {
   justify-content: center;
-  flex-direction: column;
 }
 .shell--min :deep(.k-nav-item) {
   justify-content: center;
@@ -1554,6 +1891,7 @@ const pullHint = computed(() => {
   padding: var(--k-sp-1);
 }
 .shell--min :deep(.k-rail__name),
+.shell--min :deep(.k-rail__minion),
 .shell--min :deep(.k-rail__agents) {
   display: none;
 }
@@ -1595,10 +1933,10 @@ const pullHint = computed(() => {
 }
 .shell__side-inner:not(.shell--min) {
   .shell__side-label,
-  .shell__account-meta,
   :deep(.k-nav-item__text),
   :deep(.k-count),
   :deep(.k-rail__name),
+  :deep(.k-rail__minion),
   :deep(.k-rail__agents),
   :deep(.k-ws__name),
   :deep(.k-ws__end),
@@ -1628,12 +1966,6 @@ const pullHint = computed(() => {
   }
 }
 
-.shell__buckets {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-
 // The right margin is 1px, not the 4px on the other three sides: the rows below carry a
 // 1px transparent border and this heading does not, so that pixel is what puts this row's
 // «+» in the same column as the one on KWorkspaceRow.
@@ -1644,6 +1976,24 @@ const pullHint = computed(() => {
   letter-spacing: 0.06em;
   text-transform: uppercase;
   color: var(--k-faint);
+}
+.shell__projects-skeleton {
+  padding: 0 var(--k-sp-2);
+}
+// A project being moved to another workspace, until the cloud patch resolves.
+.shell__item--pending {
+  opacity: 0.55;
+  pointer-events: none;
+}
+// The footer ↻ while a git status read / remote fetch is in flight.
+.shell__foot-spin {
+  display: inline-block;
+  animation: shell-foot-spin 0.9s linear infinite;
+}
+@keyframes shell-foot-spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 // Both levels are real <ul>s now (the grouping semantics), so both need the list chrome
@@ -1709,14 +2059,25 @@ const pullHint = computed(() => {
   &:hover { color: var(--k-text); }
 }
 
-// account chip — pinned to the foot of the sidebar: avatar, name over plan spend, toggle.
-.shell__user {
+// The sidebar's foot: the collapse toggle alone, pinned to the bottom and right-aligned.
+.shell__side-foot {
   margin-top: auto;
+  display: flex;
+  justify-content: flex-end;
+  padding-top: var(--k-sp-3);
+  border-top: 1px solid var(--k-line);
+}
+
+// Account chip at the footer's left edge: avatar, name over plan spend. It shrinks before
+// the git controls do, and the name ellipsises inside it.
+.shell__user {
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 260px;
   display: flex;
   align-items: center;
   gap: var(--k-sp-2);
-  padding-top: var(--k-sp-3);
-  border-top: 1px solid var(--k-line);
+  margin-right: var(--k-sp-3);
 }
 
 .shell__account {
@@ -1810,6 +2171,7 @@ const pullHint = computed(() => {
   display: flex;
   align-items: center;
   gap: var(--k-sp-2);
+  min-width: 0;
 }
 
 .shell__mark {
@@ -1826,9 +2188,12 @@ const pullHint = computed(() => {
   color: var(--k-text);
 }
 
-.shell__ver {
-  font-size: var(--k-fs-xs);
-  color: var(--k-muted);
+// The ⚙ / theme buttons' control, so the header has one kind of glyph button; its accent
+// frame (`active`) says focus mode is on.
+.shell__focus {
+  flex: none;
+  margin-left: var(--k-sp-2);
+  --k-icon-size: var(--k-icon-md);
 }
 
 // The selected workspace, centred in the gap between the brand and the segmented nav.
@@ -1859,6 +2224,71 @@ const pullHint = computed(() => {
   gap: var(--k-sp-2);
 }
 
+// The voice pill: accent-framed — something live, not a blocker like the sign-out pill beside it.
+.shell__voice {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 28px;
+  padding: 0 2px 0 8px;
+  border: 1px solid var(--k-accent);
+  border-radius: var(--k-r);
+  color: var(--k-accent);
+  font-size: 12px;
+}
+.shell__voice-open {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 220px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+
+  &:focus-visible {
+    outline: 1px solid var(--k-accent);
+    outline-offset: 2px;
+  }
+}
+.shell__voice-name {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  color: var(--k-text);
+}
+.shell__voice-time { color: var(--k-muted); }
+.shell__voice-icon { --k-icon-size: var(--k-icon-sm); }
+
+// The sign-out pill: danger-framed so it reads as a blocker next to the quiet icon cluster,
+// at the icon buttons' 28px height so the row stays one line.
+.shell__signin {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 10px;
+  border: 1px solid var(--k-danger);
+  border-radius: var(--k-r);
+  background: transparent;
+  color: var(--k-danger);
+  font-size: 12px;
+  white-space: nowrap;
+  cursor: pointer;
+
+  &:hover {
+    background: var(--k-danger);
+    color: var(--k-on-accent);
+  }
+
+  &:focus-visible {
+    outline: 1px solid var(--k-accent);
+    outline-offset: 1px;
+  }
+}
+
 .shell__form {
   display: flex;
   flex-direction: column;
@@ -1879,6 +2309,25 @@ const pullHint = computed(() => {
   color: var(--k-muted);
 }
 
+.shell__limits {
+  border-collapse: collapse;
+  font-size: 12.5px;
+  color: var(--k-text);
+
+  td {
+    padding: 4px 0;
+    border-bottom: 1px solid var(--k-line);
+  }
+
+  td + td {
+    padding-left: 16px;
+    text-align: right;
+  }
+}
+
+.shell__limits-note {
+  color: var(--k-faint);
+}
 
 .shell__runtime-picker {
   display: flex;
@@ -2017,7 +2466,7 @@ const pullHint = computed(() => {
   display: flex;
   align-items: center;
   gap: var(--k-sp-1);
-  height: 34px;
+  height: 44px;
   padding: 0 var(--k-sp-2);
   background: var(--k-bg);
   border-top: 1px solid var(--k-line-strong);
@@ -2140,7 +2589,7 @@ const pullHint = computed(() => {
 .shell__main {
   display: flex;
   flex-direction: column;
-  height: calc(100vh - 90px);
+  height: calc(100vh - 100px);
   min-height: 0;
   overflow: hidden;
 }
@@ -2167,7 +2616,7 @@ const pullHint = computed(() => {
 .shell__workarea > .shell__fm {
   flex: none;
   box-sizing: border-box;
-  width: 340px;
+  // The width itself is inline: dragged from .shell__fm-resizer, 340px until then.
   height: calc(100% - 2 * var(--k-sp-3));
   margin-top: var(--k-sp-3);
   margin-bottom: var(--k-sp-3);
@@ -2177,5 +2626,39 @@ const pullHint = computed(() => {
 }
 .shell__workarea > .shell__fm--right {
   margin-right: var(--k-sp-3);
+}
+
+// The seam between the page and the dock: a 7px grab strip laid over the page's own 12px
+// gutter (negative margin, so it takes no width), with a 1px rule that shows only on hover,
+// focus and drag — the gutter stays a plain gap at rest. Same feel as the Агенти board's
+// resizer.
+.shell__fm-resizer {
+  position: relative;
+  z-index: 3;
+  flex: none;
+  width: 7px;
+  margin-block: var(--k-sp-3);
+  cursor: col-resize;
+  touch-action: none;
+  user-select: none;
+
+  &--right { margin-left: -9px; margin-right: 2px; }
+  &--left { margin-right: -9px; margin-left: 2px; }
+
+  &::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: 50%;
+    width: 1px;
+    transform: translateX(-50%);
+    background: transparent;
+    transition: background 0.12s;
+  }
+  &:hover::before,
+  &:focus-visible::before,
+  &--on::before { background: var(--k-accent); }
+  &:focus-visible { outline: none; }
 }
 </style>

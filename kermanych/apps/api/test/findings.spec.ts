@@ -9,6 +9,7 @@ import { RegistryService } from "../src/registry/registry.service";
 import type { PreviewService } from "../src/preview/preview.service";
 import type { ModelsService } from "../src/models/models.service";
 import { BrowserMcpService } from "../src/browser/browser-mcp.service";
+import type { DeviceApi } from "../src/device/device.contract";
 import { SupervisorService } from "../src/supervisor/supervisor.service";
 import { WorktreeService } from "../src/worktree/worktree.service";
 import { SessionsController } from "../src/http/sessions.controller";
@@ -31,7 +32,8 @@ function make() {
   registry.upsertProject({ id: "p1", name: "p", localRepoPath: "/tmp/p1" });
   const s = registry.createSession({ projectId: "p1", name: "n", task: "t", worktreePath: "", branch: "b" });
   const other = registry.createSession({ projectId: "p1", name: "o", task: "t", worktreePath: "", branch: "o" });
-  const mcp = new BrowserMcpService(registry, { urlOf: () => undefined } as unknown as PreviewService, http);
+  // The findings tools never reach the device.
+  const mcp = new BrowserMcpService(registry, { urlOf: () => undefined } as unknown as PreviewService, {} as DeviceApi, http);
   const sup = new SupervisorService(registry, new WorktreeService(), offlineAuth(), stubSkills(), undefined as unknown as ModelsService, undefined, mcp);
   const events: ServerEvent[] = [];
   sup.events$.subscribe((e) => events.push(e));
@@ -40,7 +42,7 @@ function make() {
     return reply.result;
   };
   const updates = () => events.flatMap((e) => (e.type === "session_update" ? [e.session] : []));
-  return { registry, s, other, sup, call, updates, ctl: new SessionsController(sup, registry, {} as PreviewService) };
+  return { registry, s, other, sup, call, updates, ctl: new SessionsController(sup, registry, {} as PreviewService, {} as never) };
 }
 
 describe("report_finding / list_findings", () => {
@@ -81,14 +83,17 @@ describe("report_finding / list_findings", () => {
     await call("report_finding", { ...report, title: "A" });
     await call("report_finding", { ...report, title: "B", kind: "docs" });
     await call("report_finding", { ...report, title: "C" });
-    const [a, b] = registry.listFindings(s.id);
+    await call("report_finding", { ...report, title: "D", kind: "security" });
+    const [a, b, , d] = registry.listFindings(s.id);
     registry.resolveFinding(s.id, a!.id, { status: "filed", target: { kind: "jira", key: "KRM-7", url: "https://x.atlassian.net/browse/KRM-7" } });
     registry.resolveFinding(s.id, b!.id, { status: "dismissed" });
+    registry.resolveFinding(s.id, d!.id, { status: "filed", target: { kind: "plane", key: "WEB-12", url: "https://app.plane.so/team/browse/WEB-12/" } });
     const text = (await call("list_findings")).content[0]!.text.split("\n");
     expect(text).toEqual([
       expect.stringMatching(/^- \[filed → Jira KRM-7\] \(bug\) A {2}id=/),
       expect.stringMatching(/^- \[dismissed\] \(docs\) B {2}id=/),
       expect.stringMatching(/^- \[open\] \(bug\) C {2}id=/),
+      expect.stringMatching(/^- \[filed → Plane WEB-12\] \(security\) D {2}id=/),
     ]);
   });
 
@@ -132,6 +137,7 @@ describe("findings routes", () => {
     expect(() => ctl.listFindings("nope")).toThrow(expect.objectContaining({ status: 404 }));
     expect(() => ctl.dismissFinding(s.id, "nope")).toThrow(expect.objectContaining({ status: 404 }));
     expect(() => ctl.findingFiled(s.id, f!.id, { kind: "jira", key: "K-1", url: "javascript:alert(1)" })).toThrow(expect.objectContaining({ status: 400 }));
+    expect(() => ctl.findingFiled(s.id, f!.id, { kind: "plane", key: "WEB-1", url: "javascript:alert(1)" })).toThrow(expect.objectContaining({ status: 400 }));
     expect(() => ctl.findingFiled(s.id, f!.id, { kind: "board" })).toThrow(expect.objectContaining({ status: 400 }));
     expect(ctl.listFindings(s.id)[0]!.status).toBe("open");
   });

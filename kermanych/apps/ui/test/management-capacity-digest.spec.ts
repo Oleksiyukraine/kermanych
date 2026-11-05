@@ -20,7 +20,7 @@ vi.mock('../src/lib/api', () => ({
 }));
 vi.mock('../src/stores/orchestrator', () => ({ useOrchestrator: () => ({ selectedWorkspaceId: 'w1', notify: vi.fn() }) }));
 vi.mock('../src/stores/projects', () => ({
-  useProjects: () => ({ projects: [], members: { w1: [] }, workspaceById: new Map([['w1', { id: 'w1', name: 'Acme' }]]), loadMembers: vi.fn() }),
+  useProjects: () => ({ projects: [], members: { w1: [] }, workspaceById: new Map([['w1', { id: 'w1', name: 'Acme' }]]), loadMembers: vi.fn(), canManageWorkspace: () => true }),
 }));
 vi.mock('../src/stores/board', () => ({ useBoard: () => ({ createTask: vi.fn() }) }));
 vi.mock('../src/stores/jira', () => ({
@@ -47,7 +47,7 @@ vi.mock('../src/stores/jira', () => ({
 vi.mock('../src/stores/risks', () => ({ useRisks: () => ({ byWorkspace: { w1: [] }, load: vi.fn(), create: vi.fn(), save: vi.fn() }) }));
 vi.mock('../src/stores/release-notes', () => ({ useReleaseNotes: () => ({ generate: vi.fn(), byWorkspace: { w1: [] }, load: vi.fn() }) }));
 
-const reply: ManagementChatReply = { text: 'ok', actions: [], rejected: [], notices: [], jiraChanges: [], ms: 1 };
+const reply: ManagementChatReply = { text: 'ok', actions: [], rejected: [], notices: [], trackerChanges: [], ms: 1 };
 
 const issue = (over: Record<string, unknown>) => ({
   integrationId: 'i1', workspaceId: 'w1', issueId: '1', key: 'KAN-1', summary: 's', descriptionHtml: '',

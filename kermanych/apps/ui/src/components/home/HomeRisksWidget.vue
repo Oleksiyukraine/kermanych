@@ -3,6 +3,9 @@
     <p v-if="store.loadError" class="riskw__note riskw__note--error mono">
       {{ t('management.home.risks.error', { error: store.loadError }) }}
     </p>
+    <template v-else-if="phase !== 'ready'">
+      <KSkeleton v-if="phase === 'skeleton'" variant="rows" :rows="3" />
+    </template>
     <p v-else-if="!highlighted.length" class="riskw__note mono">
       {{ t('management.home.risks.empty') }}
     </p>
@@ -24,7 +27,7 @@
       </li>
     </ol>
 
-    <RouterLink v-if="highlighted.length" class="riskw__all mono" :to="{ name: 'management-risks' }">
+    <RouterLink v-if="phase === 'ready' && highlighted.length" class="riskw__all mono" :to="{ name: 'management-risks' }">
       {{ t('management.home.risks.open') }} →
     </RouterLink>
   </div>
@@ -40,6 +43,8 @@ import { useI18n } from 'vue-i18n';
 import { RouterLink } from 'vue-router';
 import type { WorkspaceRisk } from '@kermanych/cloud';
 import { useRisks } from 'stores/risks';
+import KSkeleton from 'components/kit/KSkeleton.vue';
+import { useLoadPhase } from '../../composables/useLoadPhase';
 import { useNow } from '../../composables/useNow';
 import {
   type RiskBand,
@@ -67,6 +72,9 @@ watch(
   },
   { immediate: true },
 );
+
+// «Немає ризиків» only once this workspace's register has arrived.
+const phase = useLoadPhase(() => store.byWorkspace[props.workspaceId] === undefined && !store.loadError);
 
 const BAND_RANK: Record<RiskBand, number> = { low: 0, medium: 1, high: 2, extreme: 3 };
 

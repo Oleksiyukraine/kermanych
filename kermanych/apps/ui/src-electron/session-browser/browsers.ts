@@ -44,7 +44,7 @@ import type {
   BrowserTarget,
   BrowserViewport,
 } from '@kermanych/api';
-import { isExternalScheme, navigationAllowed, normalizeUrl } from '../../src/lib/browser-url';
+import { httpOrigin, isExternalScheme, navigationAllowed, normalizeUrl, previewDestination } from '../../src/lib/browser-url';
 import * as actions from './actions';
 import { cdp, run } from './cdp';
 import { PICKER_SCRIPT, type PickResult } from './scripts';
@@ -78,11 +78,13 @@ const PAUSED_MESSAGE =
 // Shortcuts with Cmd (macOS) / Ctrl (elsewhere) held, by KeyboardEvent.code. Zoom keys and
 // Cmd+W are swallowed: zoom is shared by every view of the origin in the project's partition
 // (it would rescale the same site in the other sessions and the agent's coordinates), and the
-// default app menu's Cmd+W would close the Kermanych window itself.
-const MOD_SHORTCUTS: Record<string, 'reload' | 'focus-address' | 'find' | 'swallow'> = {
+// default app menu's Cmd+W would close the Kermanych window itself. Cmd+K is the app's — it
+// summons the Менеджмент assistant from anywhere (docs/specs/2026-11-03-assistant-overlay.md).
+const MOD_SHORTCUTS: Record<string, 'reload' | 'focus-address' | 'find' | 'assistant' | 'swallow'> = {
   KeyR: 'reload',
   KeyL: 'focus-address',
   KeyF: 'find',
+  KeyK: 'assistant',
   KeyW: 'swallow',
   Equal: 'swallow',
   Minus: 'swallow',
@@ -121,6 +123,11 @@ function freeDownloadPath(dir: string, filename: string, reserved: Set<string>):
   return candidate;
 }
 
+// A tester run's own partition: no `persist:` prefix, so it is in memory only.
+function ephemeralPartition(sessionId: string): string {
+  return `kermanych-tester-${sessionId}`;
+}
+
 export class SessionBrowsers implements BrowserHost {
   private win: BrowserWindow | undefined;
   private readonly views = new Map<string, SessionView>();
@@ -136,9 +143,19 @@ export class SessionBrowsers implements BrowserHost {
   // sessionId → the last http(s) URL its browser was at, kept in userData across restarts and
   // idle closes so the pane and the agent can go back there.
   private readonly lastUrls = new Map<string, string>();
+  // sessionId → the origin of the live preview opened last (openPreview), kept in the same file:
+  // the next preview keeps the path of a page on it, and the empty pane offers «Запустити превʼю»
+  // instead of «Відкрити знову» for a last URL on it (docs/specs/2026-11-03-session-browser-
+  // preview.md, decision 7).
+  private readonly previewOrigins = new Map<string, string>();
   private readonly lastUrlsFile = path.join(app.getPath('userData'), 'session-browser.json');
   private readonly lastUrlsLoaded: Promise<void>;
   private lastUrlsTimer: NodeJS.Timeout | undefined;
+  // Sessions whose view uses an in-memory partition of its own (BrowserTarget.ephemeral: a
+  // «Тестувальник» run, docs/specs/2026-11-04-qa-tester-agent.md, decision 7). Every call that may
+  // create a view — the api's targets and the renderer's show/navigate/set-viewport/open-preview —
+  // carries the flag, so the view is made in the right partition from the start.
+  private readonly ephemeral = new Set<string>();
 
   constructor() {
     this.registerIpc();
@@ -166,6 +183,7 @@ export class SessionBrowsers implements BrowserHost {
     const href = normalizeUrl(url);
     const existing = this.views.get(target.sessionId);
     if (existing?.agentPaused) throw new Error(PAUSED_MESSAGE);
+    this.learn(target);
     const v = this.ensure(target.sessionId, target.projectId);
     this.touch(v);
     v.agentBusy++;
@@ -256,15 +274,47 @@ export class SessionBrowsers implements BrowserHost {
     return this.agent(target, (v) => actions.evaluate(v, expression));
   }
 
+  // Not an agent tool: the api opens a preview that became running (started by the operator or
+  // the agent), and the renderer's «Відкрити превʼю». So the agent pause does not apply, and the
+  // load never takes the keyboard (the agent-load focus guard). The page — or, with none, the
+  // last address — keeps its path when it is on the previous preview's origin.
+  async openPreview(target: BrowserTarget, url: string): Promise<void> {
+    const href = normalizeUrl(url);
+    await this.lastUrlsLoaded;
+    const { sessionId } = target;
+    this.learn(target);
+    const current = this.views.get(sessionId)?.wc.getURL() || this.lastUrls.get(sessionId);
+    const destination = previewDestination(current, this.previewOrigins.get(sessionId), href);
+    const origin = httpOrigin(href);
+    if (origin && this.previewOrigins.get(sessionId) !== origin) {
+      this.previewOrigins.set(sessionId, origin);
+      this.saveLastUrls();
+    }
+    await this.load(this.ensure(sessionId, target.projectId), destination, true);
+  }
+
+  isPaused(sessionId: string): boolean {
+    return this.views.get(sessionId)?.agentPaused ?? false;
+  }
+
   has(sessionId: string): boolean {
     return this.views.has(sessionId);
   }
 
-  // The session was deleted: everything of its browser goes, temp files and last URL included.
+  // The session was deleted (or a tester run retired): everything of its browser goes, temp
+  // files, last URL and preview origin included — and an ephemeral partition's storage.
   close(sessionId: string): void {
     this.teardown(sessionId);
-    if (this.lastUrls.delete(sessionId)) this.saveLastUrls();
+    const forgot = this.lastUrls.delete(sessionId);
+    if (this.previewOrigins.delete(sessionId) || forgot) this.saveLastUrls();
     void rm(tempDir(sessionId), { recursive: true, force: true }).catch(() => {});
+    // The in-memory session object itself lives until the app quits (Electron keeps every
+    // partition it made); its storage goes now, and its id is never reused.
+    if (this.ephemeral.delete(sessionId)) void session.fromPartition(ephemeralPartition(sessionId)).clearStorageData().catch(() => {});
+  }
+
+  private learn(target: BrowserTarget): void {
+    if (target.ephemeral) this.ephemeral.add(target.sessionId);
   }
 
   // ---- The renderer's side (Браузер tab) ----
@@ -416,7 +466,9 @@ export class SessionBrowsers implements BrowserHost {
   }
 
   private emit(v: SessionView): void {
-    if (v.wc.isDestroyed()) return;
+    // A closed view's page can still report a load stopping on its way out; that report must
+    // not bring its state back in the renderer (the pane would then show it and recreate it).
+    if (v.wc.isDestroyed() || this.views.get(v.sessionId) !== v) return;
     this.send('kermanych:browser:state-changed', this.state(v));
   }
 
@@ -430,12 +482,14 @@ export class SessionBrowsers implements BrowserHost {
       const v = this.views.get(sessionId);
       if (v && !v.wc.isDestroyed()) act(v);
     };
-    ipcMain.on('kermanych:browser:show', (_e, sessionId: string, projectId: string, bounds: KermanychBrowserBounds) => {
+    ipcMain.on('kermanych:browser:show', (_e, sessionId: string, projectId: string, bounds: KermanychBrowserBounds, ephemeral?: boolean) => {
+      this.learn({ sessionId, projectId, ephemeral: ephemeral === true });
       this.show(sessionId, projectId, bounds);
     });
     ipcMain.handle('kermanych:browser:hide', (_e, opts?: { freeze?: boolean }) => this.hide(opts?.freeze === true));
-    ipcMain.handle('kermanych:browser:navigate', async (_e, sessionId: string, projectId: string, url: string) => {
+    ipcMain.handle('kermanych:browser:navigate', async (_e, sessionId: string, projectId: string, url: string, ephemeral?: boolean) => {
       const href = normalizeUrl(url);
+      this.learn({ sessionId, projectId, ephemeral: ephemeral === true });
       const v = this.ensure(sessionId, projectId);
       // Like Chrome: Enter in the address bar moves the keyboard into the page the operator is
       // looking at. A view that is not shown (navigated from elsewhere) must not take it.
@@ -448,6 +502,8 @@ export class SessionBrowsers implements BrowserHost {
     ipcMain.on('kermanych:browser:devtools', (_e, sessionId: string) => withView(sessionId, (v) => v.wc.openDevTools({ mode: 'detach' })));
     ipcMain.handle('kermanych:browser:pick', (_e, sessionId: string) => this.pick(sessionId));
     ipcMain.on('kermanych:browser:cancel-pick', (_e, sessionId: string) => void this.cancelPick(sessionId));
+    // The operator's ✕ on the Браузер tab: the page goes, its last URL stays for «Відкрити знову».
+    ipcMain.on('kermanych:browser:close', (_e, sessionId: string) => this.teardown(sessionId));
     ipcMain.handle('kermanych:browser:answer-dialog', async (_e, sessionId: string, accept: boolean) => {
       const v = this.views.get(sessionId);
       if (!v) throw new Error('This session has no browser open');
@@ -462,7 +518,8 @@ export class SessionBrowsers implements BrowserHost {
         this.emit(v);
       });
     });
-    ipcMain.on('kermanych:browser:set-viewport', (_e, sessionId: string, projectId: string, viewport: KermanychBrowserViewport) => {
+    ipcMain.on('kermanych:browser:set-viewport', (_e, sessionId: string, projectId: string, viewport: KermanychBrowserViewport, ephemeral?: boolean) => {
+      this.learn({ sessionId, projectId, ephemeral: ephemeral === true });
       const v = this.ensure(sessionId, projectId);
       v.viewport = viewport && clampViewport(viewport);
       this.layout(v);
@@ -476,9 +533,15 @@ export class SessionBrowsers implements BrowserHost {
       const v = this.views.get(sessionId);
       return v ? this.state(v) : null;
     });
-    ipcMain.handle('kermanych:browser:last-url', async (_e, sessionId: string) => {
+    ipcMain.handle('kermanych:browser:open-preview', (_e, sessionId: string, projectId: string, url: string, ephemeral?: boolean) =>
+      this.openPreview({ sessionId, projectId, ephemeral: ephemeral === true }, url),
+    );
+    ipcMain.handle('kermanych:browser:last-url', async (_e, sessionId: string): Promise<{ url: string; preview: boolean } | null> => {
       await this.lastUrlsLoaded;
-      return this.lastUrls.get(sessionId) ?? null;
+      const url = this.lastUrls.get(sessionId);
+      if (!url) return null;
+      const origin = this.previewOrigins.get(sessionId);
+      return { url, preview: !!origin && httpOrigin(url) === origin };
     });
   }
 
@@ -536,7 +599,7 @@ export class SessionBrowsers implements BrowserHost {
     if (existing) return existing;
     const win = this.window();
     this.evictForNewView();
-    const partition = `persist:kermanych-browser-${projectId}`;
+    const partition = this.ephemeral.has(sessionId) ? ephemeralPartition(sessionId) : `persist:kermanych-browser-${projectId}`;
     this.guardPartition(partition);
     const view = new WebContentsView({
       webPreferences: {
@@ -577,7 +640,7 @@ export class SessionBrowsers implements BrowserHost {
     return v;
   }
 
-  // Once per partition (a project's sessions share one).
+  // Once per partition (a project's sessions share one; an ephemeral one is a session's own).
   private guardPartition(partition: string): void {
     if (this.guardedPartitions.has(partition)) return;
     this.guardedPartitions.add(partition);
@@ -885,7 +948,7 @@ export class SessionBrowsers implements BrowserHost {
     if (action === 'reload') {
       if (input.shift) v.wc.reloadIgnoringCache();
       else v.wc.reload();
-    } else if (action === 'focus-address' || action === 'find') {
+    } else if (action === 'focus-address' || action === 'find' || action === 'assistant') {
       // The keyboard is in the view; the renderer can focus its input only once its own
       // webContents has focus back.
       this.win?.webContents.focus();
@@ -939,6 +1002,7 @@ export class SessionBrowsers implements BrowserHost {
   // Every agent tool but navigate: the session's view with a live page in it, not paused by the
   // operator. Counts as agent use and marks agent input in flight for the focus guard.
   private async agent<T>(target: BrowserTarget, act: (v: SessionView) => T | Promise<T>): Promise<T> {
+    this.learn(target);
     const v = this.views.get(target.sessionId);
     if (v?.agentPaused) throw new Error(PAUSED_MESSAGE);
     if (!v || !v.wc.getURL()) {
@@ -1012,17 +1076,24 @@ export class SessionBrowsers implements BrowserHost {
     this.lastUrlsTimer = setTimeout(() => {
       void (async () => {
         await this.lastUrlsLoaded;
-        await writeFile(this.lastUrlsFile, JSON.stringify(Object.fromEntries(this.lastUrls))).catch(() => {});
+        const saved: Record<string, { url?: string; preview?: string }> = {};
+        for (const [sessionId, url] of this.lastUrls) saved[sessionId] = { url };
+        for (const [sessionId, preview] of this.previewOrigins) saved[sessionId] = { ...saved[sessionId], preview };
+        await writeFile(this.lastUrlsFile, JSON.stringify(saved)).catch(() => {});
       })();
     }, LAST_URLS_WRITE_MS);
   }
 
+  // `{ [sessionId]: { url, preview } }`; a bare URL string is the shape before preview origins
+  // were kept.
   private async loadLastUrls(): Promise<void> {
     try {
       const saved = JSON.parse(await readFile(this.lastUrlsFile, 'utf8')) as Record<string, unknown>;
-      for (const [sessionId, url] of Object.entries(saved)) {
-        // A URL recorded since startup is newer than the file's.
+      for (const [sessionId, entry] of Object.entries(saved)) {
+        const { url, preview } = typeof entry === 'string' ? { url: entry, preview: undefined } : ((entry ?? {}) as { url?: unknown; preview?: unknown });
+        // What was recorded since startup is newer than the file's.
         if (typeof url === 'string' && !this.lastUrls.has(sessionId)) this.lastUrls.set(sessionId, url);
+        if (typeof preview === 'string' && !this.previewOrigins.has(sessionId)) this.previewOrigins.set(sessionId, preview);
       }
     } catch {
       // No file yet (first run) or an unreadable one: start empty.

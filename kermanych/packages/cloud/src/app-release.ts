@@ -1,5 +1,5 @@
 // The cloud's release policy: the oldest app version it still serves
-// (supabase/migrations/20261012120000_app_release_policy.sql). Readable with the anon key.
+// (supabase/migrations/20261105090000_app_release_policy.sql). Readable with the anon key.
 import type { SupabaseClient } from "@supabase/supabase-js";
 
 // null when the policy cannot be read (offline, no row, a table older than this build): the

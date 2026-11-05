@@ -1,7 +1,7 @@
 // apps/ui/src/stores/projects.ts
 import { defineStore } from 'pinia';
 import { computed, ref } from 'vue';
-import type { Project } from '@kermanych/core';
+import type { Platform, Project } from '@kermanych/core';
 import type {
   AssignableRole,
   CloudProject,
@@ -43,8 +43,16 @@ export const useProjects = defineStore('projects', () => {
   const projects = ref<CloudProject[]>([]);
   // Keyed by WORKSPACE id now: membership is a workspace concept.
   const members = ref<Record<string, WorkspaceMember[]>>({});
+  // Workspaces whose LAST roster read failed. Kept so a screen gated on the caller's role can
+  // tell «not answered yet» from «will not be answered» and settle on the least-privileged
+  // view instead of a skeleton that never resolves (roleSettled below).
+  const membersFailed = ref<Record<string, true>>({});
   const loading = ref(false);
   const offlineError = ref<string | null>(null);
+  // Has the FIRST load() finished (either way)? `loading` is false before load() starts too —
+  // MainLayout awaits auth.ready first — so the sidebar skeleton and the onboarding count
+  // need this to tell «not asked yet» from «answered».
+  const loadSettled = ref(false);
 
   // Has a cloud project list been READ on this run? The sidebar needs this to know whether
   // it holds an authoritative picture of what exists in the cloud, and it cannot be inferred
@@ -227,6 +235,7 @@ export const useProjects = defineStore('projects', () => {
       return projects.value;
     } finally {
       loading.value = false;
+      loadSettled.value = true;
     }
   }
 
@@ -296,16 +305,18 @@ export const useProjects = defineStore('projects', () => {
     );
   }
 
+  // `platform` absent is «Не визначено» (NULL), the «Новий проєкт» modal's default.
   async function create(
     workspaceId: string,
     name: string,
-    gitRemoteUrl?: string,
+    opts: { gitRemoteUrl?: string | undefined; platform?: Platform | undefined } = {},
   ): Promise<CloudProject> {
-    // exactOptionalPropertyTypes: an absent remote is an absent KEY, not `undefined`.
+    // exactOptionalPropertyTypes: an absent field is an absent KEY, not `undefined`.
     const created = await cloudCreateProject(auth.client, {
       name,
       workspaceId,
-      ...(gitRemoteUrl ? { gitRemoteUrl } : {}),
+      ...(opts.gitRemoteUrl ? { gitRemoteUrl: opts.gitRemoteUrl } : {}),
+      ...(opts.platform ? { platform: opts.platform } : {}),
     });
     projects.value = [...projects.value, created];
     pushProjectWorkspace(created);
@@ -334,7 +345,7 @@ export const useProjects = defineStore('projects', () => {
   // belong to a project the whole team can see, with nothing re-created and nothing moved.
   //
   // The config travels with it because the mirror runs the other way afterwards:
-  // syncProjects() overwrites name, colour, commands, carry files, branch and conventions
+  // syncProjects() overwrites name, colour, platform, carry files, branch and conventions
   // from the cloud row, so publishing a bare name would silently blank the local setup.
   async function publish(localRow: Project, workspaceId: string): Promise<CloudProject> {
     // exactOptionalPropertyTypes: an unset field is an absent KEY, and an absent key is
@@ -345,8 +356,7 @@ export const useProjects = defineStore('projects', () => {
       workspaceId,
       carryFiles: localRow.carryFiles ?? ['.env'],
       ...(localRow.color ? { color: localRow.color } : {}),
-      ...(localRow.previewCommand ? { previewCommand: localRow.previewCommand } : {}),
-      ...(localRow.apiCommand ? { apiCommand: localRow.apiCommand } : {}),
+      ...(localRow.platform ? { platform: localRow.platform } : {}),
       ...(localRow.defaultBranch ? { defaultBranch: localRow.defaultBranch } : {}),
       ...(localRow.conventions ? { conventions: localRow.conventions } : {}),
       ...(localRow.docsRequired ? { docsRequired: true } : {}),
@@ -373,8 +383,19 @@ export const useProjects = defineStore('projects', () => {
   }
 
   async function loadMembers(workspaceId: string): Promise<WorkspaceMember[]> {
-    const list = await cloudListMembers(auth.client, workspaceId);
+    let list: WorkspaceMember[];
+    try {
+      list = await cloudListMembers(auth.client, workspaceId);
+    } catch (e) {
+      membersFailed.value = { ...membersFailed.value, [workspaceId]: true };
+      throw e;
+    }
     members.value = { ...members.value, [workspaceId]: list };
+    if (membersFailed.value[workspaceId]) {
+      const next = { ...membersFailed.value };
+      delete next[workspaceId];
+      membersFailed.value = next;
+    }
     return list;
   }
 
@@ -460,10 +481,24 @@ export const useProjects = defineStore('projects', () => {
     return (members.value[workspaceId] ?? []).find((m) => m.userId === uid)?.role;
   }
 
-  // May the caller administer the workspace's password vault — create/edit/delete a
-  // password, read any secret, decide access requests. Owner OR a seated manager. UX gate
-  // only; can_manage_workspace_passwords is the real one. The password vault is the first
-  // surface where the manager role carries authorization weight.
+  // Is the caller's role in this workspace as known as it is going to get? At once for the
+  // owner (the workspace row says so); otherwise once the roster read has answered — either
+  // way, because a failed read leaves myRole undefined and the caller on the developer view
+  // (RLS still decides), which is a settled answer, not a pending one.
+  function roleSettled(workspaceId: string): boolean {
+    return (
+      isWorkspaceOwner(workspaceId) ||
+      members.value[workspaceId] !== undefined ||
+      !!membersFailed.value[workspaceId]
+    );
+  }
+
+  // Owner OR a seated manager: the workspace's management role. It authorises the password
+  // vault — create/edit/delete a password, read any secret, decide access requests
+  // (can_manage_workspace_passwords) — and the risk register, which a developer neither
+  // opens nor sees on Home (can_access_workspace_risks, core `managersOnly`). UX gate only;
+  // those SQL predicates are the real ones. `false` until the roster is in for a non-owner,
+  // so a screen that must not flash manager content waits on roleSettled.
   function canManageWorkspace(workspaceId: string): boolean {
     const r = myRole(workspaceId);
     return r === 'owner' || r === 'manager';
@@ -483,6 +518,7 @@ export const useProjects = defineStore('projects', () => {
     members,
     loading,
     listRead,
+    loadSettled,
     offlineError,
     byId,
     workspaceById,
@@ -505,6 +541,7 @@ export const useProjects = defineStore('projects', () => {
     isOwner,
     isWorkspaceOwner,
     myRole,
+    roleSettled,
     canManageWorkspace,
   };
 });

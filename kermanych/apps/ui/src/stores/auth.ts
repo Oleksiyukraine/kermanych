@@ -33,6 +33,10 @@ export const useAuth = defineStore('auth', () => {
   const accessToken = ref<string | null>(null);
   const runtime = ref<AgentRuntimeKind | null>(null);
   const language = ref<AgentLanguage | null>(null);
+  // True while the account's runtime is being read from the cloud after a fresh session.
+  // `runtime === null` alone cannot tell «not chosen» from «not read yet», and the runtime
+  // gate in MainLayout must not pop up for a returning user during that read.
+  const runtimeLoading = ref(false);
 
   let resolveReady: () => void = () => undefined;
   // Resolves once the initial session (if any) has been read and handed to the
@@ -79,6 +83,9 @@ export const useAuth = defineStore('auth', () => {
         }
         if (mine !== applied) return;
       }
+      // Raised before `user` is set, so the gate never sees a signed-in user with an unread
+      // runtime.
+      if (fresh) runtimeLoading.value = true;
       const meta = (session.user.user_metadata ?? {}) as {
         user_name?: string;
         full_name?: string;
@@ -101,6 +108,8 @@ export const useAuth = defineStore('auth', () => {
         runtime.value = await getMyAgentRuntime(client);
       } catch {
         runtime.value = null;
+      } finally {
+        runtimeLoading.value = false;
       }
       // Same best-effort load for the communication language.
       try {
@@ -170,6 +179,16 @@ export const useAuth = defineStore('auth', () => {
       client.auth.onAuthStateChange((_event, session) => {
         void apply(session);
       });
+      // The desktop app keeps the session refreshing while its window is hidden
+      // (docs/specs/2026-10-23-minion-auto-run.md, decision 13). auth-js 2.112.3 stops its
+      // refresh ticker while `document.visibilityState` is `hidden`; a minimised or covered
+      // window would then let the token the local api holds expire within the hour, and with it
+      // the status pushes of every session and the «Посіпака» claims. `startAutoRefresh()` keeps
+      // the ticker running and drops that visibility handling — only once `initialize()` has
+      // finished, which `getSession()` awaits: its last step registers the visibility handling
+      // again. A browser tab keeps the default: there the minion works only while the tab is
+      // visible.
+      if (window.kermanych) await client.auth.startAutoRefresh();
     } catch (e) {
       // boot/supabase.ts awaits init(); rethrowing would take the whole app
       // down over a storage hiccup. A signed-out app that still renders /login
@@ -249,5 +268,5 @@ export const useAuth = defineStore('auth', () => {
     // catalog dimension.
   }
 
-  return { client, user, profile, accessToken, runtime, language, ready, init, signInWithGithub, signOut, chooseRuntime, chooseLanguage };
+  return { client, user, profile, accessToken, runtime, runtimeLoading, language, ready, init, signInWithGithub, signOut, chooseRuntime, chooseLanguage };
 });

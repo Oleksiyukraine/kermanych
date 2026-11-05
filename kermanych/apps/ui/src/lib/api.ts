@@ -1,6 +1,8 @@
 // apps/ui/src/lib/api.ts
 // Typed REST helpers against the Kermanych API (NestJS, global prefix "api").
 import type {
+  CukChatAsk,
+  CukChatReply,
   DirListing,
   ImageInput,
   ManagementChatAsk,
@@ -10,10 +12,14 @@ import type {
   Session,
   ReleaseNotesAsk,
   ReleaseNotesReply,
+  ReleaseNotesAuthorsAsk,
+  ReleaseNotesAuthorsReply,
   SubscriptionUsage,
   ProjectSkillsPayload,
+  SkillImportRead,
+  SkillImportRoot,
+  SkillImportScan,
   TranscriptEntry,
-  SubagentNode,
   ThinkingLevel,
   ToolLine,
   RpcExtensionUIResponse,
@@ -29,9 +35,22 @@ import type {
   DocsWriteKind,
   DocsGate,
   DocsGateFailure,
-  DocsPolicy,
+  PreviewInfo,
+  PreviewLogs,
+  PreviewState,
+  DeviceChoice,
+  DeviceInfo,
+  DevicePick,
+  DevicePlatform,
   AgentFinding,
   FindingTarget,
+  MachineResources,
+  ResourcesUpdate,
+  MinionState,
+  NativeSettings,
+  PrCheck,
+  QaRunScope,
+  TesterSettings,
 } from '@kermanych/core';
 import type {
   CloudProject,
@@ -39,6 +58,8 @@ import type {
   JiraIssue,
   LinearIntegration,
   LinearIssue,
+  PlaneIntegration,
+  PlaneIssue,
   ReleaseNotesSlack,
   SlackIntegration,
 } from '@kermanych/cloud';
@@ -56,6 +77,12 @@ const BASE =
 // imports the auth store (that would be circular: store → api → store).
 let authToken: string | undefined;
 let onUnauthorized: (() => void) | undefined;
+
+// POST /auth/session itself is accepted only from this ui (apps/api/src/auth/ui-proof.ts):
+// with the current bearer, the desktop app's per-launch key (`UI_KEY` below), or — the web
+// build — from the dev ui's own origin, which the browser sets.
+const UI_KEY: Record<string, string> =
+  typeof window !== 'undefined' && window.kermanych?.uiKey ? { 'x-kermanych-ui-key': window.kermanych.uiKey } : {};
 
 export function setAuthToken(token: string | undefined): void {
   authToken = token;
@@ -83,11 +110,16 @@ function authHeaders(json: boolean, token: string | undefined): Record<string, s
 // a sign-out followed by a new sign-in — says nothing about the CURRENT session and must
 // not end it. Only the guard answers 401 (integration-token refusals are 403), so the
 // handler never ran and re-sending once with the current token is safe for any method.
-async function send(method: string, path: string, body?: { json: unknown }): Promise<Response> {
+async function send(
+  method: string,
+  path: string,
+  body?: { json: unknown },
+  extraHeaders?: Record<string, string>,
+): Promise<Response> {
   const attempt = (token: string | undefined) =>
     fetch(BASE + path, {
       method,
-      headers: authHeaders(body !== undefined, token),
+      headers: { ...authHeaders(body !== undefined, token), ...extraHeaders },
       ...(body !== undefined ? { body: JSON.stringify(body.json) } : {}),
     });
   let used = authToken;
@@ -179,10 +211,6 @@ async function del(path: string): Promise<void> {
 // counters without a second round trip.
 async function delJson<T>(path: string): Promise<T> {
   return (await (await send('DELETE', path)).json()) as T;
-}
-
-async function patchJson<T>(path: string, body: unknown): Promise<T> {
-  return (await (await send('PATCH', path, { json: body })).json()) as T;
 }
 
 // One changed file, already paired into side-by-side rows by the api (see
@@ -282,6 +310,60 @@ export type LinearEditorOptions = {
 };
 export type LinearAssignableUser = { id: string; name: string; avatar?: string };
 
+// ── Plane (REST v1, proxied through the local api for the same reason as Jira: the
+// per-user API token lives in this machine's registry, never in the browser). A token is
+// keyed by the Plane address AND the Plane workspace slug — some editions scope a token to
+// one workspace — so every token route carries both. ──────────────────────────────────────
+export type PlaneTokenStatus = { present: boolean; displayName?: string };
+export type PlaneProjectOption = { id: string; name: string; identifier: string };
+// The project's states shaped as Jira-style transitions (id === stateId): Plane has no
+// workflow, so every other state is a «transition», and the board, the ticket dialog and the
+// merge prompt share one vocabulary with the Jira views.
+export type PlaneTransition = {
+  id: string;
+  name: string;
+  to: { id: string; name: string; statusCategory: { key: string } };
+};
+// Plane's fixed priority enum — no priorities endpoint, the five values are the whole set.
+export type PlanePriority = 'urgent' | 'high' | 'medium' | 'low' | 'none';
+// Create/edit a Plane work item. `description` is markdown (the api renders Plane's editor
+// HTML); `labels` are NAMES (the api resolves them to the project's label ids, creating a
+// missing one best-effort); `assigneeAccountId` null and `estimatePointId` null clear;
+// `startDate`/`dueDate` '' clear. `stateId` moves the item — the drag-to-column field.
+export type PlaneIssueDraft = {
+  summary?: string;
+  description?: string;
+  issueTypeId?: string;
+  priority?: PlanePriority;
+  labels?: string[];
+  assigneeAccountId?: string | null;
+  estimatePointId?: string | null;
+  startDate?: string;
+  dueDate?: string;
+  parentKey?: string;
+  stateId?: string;
+};
+// The editor's live lists, plus what the token may do to worklogs. `issueTypes` and
+// `estimatePoints` are empty where the project (or the edition) has none; time tracking is
+// a project switch Plane Pro owns, so the worklog surfaces read `timeTrackingEnabled` and
+// hide rather than break. An entry is «mine» when its authorAccountId is `myAccountId`.
+export type PlaneEditorOptions = {
+  issueTypes: { id: string; name: string }[];
+  priorities: { id: string; name: string }[];
+  labels: { id: string; name: string; color: string }[];
+  states: { id: string; name: string; group: string; color: string }[];
+  estimatePoints: { id: string; value: string }[];
+  estimateType: 'points' | 'categories' | 'time' | '';
+  timeTrackingEnabled: boolean;
+  myAccountId: string;
+  worklog: { editOwn: boolean; editAll: boolean; deleteOwn: boolean; deleteAll: boolean };
+};
+export type PlaneAssignableUser = { accountId: string; displayName: string; avatar?: string };
+// Plane's worklog is a duration and an optional note — no «started», no estimate
+// adjustment. The duration is typed in Jira's spelling (`3h 20m`, `45m`, `1.5h`); the api
+// converts it to Plane's minutes.
+export type PlaneWorklogDraft = { timeSpent: string; description?: string };
+
 // ── Slack (the documentation Q&A bot; its bot and app-level tokens live in this machine's
 // registry, keyed by the Kermanych workspace, and never reach the browser or the cloud) ────
 // `listening` = this machine holds an open Socket Mode connection answering for the
@@ -302,11 +384,6 @@ export const api = {
   // LOCAL project rows. Creation and deletion live in the cloud (see stores/projects.ts);
   // these routes cache cloud config and own this machine's binding.
   listProjects: (): Promise<Project[]> => get<Project[]>('/projects'),
-
-  patchProject: (
-    id: string,
-    body: { name?: string; color?: string; previewCommand?: string; apiCommand?: string; carryFiles?: string[]; docFolders?: string[]; docsRequired?: boolean; docsPolicy?: DocsPolicy; defaultBranch?: string; conventions?: string },
-  ): Promise<Project> => patchJson<Project>(`/projects/${id}`, body),
 
   // The resolved library (defaults + project rows, with the repo-shadowed ones marked), AND
   // the names the bound checkout's own skill directories define. The second list is the only
@@ -483,6 +560,105 @@ export const api = {
       { projectId, transitionId, images },
     ),
 
+  // ── Plane. The acting user comes from the guard's token; their Plane API token from the
+  // machine's registry, keyed by site + Plane workspace slug. Every write returns the
+  // refreshed mirror issue so the caller can upsert it without waiting for realtime. The
+  // action key is the work item's key («WEB-42»).
+  planeTokenStatus: (site: string, workspace: string): Promise<PlaneTokenStatus> =>
+    get<PlaneTokenStatus>(`/plane/token?site=${encodeURIComponent(site)}&workspace=${encodeURIComponent(workspace)}`),
+  planeSetToken: (siteUrl: string, workspaceSlug: string, token: string): Promise<{ displayName: string }> =>
+    put<{ displayName: string }>('/plane/token', { siteUrl, workspaceSlug, token }),
+  planeDeleteToken: (site: string, workspace: string): Promise<void> =>
+    del(`/plane/token?site=${encodeURIComponent(site)}&workspace=${encodeURIComponent(workspace)}`),
+
+  planeProjects: (site: string, workspace: string): Promise<PlaneProjectOption[]> =>
+    get<PlaneProjectOption[]>(
+      `/plane/projects?site=${encodeURIComponent(site)}&workspace=${encodeURIComponent(workspace)}`,
+    ),
+  planeIntegrations: (workspaceId: string): Promise<PlaneIntegration[]> =>
+    get<PlaneIntegration[]>(`/plane/integrations/${workspaceId}`),
+  planeConnect: (
+    workspaceId: string,
+    siteUrl: string,
+    workspaceSlug: string,
+    projectId: string,
+  ): Promise<PlaneIntegration> =>
+    post<PlaneIntegration>('/plane/integrations', { workspaceId, siteUrl, workspaceSlug, projectId }),
+  // Disconnect ONE project by its integration id — the workspace's other projects stay.
+  planeDisconnect: (integrationId: string): Promise<void> => del(`/plane/integrations/${integrationId}`),
+
+  // `rateLimited`: Plane's 60-requests-a-minute budget ran out mid-tick and the api ended the
+  // tick quietly — not a failure, the next tick carries on.
+  planeSync: (integrationId: string, full = false): Promise<{ synced: boolean; rateLimited?: boolean }> =>
+    post<{ synced: boolean; rateLimited?: boolean }>(`/plane/sync/${integrationId}`, { full }),
+
+  planeTransitions: (integrationId: string, key: string): Promise<PlaneTransition[]> =>
+    get<PlaneTransition[]>(`/plane/issues/${integrationId}/${encodeURIComponent(key)}/transitions`),
+  planeTransition: (integrationId: string, key: string, transitionId: string): Promise<PlaneIssue> =>
+    post<PlaneIssue>(`/plane/issues/${integrationId}/${encodeURIComponent(key)}/transition`, { transitionId }),
+  planeComment: (integrationId: string, key: string, body: string): Promise<PlaneIssue> =>
+    post<PlaneIssue>(`/plane/issues/${integrationId}/${encodeURIComponent(key)}/comments`, { body }),
+  planeRefreshIssue: (integrationId: string, key: string): Promise<PlaneIssue> =>
+    post<PlaneIssue>(`/plane/issues/${integrationId}/${encodeURIComponent(key)}/refresh`, {}),
+  planeLogWork: (integrationId: string, key: string, draft: PlaneWorklogDraft): Promise<PlaneIssue> =>
+    post<PlaneIssue>(`/plane/issues/${integrationId}/${encodeURIComponent(key)}/worklogs`, draft),
+  planeEditWorklog: (
+    integrationId: string,
+    key: string,
+    worklogId: string,
+    draft: PlaneWorklogDraft,
+  ): Promise<PlaneIssue> =>
+    put<PlaneIssue>(
+      `/plane/issues/${integrationId}/${encodeURIComponent(key)}/worklogs/${encodeURIComponent(worklogId)}`,
+      draft,
+    ),
+  planeDeleteWorklog: (integrationId: string, key: string, worklogId: string): Promise<PlaneIssue> =>
+    delJson<PlaneIssue>(
+      `/plane/issues/${integrationId}/${encodeURIComponent(key)}/worklogs/${encodeURIComponent(worklogId)}`,
+    ),
+
+  planeCreateIssue: (integrationId: string, draft: PlaneIssueDraft): Promise<PlaneIssue> =>
+    post<PlaneIssue>(`/plane/issues/${integrationId}`, draft),
+  planeEditIssue: (integrationId: string, key: string, draft: PlaneIssueDraft): Promise<PlaneIssue> =>
+    put<PlaneIssue>(`/plane/issues/${integrationId}/${encodeURIComponent(key)}`, draft),
+  // An existing work item's description as markdown (from Plane's editor HTML) — the
+  // editor's start.
+  planeIssueDescription: (integrationId: string, key: string): Promise<{ markdown: string }> =>
+    get<{ markdown: string }>(`/plane/issues/${integrationId}/${encodeURIComponent(key)}/description`),
+  planeDeleteIssue: (integrationId: string, key: string): Promise<void> =>
+    del(`/plane/issues/${integrationId}/${encodeURIComponent(key)}`),
+
+  planeEditorOptions: (integrationId: string): Promise<PlaneEditorOptions> =>
+    get<PlaneEditorOptions>(`/plane/editor-options/${integrationId}`),
+  planeAssignableUsers: (integrationId: string, q: string): Promise<PlaneAssignableUser[]> =>
+    get<PlaneAssignableUser[]>(`/plane/assignable/${integrationId}?q=${encodeURIComponent(q)}`),
+
+  planeUploadAttachment: (
+    integrationId: string,
+    key: string,
+    filename: string,
+    data: string,
+    mimeType: string,
+  ): Promise<PlaneIssue> =>
+    post<PlaneIssue>(`/plane/issues/${integrationId}/${encodeURIComponent(key)}/attachments`, { filename, data, mimeType }),
+
+  // A fetch, not an <a href>, for Jira's reason (the bearer guard); the api follows Plane's
+  // presigned redirect itself, so the Plane key never reaches the storage host.
+  planeDownloadAttachment: (integrationId: string, key: string, attachmentId: string): Promise<Blob> =>
+    getBlob(`/plane/attachments/${integrationId}/${encodeURIComponent(key)}/${encodeURIComponent(attachmentId)}`),
+
+  planeLaunch: (
+    integrationId: string,
+    key: string,
+    projectId: string,
+    transitionId?: string,
+    images?: ImageInput[],
+  ): Promise<{ session: Session; transitionError?: string }> =>
+    post<{ session: Session; transitionError?: string }>(
+      `/plane/issues/${integrationId}/${encodeURIComponent(key)}/launch`,
+      { projectId, transitionId, images },
+    ),
+
   // ── Slack. Tokens are per workspace (one Slack app per Kermanych workspace), so every
   // route is addressed by the workspace id rather than by a Slack team.
   slackTokenStatus: (workspaceId: string): Promise<SlackTokenStatus> =>
@@ -523,6 +699,50 @@ export const api = {
   cloudOutbox: (): Promise<{ pending: number }> =>
     get<{ pending: number }>('/cloud/outbox'),
 
+  // This machine's hardware, resource profile and the operator's decision about it. Local-only
+  // like the outbox: the profile never goes to the cloud (one user, two machines).
+  machineResources: (): Promise<MachineResources> =>
+    get<MachineResources>('/machine/resources'),
+
+  updateMachineResources: (u: ResourcesUpdate): Promise<MachineResources> =>
+    put<MachineResources>('/machine/resources', u),
+
+  // Re-reads the hardware and clears the decision, so `askConsent` comes back true.
+  redetectMachineResources: (): Promise<MachineResources> =>
+    post<MachineResources>('/machine/resources/redetect', {}),
+
+  // «Посіпака» on this machine (docs/specs/2026-10-23-minion-auto-run.md, decisions 6 and 8).
+  // Local-only like the resource profile: which projects it works for, its cap and its pause
+  // never reach the cloud. Every write answers with the whole state, as `minion_update` does.
+  minion: (): Promise<MinionState> => get<MinionState>('/minion'),
+
+  // `paused: true` pauses it as the operator; `paused: false` resumes and clears the failures.
+  setMinion: (body: { cap?: number; paused?: boolean }): Promise<MinionState> =>
+    put<MinionState>('/minion', body),
+
+  setMinionProject: (projectId: string, active: boolean): Promise<MinionState> =>
+    put<MinionState>(`/minion/projects/${projectId}`, { active }),
+
+  // How native TUIs launch on this machine — local-only, applied at a session's next start.
+  nativeSettings: (): Promise<NativeSettings> => get<NativeSettings>('/native/settings'),
+
+  setNativeSettings: (s: NativeSettings): Promise<NativeSettings> =>
+    put<NativeSettings>('/native/settings', s),
+
+  // «Тестувальник» settings of a project on this machine (docs/specs/2026-11-04-qa-tester-agent.md,
+  // decisions 4 and 14). Local only and passwords included: the agent never gets them, the
+  // operator's own settings form does. The PUT answers with what the api stored (trimmed, ids).
+  getTesterSettings: (projectId: string): Promise<TesterSettings> =>
+    get<TesterSettings>(`/tester/projects/${projectId}`),
+
+  putTesterSettings: (projectId: string, settings: TesterSettings): Promise<TesterSettings> =>
+    put<TesterSettings>(`/tester/projects/${projectId}`, settings),
+
+  // The watchdog's «Зупинити команду»: the api kills only a subtree that session started
+  // after it became ready, never the agent or its MCP servers.
+  killAgentCommand: (sessionId: string, pid: number): Promise<{ ok: boolean }> =>
+    post<{ ok: boolean }>('/machine/kill', { sessionId, pid }),
+
   // What the provider plan behind this machine's agents has left (percent of each rolling
   // rate-limit window). Local-only, like the outbox above: only this process can ask omp.
   subscriptionUsage: (): Promise<SubscriptionUsage> =>
@@ -540,19 +760,31 @@ export const api = {
   resetManagementChat: (conversationId: string): Promise<{ ok: boolean }> =>
     post<{ ok: boolean }>('/management/chat/reset', { conversationId }),
 
+  // ЦУК (docs/specs/2026-11-04-cuk-control-console.md): one global conversation per signed-in
+  // user — the api keys it by the guard's user id, so neither call names a conversation.
+  cukChat: (ask: CukChatAsk): Promise<CukChatReply> => post<CukChatReply>('/cuk/chat', ask),
+
+  resetCukChat: (): Promise<{ ok: boolean }> => post<{ ok: boolean }>('/cuk/chat/reset', {}),
+
   // Write release notes from the bound repo's git history — local-only for the same
   // reason as the chat above. Generation only: the document comes back to the browser,
   // and stores/release-notes.ts saves it to the cloud under the user's own JWT.
   generateReleaseNotes: (ask: ReleaseNotesAsk): Promise<ReleaseNotesReply> =>
     post<ReleaseNotesReply>('/management/release-notes', ask),
 
+  // The commit authors of those projects, branches and period — the people the per-person
+  // form lets the operator pick. Git only, no model turn.
+  releaseNotesAuthors: (ask: ReleaseNotesAuthorsAsk): Promise<ReleaseNotesAuthorsReply> =>
+    post<ReleaseNotesAuthorsReply>('/management/release-notes/authors', ask),
+
   // The chat is promoted onto a card the UI has already minted: `taskId` is that card, and
   // the guard reads who may run it from its own token, never from this body.
   promoteChat: (id: string, taskId: string): Promise<Session> =>
     post<Session>(`/sessions/${id}/promote`, { taskId }),
 
-  sendMessage: (id: string, text: string, mode: MessageMode, images?: ImageInput[]): Promise<unknown> =>
-    post(`/sessions/${id}/message`, { text, mode, images }),
+  // `voice`: the text is a transcript from a voice conversation (docs/specs/2026-11-02-voice-conversation.md).
+  sendMessage: (id: string, text: string, mode: MessageMode, images?: ImageInput[], voice?: boolean): Promise<unknown> =>
+    post(`/sessions/${id}/message`, { text, mode, images, ...(voice ? { voice: true } : {}) }),
 
   setEffort: (id: string, level: ThinkingLevel): Promise<Session> =>
     post<Session>(`/sessions/${id}/effort`, { level }),
@@ -583,9 +815,6 @@ export const api = {
   getToolDetail: (sessionId: string, callId: string): Promise<{ lines: ToolLine[]; totalLines: number }> =>
     get<{ lines: ToolLine[]; totalLines: number }>(`/sessions/${sessionId}/tools/${encodeURIComponent(callId)}`),
 
-  getSubagents: (id: string): Promise<SubagentNode[]> =>
-    get<SubagentNode[]>(`/sessions/${id}/subagents`),
-
   // «Знахідки»: what the session's agent reported outside its task, in creation order. The
   // two writes only move the finding's local state — the card or issue itself is created
   // first, by the board store or the Jira route, and the target is reported here afterwards.
@@ -599,8 +828,21 @@ export const api = {
   getSubagentTranscript: (id: string, subagentId: string): Promise<TranscriptEntry[]> =>
     get<TranscriptEntry[]>(`/sessions/${id}/subagents/${encodeURIComponent(subagentId)}/transcript`),
 
-  listDirs: (path?: string): Promise<DirListing> =>
-    get<DirListing>(`/fs/list${path ? `?path=${encodeURIComponent(path)}` : ''}`),
+  // `hidden` is the skill import picker's mode: dot-folders listed, skill folders marked.
+  listDirs: (path?: string, opts?: { hidden?: boolean }): Promise<DirListing> => {
+    const q = new URLSearchParams();
+    if (path) q.set('path', path);
+    if (opts?.hidden) q.set('hidden', '1');
+    const qs = q.toString();
+    return get<DirListing>(`/fs/list${qs ? `?${qs}` : ''}`);
+  },
+
+  // The «Навички» import picker: this machine's skill folders, read by the local api.
+  skillImportRoots: (): Promise<SkillImportRoot[]> => get<SkillImportRoot[]>('/skills/import/roots'),
+  skillImportScan: (path: string): Promise<SkillImportScan> =>
+    get<SkillImportScan>(`/skills/import/scan?path=${encodeURIComponent(path)}`),
+  skillImportRead: (dir: string): Promise<SkillImportRead> =>
+    get<SkillImportRead>(`/skills/import/read?dir=${encodeURIComponent(dir)}`),
 
   listBranches: (id: string): Promise<{ branches: string[]; current: string; default: string | null }> =>
     get<{ branches: string[]; current: string; default: string | null }>(`/projects/${id}/branches`),
@@ -619,10 +861,54 @@ export const api = {
     edits: { file?: string; set?: Record<string, string>; remove?: string[] },
   ): Promise<EnvFileView> => put<EnvFileView>(`/projects/${id}/env`, edits),
 
-  startPreview: (id: string): Promise<{ url?: string; needsCommand?: boolean }> =>
-    post(`/sessions/${id}/preview`, {}),
+  // The live preview (docs/specs/2026-11-03-session-browser-preview.md). The config is read
+  // from the session directory on every `previewInfo`; a start answers at once (normally
+  // `starting`) and reports its progress through `preview_update`.
+  previewInfo: (id: string): Promise<PreviewInfo> => get<PreviewInfo>(`/sessions/${id}/preview`),
+
+  // `platform` / `base` (a Mobile project, docs/specs/2026-11-03-mobile-device-preview.md,
+  // decision 6): the device to start on; a base other than the session's clone re-clones it.
+  startPreview: (
+    id: string,
+    opts: { restart?: boolean; platform?: DevicePlatform; base?: string } = {},
+  ): Promise<PreviewState> => post<PreviewState>(`/sessions/${id}/preview`, opts),
+
+  // The app of a Mobile preview (decision 11): «Запустити застосунок» after it exited.
+  previewApp: (id: string, action: 'launch' | 'terminate' | 'restart'): Promise<PreviewState> =>
+    post<PreviewState>(`/sessions/${id}/preview/app`, { action }),
 
   stopPreview: (id: string): Promise<void> => del(`/sessions/${id}/preview`),
+
+  // Lines of `step` with `seq > since` (the cursor of the previous answer's `next`).
+  previewLogs: (id: string, step: string, since: number): Promise<PreviewLogs> =>
+    get<PreviewLogs>(`/sessions/${id}/preview/logs?step=${encodeURIComponent(step)}&since=${since}`),
+
+  // «Доручити агенту»: Kermanych asks the session's agent to write `.kermanych/preview.json`.
+  configurePreview: (id: string): Promise<{ sent: true }> =>
+    post<{ sent: true }>(`/sessions/${id}/preview/configure`, {}),
+
+  // «Змінні»: the `.env` of the directory the session's preview runs from (its worktree).
+  getSessionEnv: (id: string): Promise<EnvFileView> => get<EnvFileView>(`/sessions/${id}/env`),
+  saveSessionEnv: (id: string, edits: { set?: Record<string, string>; remove?: string[] }): Promise<EnvFileView> =>
+    put<EnvFileView>(`/sessions/${id}/env`, edits),
+
+  // The session's device (docs/specs/2026-11-03-mobile-device-preview.md): the tooling, the
+  // base devices of this machine, the project's choice, the session's clone and the pause.
+  deviceInfo: (id: string): Promise<DeviceInfo> => get<DeviceInfo>(`/sessions/${id}/device`),
+
+  // The project's base device on this machine (local registry only, decision 6).
+  setDeviceChoice: (projectId: string, choice: DeviceChoice): Promise<DeviceChoice> =>
+    put<DeviceChoice>(`/projects/${projectId}/device-choice`, choice),
+
+  // The «Агент» pause: `device_*` and preview start/stop refuse the agent while it is on.
+  setDevicePaused: (id: string, paused: boolean): Promise<{ paused: boolean }> =>
+    put<{ paused: boolean }>(`/sessions/${id}/device/pause`, { paused }),
+
+  // «◎ Вказати»: the element under a point given as fractions of the screen.
+  devicePick: (id: string, point: { x: number; y: number }): Promise<DevicePick> =>
+    post<DevicePick>(`/sessions/${id}/device/pick`, point),
+
+  deviceScreenshot: (id: string): Promise<Blob> => getBlob(`/sessions/${id}/device/screenshot`),
 
   finishInfo: (
     id: string,
@@ -647,11 +933,18 @@ export const api = {
   sessionFile: (id: string, path: string): Promise<FileContent> =>
     get<FileContent>(`/sessions/${id}/file?path=${encodeURIComponent(path)}`),
 
+  // Raw bytes for the viewer's preview mode — a PDF has no text body for sessionFile to carry.
+  sessionRaw: (id: string, path: string): Promise<Blob> =>
+    getBlob(`/sessions/${id}/raw?path=${encodeURIComponent(path)}`),
+
   projectTree: (id: string, path: string): Promise<TreeEntry[]> =>
     get<TreeEntry[]>(`/projects/${id}/tree${path ? `?path=${encodeURIComponent(path)}` : ''}`),
 
   projectFile: (id: string, path: string): Promise<FileContent> =>
     get<FileContent>(`/projects/${id}/file?path=${encodeURIComponent(path)}`),
+
+  projectRaw: (id: string, path: string): Promise<Blob> =>
+    getBlob(`/projects/${id}/raw?path=${encodeURIComponent(path)}`),
 
   projectDocsTree: (id: string, folder: string, path: string): Promise<TreeEntry[]> =>
     get<TreeEntry[]>(`/projects/${id}/docs/tree?folder=${encodeURIComponent(folder)}${path ? `&path=${encodeURIComponent(path)}` : ''}`),
@@ -682,6 +975,15 @@ export const api = {
   createPr: (id: string): Promise<{ ok: boolean }> =>
     post<{ ok: boolean }>(`/sessions/${id}/pr`, {}),
 
+  // Whether this session's pull request is merged on GitHub. Never fails for a GitHub problem:
+  // the api maps it to a state (no access, rate limit, offline …) the «Сесія» tab can show.
+  prCheck: (id: string): Promise<PrCheck> => get<PrCheck>(`/sessions/${id}/pr`),
+
+  // «Закрити задачу» after a merged PR: the api re-checks the merge, then finishes the session
+  // without the documentation gate; it refuses (400) anything not merged.
+  closeMerged: (id: string): Promise<{ finished: boolean; branch: string }> =>
+    post(`/sessions/${id}/close-merged`, {}),
+
   commitChanges: (id: string): Promise<{ ok: boolean }> =>
     post<{ ok: boolean }>(`/sessions/${id}/commit`, {}),
 
@@ -692,6 +994,10 @@ export const api = {
 
   // «Написати запит на API» / «Написати хендоф»: the agent writes that one document now, mid-task.
   writeDoc: (id: string, kind: DocsWriteKind): Promise<{ sent: true }> => post(`/sessions/${id}/docs/write`, { kind }),
+
+  // «Зберегти дизайн»: one Kermanych prompt asking the Дизайнер to screenshot every listed state,
+  // bring the README in line and commit; 400 for a session that is not a design.
+  saveDesign: (id: string): Promise<{ sent: true }> => post(`/sessions/${id}/design/save`, {}),
 
   archiveSession: (id: string): Promise<{ ok: boolean }> =>
     post<{ ok: boolean }>(`/sessions/${id}/archive`, {}),
@@ -716,6 +1022,10 @@ export const api = {
   resumeSession: (id: string): Promise<{ ok: boolean }> =>
     post<{ ok: boolean }>(`/sessions/${id}/resume`, {}),
 
+  // Starts a session waiting for an agent slot past the limit, for that one session only.
+  runSessionNow: (id: string): Promise<Session> =>
+    post<Session>(`/sessions/${id}/run-now`, {}),
+
   reopenSession: (id: string): Promise<Session> =>
     post<Session>(`/sessions/${id}/reopen`, {}),
 
@@ -725,13 +1035,21 @@ export const api = {
   reviewSession: (id: string): Promise<Session> =>
     post<Session>(`/sessions/${id}/review`, {}),
 
+  // «Виконати тестування»: starts a tester child of a doer session; answers with the child.
+  runTester: (id: string, scope: QaRunScope): Promise<Session> =>
+    post<Session>(`/sessions/${id}/qa-run`, { scope }),
+
   mergeBranch: (id: string, summary?: string): Promise<{ merged: boolean }> =>
     post<{ merged: boolean }>(`/sessions/${id}/merge`, { summary }),
 
   // Token handoff to the local api. POST is @Public() on the server (the UI has
-  // no bearer to present yet); DELETE and GET are guarded like everything else.
-  authSession: (accessToken: string): Promise<{ userId: string; githubUsername?: string }> =>
-    post<{ userId: string; githubUsername?: string }>('/auth/session', { accessToken }),
+  // no bearer to present yet) but carries the ui's proof (`UI_KEY` above); DELETE and
+  // GET are guarded like everything else.
+  authSession: async (accessToken: string): Promise<{ userId: string; githubUsername?: string }> =>
+    (await (await send('POST', '/auth/session', { json: { accessToken } }, UI_KEY)).json()) as {
+      userId: string;
+      githubUsername?: string;
+    },
 
   clearAuthSession: (): Promise<void> => del('/auth/session'),
 
@@ -760,4 +1078,19 @@ export const api = {
 
   setAccountLanguage: (language: AgentLanguage): Promise<void> =>
     post<void>('/account/language', { language }),
+
+  // ── Voice conversation (docs/specs/2026-11-02-voice-conversation.md) ──────────────────
+  // The OpenAI key stays in the api: the window only learns where it comes from and its last
+  // four characters, and hands its WebRTC offer to the api for GPT-Live's answer.
+  voiceKey: (): Promise<VoiceKeyStatus> => get<VoiceKeyStatus>('/voice/key'),
+  // An empty key deletes the stored one.
+  setVoiceKey: (key: string): Promise<VoiceKeyStatus> => put<VoiceKeyStatus>('/voice/key', { key }),
+  checkVoiceKey: (): Promise<{ ok: true }> => post<{ ok: true }>('/voice/check', {}),
+  voiceSession: (body: { sdp: string; voice: string; language: string }): Promise<{ id: string; sdp: string }> =>
+    post<{ id: string; sdp: string }>('/voice/session', body),
+  // Voice dictation (docs/specs/2026-11-03-voice-dictation.md): a transcription session's answer.
+  voiceDictation: (body: { sdp: string; languages: string[] }): Promise<{ sdp: string }> =>
+    post<{ sdp: string }>('/voice/dictation', body),
 };
+
+export type VoiceKeyStatus = { source: 'env' | 'stored' | null; hint?: string };

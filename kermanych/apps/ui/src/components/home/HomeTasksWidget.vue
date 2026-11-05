@@ -1,14 +1,27 @@
 <template>
   <div class="taskw">
-    <p v-if="jira.integration === null" class="taskw__note mono">
-      {{ t('management.home.tasks.gateJira') }}
+    <!-- Which tracker the tile reads, offered only when the workspace has both; the pick is
+         shared with the capacity tile (stores/tracker.ts). -->
+    <div v-if="src.available.length > 1" class="taskw__toolbar">
+      <KChipSelect
+        :model-value="src.kind ?? 'jira'"
+        :options="TRACKER_SOURCE_OPTIONS"
+        :title="t('management.capacity.source')"
+        placement="down"
+        @update:model-value="(v: string) => src.setKind(v)"
+      />
+    </div>
+    <p v-if="src.integration === null" class="taskw__note mono">
+      {{ t('management.home.tasks.gate') }}
       <RouterLink class="taskw__link" :to="{ name: 'management-integrations' }">
         {{ t('management.home.capacity.gateOpen') }}
       </RouterLink>
     </p>
-    <p v-else-if="jira.integration === undefined" class="taskw__note mono">
-      {{ t('management.home.capacity.loading') }}
-    </p>
+    <!-- Not loaded for this workspace (the tracker stores reset on a switch and keep `loading`
+         up through loadBoard): «нічого на сьогодні» would be a claim. -->
+    <template v-else-if="phase !== 'ready'">
+      <KSkeleton v-if="phase === 'skeleton'" variant="rows" :rows="4" />
+    </template>
     <p v-else-if="!groups.length" class="taskw__note mono">
       {{ t('management.home.tasks.empty') }}
     </p>
@@ -24,7 +37,7 @@
         </header>
         <ul class="taskw__tasks">
           <li v-for="task in g.tasks" :key="task.key" class="taskw__task">
-            <a class="taskw__task-link" :href="issueUrl(task.key)" target="_blank" rel="noopener">
+            <a class="taskw__task-link" :href="src.issueUrl(task.key)" target="_blank" rel="noopener">
               <span class="taskw__key mono">{{ task.key }}</span>
               <span class="taskw__summary">{{ task.summary }}</span>
               <span v-if="task.overdue" class="taskw__overdue mono">{{ t('management.home.tasks.overdue') }}</span>
@@ -34,17 +47,18 @@
       </section>
     </div>
 
-    <RouterLink v-if="groups.length" class="taskw__all mono" :to="{ name: 'board' }">
+    <RouterLink v-if="phase === 'ready' && groups.length" class="taskw__all mono" :to="{ name: 'board' }">
       {{ t('management.home.tasks.open') }} →
     </RouterLink>
   </div>
 </template>
 
 <script setup lang="ts">
-// Today's board, per developer: every open Jira ticket whose calendar window includes today,
-// grouped under the person it is assigned to. It reads the Jira session the home page opened
-// (stores/jira.ts) — the same mirror the board and Team Capacity read — so the tickets are the
-// ones on the board right now. Read-only: the row opens the ticket in Jira.
+// Today's board, per developer: every open Jira or Plane ticket whose calendar window includes
+// today, grouped under the person it is assigned to. It reads the tracker sessions the home
+// page opened (stores/tracker.ts picks which) — the same mirror the board and Team Capacity
+// read — so the tickets are the ones on the board right now. Read-only: the row opens the
+// ticket in its tracker.
 //
 // The grouping itself lives in lib/home-digest.ts, because the management chat sends the
 // SAME computation to the assistant on every ask — the two must never disagree about whose
@@ -52,27 +66,28 @@
 import { computed } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { RouterLink } from 'vue-router';
-import { useJira } from 'stores/jira';
+import { useTrackerSource } from 'stores/tracker';
+import KChipSelect from 'components/kit/KChipSelect.vue';
+import KSkeleton from 'components/kit/KSkeleton.vue';
+import { useLoadPhase } from '../../composables/useLoadPhase';
 import { useNow } from '../../composables/useNow';
 import { todayIso } from '../../lib/capacity';
 import { todayTaskGroups, type TodayGroup } from '../../lib/home-digest';
+import { TRACKER_SOURCE_OPTIONS } from '../../lib/tracker-source';
 
 defineProps<{ workspaceId: string }>();
 
 const { t } = useI18n();
-const jira = useJira();
+const src = useTrackerSource();
 const nowMs = useNow(60_000);
 const today = computed(() => todayIso(nowMs.value));
 
 // The digest keeps a blank name for the unassigned bucket; the label is render-side.
 const groups = computed<TodayGroup[]>(() =>
-  jira.integration ? todayTaskGroups(jira.issues, today.value) : [],
+  src.integration ? todayTaskGroups(src.issues, today.value) : [],
 );
 
-function issueUrl(key: string): string {
-  const site = jira.integration?.siteUrl ?? '';
-  return `${site.replace(/\/$/, '')}/browse/${key}`;
-}
+const phase = useLoadPhase(() => src.integration === undefined || (src.loading && !src.issues.length));
 </script>
 
 <style scoped lang="scss">
@@ -81,6 +96,11 @@ function issueUrl(key: string): string {
   flex-direction: column;
   gap: var(--k-sp-3);
   height: 100%;
+}
+
+.taskw__toolbar {
+  display: flex;
+  align-items: center;
 }
 
 .taskw__note {

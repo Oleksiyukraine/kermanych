@@ -10,7 +10,7 @@
 // array in lockstep with its union.
 
 // Notices — prose RETURNED to the operator as a transcript `notice` entry (supervisor) or a
-// `ManagementChatReply.notices` / `.jiraChanges` line (management chat). These never abort a
+// `ManagementChatReply.notices` / `.trackerChanges` line (management chat). These never abort a
 // turn: they ride alongside a real answer. A turn that FAILS is an `ApiErrorCode`, thrown to
 // the controller. `params` documents the values the localized message interpolates; a code
 // with no params carries a fixed sentence.
@@ -35,12 +35,16 @@ export type NoticeCode =
   // runtime/*-runtime.ts — a runtime child that DIED MID-SESSION, long after its launch was
   // called a success. The launch-time twins of these live in `ApiErrorCode` below: the same
   // machine fault is a thrown error when it stops a session from starting, and a transcript
-  // notice when it kills one already running.
+  // notice when it kills one already running. They are also `Session.errorCode`, set from the
+  // runtime's exit cause (supervisor.service.ts wireLive).
   | "claude_not_authenticated" // claude-code-runtime.ts — the claude CLI is signed out (params: none)
   | "claude_binary_missing" // claude-code-runtime.ts — the SDK's platform binary is absent (params: none)
-  | "omp_not_authenticated" // rpc-session.ts — the omp CLI is signed out (params: none)
-  | "omp_binary_missing" // rpc-session.ts — omp is not on PATH (params: none)
-  // jira-tools.service.ts — one `ManagementChatReply.jiraChanges` line per Jira write the
+  | "omp_not_authenticated" // rpc-session.ts exit cause — the omp CLI is signed out (params: none)
+  | "omp_binary_missing" // rpc-session.ts exit cause — omp is not on PATH (params: none)
+  // supervisor.service.ts — the machine resource profile (docs/specs/2026-10-21-machine-resource-profile.md):
+  | "slot_wait" // supervisor.service.ts — a message is accepted but waits for an agent slot (params: { running, limit })
+  | "watchdog_killed" // watchdog.service.ts — the watchdog killed an agent command at critical memory pressure (params: { command, size })
+  // jira-tools.service.ts — one `ManagementChatReply.trackerChanges` line per Jira write the
   // assistant made through its Jira tools during the turn:
   | "jira_issue_created" // jira-tools.service.ts — jira_create_issue filed an issue (params: { key, summary })
   | "jira_issue_updated" // jira-tools.service.ts — jira_update_issue changed fields (params: { key, fields } — comma-joined names)
@@ -61,7 +65,25 @@ export type NoticeCode =
   | "jira_issues_moved_to_sprint" // jira-tools.service.ts — issues moved into a sprint (params: { keys, sprint } — keys comma-joined)
   | "jira_issues_moved_to_backlog" // jira-tools.service.ts — issues moved to the backlog (params: { keys } — comma-joined)
   | "jira_version_created" // jira-tools.service.ts — a fix version was created (params: { name, project })
-  | "jira_version_updated"; // jira-tools.service.ts — a fix version was changed (params: { name })
+  | "jira_version_updated" // jira-tools.service.ts — a fix version was changed (params: { name })
+  // plane-tools.service.ts — one `ManagementChatReply.trackerChanges` line per Plane write the
+  // assistant made through its Plane tools during the turn:
+  | "plane_issue_created" // plane-tools.service.ts — plane_create_issue filed a work item (params: { key, summary })
+  | "plane_issue_updated" // plane-tools.service.ts — plane_update_issue changed fields (params: { key, fields } — comma-joined names)
+  | "plane_issue_state_changed" // plane-tools.service.ts — plane_set_state moved a work item (params: { key, state })
+  | "plane_issue_deleted" // plane-tools.service.ts — plane_delete_issue removed a work item (params: { key })
+  | "plane_comment_added" // plane-tools.service.ts — a comment was added (params: { key })
+  | "plane_comment_updated" // plane-tools.service.ts — a comment was edited (params: { key })
+  | "plane_comment_deleted" // plane-tools.service.ts — a comment was removed (params: { key })
+  | "plane_worklog_added" // plane-tools.service.ts — time was logged (params: { key, time })
+  | "plane_link_added" // plane-tools.service.ts — a web link was attached (params: { key, url })
+  | "plane_attachment_added" // plane-tools.service.ts — a file was uploaded onto a work item (params: { key, name })
+  | "plane_cycle_created" // plane-tools.service.ts — a cycle was created (params: { name, project })
+  | "plane_issues_added_to_cycle" // plane-tools.service.ts — work items were put into a cycle (params: { keys, cycle } — keys comma-joined)
+  | "plane_issue_removed_from_cycle" // plane-tools.service.ts — a work item was taken out of a cycle (params: { key, cycle })
+  | "plane_module_created" // plane-tools.service.ts — a module was created (params: { name, project })
+  | "plane_issues_added_to_module" // plane-tools.service.ts — work items were added to a module (params: { keys, module } — keys comma-joined)
+  | "plane_issue_removed_from_module"; // plane-tools.service.ts — a work item was removed from a module (params: { key, module })
 
 // HTTP errors — Ukrainian prose thrown as an exception and shown to the operator in place
 // of a 500. The controller carries `{ code, message, params }` in the response body (see
@@ -78,6 +100,8 @@ export type ApiErrorCode =
   | "period_format_invalid" // management.controller.ts:130 — range is not a YYYY-MM-DD pair (params: none)
   | "period_start_after_end" // management.controller.ts:132 — range start is after its end (params: none)
   | "group_by_invalid" // management.controller.ts — release-notes groupBy is not a known layout (params: { allowed })
+  | "authors_invalid" // management.controller.ts — release-notes authors is not a non-empty list of names (params: none)
+  | "authors_need_person" // management.controller.ts — release-notes authors sent without groupBy "person" (params: none)
   | "attachments_too_many" // management.controller.ts — more attachments than one turn accepts (params: { count, max })
   | "attachment_too_large" // management.controller.ts — one attachment over the 20 MiB cap (params: { name })
   // management-chat.service.ts — a management turn that fails is thrown to the controller:
@@ -89,6 +113,7 @@ export type ApiErrorCode =
   | "project_not_bound" // release-notes.service.ts — project not bound on this machine (params: { project })
   | "branch_not_in_repo" // release-notes.service.ts — branch absent from the project's local repo (params: { project, branch })
   | "no_commits_in_range" // release-notes.service.ts — a project has no commits in the requested range (params: { project, branch, from, to })
+  | "no_commits_by_authors" // release-notes.service.ts — none of the picked authors committed to any picked project in the range (params: { from, to })
   | "too_many_commits" // release-notes.service.ts — the period's commit subjects overflow the prompt ceiling (params: { count, from, to })
   | "omp_exited_during_generation" // release-notes.service.ts:110 — the omp child died mid-generation (params: { reason })
   | "generation_timeout" // release-notes.service.ts:122 — generation did not finish in time (params: { seconds })
@@ -107,7 +132,17 @@ export type ApiErrorCode =
   // supervisor.service.ts resolveLaunchParams — an in-place (non-worktree) launch refused:
   | "inplace_tree_dirty" // the project checkout has uncommitted changes (params: { count, files } — files: the first few paths, comma-joined, `…` when cut)
   | "inplace_already_active" // another in-place agent already owns the project checkout (params: none)
-  | "inplace_detached_head"; // the project checkout is on no branch (params: none)
+  | "inplace_detached_head" // the project checkout is on no branch (params: none)
+  // voice/voice.service.ts — a voice conversation or a dictation that could not start, or a key check:
+  | "voice_key_missing" // no OpenAI key stored and no OPENAI_API_KEY (params: none)
+  | "voice_key_invalid" // OpenAI refused the key, 401 (params: none)
+  | "voice_no_access" // the key's project cannot use the model, 403/404 (params: { model })
+  | "voice_quota" // OpenAI rate limit or quota, 429 (params: none)
+  | "voice_network" // OpenAI unreachable (params: none)
+  | "voice_upstream" // any other OpenAI refusal (params: { status })
+  | "voice_offer_invalid" // the SDP offer is missing or too large (params: none)
+  | "voice_voice_invalid" // the voice is not one of VOICE_IDS (params: none)
+  | "voice_language_invalid"; // the dictation languages are not what dictationLanguages produces (params: none)
 
 // Runtime mirrors of the unions above. MUST list every member of their type exactly once;
 // the exhaustiveness test in test/i18n-codes.spec.ts fails on a drift or a duplicate.
@@ -129,6 +164,8 @@ export const NOTICE_CODES = [
   "claude_binary_missing",
   "omp_not_authenticated",
   "omp_binary_missing",
+  "slot_wait",
+  "watchdog_killed",
   "jira_issue_created",
   "jira_issue_updated",
   "jira_issue_transitioned",
@@ -149,6 +186,22 @@ export const NOTICE_CODES = [
   "jira_issues_moved_to_backlog",
   "jira_version_created",
   "jira_version_updated",
+  "plane_issue_created",
+  "plane_issue_updated",
+  "plane_issue_state_changed",
+  "plane_issue_deleted",
+  "plane_comment_added",
+  "plane_comment_updated",
+  "plane_comment_deleted",
+  "plane_worklog_added",
+  "plane_link_added",
+  "plane_attachment_added",
+  "plane_cycle_created",
+  "plane_issues_added_to_cycle",
+  "plane_issue_removed_from_cycle",
+  "plane_module_created",
+  "plane_issues_added_to_module",
+  "plane_issue_removed_from_module",
 ] as const satisfies readonly NoticeCode[];
 
 export const API_ERROR_CODES = [
@@ -162,6 +215,8 @@ export const API_ERROR_CODES = [
   "period_format_invalid",
   "period_start_after_end",
   "group_by_invalid",
+  "authors_invalid",
+  "authors_need_person",
   "attachments_too_many",
   "attachment_too_large",
   "omp_launch_timeout",
@@ -171,6 +226,7 @@ export const API_ERROR_CODES = [
   "project_not_bound",
   "branch_not_in_repo",
   "no_commits_in_range",
+  "no_commits_by_authors",
   "too_many_commits",
   "omp_exited_during_generation",
   "generation_timeout",
@@ -184,6 +240,15 @@ export const API_ERROR_CODES = [
   "inplace_tree_dirty",
   "inplace_already_active",
   "inplace_detached_head",
+  "voice_key_missing",
+  "voice_key_invalid",
+  "voice_no_access",
+  "voice_quota",
+  "voice_network",
+  "voice_upstream",
+  "voice_offer_invalid",
+  "voice_voice_invalid",
+  "voice_language_invalid",
 ] as const satisfies readonly ApiErrorCode[];
 
 // Compile-time exhaustiveness (checked by `tsc` at build; test/ is not compiled). The
@@ -270,7 +335,6 @@ export type ManagementRejectionCode =
   // ticket.create — the block as a whole:
   | "ticket_no_project" // a ticket.create without a project name (params: { title })
   | "ticket_prefix_unknown" // a branch prefix nobody offers (params: { value, allowed })
-  | "ticket_platform_unknown" // a platform nobody offers (params: { value, allowed })
   // ticket.questions — the unfiled-ticket questions block:
   | "ticket_questions_no_target" // a ticket.questions without a forTicket (params: none)
   | "ticket_questions_empty" // a ticket.questions with no questions (params: { forTicket })
@@ -282,6 +346,13 @@ export type ManagementRejectionCode =
   | "todo_index_range" // a todo.update/delete index that is not a whole number ≥ 1 (params: { value })
   | "todo_update_empty" // a todo.update with no patch or an empty one (params: none)
   | "todo_done_type" // a todo.update done that is not a boolean (params: { value })
+  // validateCukAction — the ЦУК console's blocks (./cuk-actions):
+  | "cuk_place_missing" // a navigate without a place id (params: none)
+  | "cuk_select_empty" // a scope.select naming neither a workspace nor a project (params: none)
+  | "cuk_session_missing" // a session action without the session ref (params: { kind })
+  | "cuk_project_missing" // a task.create / agent.start without a project name (params: { kind })
+  | "cuk_task_missing" // a task.create / agent.start without the task text (params: { kind })
+  | "cuk_message_missing" // a session.message without the message text (params: none)
   // parseManagementReply — the block never parsed as JSON:
   | "block_unreadable"; // the fenced block was not readable JSON (params: { message })
 
@@ -331,7 +402,6 @@ export const MANAGEMENT_REJECTION_CODES = [
   "field_not_name_string",
   "ticket_no_project",
   "ticket_prefix_unknown",
-  "ticket_platform_unknown",
   "ticket_questions_no_target",
   "ticket_questions_empty",
   "todo_create_empty",
@@ -341,6 +411,12 @@ export const MANAGEMENT_REJECTION_CODES = [
   "todo_index_range",
   "todo_update_empty",
   "todo_done_type",
+  "cuk_place_missing",
+  "cuk_select_empty",
+  "cuk_session_missing",
+  "cuk_project_missing",
+  "cuk_task_missing",
+  "cuk_message_missing",
   "block_unreadable",
 ] as const satisfies readonly ManagementRejectionCode[];
 

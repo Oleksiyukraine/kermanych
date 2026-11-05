@@ -199,6 +199,8 @@
     <!-- The audit trail. It is the whole reason a risk is closed rather than deleted, so it
          is one tab away from the row, not in a separate screen. -->
     <div v-if="risk" v-show="tab === 'history'" class="rform__history">
+      <KSkeleton v-if="historyPhase === 'skeleton'" variant="rows" :rows="4" />
+      <template v-else-if="historyPhase === 'ready'">
       <p v-if="!events.length" class="rform__hint">{{ t('risk.editor.historyEmpty') }}</p>
       <article v-for="e in events" :key="e.id" class="rform__event">
         <span class="rform__event-kind">{{ t(eventLabel(e.kind)) }}</span>
@@ -209,6 +211,7 @@
         <span class="rform__event-who">{{ memberName(e.actor) }}</span>
         <span class="rform__event-at mono">{{ renderTime(t, relativeTime(e.at, now)) }}</span>
       </article>
+      </template>
     </div>
 
     <template #controls>
@@ -247,6 +250,8 @@ import KSelect from 'components/kit/KSelect.vue';
 import KDateField from 'components/kit/KDateField.vue';
 import KBtn from 'components/kit/KBtn.vue';
 import KTag from 'components/kit/KTag.vue';
+import KSkeleton from 'components/kit/KSkeleton.vue';
+import { useLoadPhase } from '../../composables/useLoadPhase';
 import RiskMatrix from './RiskMatrix.vue';
 import { useRisks } from 'stores/risks';
 import { useOrchestrator } from 'stores/orchestrator';
@@ -315,6 +320,8 @@ const STATUS_OPTIONS = computed<KSelectOption[]>(() =>
 
 const tab = ref('risk');
 const busy = ref(false);
+// The risk whose history is being fetched. «Немає історії» must not show while it is.
+const eventsLoadingFor = ref('');
 // Empty until the first save attempt, then live: nagging about a blank cause while the user
 // is still typing it is how a form teaches people to ignore it.
 const errors = ref<RiskError[]>([]);
@@ -329,7 +336,13 @@ watch(
     if (!open) return;
     if (props.risk) {
       draft.value = draftOf(props.risk);
-      void store.loadEvents(props.risk.id);
+      eventsLoadingFor.value = props.risk.id;
+      const id = props.risk.id;
+      // A failed read toasts from the store; the tab then settles on what it has rather than
+      // a skeleton that never resolves.
+      void store.loadEvents(id).finally(() => {
+        if (eventsLoadingFor.value === id) eventsLoadingFor.value = '';
+      });
     } else {
       draft.value = emptyDraft(Date.now());
     }
@@ -340,6 +353,9 @@ watch(
 );
 
 const events = computed(() => (props.risk ? (store.eventsByRisk[props.risk.id] ?? []) : []));
+const historyPhase = useLoadPhase(
+  () => !!props.risk && eventsLoadingFor.value === props.risk.id && store.eventsByRisk[props.risk.id] === undefined,
+);
 
 // KSelect models are strings; these three narrow back to their enums on the way in, and the
 // kind switch also repairs a strategy that its new direction does not allow.

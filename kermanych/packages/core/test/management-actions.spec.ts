@@ -454,8 +454,9 @@ const TICKET = {
 };
 
 // The default board, and the whole of the routing rule: a request that did not name Jira is
-// a `ticket.create`. The project travels by NAME for the reason release.notes does.
-test("a ticket.create carries the ticket, a project by name and the two launch hints", () => {
+// a `ticket.create`. The project travels by NAME for the reason release.notes does. A
+// `platform` is no longer a card's (it belongs to the project) and is dropped, not refused.
+test("a ticket.create carries the ticket, a project by name and the launch hint", () => {
   const r = parseManagementReply(
     "Готую тікет на дошку воркспейсу.\n\n" +
       block(
@@ -471,7 +472,7 @@ test("a ticket.create carries the ticket, a project by name and the two launch h
   );
   expect(r.rejected).toEqual([]);
   expect(r.actions).toEqual([
-    { kind: "ticket.create", project: "Альфа", assignee: "olya", prefix: "feature", platform: "web", ticket: TICKET },
+    { kind: "ticket.create", project: "Альфа", assignee: "olya", prefix: "feature", ticket: TICKET },
   ]);
   expect(r.text).toBe("Готую тікет на дошку воркспейсу.");
 });
@@ -523,15 +524,12 @@ test("a ticket.create without a project is refused rather than filed on a guess"
   });
 });
 
-// The launch hints are validated against the core constants the board's own form offers, so a
+// The launch hint is validated against the core constant the board's own form offers, so a
 // value Postgres would store but no screen can render is refused with the list attached.
-test("a ticket.create refuses a prefix or a platform outside the app's vocabulary", () => {
+test("a ticket.create refuses a prefix outside the app's vocabulary", () => {
   expect(
     validateManagementAction({ kind: "ticket.create", project: "Альфа", ticket: TICKET, prefix: "hotfix" }),
-  ).toMatchObject({ error: { code: "ticket_prefix_unknown", text: 'невідомий тип задачі "hotfix" (feature, fix, refactoring, chore)' } });
-  expect(
-    validateManagementAction({ kind: "ticket.create", project: "Альфа", ticket: TICKET, platform: "desktop" }),
-  ).toMatchObject({ error: { code: "ticket_platform_unknown", text: 'невідома платформа "desktop" (backend, web, mobile)' } });
+  ).toMatchObject({ error: { code: "ticket_prefix_unknown", text: 'невідомий тип задачі "hotfix" (feature, fix, refactoring, chore, design)' } });
 });
 
 // The requirement this whole action exists to satisfy: a ticket that reaches a board contains

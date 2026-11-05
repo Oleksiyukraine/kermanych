@@ -3,7 +3,6 @@ import { homedir } from "node:os";
 import {
   BRANCH_PREFIXES,
   MANAGEMENT_SECTIONS,
-  PLATFORMS,
   RISK_CATEGORY_VALUES,
   RISK_EXPORT_FORMATS,
   RISK_RESPONSES_BY_KIND,
@@ -260,7 +259,7 @@ describe("buildManagementTurn", () => {
     // The launch vocabulary is printed from the core constants, never hand-copied — the same
     // rule the risk vocabulary follows.
     expect(out).toContain(`prefix — тип роботи: ${BRANCH_PREFIXES.join(" | ")}`);
-    expect(out).toContain(`platform — ${PLATFORMS.join(" | ")}`);
+    expect(out).not.toContain("platform");
   });
 
   // The reported failures, stated where the model decides. A create without an issue type was
@@ -373,6 +372,31 @@ describe("buildManagementTurn", () => {
       text: "?",
     });
     expect(writable).toContain("є особистий токен — читай і змінюй інструментами jira_*");
+  });
+
+  // Plane's twin of the three states, plus what only Plane needs: the Plane workspace the
+  // project lives in, because a Plane token is keyed by it and two connected projects may sit
+  // in different ones.
+  it("states which Plane projects are connected and whether this machine may write to each", () => {
+    const none = buildManagementTurn({ first: false, repos, context, today: TODAY, text: "?" });
+    expect(none).toContain("Проєкти Plane: не підключені");
+
+    const out = buildManagementTurn({
+      first: false,
+      repos,
+      context: {
+        ...context,
+        plane: [
+          { projectIdentifier: "WEB", projectName: "Web", siteUrl: "https://app.plane.so", workspaceSlug: "acme", canWrite: true },
+          { projectIdentifier: "OPS", projectName: "Ops", siteUrl: "https://plane.acme.io", workspaceSlug: "ops", canWrite: false },
+        ],
+      },
+      today: TODAY,
+      text: "?",
+    });
+    expect(out).toContain("Проєкти Plane (2) — у plane_create_issue назви project");
+    expect(out).toContain("- «Web» · проєкт WEB · https://app.plane.so/acme · є особистий токен — читай і змінюй інструментами plane_*");
+    expect(out).toContain("- «Ops» · проєкт OPS · https://plane.acme.io/ops · БЕЗ особистого токена Plane");
   });
 
   // A Jira issue is assigned to an ATLASSIAN account, so the roster cannot answer it: with only

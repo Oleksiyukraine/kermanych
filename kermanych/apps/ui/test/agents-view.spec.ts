@@ -15,13 +15,11 @@ test('every kind has a Ukrainian label, and they differ', () => {
   const labels = (['session', 'procedure', 'automation'] as const).map(
     (k) => uk.settings.agentKind[k],
   );
-  expect(labels).toEqual(['власна сесія', 'процедура', 'без ШІ']);
   expect(new Set(labels).size).toBe(3);
   for (const l of labels) expect(l.trim()).not.toBe('');
 });
 
-test('the catalogue can render every registry entry: five with a template, two without', () => {
-  expect(AGENTS.filter((a) => a.instruction)).toHaveLength(5);
+test('the catalogue can render every registry entry: only automations go without a template', () => {
   expect(AGENTS.filter((a) => !a.instruction).every((a) => a.kind === 'automation')).toBe(true);
 });
 

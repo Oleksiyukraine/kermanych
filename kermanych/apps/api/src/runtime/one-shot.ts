@@ -9,7 +9,7 @@
 import type { AgentRuntimeKind, RpcEvent } from "@kermanych/core";
 import { createRuntime } from "./agent-runtime";
 import { reduceRpcEvents, sumTurnUsage, type TurnSpend } from "../supervisor/transcript-reducer";
-import { limit } from "../management/management-chat.service";
+import { limit } from "./limit";
 import { CodedError } from "../management/coded-error";
 
 // Same bounds as the management chat, for the same reasons: a start slower than thirty
@@ -29,6 +29,10 @@ export type OneShotInput = {
   // When the caller's request began, so the spend's wall time includes the work before
   // the spawn (git log, retrieval) exactly as the operator experienced it.
   startedAt: number;
+  // Tighter bounds for a caller that has a fallback and a person waiting on it (the branch
+  // namer at launch). Default to the chat's bounds above.
+  startTimeoutMs?: number;
+  turnTimeoutMs?: number;
 };
 
 // The event handling is the management chat's `drive` minus everything conversational: no
@@ -58,10 +62,11 @@ export async function runOneShot(opts: OneShotInput): Promise<{ text: string; sp
   );
 
   try {
-    const startSeconds = Math.round(START_TIMEOUT_MS / 1000);
+    const startMs = opts.startTimeoutMs ?? START_TIMEOUT_MS;
+    const startSeconds = Math.round(startMs / 1000);
     await limit(
       rpc.start(),
-      START_TIMEOUT_MS,
+      startMs,
       new CodedError(
         "omp_launch_timeout",
         `не вдалося запустити omp за ${startSeconds} с — перевірте, що команда omp доступна в PATH`,
@@ -69,10 +74,11 @@ export async function runOneShot(opts: OneShotInput): Promise<{ text: string; sp
       ),
     );
     rpc.prompt(opts.prompt);
-    const genSeconds = Math.round(TURN_TIMEOUT_MS / 1000);
+    const turnMs = opts.turnTimeoutMs ?? TURN_TIMEOUT_MS;
+    const genSeconds = Math.round(turnMs / 1000);
     await limit(
       promise,
-      TURN_TIMEOUT_MS,
+      turnMs,
       new CodedError(
         "generation_timeout",
         `генерація не завершилась за ${genSeconds} с — спробуйте вужчий період або меншу гілку`,

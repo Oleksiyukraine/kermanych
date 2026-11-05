@@ -187,6 +187,27 @@ describe("the /terminal namespace", () => {
     await exited;
   });
 
+  it("re-arms a TUI's SGR mouse reporting in the replay, not just its tracking", async () => {
+    const first = socket(TOKEN);
+    await connected(first);
+    const t = await openTerminal(first);
+    await ask(first, "attach", { id: t.id });
+    const armed = output(first, t.id, "ARMED-9");
+    // What claude's TUI asks for: button + drag tracking, reported in SGR encoding.
+    first.emit("input", { id: t.id, data: "printf '\\033[?1002h\\033[?1006h'; echo ARMED-$((4+5))\r" });
+    await armed;
+
+    const second = socket(TOKEN);
+    await connected(second);
+    const reply = await ask<TerminalAttachReply>(second, "attach", { id: t.id });
+    expect("replay" in reply && reply.replay).toContain("\x1b[?1002h");
+    expect("replay" in reply && reply.replay).toContain("\x1b[?1006h");
+
+    const exited = new Promise((resolve) => second.once("exit", resolve));
+    second.emit("kill", { id: t.id });
+    await exited;
+  });
+
   it("the shell exiting on its own ends the terminal", async () => {
     const s = socket(TOKEN);
     await connected(s);

@@ -5,19 +5,31 @@ import type { TranscriptEntry } from "./types";
 
 export type SkillDef = { name: string; description: string; body: string };
 
-// What the UI lists and what the transcript labels a row with. `shadowedByRepo` is the
-// absolute path of the repository skill that won the name, so the override is never silent.
+// The library owners a row can belong to, most specific first — the order the launch
+// resolver applies (user > project > workspace, then the defaults).
+export type SkillScope = "user" | "project" | "workspace";
+
+// What the UI lists and what the transcript labels a row with. `source` is "default" for one
+// of Kermanych's own skills and otherwise the scope that OWNS the library row the session
+// gets — a workspace row that replaces a default says "workspace", so the operator knows which
+// scope to edit. `shadowedByRepo` is the absolute path of the repository skill that won the
+// name, so the override is never silent.
 export type SkillView = {
   name: string;
   description: string;
-  source: "default" | "project";
+  source: "default" | SkillScope;
   shadowedByRepo?: string;
 };
 
 /**
+ * One skill the bound checkout's own skill directories define: the absolute path of its
+ * SKILL.md and its frontmatter description ('' when there is none or it does not parse).
+ */
+export type RepoSkill = { path: string; description: string };
+
+/**
  * What `GET /projects/:id/skills` answers: the resolved library, and the names the bound
- * checkout's own skill directories define, keyed by name to the absolute path of the file
- * that owns them.
+ * checkout's own skill directories define, keyed by name to the file that owns them.
  *
  * The two lists are NOT interchangeable and neither subsumes the other. `view` is the
  * LIBRARY — Kermanych's defaults plus the project's rows, with `shadowedByRepo` set on the
@@ -28,26 +40,89 @@ export type SkillView = {
  */
 export type ProjectSkillsPayload = {
   view: SkillView[];
-  repo: Record<string, string>;
+  repo: Record<string, RepoSkill>;
 };
+
+/**
+ * A skill found on this machine's disk that the «Навички» pane can import (copy) into a
+ * library row. `name` is what the file calls itself (frontmatter `name`, else the folder
+ * name); `suggestedName` is that name made legal under SKILL_NAME_RE. `extraFiles` are the
+ * skill folder's other files, relative and capped — they are NOT copied, and the UI says so;
+ * `extraCount` is their full number.
+ */
+export type SkillImportCandidate = {
+  name: string;
+  suggestedName: string;
+  description: string;
+  // The skill's folder (the one holding SKILL.md), absolute.
+  dir: string;
+  // SKILL.md's size in bytes.
+  bytes: number;
+  extraFiles: string[];
+  extraCount: number;
+  // The frontmatter is there but is not valid YAML: the description is then empty.
+  frontmatterError?: true;
+};
+
+// The same skill with its body, read when the operator picks it.
+export type SkillImportRead = SkillImportCandidate & { body: string };
+
+// One of the standard home-directory skill roots, as the import picker lists it.
+export type SkillImportRoot = {
+  // `~/.agents/skills` — for display.
+  label: string;
+  path: string;
+  skills: SkillImportCandidate[];
+  error?: string;
+};
+
+// A folder the operator chose with «Інша тека…»: itself one skill, or a root of several.
+export type SkillImportScan = { path: string; skills: SkillImportCandidate[] };
 
 // A skill name is also a directory name under ~/.kermanych/skills/<projectId>/, so this
 // pattern is a security boundary rather than cosmetics: no separators, no dots, no
-// traversal. The `check` constraint on project_skills.name is the same expression.
+// traversal. The `check` constraint on ai_skills.name is the same expression.
 export const SKILL_NAME_RE = /^[a-z0-9][a-z0-9-]{0,63}$/;
 
 export function isSkillName(v: string): boolean {
   return SKILL_NAME_RE.test(v);
 }
 
+// A name taken from a file on disk, made legal for the library: lowercase, every run of
+// characters outside [a-z0-9-] becomes one `-`, no leading or trailing `-`, at most 64
+// characters. '' when nothing usable is left — the editor then refuses it like any bad name.
+export function normaliseSkillName(raw: string): string {
+  return raw
+    .toLowerCase()
+    .replace(/[^a-z0-9-]+/g, "-")
+    .replace(/-{2,}/g, "-")
+    .replace(/^-+/, "")
+    .slice(0, 64)
+    .replace(/-+$/, "");
+}
+
 // omp reads `<dir>/<name>/SKILL.md` and needs BOTH keys — a custom-directory skill without
 // a description is dropped at discovery. The description is emitted as a JSON string, which
 // is valid YAML and survives colons, quotes and newlines without hand-rolled escaping.
-export function renderSkillFile(s: SkillDef): string {
+//
+// `scope` is the owner of a library row. The body then opens with a comment naming it, so the
+// agent reading `skill://<name>` (and the operator opening the file) sees where the text comes
+// from — and, for a row that replaces one of Kermanych's defaults, which scope to edit to get
+// the default back. A default itself is written without it.
+export function renderSkillFile(s: SkillDef, scope?: SkillScope): string {
   // The name is a plain YAML scalar, so an unvalidated one could close the frontmatter and
   // inject keys (e.g. `alwaysApply`). Both callers must go through this guard.
   if (!isSkillName(s.name)) throw new Error(`invalid skill name: ${s.name}`);
-  return `---\nname: ${s.name}\ndescription: ${JSON.stringify(s.description)}\n---\n\n${s.body.replace(/\s+$/, "")}\n`;
+  const origin = scope ? `${libraryOrigin(s.name, scope)}\n\n` : "";
+  return `---\nname: ${s.name}\ndescription: ${JSON.stringify(s.description)}\n---\n\n${origin}${s.body.replace(/\s+$/, "")}\n`;
+}
+
+// An HTML comment: invisible in rendered markdown, verbatim to a model reading the file. The
+// name passed isSkillName and the scope is a literal, so neither can close the comment.
+function libraryOrigin(name: string, scope: SkillScope): string {
+  const base = `Kermanych library skill, owned at ${scope} scope.`;
+  if (!DEFAULT_SKILLS.some((d) => d.name === name)) return `<!-- ${base} -->`;
+  return `<!-- ${base} It replaces Kermanych's default skill "${name}"; deleting this ${scope} row restores the default. -->`;
 }
 
 // Kermanych's own library: both entries describe THIS harness's instrumentation, which no
@@ -280,6 +355,238 @@ export const DEFAULT_SKILLS: readonly SkillDef[] = [
       "3. Write the task document (`docs/specs/YYYY-MM-DD-<topic>.md` unless the docs policy says",
       "   otherwise): decisions and rejected alternatives. Commit it, ask for an explicit go-ahead.",
       "4. Implement only after approval; if a decision changes, update the document too.",
+    ].join("\n"),
+  },
+  // «Посіпака» (docs/specs/2026-10-23-minion-auto-run.md, decision 14): the per-kind rules for a
+  // card filed from a «Знахідка». The supervisor pastes it into such a minion run's opening
+  // prompt only, after a line of its own naming the kind (minionFindingLine), so a repository,
+  // project, workspace or user may rewrite it by name or switch it off. Every default is listed in
+  // every session's library, hence a description that keeps other sessions away from it.
+  {
+    name: "minion-findings",
+    description:
+      "Use only in a «Посіпака» (minion) run of a card filed from a «Знахідка» (an agent's finding): how to work a bug, security, tech-debt or docs finding unattended. Kermanych adds it to such runs itself; other sessions do not need it.",
+    body: [
+      "# Working a finding unattended",
+      "",
+      "Kermanych names the card's kind above. Follow that kind's section, on top of your instruction.",
+      "",
+      "## bug",
+      "",
+      "- Reproduce it first: a test, or the command from the evidence. A bug you cannot reproduce,",
+      "  and cannot show fixed, is `needs_decision`, not a guess.",
+      "- Keep a test that fails without your fix and passes with it.",
+      "",
+      "## security",
+      "",
+      "- Reproduce only locally: a test or a local run of the code. Never against a deployed",
+      "  environment, a real account or an external service.",
+      "- No secrets in your output, your commits or the pull request.",
+      "- The pull request states the impact and the fix, not the steps to exploit it.",
+      "- Rotating keys, or changing infrastructure or access policies, is `needs_decision`.",
+      "- `not_needed` only when the vulnerable code is gone from this branch. «Not exploitable in my",
+      "  view» is `needs_decision`.",
+      "",
+      "## tech-debt",
+      "",
+      "- Behaviour stays the same: the project's checks pass before and after your change.",
+      "- A refactor that would grow large is `needs_decision`, with a plan in stages.",
+      "",
+      "## docs",
+      "",
+      "- Change documentation only: the code is the source of truth.",
+      "- If the code is what is wrong, that is `needs_decision`; leave the code alone.",
+    ].join("\n"),
+  },
+  // The live preview (docs/specs/2026-11-03-session-browser-preview.md, decision 4): «Доручити
+  // агенту» in the session's «Браузер» or «Пристрій» tab inlines it when the repository has no
+  // valid `.kermanych/preview.json`. The schema here must match parsePreviewConfig (preview.ts);
+  // the mobile part is docs/specs/2026-11-03-mobile-device-preview.md, decision 5.
+  {
+    name: "preview-config",
+    description:
+      "Use when asked to set up, fix or change the live preview of this repository: how to write `.kermanych/preview.json`, the file Kermanych reads to run the app from the session's directory and open it in the session browser, or, for a Mobile project, run it on the session's iOS / Android device.",
+    body: [
+      "# Writing `.kermanych/preview.json`",
+      "",
+      "Kermanych runs the preview from the session directory (the worktree): `setup` first, then",
+      "every service in order, each through `sh -c`. It opens the `open` service's page in the",
+      "session browser. Example:",
+      "",
+      "```json",
+      "{",
+      '  "setup": "pnpm install",',
+      '  "services": [',
+      '    { "name": "api", "command": "pnpm --filter api start",',
+      '      "env": { "DATABASE_URL": "file:${PREVIEW_DIR}/db.sqlite" } },',
+      '    { "name": "web", "open": true, "command": "pnpm --filter web dev -- --port $PORT",',
+      '      "env": { "API_URL": "http://localhost:${PORT_API}" } }',
+      "  ]",
+      "}",
+      "```",
+      "",
+      "## Schema",
+      "",
+      "- `setup` (optional): one shell command run before the services on every start; it must",
+      "  exit 0 within 20 minutes.",
+      "- `services`, started in order; each must be ready within 5 minutes before the next starts.",
+      "  At least one, except with a `device` block (see «Mobile projects»), where it may be empty",
+      "  or left out:",
+      "  - `name`: `^[a-z][a-z0-9-]*$`, unique, not `setup`, `device` or `install`;",
+      "  - `command`: required;",
+      "  - `env` (optional): string values; it cannot set Kermanych's variables below;",
+      "  - `open: true` on exactly one service: the page the browser opens (never with `device`);",
+      "  - `device: true` (Mobile only, at most one): see «Mobile projects».",
+      "- `device` (Mobile projects only): see «Mobile projects».",
+      "- No other keys.",
+      "",
+      "## Variables Kermanych provides to `setup`, every service and `install`",
+      "",
+      "- `PORT_<NAME>` for every service (upper case, `-` → `_`), each a free port;",
+      "- `PORT`: the service's own port (equal to its `PORT_<NAME>`; services only);",
+      "- `PREVIEW_DIR`: a temp directory for this session, kept across starts and deleted with",
+      "  the session — put databases and caches there;",
+      "- with a `device` block: `DEVICE_ID` (the simulator UDID or the emulator serial, e.g.",
+      "  `emulator-5584`), `DEVICE_PLATFORM` (`ios` or `android`) and, on Android, `ANDROID_SERIAL`",
+      "  (which `adb`, Gradle and Flutter read by themselves).",
+      "",
+      "`${VAR}` in `env` values expands only these names; any other name makes the file invalid.",
+      "Commands can use `$VAR` themselves.",
+      "",
+      "## Readiness",
+      "",
+      "A service is ready when its `PORT` accepts a TCP connection. The `open` service is also",
+      "ready when it prints an `http://localhost:<port>` (or `127.0.0.1`) URL whose port accepts;",
+      "the browser then opens that port. A `\"device\": true` service is ready once the app runs",
+      "on the device instead.",
+      "",
+      "## Rules",
+      "",
+      "- `setup` is idempotent: it runs on every start, so it must be safe and quick the second",
+      "  time (install, build, migrate — never reset data the operator made).",
+      "- Every service binds `PORT` (pass it as a flag when the tool ignores the variable) and",
+      "  listens on localhost (a `\"device\": true` service needs no port).",
+      "- Exactly one service has `open: true` (none in a Mobile project).",
+      "- No secrets in the file: it is committed. Services read the repository's own `.env` as",
+      "  they would in development.",
+      "- Commit the file with the work, on this branch.",
+      "- Try it: call `preview_start`, read `preview_logs` of the failed step when it fails, fix",
+      "  the file and start again until it runs; then check the page with the browser tools (a",
+      "  Mobile project: the app with the `device_*` tools).",
+      "",
+      "## Mobile projects",
+      "",
+      "A project whose platform is Mobile needs a `device` block, and only such a project may have",
+      "one. Kermanych owns the device: it boots this session's own copy of an iOS Simulator or an",
+      "Android emulator (the operator picks which on this machine; never name devices in the",
+      "file). The repository's commands build the app and install it on that device. The steps:",
+      "`device` (boot) → `setup` → services → `install` → Kermanych launches `app` → running.",
+      "",
+      "- `device` has `ios` and/or `android`; each holds:",
+      "  - `app` (required): the bundle id (iOS) or the application id / package (Android), e.g.",
+      "    `com.acme.app`. Kermanych launches it, tells that it runs, and notices when it exits;",
+      "  - `install` (optional): a shell command that builds the app and installs it on",
+      "    `$DEVICE_ID`; it must exit 0 within 20 minutes, then Kermanych launches `app`.",
+      "- `\"device\": true` on a service: that service installs and launches the app itself and",
+      "  keeps running (`flutter run`). It is ready once the app runs on the device (20 minutes for",
+      "  a first build), not by its port; its exit crashes the preview. At most one, and not",
+      "  together with an `install` of the same file.",
+      "- Neither `install` nor a `device` service: Kermanych only launches `app`, already on the",
+      "  device.",
+      "- No `open`: there is no browser page.",
+      "- When the app exits, the services and the device keep running and the preview shows the",
+      "  app as exited; `device_app` with `launch` starts it again. `preview_logs` of step `device`",
+      "  holds the device's boot lines and the app's own log.",
+      "",
+      "Flutter: `flutter run` is the device service; hot reload is yours.",
+      "",
+      "```json",
+      "{",
+      '  "setup": "flutter pub get",',
+      '  "services": [',
+      '    { "name": "app", "device": true, "command": "flutter run -d $DEVICE_ID --pid-file $PREVIEW_DIR/flutter.pid" }',
+      "  ],",
+      '  "device": {',
+      '    "ios": { "app": "com.acme.app" },',
+      '    "android": { "app": "com.acme.app" }',
+      "  }",
+      "}",
+      "```",
+      "",
+      "After a Dart change, hot reload with `kill -USR1 $(cat $PREVIEW_DIR/flutter.pid)` and hot",
+      "restart with `kill -USR2 …` of that `flutter run` process (`PREVIEW_DIR` is",
+      "`$TMPDIR/kermanych-preview/<session id>`); there is no tool for it. A native change (a",
+      "plugin, Info.plist, Gradle) needs `preview_start` with `restart: true`.",
+      "",
+      "Expo / React Native: Metro is a service, and `install` builds and installs the app without",
+      "starting a second bundler:",
+      "",
+      "```json",
+      "{",
+      '  "setup": "npm ci",',
+      '  "services": [{ "name": "metro", "command": "npx expo start --port $PORT" }],',
+      '  "device": {',
+      '    "ios": { "app": "com.acme.app", "install": "npx expo run:ios --device $DEVICE_ID --no-bundler --port $PORT_METRO" },',
+      '    "android": { "app": "com.acme.app", "install": "npx expo run:android --device $DEVICE_ID --no-bundler --port $PORT_METRO" }',
+      "  }",
+      "}",
+      "```",
+      "",
+      "Native: build and install in `install`, with no service at all:",
+      "",
+      "- iOS: `xcodebuild -scheme App -sdk iphonesimulator -destination id=$DEVICE_ID",
+      "  -derivedDataPath $PREVIEW_DIR/build build && xcrun simctl install $DEVICE_ID",
+      "  $PREVIEW_DIR/build/Build/Products/Debug-iphonesimulator/App.app`;",
+      "- Android: `./gradlew installDebug` (it installs on `ANDROID_SERIAL`), or `./gradlew",
+      "  assembleDebug && adb install -r app/build/outputs/apk/debug/app-debug.apk`.",
+    ].join("\n"),
+  },
+  // «Дизайн» (docs/specs/2026-10-29-design-tab.md): the Дизайнер's method and README template.
+  // The launch pastes it into a design session's opening prompt; overridable by name.
+  {
+    name: "design-spec",
+    description:
+      "Use in a «Дизайн» session (the «Дизайнер» role): build the screen as a prototype on the project's UI kit with fixtures, cover every state, and keep the design folder's README and screenshots current.",
+    body: [
+      "# Designing a screen as a prototype",
+      "",
+      "1. Read the conventions, UI kit and routing first. Kit components only; a missing one is a",
+      "   kit gap in the README, not an inline invention.",
+      "2. One dev-only route per screen, `/__design/<design>/<screen>`, with a state switch",
+      "   (`?state=empty`). Fixtures sit beside the prototype; nothing calls a real backend.",
+      "3. States: data, empty, loading, error, long content, narrow width (390).",
+      "4. After each change, `browser_screenshot` at 390 and 1280 and look before you answer.",
+      "5. Screenshots: `<designDir>/screens/<screen>-<state>@<width>.png`, via `path`.",
+      "",
+      "## README template",
+      "",
+      "```markdown",
+      "# <Topic>",
+      "## Purpose — who uses the screen and for what",
+      "## Screens — each with its route and prototype files",
+      "## States — per screen, with its screenshots",
+      "## Decisions — what was chosen, and what was rejected and why",
+      "## Open questions",
+      "## Acceptance criteria — checkable statements for the implementation",
+      "## Kit gaps — components the kit lacks",
+      "```",
+    ].join("\n"),
+  },
+  // The order an agent follows when its task implements a saved design. The documentation policy
+  // line names it, so every session of a project that keeps designs learns of it.
+  {
+    name: "implement-from-design",
+    description:
+      "Use when a task implements a design from docs/design/<date>-<topic>/: build the real screen from its README, screenshots and prototype, then delete the prototype.",
+    body: [
+      "# Implementing a saved design",
+      "",
+      "1. Read the design's README and look at every screenshot in its `screens/`.",
+      "2. Reuse the prototype's components and the shape of its fixtures for the real data.",
+      "3. Implement every state the README lists.",
+      "4. `browser_screenshot` the real screen at the same widths and compare it with the saved",
+      "   ones; list every deliberate difference in your handoff or pull request.",
+      "5. Delete the prototype's route and files. Keep the design folder.",
     ].join("\n"),
   },
 ];

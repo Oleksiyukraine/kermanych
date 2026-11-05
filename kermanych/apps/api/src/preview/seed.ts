@@ -4,9 +4,9 @@ import type { RegistryService } from "../registry/registry.service";
 import type { SessionStatus, Usage } from "@kermanych/core";
 
 // Demo data for a Kermanych-on-Kermanych preview. The previewed api boots on a fresh,
-// isolated DB (KERMANYCH_DB in preview.service.ts), so without this the board comes up
-// empty and there's nothing to eyeball. seedDemo fills the registry with INERT rows —
-// no git, no omp, no cloud: projects carry no previewCommand, point at an unreachable
+// isolated DB (KERMANYCH_DB in the repository's .kermanych/preview.json), so without this the
+// board comes up empty and there's nothing to eyeball. seedDemo fills the registry with INERT
+// rows — no git, no omp, no cloud: projects point at an unreachable
 // localRepoPath and use synthetic UUIDs that exist on no Supabase project — covering
 // every status, the archived filter and the discussion/review branches that hang off an
 // agent, so the board, status dots, branch tags, fork elbows and the project switcher all
@@ -25,6 +25,8 @@ type Demo = {
   usage?: Usage;
   // A «Глибокий аналіз» agent, so the preview shows the mark its card and header carry.
   deepAnalysis?: boolean;
+  // A «Дизайн» session's folder, so the Дизайн page has an entry to list.
+  designDir?: string;
   // Branches forked off this agent's conversation, as branchSession/reviewSession make
   // them: no worktree, no branch of their own, and a name carrying the parent's. Seeded so
   // the board's one-level tree — the fork cards and their elbow — has something to draw.
@@ -58,6 +60,7 @@ export function seedDemo(registry: RegistryService): void {
       baseBranch: d.baseBranch,
       model: d.model,
       ...(d.deepAnalysis ? { deepAnalysis: true } : {}),
+      ...(d.designDir ? { designDir: d.designDir } : {}),
     });
     if (d.archived) registry.updateSession(s.id, { archived: true });
     if (d.usage) registry.addUsage(s.id, d.usage);
@@ -99,6 +102,7 @@ export function seedDemo(registry: RegistryService): void {
     { name: "Міграція БД", branch: "feature/db-migration", status: "conflict", model: "opus-5", usage: { input: 12_600, output: 5_800, cacheRead: 720_000, cacheWrite: 41_000, cost: 2.07 } },
     { name: "Логотип у хедері", branch: "feature/header-logo", status: "merged", model: "haiku", usage: { input: 620, output: 240, cacheRead: 9_100, cacheWrite: 0, cost: 0.02 } },
     { name: "Стара фіча", branch: "feature/legacy", status: "done", archived: true, model: "sonnet-4.5", usage: { input: 2_400, output: 800, cacheRead: 51_000, cacheWrite: 3_300, cost: 0.19 } },
+    { name: "Список замовлень", branch: "design/orders-list", status: "done", model: "opus-5", designDir: "docs/design/2026-10-29-orders-list", usage: { input: 4_200, output: 2_300, cacheRead: 140_000, cacheWrite: 7_800, cost: 0.52 } },
   ];
   for (const r of acmeRows) seed(acme.id, r);
 

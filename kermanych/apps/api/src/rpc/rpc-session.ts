@@ -5,6 +5,7 @@ import { LineSplitter, ChunkReassembler } from "@kermanych/core";
 import type { RpcEvent, RpcExtensionUIResponse, ImageInput, ThinkingLevel, SubagentSubscriptionLevel, SubagentInfo, SubagentMessagesPage } from "@kermanych/core";
 import type { AgentRuntime, RpcStateData, RuntimeLaunchOpts } from "../runtime/agent-runtime";
 import { MCP_TOKEN_ENV, MCP_URL_ENV, ompMcpBridgePath } from "../runtime/omp-mcp-bridge";
+import { AuthFailure, authFailureCode, type AuthFailureCode } from "../runtime/auth-failure";
 
 interface RpcResponseFrame {
   type: "response"; id?: string; command: string; success: boolean; data?: unknown; error?: string;
@@ -26,7 +27,7 @@ export class RpcSession implements AgentRuntime {
   private splitter = new LineSplitter();
   private reassembler = new ChunkReassembler();
   private eventCbs: ((e: RpcEvent) => void)[] = [];
-  private exitCbs: ((code: number | null, reason: string) => void)[] = [];
+  private exitCbs: ((code: number | null, reason: string, cause?: AuthFailureCode) => void)[] = [];
   private pending = new Map<string, { resolve: (r: RpcResponseFrame) => void; reject: (e: Error) => void }>();
   private stderr = "";
   // Frames omp sent that we could not decode. Silent loss is the exact failure class the
@@ -39,18 +40,19 @@ export class RpcSession implements AgentRuntime {
   // otherwise liveOrResume's fast path hands a caller the dying child and the write to its
   // already-ended stdin vanishes, the exact silent loss the resume-on-dead contract prevents.
   private stopping = false;
-  constructor(private opts: { cwd: string; model?: string; thinking?: ThinkingLevel; ompPath?: string; fork?: string; noTools?: boolean; tools?: string[]; appendSystemPrompt?: string; commandTimeoutMs?: number; configPath?: string; extensionPath?: string; subagentSubscription?: SubagentSubscriptionLevel; mcp?: RuntimeLaunchOpts["mcp"] }) {}
+  constructor(private opts: { cwd: string; model?: string; thinking?: ThinkingLevel; ompPath?: string; fork?: string; noTools?: boolean; tools?: string[]; appendSystemPrompt?: string; commandTimeoutMs?: number; configPaths?: string[]; extensionPath?: string; subagentSubscription?: SubagentSubscriptionLevel; mcp?: RuntimeLaunchOpts["mcp"]; env?: RuntimeLaunchOpts["env"]; onSpawn?: RuntimeLaunchOpts["onSpawn"] }) {}
 
   onEvent(cb: (e: RpcEvent) => void) { this.eventCbs.push(cb); }
-  onExit(cb: (code: number | null, reason: string) => void) { this.exitCbs.push(cb); }
+  onExit(cb: (code: number | null, reason: string, cause?: AuthFailureCode) => void) { this.exitCbs.push(cb); }
 
   private write(o: unknown) { this.proc!.stdin.write(JSON.stringify(o) + "\n"); }
 
   async start(): Promise<void> {
     const argv = ["omp", "--mode", "rpc", "--cwd", this.opts.cwd];
-    // The project's skill-library overlay (skills.customDirectories). Launch-time only:
-    // no RPC command can add skills to a running child.
-    if (this.opts.configPath) argv.push("--config", this.opts.configPath);
+    // Config overlays, in order (omp accepts the flag repeated; later files win): the project's
+    // skill library and the machine resource limits. Launch-time only: no RPC command can add
+    // skills or change task.maxConcurrency for a running child.
+    for (const path of this.opts.configPaths ?? []) argv.push("--config", path);
     // The session's trigger package (TTSR rules). Launch-time only, like --config: no RPC
     // command can register a rule with a running child.
     if (this.opts.extensionPath) argv.push("-e", this.opts.extensionPath);
@@ -67,12 +69,15 @@ export class RpcSession implements AgentRuntime {
     if (this.opts.ompPath) argv[0] = this.opts.ompPath;
     // The MCP server rides a bridge extension (omp reads MCP only from config files); its
     // address and bearer go in the child's environment so the secret never touches disk.
-    let env: NodeJS.ProcessEnv | undefined;
+    let env: NodeJS.ProcessEnv | undefined = this.opts.env ? { ...process.env, ...this.opts.env } : undefined;
     if (this.opts.mcp) {
       argv.push("-e", await ompMcpBridgePath());
-      env = { ...process.env, [MCP_URL_ENV]: this.opts.mcp.url, [MCP_TOKEN_ENV]: this.opts.mcp.token };
+      env = { ...process.env, ...this.opts.env, [MCP_URL_ENV]: this.opts.mcp.url, [MCP_TOKEN_ENV]: this.opts.mcp.token };
     }
     this.proc = spawn(argv[0], argv.slice(1), { stdio: ["pipe", "pipe", "pipe"], ...(env ? { env } : {}) });
+    // Before `ready`: omp starts its MCP servers and workers during boot, and they inherit the
+    // priority only if the renice lands first. A failed spawn has no pid (the 'error' event follows).
+    if (this.proc.pid !== undefined) this.opts.onSpawn?.(this.proc.pid);
     // Persistent decoders buffer partial multibyte (UTF-8) sequences split across chunk boundaries.
     const outDec = new StringDecoder("utf8");
     const errDec = new StringDecoder("utf8");
@@ -106,11 +111,14 @@ export class RpcSession implements AgentRuntime {
   // Shared failure path for both 'exit' and 'error': reject start() if not yet ready, reject+clear all
   // outstanding command promises, then notify exit callbacks. Callers pass the live `ready_` at fire time;
   // rejectBeforeReady is a no-op once start() has already settled, so a post-ready failure only fans out.
+  // A signed-out omp exits before `ready` ("No models available. Use /login…"), so the cause is
+  // classified here and rides the launch rejection as `.code`, the way ClaudeCodeRuntime's does.
   private failAll(e: Error, code: number | null, ready_: boolean, rejectBeforeReady: (e: Error) => void) {
-    if (!ready_) rejectBeforeReady(e);
+    const cause = authFailureCode(e.message);
+    if (!ready_) rejectBeforeReady(cause ? new AuthFailure(cause, e.message) : e);
     for (const p of this.pending.values()) p.reject(e);
     this.pending.clear();
-    this.exitCbs.forEach((cb) => cb(code, e.message));
+    this.exitCbs.forEach((cb) => cb(code, e.message, cause));
   }
 
   private exitMessage(code: number | null): string {
@@ -160,7 +168,11 @@ export class RpcSession implements AgentRuntime {
   }
 
   prompt(message: string, images?: ImageInput[]) { this.write({ id: `req_${++this.seq}`, type: "prompt", message, ...imagesFrame(images) }); }
-  followUp(message: string, images?: ImageInput[]) { this.write({ id: `req_${++this.seq}`, type: "follow_up", message, ...imagesFrame(images) }); }
+  // A follow-up is a `prompt` with `streamingBehavior: "followUp"`: omp starts a turn when the
+  // child is idle and queues the message behind the running turn otherwise. The bare
+  // `follow_up` command only queues — on omp 18.8.4 an idle child never drains that queue, so a
+  // message sent to a settled session sat there unanswered.
+  followUp(message: string, images?: ImageInput[]) { this.write({ id: `req_${++this.seq}`, type: "prompt", message, streamingBehavior: "followUp", ...imagesFrame(images) }); }
   steer(message: string, images?: ImageInput[]) { this.write({ id: `req_${++this.seq}`, type: "steer", message, ...imagesFrame(images) }); }
   answerUi(res: RpcExtensionUIResponse) { this.write(res); }
 

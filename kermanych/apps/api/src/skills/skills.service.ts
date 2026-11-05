@@ -1,6 +1,6 @@
 // Resolves a project's skill library and lays it out on disk for one omp launch.
 // The ONLY component that touches the filesystem or decides precedence:
-//   repository skills  >  project_skills rows  >  Kermanych's DEFAULT_SKILLS
+//   repository skills  >  user  >  project  >  workspace ai_skills rows  >  Kermanych's DEFAULT_SKILLS
 // The materialised directory doubles as the offline cache — there is no SQLite mirror.
 import { Injectable } from "@nestjs/common";
 import { spawn } from "node:child_process";
@@ -33,6 +33,7 @@ import {
   type SupabaseClient,
 } from "@kermanych/cloud";
 import { AuthService } from "../auth/auth.service";
+import { skillFileDescription } from "./skill-files";
 
 // Every project-level skill directory omp itself discovers in the session cwd. One level
 // deep, no ancestor walk: a Kermanych session's cwd is always a repository root (a worktree
@@ -51,7 +52,10 @@ export function skillsRoot(): string {
   return join(process.env.KERMANYCH_SKILLS_HOME ?? join(homedir(), ".kermanych"), "skills");
 }
 
-export type Resolved = { def: SkillDef; source: "default" | "project" };
+// `source` is the owner scope of the winning library row, or "default" — never a flattened
+// "project": a workspace row that replaces a default must say so, or the operator cannot tell
+// which scope to edit to get the default back.
+export type Resolved = { def: SkillDef; source: SkillView["source"] };
 
 // The owners one session reads, most-specific first. A session always has a project; the
 // workspace and the launching user are added when known (a local-only project has no
@@ -93,7 +97,7 @@ export function resolveSkills(rows: readonly AiSkill[]): Resolved[] {
       out.delete(r.name);
       continue;
     }
-    out.set(r.name, { def: { name: r.name, description: r.description, body: r.body }, source: "project" });
+    out.set(r.name, { def: { name: r.name, description: r.description, body: r.body }, source: r.owner.scope });
   }
   // Last line of defence before mkdir/write: the DB has the same constraints, but a bad row
   // from an older client must never become a directory name or a description-less skill.
@@ -321,6 +325,14 @@ export function renderRuleFile(t: AiTrigger, body: string): string {
 // reason to refuse a launch. `configPath` is set only once the overlay write succeeded.
 export type Materialized = { configPath?: string; view: SkillView[]; stale?: boolean };
 
+// How long one library read serves the launch-time callers. Every row carries its full text,
+// and one launch used to read it once in materialize, once per trigger in materializeTriggers
+// and once more for the first prompt — egress a Free cloud project pays for
+// (docs/specs/2026-11-03-board-egress-and-lag.md). Long enough to cover one launch and the
+// trigger and PR turns right after it; short enough that an edit made in another window
+// reaches the next launch well within a minute.
+const LIBRARY_TTL_MS = 30_000;
+
 @Injectable()
 export class SkillsService {
   constructor(private auth: AuthService) {}
@@ -328,11 +340,33 @@ export class SkillsService {
   // Seams for tests: the cloud reads and the `omp` child are the parts a unit test cannot
   // perform. Each reads EVERY owner the session sees (user, project, workspace) and returns
   // the rows tagged with their owner; the resolver methods below apply precedence.
-  readSkills = (scope: AiScopeSet): Promise<AiSkill[]> => this.readAll(scope, listAiSkills);
+  // The launch-time callers share one read per scope for LIBRARY_TTL_MS, the in-flight promise
+  // included, so a launch's concurrent callers wait on one request. A failed read is dropped at
+  // once, so offline → online is not held back. `fresh` is the editor's read: it always goes to
+  // the cloud, and because the operator may just have saved, it also drops every cached entry
+  // of that project so the next launch reads what they saved.
+  readSkills = (scope: AiScopeSet, fresh = false): Promise<AiSkill[]> => {
+    const now = Date.now();
+    const key = scopeOwners(scope).map((o) => `${o.scope}:${o.id}`).join("|");
+    if (fresh) {
+      for (const k of this.library.keys()) if (k.split("|").includes(`project:${scope.projectId}`)) this.library.delete(k);
+    } else {
+      const hit = this.library.get(key);
+      if (hit && hit.expires > now) return hit.rows;
+    }
+    for (const [k, e] of this.library) if (e.expires <= now) this.library.delete(k);
+    const rows = this.readAll(scope, listAiSkills);
+    this.library.set(key, { expires: now + LIBRARY_TTL_MS, rows });
+    rows.catch(() => {
+      if (this.library.get(key)?.rows === rows) this.library.delete(key);
+    });
+    return rows;
+  };
   readAssignments = (scope: AiScopeSet): Promise<AiAgentSkill[]> => this.readAll(scope, listAiAgentSkills);
   readTriggers = (scope: AiScopeSet): Promise<AiTrigger[]> => this.readAll(scope, listAiTriggers);
   readAgents = (scope: AiScopeSet): Promise<AiAgent[]> => this.readAll(scope, listAiAgents);
   readCustomDirs = (cwd: string): Promise<string[] | undefined> => readOmpCustomDirectories(cwd);
+  private library = new Map<string, { expires: number; rows: Promise<AiSkill[]> }>();
 
   // One cloud call per owner, under the signed-in user's JWT. A member of a project is a
   // member of its workspace and owns their own user rows, so all present owners read; an
@@ -385,19 +419,24 @@ export class SkillsService {
   // the view the UI labels the rows with, and the names that resolved to nothing. The
   // sequence is taken WHOLE from the most specific scope that defines one (user, else project,
   // else workspace) — not concatenated across scopes, so a skill is never glued in twice.
-  // Never throws for a library reason — an agent that cannot read its assignments still runs
-  // with its own instruction.
+  // `extra` are names Kermanych adds for this launch (a minion run of a finding card gets
+  // `minion-findings`): they follow the sequence in the same block, once even when the sequence
+  // already names them. Never throws for a library reason — an agent that cannot read its
+  // assignments still runs with its own instruction, and with the extras, which a default
+  // resolves without the cloud.
   async assignedFor(
     scope: AiScopeSet,
     agentId: string,
     cwd: string,
+    extra: readonly string[] = [],
   ): Promise<{ block: string; view: SkillView[]; missing: string[] }> {
     assertProjectId(scope.projectId);
     let rows: AiAgentSkill[];
     try {
       rows = (await this.readAssignments(scope)).filter((r) => r.agentId === agentId);
     } catch {
-      return { block: "", view: [], missing: [] }; // offline or signed out
+      // offline or signed out
+      return extra.length ? this.assignedForNames(scope, extra, cwd) : { block: "", view: [], missing: [] };
     }
     // The winning scope is the most specific one with any row for this agent. Its rows, in
     // the operator's own order with the name as the tiebreak, are the sequence.
@@ -410,7 +449,7 @@ export class SkillsService {
       .sort((a, b) => a.position - b.position || a.skillName.localeCompare(b.skillName));
     return this.assignedForNames(
       scope,
-      chosen.map((r) => r.skillName),
+      [...chosen.map((r) => r.skillName), ...extra],
       cwd,
     );
   }
@@ -481,7 +520,7 @@ export class SkillsService {
     // the workspace and the user. Inheritance is a runtime concept (materialize / assignedFor);
     // the editor shows and edits exactly what this scope owns, so a workspace or user skill
     // never leaks into the project's list. The repo shadow is the project's checkout.
-    const rows = await this.readSkills({ projectId });
+    const rows = await this.readSkills({ projectId }, true);
     const repo = await repoSkillNames(cwd);
     const view = resolveSkills(rows).map(({ def, source }) => ({
       name: def.name,
@@ -489,7 +528,12 @@ export class SkillsService {
       source,
       ...(repo.has(def.name) ? { shadowedByRepo: repo.get(def.name)! } : {}),
     }));
-    return { view, repo: Object.fromEntries(repo) };
+    // Each repository skill with its own description, for the pane's «З репозиторію» block and
+    // the assignment pickers' labels. Off the launch path, so reading each file here is fine.
+    const repoSkills = await Promise.all(
+      [...repo].map(async ([name, path]) => [name, { path, description: await skillFileDescription(path) }] as const),
+    );
+    return { view, repo: Object.fromEntries(repoSkills) };
   }
 
   // Never blocks a launch: every filesystem, cloud or config failure degrades to
@@ -552,14 +596,18 @@ export class SkillsService {
       }
       if (!repoFailed) {
         const keep = new Set<string>();
-        for (const { def } of resolved) {
+        for (const { def, source } of resolved) {
           if (repo.has(def.name)) continue; // the repository's own skill wins the name
           keep.add(def.name);
           // With no cloud, `resolved` is just the defaults: rewriting a name already on disk
           // would demote an owner's own skill to the default that shares its name.
           if (cloudFailed && (await hasSkillFile(dir, def.name))) continue;
           await mkdir(join(dir, def.name), { recursive: true });
-          await writeFile(join(dir, def.name, "SKILL.md"), renderSkillFile(def), "utf8");
+          await writeFile(
+            join(dir, def.name, "SKILL.md"),
+            renderSkillFile(def, source === "default" ? undefined : source),
+            "utf8",
+          );
         }
         // Runs only after every write succeeded, so a half-written library is never pruned
         // against. Removed AND newly repo-shadowed names both disappear here. Skipped when the

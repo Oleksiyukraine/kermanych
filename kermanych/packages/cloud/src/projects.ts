@@ -5,10 +5,10 @@
 // surface; refusals surface as thrown postgrest messages.
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { CloudProject } from "./types";
-import { docsPolicy, type ThinkingLevel } from "@kermanych/core";
+import { docsPolicy, isPlatform, type Platform, type ThinkingLevel } from "@kermanych/core";
 
 const PROJECT_COLUMNS =
-  "id, name, workspace_id, git_remote_url, conventions, preview_command, api_command, default_branch, default_model, default_effort, carry_files, env_keys, color, doc_folders, docs_required, docs_policy, created_at";
+  "id, name, workspace_id, git_remote_url, conventions, platform, default_branch, default_model, default_effort, carry_files, env_keys, color, doc_folders, docs_required, docs_policy, created_at";
 
 type ProjectRow = {
   id: string;
@@ -16,8 +16,7 @@ type ProjectRow = {
   workspace_id: string;
   git_remote_url: string | null;
   conventions: string | null;
-  preview_command: string | null;
-  api_command: string | null;
+  platform: string | null;
   default_branch: string | null;
   default_model: string | null;
   default_effort: string | null;
@@ -36,9 +35,9 @@ type ProjectRow = {
 export type CloudProjectPatch = Partial<
   Pick<
     CloudProject,
-    "name" | "workspaceId" | "gitRemoteUrl" | "conventions" | "previewCommand" | "apiCommand" | "defaultBranch" | "defaultModel" | "carryFiles" | "envKeys" | "docFolders" | "docsRequired" | "docsPolicy" | "color"
+    "name" | "workspaceId" | "gitRemoteUrl" | "conventions" | "defaultBranch" | "defaultModel" | "carryFiles" | "envKeys" | "docFolders" | "docsRequired" | "docsPolicy" | "color"
   >
-> & { defaultEffort?: ThinkingLevel | "" };
+> & { defaultEffort?: ThinkingLevel | ""; platform?: Platform | "" };
 
 export function toCloudProject(row: ProjectRow): CloudProject {
   const p: CloudProject = {
@@ -60,8 +59,9 @@ export function toCloudProject(row: ProjectRow): CloudProject {
   // a hand-written literal in tests and JSON round-trips carry no null noise.
   if (row.git_remote_url !== null) p.gitRemoteUrl = row.git_remote_url;
   if (row.conventions !== null) p.conventions = row.conventions;
-  if (row.preview_command !== null) p.previewCommand = row.preview_command;
-  if (row.api_command !== null) p.apiCommand = row.api_command;
+  // Plain text with no CHECK in Postgres (20261103090000): a value this build does not know
+  // reads as «Не визначено», the same as NULL, rather than leaking into the gate.
+  if (isPlatform(row.platform)) p.platform = row.platform;
   if (row.default_branch !== null) p.defaultBranch = row.default_branch;
   if (row.default_model !== null) p.defaultModel = row.default_model;
   if (row.default_effort !== null) p.defaultEffort = row.default_effort as ThinkingLevel;
@@ -80,8 +80,7 @@ export function toProjectRow(patch: CloudProjectPatch): Record<string, unknown> 
   if (patch.workspaceId !== undefined) row.workspace_id = patch.workspaceId;
   if (patch.gitRemoteUrl !== undefined) row.git_remote_url = patch.gitRemoteUrl.trim() || null;
   if (patch.conventions !== undefined) row.conventions = patch.conventions.trim() || null;
-  if (patch.previewCommand !== undefined) row.preview_command = patch.previewCommand.trim() || null;
-  if (patch.apiCommand !== undefined) row.api_command = patch.apiCommand.trim() || null;
+  if (patch.platform !== undefined) row.platform = patch.platform || null;
   if (patch.defaultBranch !== undefined) row.default_branch = patch.defaultBranch.trim() || null;
   if (patch.defaultModel !== undefined) row.default_model = patch.defaultModel.trim() || null;
   if (patch.defaultEffort !== undefined) row.default_effort = patch.defaultEffort.trim() || null;

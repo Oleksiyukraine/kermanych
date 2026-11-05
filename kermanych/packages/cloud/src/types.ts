@@ -1,7 +1,7 @@
 // Cloud coordination rows in camelCase. Postgres columns are snake_case; the
 // mapping lives inside this package (see projects.ts / tasks.ts) and nothing
 // outside @kermanych/cloud ever sees a snake_case key.
-import type { AgentLanguage, AgentRuntimeKind, DocsPolicy, DocsReport, QaChecklist, RiskCategory, RiskKind, RiskResponse, RiskStatus, SessionReport, SessionStatus, ThinkingLevel } from "@kermanych/core";
+import type { AgentLanguage, AgentRuntimeKind, DocsPolicy, DocsReport, FindingKind, Platform, QaChecklist, RiskCategory, RiskKind, RiskResponse, RiskStatus, SessionReport, SessionStatus, ThinkingLevel } from "@kermanych/core";
 
 // Re-exported from core so the cloud enum and the local session enum cannot drift.
 // The Postgres type `task_status` carries the same eleven labels.
@@ -32,8 +32,9 @@ export type CloudProject = {
   name: string;
   gitRemoteUrl?: string;
   conventions?: string;
-  previewCommand?: string;
-  apiCommand?: string;
+  // What the project ships (core Platform). Absent = «Не визначено»: the session browser and
+  // the live preview stay on; back-end and mobile turn both off.
+  platform?: Platform;
   defaultBranch?: string;
   // The «за замовчуванням» a new task/agent in this project pre-selects: `defaultModel` is an
   // omp model id. Absent = leave the choice to omp, which is what an empty picker already means.
@@ -90,7 +91,6 @@ export type Task = {
   // text in Postgres (omp owns the vocabulary), taken at its word here — see toTask().
   effort?: ThinkingLevel;
   prefix?: string;
-  platform?: string;
   // `tasks.worktree` is `not null default true`, so unlike every other launch param this
   // key is always present. `false` means the launcher's «Ізолювати у worktree» was cleared:
   // run in the project folder itself. createSessionFromTask honours that only for the
@@ -105,8 +105,26 @@ export type Task = {
   // present. `true` means the card was filed as «Глибокий аналіз»: whoever launches it, the
   // agent interviews the operator and writes the task document before any code.
   deepAnalysis: boolean;
+  // `tasks.auto_run` is `not null default false`, so like `hidden` this key is always present.
+  // `true` means «Дозволити автовиконання»: «Посіпака» on its author's machine may take the card
+  // by itself (docs/specs/2026-10-23-minion-auto-run.md). Only the author can switch it on, and
+  // anyone else's edit of the card's content switches it off — both enforced by tasks_guard().
+  autoRun: boolean;
+  // `tasks.design` is `not null default false`, so like `hidden` this key is always present.
+  // `true` means the card was filed by «+ Новий дизайн» (docs/specs/2026-10-29-design-tab.md):
+  // its session is a «Дизайнер» on a `design/<slug>` branch, stamped with a `designDir`. Set on
+  // insert only; no patch carries it.
+  design: boolean;
+  // The kind of the «Знахідка» the card was filed from; absent for every other card. Set once by
+  // the filing dialog and frozen by tasks_guard(), so finding-born cards can be counted.
+  findingKind?: FindingKind;
   kind?: string;
+  // `tasks.branch` is the BASE branch the agent forks from, not the agent's own branch.
   branch?: string;
+  // The agent's own branch, after the prefix (`feature/<branchSlug>`), when the launcher's
+  // «Гілка» box was filled in. Absent means the launch names it from the task with a model
+  // (docs/specs/2026-11-04-custom-branch-name.md). Taken as typed; the launch slugifies it.
+  branchSlug?: string;
   // Storage object paths in the `task-images` bucket (private). The board mints signed
   // URLs from these on demand; the row never carries a URL. Absent when the task has none.
   imagePaths?: string[];
@@ -116,6 +134,9 @@ export type Task = {
   // The Linear identifier («ENG-42») when this row is a shadow task minted by launching a
   // mirrored Linear ticket. Its Jira twin above; the two boards each filter their own.
   linearKey?: string;
+  // The Plane work-item key («WEB-42») when this row is a shadow task minted by launching a
+  // mirrored Plane work item. The Jira/Linear twins above; each board filters its own.
+  planeKey?: string;
   // The QA checklist the pull-request agent generated for this card and a human ticks off on
   // the board. Absent until a «Створити ПР» run produced one; survives the session's archive
   // because it lives on the card, not the session. See @kermanych/core's QaChecklist.
@@ -137,7 +158,6 @@ export type TaskInsert = {
   model?: string;
   effort?: ThinkingLevel | ""; // "" from the board's shared create/edit form; toTaskRow nulls it
   prefix?: string;
-  platform?: string;
   // Supplied ONLY by the one-time publication of pre-cutover local backlog rows, which
   // reuses the local session id so a repeated pass collides instead of duplicating. Same
   // trick as CloudProjectInsert.id (projects.ts:95).
@@ -145,11 +165,16 @@ export type TaskInsert = {
   worktree?: boolean;
   hidden?: boolean;
   deepAnalysis?: boolean;
+  autoRun?: boolean;
+  findingKind?: FindingKind;
+  design?: boolean;
   kind?: string;
   branch?: string;
+  branchSlug?: string;
   imagePaths?: string[];
   jiraKey?: string;
   linearKey?: string;
+  planeKey?: string;
 };
 
 export type TaskPatch = {
@@ -159,15 +184,18 @@ export type TaskPatch = {
   model?: string;
   effort?: ThinkingLevel | ""; // "" clears the column (toTaskRow turns a blank into null)
   prefix?: string;
-  platform?: string;
   worktree?: boolean;
   hidden?: boolean;
   deepAnalysis?: boolean;
+  // No `findingKind`: it is a fact of the insert, and tasks_guard() would ignore a change anyway.
+  autoRun?: boolean;
   kind?: string;
   branch?: string;
+  branchSlug?: string; // "" clears the column: the launch names the branch again
   imagePaths?: string[];
   jiraKey?: string;
   linearKey?: string;
+  planeKey?: string;
   qaChecklist?: QaChecklist;
   docsReport?: DocsReport;
   sessionReport?: SessionReport;
@@ -725,9 +753,163 @@ export type LinearAttachment = {
   createdAt: string;
 };
 
+// ── Plane mirror ──────────────────────────────────────────────────────────────
+// Up to ten Plane projects mirrored per workspace (spec 2026-11-04), the Jira multi-board
+// rule. Structural twin of the Jira mirror above, kept entirely separate so a workspace may
+// connect Jira, Linear and Plane at once. These are the camelCase shapes of the plane_*
+// tables; plane.ts owns the snake_case boundary. Plane is the source of truth — every row
+// here is a cache overwritten from Plane, never merged. Field names that mean the same as
+// Jira's (`assigneeAccountId`, `statusCategory`, `originalEstimateSeconds`, …) are spelled
+// the same, so capacity and the Home widgets read either tracker through one shape.
+
+// Plane's state group mapped onto Jira's three-way categorisation. The launch flow's
+// «already in progress — don't move it» rule reads THIS, never the free-form state name:
+// backlog/unstarted -> new; started -> indeterminate; completed/cancelled -> done.
+export type PlaneStatusCategory = "new" | "indeterminate" | "done";
+
+export type PlaneIntegration = {
+  id: string;
+  workspaceId: string;
+  // The Plane WEB origin («https://app.plane.so» for Cloud, the instance origin when
+  // self-hosted) — the api derives the REST base from it.
+  siteUrl: string;
+  workspaceSlug: string;
+  // Plane ids are UUID strings.
+  projectId: string;
+  // The project's key prefix («WEB»): a work item's key is `${identifier}-${sequence_id}`.
+  projectIdentifier: string;
+  projectName: string;
+  connectedBy?: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type PlaneIntegrationInsert = {
+  workspaceId: string;
+  siteUrl: string;
+  workspaceSlug: string;
+  projectId: string;
+  projectIdentifier: string;
+  projectName: string;
+};
+
+export type PlaneSyncState = {
+  integrationId: string;
+  workspaceId: string;
+  lastSyncedAt?: string;
+  // High-water Plane `updated_at` timestamp; absent forces a full sweep.
+  syncCursor?: string;
+};
+
+export type PlaneColumn = {
+  integrationId: string;
+  workspaceId: string;
+  position: number;
+  name: string;
+  // One Plane column maps a SINGLE state; the array keeps parity with the Jira mirror
+  // (which maps a set) and holds exactly one id in practice.
+  stateIds: string[];
+  // The state's group (backlog | unstarted | started | completed | cancelled) and colour,
+  // as Plane said them. Columns are ordered by group first, then by Plane's sequence.
+  stateGroup: string;
+  color: string;
+};
+
+export type PlaneIssue = {
+  integrationId: string;
+  workspaceId: string;
+  issueId: string;
+  // `${projectIdentifier}-${sequence_id}`, Plane's human key («WEB-42»).
+  key: string;
+  summary: string;
+  // Plane's editor HTML (`description_html`). Stored as Plane said it; the UI sanitizes on
+  // display.
+  descriptionHtml: string;
+  // The work-item type's name (Plane Pro); blank when the project has no types.
+  typeName: string;
+  // Plane's fixed enum: urgent | high | medium | low | none.
+  priority: string;
+  labels: string[];
+  // The estimate point the item carries, and its display value («3», «M», «90»); blank =
+  // none.
+  estimatePointId?: string;
+  estimate: string;
+  // Filled only for a `time`-type estimate (its value read as minutes); 0 otherwise, so
+  // capacity reports Plane items as unestimated rather than inventing hours.
+  originalEstimateSeconds: number;
+  // The item's worklog total, in Jira's display spelling («1h 30m») and in seconds; blank
+  // and 0 when time tracking is off or nothing is logged.
+  timeSpent: string;
+  timeSpentSeconds: number;
+  // Plane's planning dates (`start_date`, `target_date`) in its own spelling
+  // (YYYY-MM-DD); blank = not set.
+  startDate: string;
+  dueDate: string;
+  // The FIRST assignee: Kermanych shows one person per ticket (spec Decision 6).
+  assigneeAccountId?: string;
+  assigneeName?: string;
+  assigneeAvatar?: string;
+  reporterName?: string;
+  statusId: string;
+  statusName: string;
+  statusCategory: PlaneStatusCategory;
+  parentKey?: string;
+  planeUpdatedAt: string;
+  // When this item's comments/attachments/worklogs were last mirrored. Absent or older
+  // than `planeUpdatedAt` = due for a child refresh (the sync drains a few per tick).
+  childrenSyncedAt?: string;
+  // Launch binding: the Kermanych repo a launch chose (remembered for relaunches)
+  // and the shadow tasks row the session pipeline runs on.
+  kermanychProjectId?: string;
+  taskId?: string;
+  updatedAt: string;
+};
+
+export type PlaneComment = {
+  integrationId: string;
+  workspaceId: string;
+  issueId: string;
+  commentId: string;
+  authorName: string;
+  authorAvatar: string;
+  bodyHtml: string;
+  planeCreatedAt: string;
+  planeUpdatedAt: string;
+};
+
+export type PlaneWorklog = {
+  integrationId: string;
+  workspaceId: string;
+  issueId: string;
+  worklogId: string;
+  // Plane's user id for the author: what «may I edit this entry?» is decided from (own
+  // entries, or any entry for a project admin).
+  authorAccountId: string;
+  authorName: string;
+  authorAvatar: string;
+  // Plane keeps minutes; the mirror keeps Jira's display spelling («1h 30m») and seconds.
+  timeSpent: string;
+  seconds: number;
+  // Plane has no work-date field: this is the entry's `created_at`.
+  startedAt: string;
+  description: string;
+};
+
+export type PlaneAttachment = {
+  integrationId: string;
+  workspaceId: string;
+  issueId: string;
+  attachmentId: string;
+  filename: string;
+  mime: string;
+  size: number;
+  authorName: string;
+  planeCreatedAt: string;
+};
+
 // ── Slack integration ─────────────────────────────────────────────────────────
-// One Slack channel bound per workspace; its top-level messages are questions answered
-// from the workspace's indexed documentation. The camelCase shape of
+// One Slack channel bound per workspace; its messages that @-mention the bot are questions
+// answered from the workspace's indexed documentation. The camelCase shape of
 // workspace_slack_integrations; slack.ts owns the snake_case boundary. Addresses only —
 // the bot/app tokens never leave each machine's registry SQLite.
 export type SlackIntegration = {

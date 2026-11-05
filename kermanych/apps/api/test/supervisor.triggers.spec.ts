@@ -8,7 +8,7 @@ import type { TranscriptEntry } from "@kermanych/core";
 import type { WorktreeService } from "../src/worktree/worktree.service";
 import type { AiScopeSet, SkillsService } from "../src/skills/skills.service";
 
-type SpawnOpts = { cwd: string; configPath?: string; extensionPath?: string };
+type SpawnOpts = { cwd: string; configPaths?: string[]; extensionPath?: string };
 const started: SpawnOpts[] = [];
 const sent: { kind: "prompt" | "follow_up" | "steer"; text: string }[] = [];
 // Flipped to false to force the next send down the resume path, which is the only await
@@ -196,6 +196,21 @@ describe("an operator trigger fires before the message is forwarded", () => {
     expect(launch.code).toBe("trigger_launches_agent");
     expect(launch.params).toEqual({ trigger: "Хоче ПР", agent: "resolve-conflict" });
     expect(launch.text).toBe("тригер «Хоче ПР» запускає «resolve-conflict»");
+  });
+
+  // The picker offers every instruction-carrying agent but the card/design ones, «Комітер»
+  // included; a trigger naming it must start it, not end in «агента «commit» не існує».
+  it("runs «Комітер» for a trigger naming `commit`", async () => {
+    const { sup, registry, project } = make([t({ agentId: "commit", pattern: "закоміть" })]);
+    const s = registry.createSession({ projectId: project.id, name: "AAA", task: "t", worktreePath: "/tmp/wt", branch: "feature/aaa" });
+    registry.updateSession(s.id, { ompSessionFile: "/tmp/aaa.jsonl", status: "done" });
+    await sup.sendMessage(s.id, "закоміть це", "prompt");
+
+    expect(sent).toHaveLength(1);
+    expect(sent[0]!.text).toContain("Commit and push any pending work on this session's branch `feature/aaa`");
+    expect(sent[0]!.text).not.toContain("закоміть це");
+    const rows = sup.getTranscript(s.id).filter((r) => r.kind === "notice") as Extract<TranscriptEntry, { kind: "notice" }>[];
+    expect(rows.map((r) => r.code)).toEqual(["trigger_launches_agent"]);
   });
 
   it("never matches Kermanych's own prompt, so a fired agent cannot loop", async () => {

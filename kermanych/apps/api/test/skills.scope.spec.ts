@@ -5,7 +5,7 @@
 // that order for the four things it decides: an agent's instruction, an agent's skill
 // sequence, a skill's body by name, and the operator trigger union.
 import { afterEach, beforeEach, expect, test } from "vitest";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AiAgent, AiAgentSkill, AiScope, AiSkill, AiTrigger } from "@kermanych/cloud";
@@ -126,6 +126,8 @@ test("a name defined at every scope resolves to the user body, and the repositor
   expect(cloud.block).not.toContain("PROJ BODY");
   expect(cloud.block).not.toContain("WS BODY");
   expect(cloud.view[0]?.shadowedByRepo).toBeUndefined();
+  // The view names the scope that won, so the operator knows which row they are looking at.
+  expect(cloud.view[0]?.source).toBe("user");
 
   // The repository's own file for the name outranks every cloud scope: its body is delivered
   // and the view says where from.
@@ -135,6 +137,30 @@ test("a name defined at every scope resolves to the user body, and the repositor
   expect(shadowed.block).toContain("REPO BODY");
   expect(shadowed.block).not.toContain("USER BODY");
   expect(shadowed.view[0]?.shadowedByRepo).toBe(join(repo, ".omp/skills/dup/SKILL.md"));
+});
+
+// A workspace row under a default's name replaces that default in every session of the
+// workspace. The session must be able to tell — the launch view and the file the agent reads
+// both name the owning scope — or removing the override means querying the cloud tables.
+test("a workspace row replacing a default is labelled with its scope in the view and in SKILL.md", async () => {
+  const s = svc();
+  s.readSkills = async () => [skill("workspace", "kermanych-session", "WS BODY"), skill("project", "house", "H")];
+
+  const { view } = await s.materialize(S, repo);
+  expect(view.find((v) => v.name === "kermanych-session")?.source).toBe("workspace");
+  expect(view.find((v) => v.name === "house")?.source).toBe("project");
+
+  const dir = join(home, "skills", "p");
+  const override = readFileSync(join(dir, "kermanych-session", "SKILL.md"), "utf8");
+  expect(override).toContain("owned at workspace scope");
+  expect(override).toContain(`replaces Kermanych's default skill "kermanych-session"`);
+  expect(override).toContain("WS BODY");
+  // A row under its own name replaces nothing, so it only names its owner.
+  const own = readFileSync(join(dir, "house", "SKILL.md"), "utf8");
+  expect(own).toContain("owned at project scope");
+  expect(own).not.toContain("replaces");
+  // A default the library left alone is written as shipped, with no origin line.
+  expect(readFileSync(join(dir, "task-spec", "SKILL.md"), "utf8")).not.toContain("Kermanych library skill");
 });
 
 // ---- (d) triggers: the UNION of every scope, deduped by slug with the most specific winning ----

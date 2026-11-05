@@ -10,7 +10,7 @@
       <span class="rel__count mono">{{ notes.length ? t('management.releases.count', { count: notes.length }) : '' }}</span>
       <!-- The section's Slack settings: the channel notes are sent to, and the member's
            Slack account they are sent as. The label names the channel once it is set. -->
-      <KBtn variant="secondary" @click="slackOpen = true">
+      <KBtn variant="secondary" :loading="slackRow === undefined" @click="slackOpen = true">
         {{ slackRow ? t('releaseSlack.toolbarSet', { channel: slackRow.channelName }) : t('releaseSlack.toolbarUnset') }}
       </KBtn>
       <KBtn variant="primary" @click="openGenerate">{{ t('management.releases.generate') }}</KBtn>
@@ -19,6 +19,12 @@
     <p v-if="store.loadError" class="rel__error">
       {{ t('management.releases.loadError', { error: store.loadError }) }}
     </p>
+
+    <!-- Not loaded for THIS workspace: no «ще немає нотаток» until the history has arrived.
+         A running job is local state and still shows below while it loads. -->
+    <template v-else-if="phase !== 'ready' && !jobs.length">
+      <KSkeleton v-if="phase === 'skeleton'" variant="rows" :rows="4" />
+    </template>
 
     <div v-else-if="!notes.length && !jobs.length" class="rel__blank">
       <span class="rel__blank-eyebrow mono">{{ t('management.releases.blankEyebrow') }}</span>
@@ -45,7 +51,11 @@
           </span>
           <span class="rel__row-meta">
             <KTag v-for="s in j.sources" :key="s.projectId">{{ sourceLabel(s) }}</KTag>
-            <KTag v-if="j.groupBy === 'person'">{{ t('management.releases.byPersonTag') }}</KTag>
+            <KTag v-if="j.groupBy === 'person'">{{
+              j.authors
+                ? t('management.releases.byPersonOfTag', { names: j.authors.join(', ') })
+                : t('management.releases.byPersonTag')
+            }}</KTag>
             <span class="rel__row-range mono">{{ j.rangeFrom }} — {{ j.rangeTo }}</span>
           </span>
           <span v-if="j.error" class="rel__row-error">{{ j.error }}</span>
@@ -97,6 +107,7 @@
             :label="t('management.releases.branchFor', { project: p.name })"
             :options="branchLists[p.id]?.branches ?? []"
             :placeholder="branchPlaceholder(p.id)"
+            :loading="!branchLists[p.id] || branchLists[p.id]!.loading"
             :disabled="!branchLists[p.id]?.branches.length"
             searchable
             @update:model-value="(v: string) => (gen.branches[p.id] = v)"
@@ -114,6 +125,26 @@
         <!-- Off by default: the note is the by-topic document it always was. On, it is one
              section per commit author in the period, each in the same plain language. -->
         <KCheckbox v-model="gen.byPerson" :label="t('management.releases.byPersonLabel')" />
+        <!-- Who the per-person report is about: the whole team by default, or any subset of
+             the commit authors the picked projects, branches and period actually have — read
+             from the same git history the note will be written from, so every name offered
+             is a name the generation will find. -->
+        <template v-if="gen.byPerson">
+          <KSelect
+            multiple
+            :values="authorModel"
+            :label="t('management.releases.authorsLabel')"
+            :options="authorOptions"
+            :summary="authorSummary"
+            :loading="authorList.loading"
+            :disabled="!authorList.authors.length"
+            @update:values="pickAuthors"
+          />
+          <p v-if="authorList.error" class="rel__form-error">
+            {{ t('management.releases.authorsFailed', { error: authorList.error }) }}
+          </p>
+          <p v-else-if="authorHint" class="rel__form-hint">{{ authorHint }}</p>
+        </template>
 
         <!-- Where the material comes from and what pressing the button costs, said before
              it is pressed: the commits are read from THIS machine's clone, the writing
@@ -155,9 +186,15 @@
                controlled tag set — the same guarantee the assistant transcript relies on. -->
           <div class="k-log__markdown" v-html="renderMarkdown(current.bodyMd)"></div>
           <p class="rel__doc-audit mono">
-            {{ t('management.releases.auditGenerated') }} {{ memberName(current.createdBy) }} · {{ renderTime(t, relativeTime(current.createdAt, now)) }}
+            {{ t('management.releases.auditGenerated') }}
+            <KSkeleton v-if="!membersReady" variant="line" width="96px" />
+            <template v-else>{{ memberName(current.createdBy) }}</template>
+            · {{ renderTime(t, relativeTime(current.createdAt, now)) }}
             <template v-if="current.updatedAt !== current.createdAt">
-              · {{ t('management.releases.auditEdited') }} {{ memberName(current.updatedBy) }} · {{ renderTime(t, relativeTime(current.updatedAt, now)) }}
+              · {{ t('management.releases.auditEdited') }}
+              <KSkeleton v-if="!membersReady" variant="line" width="96px" />
+              <template v-else>{{ memberName(current.updatedBy) }}</template>
+              · {{ renderTime(t, relativeTime(current.updatedAt, now)) }}
             </template>
           </p>
         </div>
@@ -179,11 +216,12 @@
         <template v-if="!editing">
           <KBtn variant="secondary" @click="startEdit">{{ t('management.releases.edit') }}</KBtn>
           <!-- Posted under the pressing member's own Slack name. Without a channel it opens
-               the Slack settings, which say who sets one. -->
+               the Slack settings, which say who sets one. Spinning until the setting has been
+               read: before that the press could not tell «send» from «set a channel first». -->
           <KBtn
             v-tip="slackRow ? t('releaseSlack.sendTip', { channel: slackRow.channelName }) : ''"
             variant="secondary"
-            :loading="sending"
+            :loading="sending || slackRow === undefined"
             @click="sendToSlack"
           >
             {{ sent ? t('releaseSlack.sent') : t('releaseSlack.send') }}
@@ -192,7 +230,7 @@
         </template>
         <template v-else>
           <KBtn variant="ghost" :disabled="saving" @click="cancelEdit">{{ t('management.releases.cancel') }}</KBtn>
-          <KBtn variant="primary" :disabled="saving || !draftTitle.trim() || !draftBody.trim()" @click="saveEdit">
+          <KBtn variant="primary" :loading="saving" :disabled="!draftTitle.trim() || !draftBody.trim()" @click="saveEdit">
             {{ saving ? t('management.releases.saving') : t('management.releases.save') }}
           </KBtn>
         </template>
@@ -225,12 +263,18 @@ import KField from 'components/kit/KField.vue';
 import KCheckbox from 'components/kit/KCheckbox.vue';
 import KBtn from 'components/kit/KBtn.vue';
 import KTag from 'components/kit/KTag.vue';
+import KSkeleton from 'components/kit/KSkeleton.vue';
+import { useLoadPhase } from '../composables/useLoadPhase';
+import { useAsyncAction } from '../composables/useAsyncAction';
 import { useReleaseNotes, type ReleaseNotesJob } from 'stores/release-notes';
 import { useReleaseSlack } from 'stores/release-slack';
 import ReleaseSlackModal from 'components/releases/ReleaseSlackModal.vue';
 import { useProjects } from 'stores/projects';
 import { useOrchestrator } from 'stores/orchestrator';
 import { renderMarkdown } from '../lib/markdown';
+import { api } from '../lib/api';
+import { toggleActive } from '../lib/capacity';
+import type { ReleaseAuthor, ReleaseNotesAuthorsAsk } from '@kermanych/core';
 import { relativeTime, renderTime } from '../lib/time';
 import { useNow } from '../composables/useNow';
 
@@ -258,15 +302,25 @@ watch(
 );
 
 // Author names for the audit line. Same source the risks page uses.
+const membersFailed = ref('');
 watch(
   () => props.workspaceId,
   (id) => {
-    if (id && !projects.members[id]) void projects.loadMembers(id);
+    if (id && !projects.members[id]) {
+      projects.loadMembers(id).catch(() => {
+        // No roster: the audit line falls back to raw ids rather than a skeleton forever.
+        membersFailed.value = id;
+      });
+    }
   },
   { immediate: true },
 );
+const membersReady = computed(
+  () => projects.members[props.workspaceId] !== undefined || membersFailed.value === props.workspaceId,
+);
 
 const notes = computed<WorkspaceReleaseNote[]>(() => store.byWorkspace[props.workspaceId] ?? []);
+const phase = useLoadPhase(() => store.byWorkspace[props.workspaceId] === undefined && !store.loadError);
 
 function memberName(id: string | undefined): string {
   if (!id) return '—';
@@ -291,6 +345,10 @@ const gen = reactive({
   rangeFrom: '',
   rangeTo: '',
   byPerson: false,
+  // Who a per-person report is about, as the operator last picked them. `null` is the whole
+  // team — every author the period has, including one who appears when the range widens. A
+  // list is an explicit pick: an author it does not name stays out of the report.
+  authors: null as string[] | null,
 });
 
 // The workspace's projects, with the binding state said IN the picker: an unbound project
@@ -319,28 +377,34 @@ const projectSummary = computed(() =>
 // Branches of each picked project's local clone. The DEFAULT selection is the project's
 // default branch from its settings — the user's requirement — falling back to the repo's
 // current HEAD; each picker then lets the operator switch to any local branch.
-const branchLists = ref<Record<string, { branches: string[]; failed: boolean }>>({});
+const branchLists = ref<Record<string, { branches: string[]; failed: boolean; loading: boolean }>>({});
 
 function branchPlaceholder(projectId: string): string {
-  return branchLists.value[projectId]?.failed
-    ? t('management.releases.branchPlaceholderFailed')
-    : t('management.releases.branchPlaceholderEmpty');
+  const list = branchLists.value[projectId];
+  // While the clone is being read, «гілок не знайдено» would be a false empty state.
+  if (!list || list.loading) return t('management.releases.branchPlaceholderLoading');
+  return list.failed ? t('management.releases.branchPlaceholderFailed') : t('management.releases.branchPlaceholderEmpty');
 }
 
 // A newly picked project reads its branches fresh — the clone may have grown a release
 // branch since the form was last open — and keeps the branch already chosen for it if that
-// branch still exists.
+// branch still exists. The previous list stays visible (spinning) during the re-read.
 async function loadBranches(projectId: string): Promise<void> {
+  const prev = branchLists.value[projectId];
+  branchLists.value = {
+    ...branchLists.value,
+    [projectId]: { branches: prev?.branches ?? [], failed: false, loading: true },
+  };
   try {
     const info = await local.listBranches(projectId);
-    branchLists.value = { ...branchLists.value, [projectId]: { branches: info.branches, failed: false } };
+    branchLists.value = { ...branchLists.value, [projectId]: { branches: info.branches, failed: false, loading: false } };
     const kept = gen.branches[projectId];
     gen.branches[projectId] =
       kept && info.branches.includes(kept) ? kept : (info.default ?? info.current ?? info.branches[0] ?? '');
   } catch {
     // GET /projects/:id/branches answers `project not bound` without a binding — the
     // placeholder says so, and the generate button stays disabled without a branch.
-    branchLists.value = { ...branchLists.value, [projectId]: { branches: [], failed: true } };
+    branchLists.value = { ...branchLists.value, [projectId]: { branches: [], failed: true, loading: false } };
     gen.branches[projectId] = '';
   }
 }
@@ -357,12 +421,121 @@ function openGenerate(): void {
   genOpen.value = true;
 }
 
-const canGenerate = computed(
+// ── People of a per-person report ─────────────────────────────────────────────
+
+// The «whole team» master row of the people picker — the same shape the capacity screen's
+// roster picker uses. An author git prints is never an empty name, so it cannot collide.
+const ALL_AUTHORS = '';
+
+// The commit authors of what the form currently names, read by the local api from the same
+// git history the note will be written from. `key` is the ask the list answers, so a reply
+// to an ask the operator has already changed is dropped instead of shown.
+const authorList = ref<{ key: string; authors: ReleaseAuthor[]; loading: boolean; error: string }>({
+  key: '',
+  authors: [],
+  loading: false,
+  error: '',
+});
+
+// Every project has its branch and the period is set — what the history is read by.
+const sourcesReady = computed(
   () =>
     pickedProjects.value.length > 0 &&
     pickedProjects.value.every((p) => !!gen.branches[p.id]) &&
     gen.rangeFrom !== '' &&
     gen.rangeTo !== '',
+);
+
+// Only once the form names everything the history is read by, with a forward period, and
+// only while somebody is looking at the picker.
+const authorsAsk = computed<ReleaseNotesAuthorsAsk | null>(() => {
+  if (!genOpen.value || !gen.byPerson || !sourcesReady.value || gen.rangeFrom > gen.rangeTo) return null;
+  return {
+    sources: pickedProjects.value.map((p) => ({ projectId: p.id, branch: gen.branches[p.id] ?? '' })),
+    rangeFrom: gen.rangeFrom,
+    rangeTo: gen.rangeTo,
+  };
+});
+const authorsKey = computed(() => (authorsAsk.value ? JSON.stringify(authorsAsk.value) : ''));
+
+// Re-read whenever the ask changes, and on every reopening of the form — the clone may have
+// grown commits since. The previous names stay visible (spinning) during the re-read.
+watch(
+  authorsKey,
+  async (key) => {
+    const ask = authorsAsk.value;
+    if (!key || !ask) return;
+    authorList.value = { ...authorList.value, key, loading: true, error: '' };
+    try {
+      const reply = await api.releaseNotesAuthors(ask);
+      if (authorList.value.key === key) authorList.value = { key, authors: reply.authors, loading: false, error: '' };
+    } catch (e) {
+      if (authorList.value.key === key)
+        authorList.value = { key, authors: [], loading: false, error: e instanceof Error ? e.message : String(e) };
+    }
+  },
+  { immediate: true },
+);
+
+const authorNames = computed(() => authorList.value.authors.map((a) => a.name));
+// The pick, narrowed to the authors this period actually has: a name picked for another
+// range is kept in `gen.authors` (it comes back if the range does) but is not sent.
+const pickedAuthors = computed(() =>
+  gen.authors === null ? authorNames.value : authorNames.value.filter((n) => gen.authors?.includes(n)),
+);
+const allAuthors = computed(() => pickedAuthors.value.length === authorNames.value.length);
+
+const authorOptions = computed<KSelectOption[]>(() => [
+  { value: ALL_AUTHORS, label: t('management.releases.authorsAll') },
+  ...authorList.value.authors.map((a) => ({
+    value: a.name,
+    label: t('management.releases.authorOption', { name: a.name, count: a.commits }),
+  })),
+]);
+const authorModel = computed(() => (allAuthors.value ? [ALL_AUTHORS, ...pickedAuthors.value] : pickedAuthors.value));
+const authorSummary = computed(() => {
+  if (authorList.value.loading && !authorNames.value.length) return t('management.releases.authorsLoading');
+  if (allAuthors.value) return t('management.releases.authorsAll');
+  return t('management.releases.authorsPicked', { count: pickedAuthors.value.length, total: authorNames.value.length });
+});
+
+// What the operator needs to know about the pick before pressing the button: that the form
+// does not name enough to read the history yet, that the period has nobody, or that nobody
+// is picked — the last one being why «Згенерувати» is disabled.
+const authorHint = computed(() => {
+  if (!authorsAsk.value) return t('management.releases.authorsNeedForm');
+  if (authorList.value.loading) return '';
+  if (!authorNames.value.length) return t('management.releases.authorsNone');
+  if (!pickedAuthors.value.length) return t('management.releases.authorsPickOne');
+  return '';
+});
+
+// One pick toggles one row; the fold onto an exclusion set is the capacity screen's
+// `toggleActive`, so «whole team» clears or fills the roster exactly as it does there.
+// Everybody picked is stored as `null` — the whole team, newcomers included. Names picked
+// earlier that this period does not have are kept, so they return with their range.
+function pickAuthors(next: readonly string[]): void {
+  const names = authorNames.value;
+  const excluded = new Set(names.filter((n) => !pickedAuthors.value.includes(n)));
+  const out = toggleActive(names, excluded, ALL_AUTHORS, next);
+  gen.authors =
+    out.size === 0
+      ? null
+      : [...(gen.authors ?? []).filter((n) => !names.includes(n)), ...names.filter((n) => !out.has(n))];
+}
+
+// An explicit pick of people is only sendable once the list it was made from is read for
+// THIS ask: otherwise the names might belong to a range the form no longer says. The whole
+// team needs no list — the api reads everyone the period has.
+const canGenerate = computed(
+  () =>
+    sourcesReady.value &&
+    (!gen.byPerson ||
+      gen.authors === null ||
+      (authorList.value.key === authorsKey.value &&
+        !authorList.value.loading &&
+        !authorList.value.error &&
+        pickedAuthors.value.length > 0)),
 );
 
 // Hand the run to the store and close. Nothing is awaited here on purpose: this component
@@ -382,6 +555,7 @@ function submitGenerate(): void {
     rangeFrom: gen.rangeFrom,
     rangeTo: gen.rangeTo,
     groupBy: gen.byPerson ? 'person' : 'topic',
+    ...(gen.byPerson && gen.authors !== null && !allAuthors.value ? { authors: pickedAuthors.value } : {}),
   });
   genOpen.value = false;
 }
@@ -466,31 +640,29 @@ async function copy(): Promise<void> {
 // ── Slack ─────────────────────────────────────────────────────────────────────
 
 const slackOpen = ref(false);
-const slackRow = computed(() => slack.settings[props.workspaceId] ?? null);
-const sending = ref(false);
+// `undefined` = the setting has not been read for this workspace yet; `null` = no channel.
+const slackRow = computed(() => slack.settings[props.workspaceId]);
 const sent = ref(false);
 
 // The store connects the member's Slack account first when there is none on this machine,
 // so this is one press whoever presses it. Feedback on the button, like Copy, plus a toast
 // naming the channel — the post is public and under the member's name.
-async function sendToSlack(): Promise<void> {
+const sendAction = useAsyncAction(async (noteId: string, title: string) => {
+  const res = await slack.send(props.workspaceId, noteId);
+  sent.value = true;
+  setTimeout(() => (sent.value = false), 2000);
+  local.notify(t('releaseSlack.notify.sent', { title, channel: `#${res.channelName}` }), 'info');
+});
+const sending = sendAction.busy;
+
+function sendToSlack(): void {
   const note = current.value;
-  if (!note || sending.value) return;
+  if (!note || slackRow.value === undefined) return;
   if (!slackRow.value) {
     slackOpen.value = true;
     return;
   }
-  sending.value = true;
-  try {
-    const res = await slack.send(props.workspaceId, note.id);
-    sent.value = true;
-    setTimeout(() => (sent.value = false), 2000);
-    local.notify(t('releaseSlack.notify.sent', { title: note.title, channel: `#${res.channelName}` }), 'info');
-  } catch (e) {
-    local.notify(e instanceof Error ? e.message : String(e), 'error');
-  } finally {
-    sending.value = false;
-  }
+  void sendAction.run(note.id, note.title);
 }
 
 function startEdit(): void {

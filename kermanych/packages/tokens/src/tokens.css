@@ -1,11 +1,11 @@
 /* Kermanych design tokens.
  *
- * Two themes, one contract. `:root` carries the DARK set because dark is the
+ * Four themes, one contract. `:root` carries the DARK set because dark is the
  * product's default look: a document with no `data-theme` attribute already
  * renders correctly, so nothing flashes while the app boots.
- * `:root[data-theme='light']` overrides COLOR tokens only — type, radii,
- * spacing and rules are theme-independent, and duplicating them here would let
- * the two sets drift apart.
+ * `:root[data-theme='light' | 'matrix' | 'hermes']` override COLOUR and DEPTH
+ * tokens only — type, radii, spacing and rules are theme-independent, and
+ * duplicating them here would let the sets drift apart.
  *
  * The attribute is written by apps/ui/src/lib/theme.ts.
  */
@@ -30,6 +30,22 @@
   --k-shadow-pop:0 2px 8px rgba(0,0,0,.35);
   --k-shadow-toast:0 12px 32px rgba(0,0,0,.5);
   --k-shadow-modal:0 24px 64px rgba(0,0,0,.6);
+  /* depth — gradients and highlights that lift raised and clickable surfaces.
+   * Visible when you look for it, never louder: a 1px top sheen, a vertical
+   * overlay a few percent lighter at the top, a card shadow that deepens on
+   * hover, a primary fill a step lighter at the top, a focus glow in the accent.
+   * `--k-grad-accent` is a translucent white overlay laid over `--k-accent` as a
+   * background-image, not a fill of its own: hover then changes only the colour
+   * underneath, which transitions (a gradient image does not). White .08 lands on
+   * the same top shade in every theme, so the four sets share the value.
+   * Kept off large planes (sidebar, canvas, log): a gradient across a big dark
+   * area bands on ordinary panels. Spec: docs/specs/2026-10-28-hermes-theme-and-depth.md. */
+  --k-sheen:inset 0 1px 0 rgba(255,255,255,.04);
+  --k-grad-raise:linear-gradient(180deg,rgba(255,255,255,.025),rgba(255,255,255,0) 70%);
+  --k-shadow-card:0 1px 2px rgba(0,0,0,.25);
+  --k-shadow-card-hover:0 4px 14px rgba(0,0,0,.35);
+  --k-grad-accent:linear-gradient(180deg,rgba(255,255,255,.08),rgba(255,255,255,0));
+  --k-glow-focus:0 0 0 3px rgba(255,86,60,.18);
   /* type */
   --k-font-ui:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
   --k-font-mono:'JetBrains Mono',ui-monospace,monospace;
@@ -104,6 +120,13 @@
   --k-shadow-pop:0 2px 8px rgba(0,0,0,.10);
   --k-shadow-toast:0 12px 32px rgba(0,0,0,.14);
   --k-shadow-modal:0 24px 64px rgba(0,0,0,.18);
+  /* depth — a white sheen reads only on the tinted layers; shadows a third of dark's */
+  --k-sheen:inset 0 1px 0 rgba(255,255,255,.8);
+  --k-grad-raise:linear-gradient(180deg,rgba(255,255,255,.6),rgba(255,255,255,0) 70%);
+  --k-shadow-card:0 1px 2px rgba(0,0,0,.05);
+  --k-shadow-card-hover:0 4px 14px rgba(0,0,0,.08);
+  --k-grad-accent:linear-gradient(180deg,rgba(255,255,255,.08),rgba(255,255,255,0));
+  --k-glow-focus:0 0 0 3px rgba(200,53,27,.16);
 }
 
 /* MATRIX theme.
@@ -111,7 +134,7 @@
  * The film look: a black substrate under near-white, green-tinted text, with
  * one soft grey-green brand accent — the settled colour of the digital rain
  * that reveals this theme (apps/ui/src/lib/matrix-rain.ts). Like the light
- * block, this overrides COLOUR tokens only; type, spacing, radii and rules stay
+ * block, this overrides COLOUR and DEPTH tokens only; type, spacing, radii and rules stay
  * theme-independent.
  *
  * Toned down twice from a neon first cut. `--k-text` (#d7e3db) is lifted close
@@ -138,4 +161,49 @@
   --k-shadow-pop:0 2px 8px rgba(0,20,0,.5);
   --k-shadow-toast:0 12px 32px rgba(0,25,0,.55);
   --k-shadow-modal:0 24px 64px rgba(0,30,0,.6);
+  /* depth — green-tinted sheen and overlay */
+  --k-sheen:inset 0 1px 0 rgba(180,220,190,.05);
+  --k-grad-raise:linear-gradient(180deg,rgba(150,200,165,.03),rgba(150,200,165,0) 70%);
+  --k-shadow-card:0 1px 2px rgba(0,20,0,.35);
+  --k-shadow-card-hover:0 4px 14px rgba(0,25,0,.45);
+  --k-grad-accent:linear-gradient(180deg,rgba(255,255,255,.08),rgba(255,255,255,0));
+  --k-glow-focus:0 0 0 3px rgba(99,160,121,.2);
+}
+
+/* HERMES theme.
+ *
+ * Modelled on Hermes Agent by Nous Research (hermes-agent.nousresearch.com and
+ * its desktop app): graphite-blue near-black surfaces, neutrals carrying the
+ * brand's blue-violet cast (#616191), one cyan accent. The brand cyan #00f2f2
+ * is not used as is — the accent is also small text, and the raw value is acid
+ * on a dark ground — so `--k-accent` is a calmer #4fd1e0 (9.6:1 on surface).
+ * Every foreground token clears AA (>=4.5:1) on `--k-surface`; `--k-faint` is
+ * decorative at ~3.3:1, as in the dark set. Shadows are blue-black rather than
+ * neutral, so a raised layer reads as the same night, deeper.
+ */
+:root[data-theme='hermes'] {
+  color-scheme: dark;
+  /* surfaces — graphite blue, darkest→lightest */
+  --k-canvas:#0a0c11; --k-bg:#10131a; --k-surface:#161a23; --k-surface2:#202633;
+  /* borders — blue-violet alpha */
+  --k-line:rgba(150,165,210,.09); --k-line-strong:rgba(150,165,210,.15);
+  /* text */
+  --k-text:#e6e9f0; --k-muted:#8d93a8; --k-faint:#646a80; --k-on-accent:#04161a;
+  /* brand — cyan; hover lifts a step */
+  --k-accent:#4fd1e0; --k-accent-hover:#6edbe8;
+  /* status */
+  --k-success:#3ecf8e; --k-warning:#e8c35a; --k-danger:#f0716b;
+  /* diff */
+  --k-diff:#3ecf8e; --k-diff-add:#3ecf8e; --k-diff-del:#f0716b;
+  /* elevation — blue-black */
+  --k-shadow-pop:0 2px 8px rgba(2,4,12,.45);
+  --k-shadow-toast:0 12px 32px rgba(2,4,12,.55);
+  --k-shadow-modal:0 24px 64px rgba(2,4,12,.65);
+  /* depth — cool sheen and overlay */
+  --k-sheen:inset 0 1px 0 rgba(170,190,240,.06);
+  --k-grad-raise:linear-gradient(180deg,rgba(140,170,240,.035),rgba(140,170,240,0) 70%);
+  --k-shadow-card:0 1px 2px rgba(2,4,12,.35);
+  --k-shadow-card-hover:0 6px 18px rgba(2,4,12,.5);
+  --k-grad-accent:linear-gradient(180deg,rgba(255,255,255,.08),rgba(255,255,255,0));
+  --k-glow-focus:0 0 0 3px rgba(79,209,224,.2);
 }

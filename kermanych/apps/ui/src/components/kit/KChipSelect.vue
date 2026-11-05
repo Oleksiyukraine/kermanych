@@ -3,16 +3,18 @@
     <button
       type="button"
       class="k-chip-select__trigger"
-      :class="{ 'k-chip-select__trigger--open': open }"
-      :disabled="disabled"
+      :class="{ 'k-chip-select__trigger--open': open, 'k-chip-select__trigger--loading': loading }"
+      :disabled="disabled || loading"
       :aria-label="title"
       :aria-haspopup="'menu'"
       :aria-expanded="open"
+      :aria-busy="loading || undefined"
       @click="toggle"
     >
       <span v-if="icon" class="k-chip-select__icon" aria-hidden="true">{{ icon }}</span>
       <span class="k-chip-select__label">{{ currentLabel }}</span>
-      <span class="k-chip-select__caret" aria-hidden="true"></span>
+      <KSpinner v-if="loading" :size="10" />
+      <span v-else class="k-chip-select__caret" aria-hidden="true"></span>
     </button>
 
     <!-- Under <body>, `position: fixed`, like KSelect's listbox and lib/tip.ts's bubble:
@@ -32,19 +34,20 @@
         role="menu"
         :aria-label="title"
       >
-        <button
-          v-for="o in options"
-          :key="o.value"
-          type="button"
-          class="k-chip-select__item"
-          :class="{ 'k-chip-select__item--active': o.value === modelValue }"
-          role="menuitemradio"
-          :aria-checked="o.value === modelValue"
-          @click="pick(o.value)"
-        >
-          <span class="k-chip-select__tick" aria-hidden="true">{{ o.value === modelValue ? '·' : '' }}</span>
-          <span class="k-chip-select__label-text">{{ o.label }}</span>
-        </button>
+        <template v-for="(o, i) in options" :key="o.value">
+          <span v-if="o.group && o.group !== options[i - 1]?.group" class="k-chip-select__group" role="presentation">{{ o.group }}</span>
+          <button
+            type="button"
+            class="k-chip-select__item"
+            :class="{ 'k-chip-select__item--active': o.value === modelValue }"
+            role="menuitemradio"
+            :aria-checked="o.value === modelValue"
+            @click="pick(o.value)"
+          >
+            <span class="k-chip-select__tick" aria-hidden="true">{{ o.value === modelValue ? '·' : '' }}</span>
+            <span class="k-chip-select__label-text">{{ o.label }}</span>
+          </button>
+        </template>
       </div>
     </Teleport>
   </span>
@@ -53,6 +56,7 @@
 <script setup lang="ts" generic="T extends string">
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue';
 import { isAnchorOffscreen, placeMenu } from '../../lib/menu';
+import KSpinner from './KSpinner.vue';
 
 // A flat chip that opens a small menu: `⚡ Високий ▾`. The composer's control row needs a
 // picker that reads as a label rather than a form field, which is why this is not KSelect —
@@ -62,13 +66,17 @@ import { isAnchorOffscreen, placeMenu } from '../../lib/menu';
 // back from `update:modelValue` instead of a bare string it would have to re-narrow.
 const props = defineProps<{
   modelValue: T;
-  options: { value: T; label: string }[];
+  // `group`: a heading over consecutive options sharing it (the device picker's iOS / Android).
+  options: { value: T; label: string; group?: string | undefined }[];
   // Leading glyph. Mono-width in the row, so an icon-less chip still lines up with its peers.
   icon?: string | undefined;
   // Names the control for screen readers and for the app tooltip — the chip itself shows only
   // the current value, so without this the menu is an unlabelled list of words.
   title?: string | undefined;
   disabled?: boolean | undefined;
+  // A pick being saved (useOptimisticValue): the chip shows the picked value, a spinner in
+  // place of the caret, and is disabled so a second pick cannot race the first.
+  loading?: boolean | undefined;
   // Which way the menu PREFERS to unfold; it flips when that side cannot hold the list.
   // Defaults to 'up' — the composer's need, and the behaviour every existing caller
   // already relies on.
@@ -102,7 +110,7 @@ function toggle(): void {
 }
 
 async function openMenu(): Promise<void> {
-  if (props.disabled || open.value) return;
+  if (props.disabled || props.loading || open.value) return;
   naturalH = 0;
   open.value = true;
   placed.value = false;
@@ -176,7 +184,7 @@ onBeforeUnmount(close);
 // A chip disabled while its menu is open (the composer locks its row on submit) must not
 // leave an orphaned list on screen.
 watch(
-  () => props.disabled,
+  () => props.disabled || props.loading,
   (isDisabled) => {
     if (isDisabled) close();
   },
@@ -219,6 +227,10 @@ watch(
   &:disabled {
     cursor: default;
     opacity: 0.5;
+  }
+  &.k-chip-select__trigger--loading:disabled {
+    cursor: progress;
+    opacity: 0.85;
   }
 }
 
@@ -274,10 +286,10 @@ watch(
   display: flex;
   flex-direction: column;
   padding: var(--k-sp-1);
-  background: var(--k-surface);
+  background: var(--k-grad-raise), var(--k-surface);
   border: 1px solid var(--k-line-strong);
   border-radius: var(--k-r);
-  box-shadow: var(--k-shadow-pop);
+  box-shadow: var(--k-sheen), var(--k-shadow-pop);
   opacity: 0;
   transition: opacity 0.12s ease, transform 0.12s cubic-bezier(0.4, 0, 0.2, 1);
   // Rests 3px toward its trigger, so the menu reads as emerging from the chip. Mirrored for
@@ -292,6 +304,14 @@ watch(
 .k-chip-select__menu--placed {
   opacity: 1;
   transform: none;
+}
+
+.k-chip-select__group {
+  display: block;
+  padding: 6px 10px 2px;
+  font-family: var(--k-font-ui);
+  font-size: var(--k-fs-xs);
+  color: var(--k-faint);
 }
 
 .k-chip-select__item {

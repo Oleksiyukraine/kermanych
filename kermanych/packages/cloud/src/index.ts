@@ -59,6 +59,15 @@ export type {
   LinearIssue,
   LinearComment,
   LinearAttachment,
+  PlaneStatusCategory,
+  PlaneIntegration,
+  PlaneIntegrationInsert,
+  PlaneSyncState,
+  PlaneColumn,
+  PlaneIssue,
+  PlaneComment,
+  PlaneWorklog,
+  PlaneAttachment,
   SlackIntegration,
   SlackIntegrationInsert,
   ReleaseNotesSlack,
@@ -79,7 +88,13 @@ export type {
 export type { SupabaseClient, CloudEnv, CloudClientOptions } from "./client";
 export { cloudEnv, createCloudClient } from "./client";
 
-export { TERMINAL_TASK_STATUSES, taskStatusFromSession, isTerminalTaskStatus } from "./status";
+export {
+  TERMINAL_TASK_STATUSES,
+  SELF_DRIVING_TASK_STATUSES,
+  TASK_STATUS_KEEPALIVE_MS,
+  taskStatusFromSession,
+  isTerminalTaskStatus,
+} from "./status";
 
 export { getMyAgentRuntime, setMyAgentRuntime, getMyAgentLanguage, setMyAgentLanguage } from "./account";
 export { getMinAppVersion } from "./app-release";
@@ -128,15 +143,22 @@ export {
   setMemberRole,
 } from "./workspaces";
 
-export type { TaskChange, TaskChannelState } from "./tasks";
+export type { TaskChange, TaskChannelState, TaskVersion } from "./tasks";
 export {
   toTask,
   toTaskRow,
   listTasks,
+  listTaskVersions,
+  listTasksByIds,
   getTask,
   createTask,
   patchTask,
-  claimTask,
+  patchQaItems,
+  setQaChecklistIfEmpty,
+  claimTaskForLaunch,
+  releaseLaunchClaim,
+  listMinionCandidates,
+  claimMinionTask,
   pushTaskStatus,
   forceStopTask,
   deleteTask,
@@ -261,6 +283,32 @@ export {
   replaceLinearIssueChildren,
   subscribeLinearIssues,
 } from "./linear";
+
+export type { PlaneIssueChange, PlaneIssueChildren } from "./plane";
+export {
+  toPlaneIntegration,
+  toPlaneIssue,
+  toPlaneIssueRow,
+  listPlaneIntegrations,
+  getPlaneIntegrationById,
+  upsertPlaneIntegration,
+  deletePlaneIntegration,
+  getPlaneSyncState,
+  ensurePlaneSyncState,
+  takePlaneSyncLease,
+  advancePlaneSyncCursor,
+  listPlaneColumns,
+  replacePlaneColumns,
+  listPlaneIssues,
+  upsertPlaneIssues,
+  deletePlaneIssues,
+  patchPlaneIssueBinding,
+  markPlaneChildrenSynced,
+  listPlaneIssueChildren,
+  listPlaneWorklogsBetween,
+  replacePlaneIssueChildren,
+  subscribePlaneIssues,
+} from "./plane";
 
 export {
   toSlackIntegration,

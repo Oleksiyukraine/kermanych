@@ -21,10 +21,14 @@ import type { TodoItem } from './home-todo';
 import { todoPlainText } from './home-todo';
 import { UNASSIGNED } from './jira-view';
 
+// What the tasks tile reads of a ticket: Jira's and Plane's mirror rows both fit (the shared
+// field names, docs/specs/2026-11-04-plane-integration.md Decision 11).
+export type TodayIssue = Pick<JiraIssue, 'key' | 'summary' | 'statusCategory' | 'startDate' | 'dueDate' | 'assigneeAccountId' | 'assigneeName'>;
+
 // A ticket is «for today» when it is still open and today falls in its planning window: due
 // today, inside its start→due span, or overdue (past due but not done — still owed today). A
 // ticket with no due date has no specific date to be assigned to, so it is not counted here.
-export function isForToday(issue: JiraIssue, day: string): boolean {
+export function isForToday(issue: TodayIssue, day: string): boolean {
   if (issue.statusCategory === 'done') return false;
   if (!issue.dueDate) return false;
   if (issue.dueDate <= day) return true; // due today or overdue
@@ -39,7 +43,7 @@ export type TodayGroup = { id: string; name: string; tasks: TodayTask[] };
 // Today's board, per developer: every open ticket whose calendar window includes today,
 // grouped under its assignee. People first (busiest first), the unassigned bucket last —
 // its tickets are a scheduling gap, not one person's day.
-export function todayTaskGroups(issues: readonly JiraIssue[], day: string): TodayGroup[] {
+export function todayTaskGroups(issues: readonly TodayIssue[], day: string): TodayGroup[] {
   const byPerson: Record<string, TodayGroup> = {};
   for (const issue of issues) {
     if (!isForToday(issue, day)) continue;

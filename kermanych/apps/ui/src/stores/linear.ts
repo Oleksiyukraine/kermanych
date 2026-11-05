@@ -15,7 +15,7 @@
 //   the tick  — POST /linear/sync every 30 s; the api's shared lease makes N open boards
 //               cost one actual poller.
 import { defineStore } from 'pinia';
-import { ref } from 'vue';
+import { computed, ref } from 'vue';
 import type { LinearColumn, LinearIntegration, LinearIssue, LinearIssueChildren } from '@kermanych/cloud';
 import {
   getLinearIntegration,
@@ -43,20 +43,39 @@ export const useLinear = defineStore('linear', () => {
   const issues = ref<LinearIssue[]>([]);
   const children = ref<Record<string, LinearIssueChildren>>({});
   const tokenPresent = ref(false);
+  // Whether the token status has been answered: the «Тільки читання» badge must not flash
+  // before the probe says whether this machine can write.
+  const tokenKnown = ref(false);
   // Linear's own assignable users for this team — the assignee picker's list, and the ONLY
   // set a Linear issue may be assigned from. Kept here rather than in the Менеджмент chat for
   // `probe`'s reason: it is a fact about the board, the chat is only one of its readers, and
   // the names the assistant is shown must be the names the ticket dialog shows.
   const assignable = ref<LinearAssignableUser[]>([]);
-  const loading = ref(false);
+  // True from the start of open()/probe() through the end of loadBoard — the contract the
+  // Management/Board/Home skeletons read (`integration === undefined || loading && !issues`).
+  // Two halves, because the probe and the board session have different owners: closing the
+  // board view (close()) ends the board half but must not hide a probe still in flight.
+  const probing = ref(false);
+  const boardLoading = ref(false);
+  const loading = computed(() => probing.value || boardLoading.value);
   const loadError = ref<string | null>(null);
   const syncing = ref(false);
 
   let unsubscribe: (() => void) | undefined;
   let ticker: ReturnType<typeof setInterval> | undefined;
-  // The load()/open() race guard, the board store's `generation` idiom: a stale async
-  // completion must not install state for a workspace the user already left.
+  // The board/feed race guard, the board store's `generation` idiom: a stale async
+  // completion must not install state for a workspace the user already left. Bumped by
+  // close/open and by a workspace change.
   let generation = 0;
+  // The probe's own guard, bumped only by a newer probe: closing the board view between a
+  // workspace switch and its probe's reply must not throw that reply away (the new
+  // workspace would never get its Linear tab).
+  let probeGen = 0;
+  // The probe in flight, so an overlapping probe of the same workspace (the Менеджмент chat
+  // asks while the board's open() is asking) shares it instead of superseding it.
+  let inflight: { ws: string; done: Promise<void> } | null = null;
+  // The workspace the shown row belongs to: a probe of a different one resets first.
+  let workspaceShown: string | null = null;
 
   function upsert(issue: LinearIssue): void {
     issues.value = [...issues.value.filter((i) => i.issueId !== issue.issueId), issue];
@@ -79,37 +98,72 @@ export const useLinear = defineStore('linear', () => {
   // property of the same question: «there is a board» without «I can write to it» would have
   // the assistant promise a ticket the api cannot sign. It costs a local sqlite read through
   // the local api, not a Linear call.
-  async function probe(workspaceId: string): Promise<void> {
-    if (IS_PREVIEW || !auth.user) {
-      integration.value = null;
+  function probe(workspaceId: string): Promise<void> {
+    // Same workspace already being asked: share that answer.
+    if (inflight && inflight.ws === workspaceId) return inflight.done;
+    // A different workspace's board must not stay on screen while this one's is asked:
+    // reset synchronously, so `integration === undefined` reads «not loaded for this
+    // workspace». A re-probe of the same workspace keeps what is shown.
+    if (workspaceShown !== workspaceId) {
+      generation++; // an in-flight board load belongs to the workspace being left
+      integration.value = undefined;
+      columns.value = [];
+      issues.value = [];
+      children.value = {};
+      loadError.value = null;
       tokenPresent.value = false;
-      return;
+      tokenKnown.value = false;
     }
-    const mine = ++generation;
-    // The cached assignee list belongs to the team this probe is about to replace, so it
-    // is dropped here: a Linear roster held over from the previous workspace would be printed
-    // into the next workspace's prompt as its own.
-    assignable.value = [];
+    workspaceShown = workspaceId;
+    const mine = ++probeGen;
+    probing.value = true;
+    const entry = { ws: workspaceId, done: runProbe(workspaceId, mine) };
+    inflight = entry;
+    void entry.done.finally(() => {
+      if (inflight === entry) inflight = null;
+    });
+    return entry.done;
+  }
+
+  async function runProbe(workspaceId: string, mine: number): Promise<void> {
     try {
-      const row = await getLinearIntegration(auth.client, workspaceId);
-      if (mine !== generation) return;
-      integration.value = row ?? null;
-    } catch {
-      // An unreachable cloud answers «нема табу», not an error banner: the native board
-      // already owns the offline story.
-      if (mine === generation) integration.value = null;
-    }
-    const row = integration.value;
-    if (!row) {
-      if (mine === generation) tokenPresent.value = false;
-      return;
-    }
-    try {
-      const status = await api.linearTokenStatus(row.orgUrlKey);
-      if (mine !== generation) return;
-      tokenPresent.value = status.present;
-    } catch {
-      if (mine === generation) tokenPresent.value = false;
+      if (IS_PREVIEW || !auth.user) {
+        integration.value = null;
+        tokenPresent.value = false;
+        tokenKnown.value = true;
+        return;
+      }
+      // The cached assignee list belongs to the team this probe is about to replace, so it
+      // is dropped here: a Linear roster held over from the previous workspace would be
+      // printed into the next workspace's prompt as its own.
+      assignable.value = [];
+      try {
+        const row = await getLinearIntegration(auth.client, workspaceId);
+        if (mine !== probeGen) return;
+        integration.value = row ?? null;
+      } catch {
+        // An unreachable cloud answers «нема табу», not an error banner: the native board
+        // already owns the offline story.
+        if (mine !== probeGen) return;
+        integration.value = null;
+      }
+      const row = integration.value;
+      if (!row) {
+        tokenPresent.value = false;
+        tokenKnown.value = true;
+        return;
+      }
+      try {
+        const status = await api.linearTokenStatus(row.orgUrlKey);
+        if (mine !== probeGen) return;
+        tokenPresent.value = status.present;
+      } catch {
+        if (mine !== probeGen) return;
+        tokenPresent.value = false;
+      }
+      tokenKnown.value = true;
+    } finally {
+      if (mine === probeGen) probing.value = false;
     }
   }
 
@@ -139,7 +193,7 @@ export const useLinear = defineStore('linear', () => {
     const row = integration.value;
     if (!row) return;
     const mine = generation;
-    loading.value = true;
+    boardLoading.value = true;
     loadError.value = null;
     try {
       const [cols, iss] = await Promise.all([
@@ -152,7 +206,7 @@ export const useLinear = defineStore('linear', () => {
     } catch (e) {
       if (mine === generation) loadError.value = e instanceof Error ? e.message : String(e);
     } finally {
-      if (mine === generation) loading.value = false;
+      if (mine === generation) boardLoading.value = false;
     }
   }
 
@@ -167,10 +221,21 @@ export const useLinear = defineStore('linear', () => {
   async function open(workspaceId: string): Promise<number> {
     const token = ++opener;
     close();
-    await probe(workspaceId);
+    // Up before the probe ends, so `loading` does not dip between the probe and loadBoard.
+    boardLoading.value = true;
+    const asked = probe(workspaceId);
+    // Taken after probe()'s synchronous workspace reset: only a later close/open makes this
+    // session stale — an overlapping probe does not.
+    const mine = generation;
+    await asked;
+    if (mine !== generation) return token; // a newer open/close owns the session
     const row = integration.value;
-    if (!row) return token;
+    if (!row) {
+      boardLoading.value = false;
+      return token;
+    }
     await loadBoard();
+    if (mine !== generation) return token; // closed or re-opened meanwhile
 
     unsubscribe = subscribeLinearIssues(auth.client, row.id, (change) => {
       if (change.kind === 'delete') drop(change.issueId);
@@ -226,6 +291,9 @@ export const useLinear = defineStore('linear', () => {
   function close(token?: number): void {
     if (token !== undefined && token !== opener) return;
     generation++;
+    // The bump discards an in-flight board load, so nothing else would lower its half; a
+    // probe in flight keeps `loading` up through its own half.
+    boardLoading.value = false;
     unsubscribe?.();
     unsubscribe = undefined;
     clearInterval(ticker);
@@ -266,6 +334,7 @@ export const useLinear = defineStore('linear', () => {
     issues,
     children,
     tokenPresent,
+    tokenKnown,
     assignable,
     loading,
     loadError,

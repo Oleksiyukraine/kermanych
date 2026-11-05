@@ -55,6 +55,7 @@ const routes: RouteRecordRaw[] = [
       { path: 'board', name: 'board', component: () => import('pages/BoardPage.vue'), meta: { public: false } },
       { path: 'kit', name: 'kit', component: () => import('pages/KitGalleryPage.vue'), meta: { public: false } },
       { path: 'chat', name: 'chat', component: () => import('pages/ChatPage.vue'), meta: { public: false } },
+      { path: 'design', name: 'design', component: () => import('pages/DesignPage.vue'), meta: { public: false } },
       // Налаштування is ONE record with the category in a param, not a nested
       // shell like Менеджмент below: all eleven categories share a single
       // component, because the save bar and the draft they queue into are one
@@ -68,12 +69,14 @@ const routes: RouteRecordRaw[] = [
         meta: { public: false },
       },
       // «ШІ-команда» is ONE record with the section in a param, the same shape as
-      // settings above: three panes (Агенти, Тригери, Навички) share a single
+      // settings above: the panes (Агенти, Тригери, Навички, Хелпери) share a single
       // component and the rail switches between them. `:section?` keeps a bare
       // /ai-team resolvable, and `aiTeamSection()` (lib/ai-team.ts) maps an unknown
       // or missing segment onto the default rather than rendering an empty pane.
+      // `:item?` is an agent's page under Агенти (/ai-team/agents/review,
+      // docs/specs/2026-11-03-ai-team-agent-pages.md); the page replaces it away elsewhere.
       {
-        path: 'ai-team/:section?',
+        path: 'ai-team/:section?/:item?',
         name: 'ai-team',
         component: () => import('pages/AiTeamPage.vue'),
         meta: { public: false },

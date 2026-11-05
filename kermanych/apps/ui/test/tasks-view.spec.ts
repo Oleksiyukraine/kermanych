@@ -1,12 +1,17 @@
 import { describe, expect, it } from 'vitest';
 import type { Task } from '@kermanych/cloud';
 import {
+  autoRunSwitchLocked,
   boardTasks,
+  canAllowAutoRun,
   canAssignTask,
   canRunTask,
+  cardModesFromCard,
   myBacklogTasks,
   taskInsertFromDraft,
   taskPatchFromDraft,
+  withAutoRun,
+  withDeepAnalysis,
   type LauncherDraft,
 } from '../src/lib/tasks-view';
 
@@ -21,6 +26,7 @@ function task(over: Partial<Task> & { id: string }): Task {
     worktree: true,
     hidden: false,
     deepAnalysis: false,
+    autoRun: false,
     createdAt: '2026-08-30T10:00:00.000Z',
     updatedAt: '2026-08-30T10:00:00.000Z',
     ...over,
@@ -33,11 +39,12 @@ const draft: LauncherDraft = {
   model: 'opus-5',
   effort: 'high',
   prefix: 'feature',
-  platform: 'backend',
   worktree: true,
   hidden: false,
   deepAnalysis: false,
+  autoRun: false,
   baseBranch: 'develop',
+  branchSlug: '  kan-42-login  ',
 };
 
 describe('taskInsertFromDraft', () => {
@@ -52,11 +59,12 @@ describe('taskInsertFromDraft', () => {
       model: 'opus-5',
       effort: 'high',
       prefix: 'feature',
-      platform: 'backend',
       worktree: true,
       hidden: false,
       deepAnalysis: false,
+      autoRun: false,
       branch: 'develop',
+      branchSlug: 'kan-42-login',
       assigneeId: ME,
     });
   });
@@ -71,29 +79,30 @@ describe('taskInsertFromDraft', () => {
 
   it('omits absent optional params instead of sending undefined keys', () => {
     const insert = taskInsertFromDraft(
-      { name: 'T', task: 'body', prefix: 'fix', worktree: true, hidden: false, deepAnalysis: false },
+      { name: 'T', task: 'body', prefix: 'fix', worktree: true, hidden: false, deepAnalysis: false, autoRun: false },
       'p1',
       ME,
     );
     expect(Object.keys(insert).sort()).toEqual(
-      ['assigneeId', 'deepAnalysis', 'description', 'hidden', 'prefix', 'projectId', 'title', 'worktree'].sort(),
+      ['assigneeId', 'autoRun', 'deepAnalysis', 'description', 'hidden', 'prefix', 'projectId', 'title', 'worktree'].sort(),
     );
   });
 });
 
 describe('taskPatchFromDraft', () => {
   it('sends every editable field, so clearing one clears the column', () => {
-    expect(taskPatchFromDraft({ ...draft, platform: undefined })).toEqual({
+    // A blanked «Гілка» travels as "", so the card goes back to a model-named branch.
+    expect(taskPatchFromDraft({ ...draft, model: undefined, branchSlug: ' ' }, false)).toEqual({
       title: 'Add login',
       description: 'wire GitHub OAuth',
-      model: 'opus-5',
+      model: '',
       effort: 'high',
       prefix: 'feature',
-      platform: '',
       worktree: true,
       hidden: false,
       deepAnalysis: false,
       branch: 'develop',
+      branchSlug: '',
     });
   });
 });
@@ -107,8 +116,8 @@ describe('hidden on a launcher draft', () => {
   });
 
   it('sends hidden on every patch, in both directions', () => {
-    expect(taskPatchFromDraft({ ...draft, hidden: true }).hidden).toBe(true);
-    expect(taskPatchFromDraft({ ...draft, hidden: false }).hidden).toBe(false);
+    expect(taskPatchFromDraft({ ...draft, hidden: true }, false).hidden).toBe(true);
+    expect(taskPatchFromDraft({ ...draft, hidden: false }, false).hidden).toBe(false);
   });
 });
 
@@ -120,8 +129,53 @@ describe('deepAnalysis on a launcher draft', () => {
   });
 
   it('sends deepAnalysis on every patch, in both directions', () => {
-    expect(taskPatchFromDraft({ ...draft, deepAnalysis: true }).deepAnalysis).toBe(true);
-    expect(taskPatchFromDraft({ ...draft, deepAnalysis: false }).deepAnalysis).toBe(false);
+    expect(taskPatchFromDraft({ ...draft, deepAnalysis: true }, false).deepAnalysis).toBe(true);
+    expect(taskPatchFromDraft({ ...draft, deepAnalysis: false }, false).deepAnalysis).toBe(false);
+  });
+});
+
+// «Дозволити автовиконання» (docs/specs/2026-10-23-minion-auto-run.md, decision 3): a card field
+// on both writes, never together with «Глибокий аналіз», and switched on only by the author.
+describe('autoRun on a launcher draft', () => {
+  it('sends autoRun on create, and on a patch only when the form changed it', () => {
+    expect(taskInsertFromDraft({ ...draft, autoRun: true }, 'p1', ME).autoRun).toBe(true);
+    expect(taskPatchFromDraft({ ...draft, autoRun: true }, false).autoRun).toBe(true);
+    expect(taskPatchFromDraft({ ...draft, autoRun: false }, true).autoRun).toBe(false);
+    // Untouched: a stale copy must neither undo the author's switch nor be refused by the guard.
+    expect(taskPatchFromDraft({ ...draft, autoRun: false }, false)).not.toHaveProperty('autoRun');
+    expect(taskPatchFromDraft({ ...draft, autoRun: true }, true)).not.toHaveProperty('autoRun');
+  });
+
+  it('never writes autoRun beside deepAnalysis', () => {
+    const both = { ...draft, deepAnalysis: true, autoRun: true };
+    expect(taskInsertFromDraft(both, 'p1', ME)).toMatchObject({ deepAnalysis: true, autoRun: false });
+    expect(taskPatchFromDraft(both, true)).toMatchObject({ deepAnalysis: true, autoRun: false });
+  });
+
+  it('checking one mode clears the other; unchecking leaves the other alone', () => {
+    expect(withAutoRun({ deepAnalysis: true, autoRun: false }, true)).toEqual({ deepAnalysis: false, autoRun: true });
+    expect(withDeepAnalysis({ deepAnalysis: false, autoRun: true }, true)).toEqual({ deepAnalysis: true, autoRun: false });
+    expect(withAutoRun({ deepAnalysis: false, autoRun: true }, false)).toEqual({ deepAnalysis: false, autoRun: false });
+    expect(withDeepAnalysis({ deepAnalysis: true, autoRun: false }, false)).toEqual({ deepAnalysis: false, autoRun: false });
+  });
+
+  it('reads the pair from a card, and seeds a new one from the menu', () => {
+    expect(cardModesFromCard(task({ id: 'a', autoRun: true }))).toEqual({ deepAnalysis: false, autoRun: true });
+    expect(cardModesFromCard(task({ id: 'b', deepAnalysis: true, autoRun: true }))).toEqual({ deepAnalysis: true, autoRun: false });
+    expect(cardModesFromCard(undefined, true)).toEqual({ deepAnalysis: true, autoRun: false });
+    expect(cardModesFromCard(undefined)).toEqual({ deepAnalysis: false, autoRun: false });
+  });
+
+  it('lets only the author switch it on, and anyone switch it off', () => {
+    const mine = task({ id: 'a', createdBy: ME });
+    const theirs = task({ id: 'b', createdBy: OTHER, autoRun: true });
+    expect(canAllowAutoRun(undefined, ME)).toBe(true);
+    expect(canAllowAutoRun(mine, ME)).toBe(true);
+    expect(canAllowAutoRun(theirs, ME)).toBe(false);
+    expect(canAllowAutoRun(task({ id: 'c' }), ME)).toBe(false);
+    expect(autoRunSwitchLocked(false, theirs, ME)).toBe(true);
+    expect(autoRunSwitchLocked(true, theirs, ME)).toBe(false);
+    expect(autoRunSwitchLocked(false, mine, ME)).toBe(false);
   });
 });
 
@@ -155,13 +209,14 @@ describe('boardTasks', () => {
   // The kanban's whole guest list. Order is preserved — the columns rely on listTasks'
   // `created_at` ascending — and the two exclusions are the card's own properties, not the
   // operator's filters, which is why they are decided before filterTasks runs.
-  it('drops hidden cards and Jira shadows, keeps everything else in order', () => {
+  it('drops hidden cards and tracker shadows, keeps everything else in order', () => {
     const plain = task({ id: 'a', assigneeId: ME });
     const hidden = task({ id: 'b', assigneeId: ME, hidden: true });
     const shadow = task({ id: 'c', jiraKey: 'KAN-42' });
     const theirs = task({ id: 'd', assigneeId: OTHER });
+    const planeShadow = task({ id: 'e', planeKey: 'WEB-7' });
 
-    expect(boardTasks([plain, hidden, shadow, theirs]).map((t) => t.id)).toEqual(['a', 'd']);
+    expect(boardTasks([plain, hidden, shadow, theirs, planeShadow]).map((t) => t.id)).toEqual(['a', 'd']);
   });
 
   // A hidden card that is RUNNING is still hidden: the flag is about the board, not about

@@ -1,5 +1,5 @@
 // apps/api/test/finish.spec.ts
-import { afterEach, beforeEach, expect, test } from "vitest";
+import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -9,6 +9,10 @@ import { offlineAuth } from "./offline-auth";
 import { stubSkills } from "./skills-stub";
 import { WorktreeService } from "../src/worktree/worktree.service";
 import { SupervisorService } from "../src/supervisor/supervisor.service";
+import type { ModelsService } from "../src/models/models.service";
+import { PreviewService } from "../src/preview/preview.service";
+import { fakeDevice } from "./fake-device";
+import { Subject } from "rxjs";
 
 const git = (cwd: string, ...args: string[]): string =>
   execFileSync("git", args, { cwd, encoding: "utf8" });
@@ -78,6 +82,45 @@ test("retires the worktree, keeps the branch, and leaves the base untouched", as
   const s = reg.listSessions().find((x) => x.id === id)!;
   expect(s.status).toBe("merged");
   expect(s.worktreePath).toBe("");
+});
+
+// docs/specs/2026-11-03-session-browser-preview.md, decision 7: finishing stops the live preview
+// and deletes its PREVIEW_DIR, while the worktree it runs in still exists.
+test("stops the session's preview before the worktree is retired", async () => {
+  const { id, wtDir } = await seed(() => {});
+  let worktreeAtRetire: boolean | undefined;
+  const preview = {
+    changes$: new Subject(),
+    retire: vi.fn(async () => {
+      worktreeAtRetire = existsSync(wtDir);
+    }),
+  };
+  const withPreview = new SupervisorService(reg, wt, offlineAuth(), stubSkills(), undefined as unknown as ModelsService, undefined, undefined, undefined, undefined, undefined, undefined, undefined, preview as unknown as PreviewService);
+  await withPreview.finishSession(id);
+  expect(preview.retire).toHaveBeenCalledWith(id);
+  expect(worktreeAtRetire).toBe(true);
+  expect(existsSync(wtDir)).toBe(false);
+});
+
+// docs/specs/2026-11-03-mobile-device-preview.md, decisions 4 and 11: finishing deletes the
+// session's device clone, made by an earlier api run (nothing runs in this one), before the
+// worktree goes.
+test("deletes the session's device clone through the preview, with no preview running", async () => {
+  const { id, wtDir } = await seed(() => {});
+  reg.patchProject("p1", { platform: "mobile" });
+  const fake = fakeDevice();
+  let worktreeAtRemove: boolean | undefined;
+  fake.device.remove.mockImplementation(async () => {
+    worktreeAtRemove = existsSync(wtDir);
+  });
+  const preview = new PreviewService(reg, fake.device);
+  preview.opts.root = mkdtempSync(join(tmpdir(), "kmq-finish-preview-"));
+  trash.push(preview.opts.root);
+  const withPreview = new SupervisorService(reg, wt, offlineAuth(), stubSkills(), undefined as unknown as ModelsService, undefined, undefined, undefined, undefined, undefined, undefined, undefined, preview);
+  await withPreview.finishSession(id);
+  expect(fake.device.remove).toHaveBeenCalledWith(id);
+  expect(fake.device.shutdown).not.toHaveBeenCalled();
+  expect(worktreeAtRemove).toBe(true);
 });
 
 test("auto-commits uncommitted worktree work onto the branch before retiring it", async () => {

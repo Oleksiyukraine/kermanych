@@ -35,8 +35,9 @@ board, transcripts, worktrees, the RPC bridge — is shared.
   ~200 MB) that `pnpm install` fetches. What must come from your machine is the
   **authentication**: the same credentials `claude /login` writes. A signed-out
   machine, or one where that 200 MB package did not install, cannot start
-  `claude-code` sessions — the app now names which of the two it is, both when you
-  pick the backend and when a session fails to launch.
+  `claude-code` sessions — the app names which of the two it is when you pick
+  the backend, when a session fails to launch, and when a running session's
+  turn is refused (see «Signed out» below).
 - **pnpm** (the repo pins its version via `packageManager` in
   `package.json`).
 
@@ -50,11 +51,14 @@ created with, and resuming or branching a session never switches its backend.
 
 Picking a backend runs a preflight against it — `GET /account/runtime/check?runtime=<kind>`
 — so an unusable one is named where the choice is made rather than surfacing later
-as a session that never answers. It asks the backend for its model catalog, which
-only succeeds if that backend is both installed and signed in, and reports either
-`{ ok: true }` or `{ ok: false, code }` where `code` names the fix (signed out vs
-binary missing). The check never blocks the choice: you may be about to run
-`claude /login`.
+as a session that never answers. For `claude-code` it asks the SDK for the signed-in
+account (a signed-out claude still lists every model, so the catalog proves nothing);
+only a first-party setup with no OAuth login and no `ANTHROPIC_API_KEY` counts as signed
+out, so Bedrock/Vertex/gateway setups are never flagged. For `omp` it asks for the model
+catalog, which omp fills only from providers it holds credentials for, so an empty one
+means signed out. It reports either `{ ok: true }` or `{ ok: false, code }` where `code`
+names the fix (signed out vs binary missing). The check never blocks the choice: you may
+be about to run `claude /login`.
 
 If sessions on a backend refuse to start, that same code is what the error names.
 To see the raw reason directly, the api logs it at `warn` — including the one line
@@ -64,8 +68,75 @@ backend.
 Not every feature is available on both. TTSR triggers, the skill-overlay
 config, subscription-plan spend, and the plan/todo chip are `omp`-only; on the
 `claude-code` backend, skills reach the agent inline through the prompt. The
-agent map (the subagents a session spawned, opened with ◈ on a session) works on
-both backends. Per-session token spend is tracked on both.
+agent map («Карта агентів», see below) shows the subagents of sessions on both backends.
+Per-session token spend is tracked on both.
+
+Claude sessions read your own Claude Code settings: Kermanych passes no `settingSources`, so the
+SDK loads `~/.claude/settings.json` and the project's `.claude/settings*.json`, the same as a
+`claude` you start yourself. What you set there beats what Kermanych sets (next section); the
+same knobs without Kermanych: [`docs/claude-resource-limits.md`](./docs/claude-resource-limits.md).
+
+### Machine resources («Ресурси машини»)
+
+Kermanych sizes its own load to the machine it runs on (spec:
+`docs/specs/2026-10-21-machine-resource-profile.md`). On start the API reads the RAM, the cores and
+the performance cores and picks a profile:
+
+| RAM | Profile | Agents at once | Subagents per session | Background commands | Test workers |
+|---|---|---|---|---|---|
+| ≤ 8 GB | Мінімальна | 1 | 1 | off | 1 |
+| ≤ 16 GB | Базова | 2 | 2 | off | 2 |
+| ≤ 32 GB | Середня | 3 | 4 | on | 2 |
+| ≤ 64 GB | Потужна | 5 | 6 | on | min(4, perf cores / 2) |
+| > 64 GB | Максимальна | 8 | 8 | on | min(6, perf cores / 2) |
+
+Nothing is limited until you agree. A popup shows the detected machine and the profile on the
+first start, after the hardware changes, and after «Визначити заново»: «Застосувати» turns the
+limits on, «Налаштувати» opens the section with the profile as an unsaved draft, «Не зараз»
+keeps today's behaviour and does not ask again until the hardware changes. Everything lives in
+Settings → Застосунок → «Ресурси машини», stored on this machine only (SQLite
+`machine_resources`), never in the cloud account.
+
+With the limits on:
+
+- **Agent slots.** Only agent sessions whose turn runs count; chats, reviews, discussions and
+  finished sessions do not. A new launch, a message to a finished agent or «Продовжити» of a
+  native agent beyond the limit waits in `queued` («чекає на слот · 2 з 2»), first in first
+  out; the worktree is created at once, only the agent process waits. A waiting message is kept
+  across a restart. «Запустити зараз» starts one session past the limit.
+- **Inside each agent** (applied when its process starts): omp gets a second `--config` overlay
+  with `task.maxConcurrency` and `bash.autoBackground.enabled`; claude gets
+  `CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS` and `CLAUDE_CODE_DISABLE_BACKGROUND_TASKS`. A value you set
+  yourself wins: a key your `~/.omp/agent/config.yml` or the project's `.omp/config.yml` changes
+  is left out of the overlay, and claude's settings `env` beats the process environment anyway.
+- **Priority.** Every agent process runs at nice 10, and so does everything it starts.
+- **Prompt.** The system prompt asks for at most N test workers (`--maxWorkers=N`), one test
+  run at a time, no watch mode. Jest and vitest have no environment variable for this.
+- **Watchdog (macOS).** Every 5 s it reads `kern.memorystatus_vm_pressure_level`. At warn it
+  names the heaviest command an agent started, with «Зупинити команду». At critical, twice in a
+  row, it kills that command's process tree if it holds at least 1 GB, and tells the agent to
+  rerun it with fewer workers; the agent itself keeps running. MCP servers and other processes
+  the agent had when it became ready are never killed. A process that detached from its agent
+  (a daemon) is invisible to it.
+
+#### Signed out
+
+A signed-out provider CLI does not always stop a session from launching: claude starts
+fine and refuses only the first turn (`Not logged in · Please run /login`). Kermanych
+shows it in two places:
+
+- **The session.** Its status reads «login required» instead of «error» or
+  «Launching…», and the panel's banner names the command (`claude /login` or
+  `omp login`). The child is stopped. Log in in a terminal and send the message
+  again: the next send respawns the session on the new credentials. A chat or a
+  session in review that is signed out mid-conversation gets the same state.
+- **The top bar.** An «AI login required» pill appears beside the settings gear while
+  the backend you chose is signed out. Its tooltip names the command. The app runs the
+  preflight again every 5 minutes while the window is visible, when the window regains
+  focus, and when you click the pill, so it clears on its own once you have logged in.
+
+Native sessions (the harness's own TUI) show the CLI's login screen in their terminal.
+They get only the top-bar pill. codex is not checked.
 
 ### Agent communication language
 
@@ -135,7 +206,10 @@ workspace ──► project ──► task ──► session
 - A **workspace** groups the projects of one product — `back-end`, `admin`,
   `mobile` — and holds its team. Membership lives here and nowhere else.
 - A **project** is one git repository. It belongs to exactly one workspace and
-  has no owner of its own.
+  has no owner of its own. Its **platform** — Web, Back-end, Mobile or «Не визначено»,
+  picked in «Новий проєкт» and changed in its settings → «Основне» — decides what its sessions
+  get: Web and «Не визначено» the [session browser and the live preview](#session-browser),
+  Mobile the [device and the live preview](#mobile-device-preview), Back-end neither.
 - A **task** is a card on the shared board. Running one creates a **session** —
   a git worktree plus one `omp` child — on the machine of whoever runs it; see
   [Cloud tasks and local sessions](#cloud-tasks-and-local-sessions).
@@ -186,6 +260,24 @@ arrives with the «Проєкти» filter already set to that project. The boar
 filter, «Виконавці», narrows by assignee and offers «Не призначено» for unclaimed
 cards.
 
+**The header switcher sets the same scope.** Right after «Керманич» the header names where
+you are — the project with its workspace's marker, «FS · усі проєкти» for a workspace, or
+«Вибрати проєкт» — and a click opens the sidebar's tree as a list: a workspace row scopes to
+the workspace, a project row to the project, each with the sidebar's mark and «Посіпака»
+icon. It only selects; creating, moving and folding stay in the sidebar. Beside the name
+sits one still (never pulsing) mark summed over every project **outside** the current
+scope, so an agent asking a question in another project shows even when the sidebar is
+hidden. The app version moved from the header to Settings → «Загальне».
+
+**Focus mode hides the sidebar.** The ⛶ button between «Керманич» and the switcher, or
+<kbd>Ctrl</kbd>/<kbd>⌘</kbd>+<kbd>\</kbd> anywhere (also while typing in the composer;
+matched by the physical key, so the Ukrainian layout works), slides the left sidebar off
+screen on every page and gives its width to the work area; the footer stays. Press it again
+to bring back the sidebar at the width it had — full or the collapsed rail. The choice is
+kept per machine. Inside the integrated terminal <kbd>Ctrl</kbd>+<kbd>\</kbd> stays the
+shell's (SIGQUIT); <kbd>⌘</kbd>+<kbd>\</kbd> still works there.
+(Spec: `docs/specs/2026-10-29-agents-tab-and-focus-mode.md`.)
+
 **The mark at the end of a sidebar row says whether the project needs you.** Only the
 most urgent state shows, and hovering the row lists all of them:
 
@@ -203,8 +295,10 @@ the red dot sits on the pill's corner instead.
 A workspace row wears the same mark summed over its projects, so a folded workspace still
 shows that something inside it is waiting. Chats, archived and merged agents, and agents
 you stopped yourself never mark a row. A result counts as read once you open the agent in
-«Агенти» while the window is visible. Read state is kept per machine, in the browser's
-local storage; finished agents from before this feature shipped count as read.
+«Агенти» (a design: in «Дизайн») while the window is visible. Read state is kept per machine, in
+the browser's local storage; finished agents from before this feature shipped count as read.
+The desktop app's Dock icon counts the same agents, except the running ones (see
+[Desktop app](#desktop-app-macos)).
 
 **The collapsed sidebar shows workspaces only.** Collapse it with « at the bottom and
 the tree shrinks to one mark per workspace; its projects stay hidden until you click that
@@ -212,6 +306,34 @@ workspace's mark, which scopes to the workspace and opens its project icons bene
 Click the mark again to close it. Every workspace starts closed each time the sidebar is
 collapsed, and a project selected from outside the sidebar (a notification, say) opens its
 own workspace so the selection stays visible.
+
+**«Агенти» has three tabs: «Агенти», «Завершені», «Задачі».** They sit on top of the list
+they filter, not in the sidebar:
+
+- «Агенти» — every agent that exists and is not closed out: working, asking you, finished
+  but not merged or retired, stopped, crashed or in conflict. The ones that need you
+  (`waiting_input`, `error`, `conflict`) come first, then the rest; both parts in launch
+  order, so agents working at the same time never trade places. A discussion or review
+  branch stays under its parent and lifts it to the top when it is the one asking. Under a
+  workspace scope a project with such an agent leads.
+- «Завершені» — merged and set-aside agents, the history; no count on the tab.
+- «Задачі» — your backlog inbox (below).
+
+A branch is always in its parent's tab, right under its parent, and its card is drawn as the
+parent's fork: indented, tied to the parent by a line (lit while the branch is open), with
+several branches of one agent sharing one bracket. A branch whose parent is not in the list
+(another tab, or filtered out) is a plain card. The count on «Агенти» and «Задачі» is exactly the
+list under it. The magnifier at the end of the row drops a search field under the tabs; it
+stays open while it holds text, folds when you leave it empty, and <kbd>Esc</kbd> or the
+magnifier again clears it. A tab or scope change clears it too.
+
+A card is the name and time, the branch, and one row: the status on a single line (hover it for
+the full text when it is cut short), the harness and the «аналіз» / «Посіпака» marks, and a
+coins icon whose tooltip gives the model, tokens and cost. The card keeps its height while the
+agent works. Every agent that is thinking or running a tool has light running around its card's
+frame, in step with the others; the open agent's ring is the brightest. An agent queued for a
+slot, waiting for you or finished has no ring. In «Задачі» the row shows the description as one
+line of plain text, without its markdown.
 
 **«Задачі» in «Агенти» is your inbox, not a local list.** It shows the cloud cards in
 `backlog` assigned to you within the current scope — including the ones a colleague
@@ -225,7 +347,7 @@ the list under the note «Лише на цій машині: проєкт цих
 launcher's checkbox, off by default, marks the card as yours alone to look at: it
 never reaches the kanban columns, and neither does its status while it runs. It is
 still an ordinary task in every other respect — it sits in your «Задачі» inbox and
-in the sidebar's count, it launches a session the usual way, it pushes status back,
+in the «Задачі» tab's count, it launches a session the usual way, it pushes status back,
 and every member of the workspace can still read the row. Hiding is a view, never a
 permission. Un-hiding is the same checkbox: open the card from «Задачі», clear it,
 «Зберегти». That is the only way back, because a hidden card has no card on the
@@ -249,6 +371,16 @@ keeps it. Migration `20261008100000_task_deep_analysis.sql` adds the column; eve
 selects it, so apply it before shipping a client that knows it
 ([Applying a migration](#applying-a-migration-to-the-teams-project)). Spec:
 `docs/specs/2026-10-08-deep-analysis-task.md`.
+
+**«Дозволити автовиконання» lets «Посіпака» take a card by itself.** The switch is in the
+launcher, in the board's create/edit form and in the findings dialog, and it is stored on the
+card (`tasks.auto_run`). Only the card's author can switch it on; anyone can switch it off; and
+when anyone but the author changes what the card asks for (title, description, project, base
+branch, branch name, model, effort, prefix, worktree, images, «Глибокий аналіз»), the database
+switches it off. It does not combine with «Глибокий аналіз», which needs a person to interview.
+Such cards carry the «Посіпака» mark on «Дошка» and in «Задачі». What the minion does with them
+is described under [Cloud tasks and local sessions](#cloud-tasks-and-local-sessions) →
+«Посіпака».
 
 ### Jira
 
@@ -299,13 +431,72 @@ launches are independent, and its mirror is removed on its own «Відключ�
   Kermanych asks where the ticket should go next and applies that transition in
   Jira.
 
+### Plane
+
+A workspace can mirror **up to ten Plane projects** onto «Дошка», from Plane Cloud or a
+self-hosted Plane. The owner connects each one in **Менеджмент → Integrations**: the Plane
+address and workspace slug (pasting a workspace URL such as
+`https://app.plane.so/my-team/projects/` fills both), then a personal API token (Plane →
+Profile settings → Personal Access Tokens), then the project picker. More projects are added
+from the same card until the tenth. The board page grows a «Plane» view next to «Задачі»
+(and Jira / Linear when they are connected), with a project picker when several are connected.
+Jira, Linear and Plane are independent and may all be connected at once.
+
+- **The columns are the project's states.** Each state is one column, ordered by Plane's state
+  groups (Backlog → Unstarted → Started → Completed → Cancelled). Dragging a card to a column
+  moves the work item to that state. Plane has no workflow, so any state is allowed.
+- **Tokens are personal and local.** Each member who wants to *act* adds their own Plane API
+  token on the Integrations tab. Acting means moving, commenting, logging work,
+  creating/editing/deleting work items, or uploading files. The token is stored in this
+  machine's registry SQLite (`plane_tokens`, keyed by Plane address and workspace slug) and is
+  checked against Plane before it is saved. Actions land in Plane under that member's own
+  account. A member without a token gets a read-only mirror.
+- **Plane is the source of truth, polled within its rate limit.** Plane allows 60 API requests
+  a minute per token, so the mirror is kept differently from Jira's:
+  - Whoever has the Plane view open polls every ~30 s, sharing one lease per project.
+  - A poll reads only the work items changed since the last one.
+  - Comments, attachments and worklogs are refreshed for at most five work items per poll, and
+    at once for the ticket you open.
+  - The project's states, and work items deleted or archived in Plane, are reconciled by a full
+    sweep every 10 minutes and on «Синхронізувати».
+  - If Plane answers «too many requests», the poll stops quietly, and the rest arrives with the
+    next one.
+- **Text is Markdown in, Plane formatting out.** Descriptions and comments written in Kermanych
+  are converted to Plane's editor HTML. `- [ ]` / `- [x]` become Plane checklists. The editor
+  opens an existing work item with its description read back as Markdown.
+- **One assignee, Kermanych-side.** The card shows a work item's first assignee. Choosing an
+  assignee in Kermanych replaces Plane's assignee list with that one person.
+- **Fields:**
+  - the five Plane priorities (urgent, high, medium, low, none);
+  - labels, chosen by name;
+  - the project's estimate points, when the project has estimates;
+  - start and due dates;
+  - the parent;
+  - the work-item type, on editions that have types.
+- **Work is logged where it is done, when the project tracks time.** Time tracking is a Plane
+  Pro feature that a project turns on. With it on, the ticket dialog's «Ворклоги» tab logs a
+  duration in the same spelling as Jira («3h 20m», «45m», «1.5h») with an optional note.
+  - Plane has no work date and no remaining estimate, so neither is asked.
+  - You may edit or delete your own entries, and a project admin may edit or delete anyone's.
+  - Without time tracking, the tab is not shown.
+- **Attachments** upload through Kermanych (Plane's default limit is 5 MB) and download through
+  the local api, so your token never reaches the storage host.
+- **Tickets launch like tasks.** «Запустити» asks for the Kermanych project and the Plane state
+  to move the work item to, and runs it on a hidden shadow task (`tasks.plane_key`). After the
+  merge, Kermanych asks which state the work item goes to next.
+- **Beyond the board.**
+  - The Менеджмент assistant reads and changes Plane with its own `plane_*` tools.
+  - A finding can be filed as a Plane work item.
+  - Team Capacity and the Home capacity and tasks tiles can read a Plane project, as described
+    in their sections.
+
 ### Slack
 
 A workspace can bind **one Slack channel** to a Slack app that answers questions about
 the workspace's project documentation. The owner connects it in **Менеджмент →
 Integrations** (create the Slack app → paste its two tokens → pick the channel); after
-that, every top-level message in the channel is a question, and Kermanych replies in a
-thread under it.
+that, a message in the channel that @-mentions Kermanych is a question, and Kermanych
+replies in a thread under it.
 
 Setting up the Slack app, once per workspace:
 
@@ -339,10 +530,12 @@ Setting up the Slack app, once per workspace:
   thread, in order. Parts break between paragraphs where possible, and a code block cut in
   two is closed and reopened so both halves still render as code. There is no upper limit
   on the answer's length.
-- **Follow-ups need a mention.** Inside a thread, Kermanych answers only messages that
-  @-mention it, and reads the whole thread — the question, its earlier answers and the
-  discussion — as the context for the new answer. Thread replies without a mention are
-  left alone, as are messages in any other channel the bot was invited to.
+- **Kermanych answers only when tagged.** A message — top-level or in a thread — is
+  answered only when it @-mentions Kermanych. A message that tags another app (Jira,
+  another bot), an agent or a person, or tags nobody, is left alone, as are messages in
+  any other channel the bot was invited to. A message that tags Kermanych together with
+  someone else is answered. Inside a thread, Kermanych reads the whole thread — the
+  question, its earlier answers and the discussion — as the context for the new answer.
 - **It answers while someone is online.** Slack delivers events over Socket Mode to
   the Kermanych app itself, because the local API is not reachable from the internet.
   The bot therefore answers only while a member whose machine holds the tokens has
@@ -453,7 +646,7 @@ update public.app_release_policy set min_app_version = '0.4.0', updated_at = now
 
 Older apps then show «Потрібне оновлення» instead of failing screen by screen. Push such a
 migration only after that release is published. The table itself comes from
-`20261012120000_app_release_policy.sql` (one row, readable without signing in, written only
+`20261105090000_app_release_policy.sql` (one row, readable without signing in, written only
 by migrations); push it before the first release.
 
 `20261019090000_drop_routines.sql` removes the retired Routines feature: it drops
@@ -471,6 +664,17 @@ has the «Cloud answers» section on the Slack card calls them. Delete the Edge 
 switched its Slack app to the cloud manifest must paste the desktop manifest back («Copy
 manifest» on the Slack tile), or Slack keeps sending events to the deleted URL and no machine
 gets the questions.
+
+`20261023090000_task_auto_run.sql` adds `tasks.auto_run` and `tasks.finding_kind` and teaches
+`tasks_guard()` the authorship rules «Посіпака» relies on: `created_by` and `finding_kind` keep
+their inserted values, only the author switches `auto_run` on, and anyone else's edit of a card's
+content switches it off. It only adds, but every task read selects the two columns, so push it
+before shipping a client that knows them.
+
+`20261104110000_task_branch_slug.sql` adds `tasks.branch_slug`, the card's own branch name from
+the launcher's «Гілка» field (NULL: the launch names the branch from the task), and adds it to
+the content `tasks_guard()` watches for auto-run. It only adds, but every task read selects the
+column, so push it before shipping a client that knows it.
 
 ### Running against a local stack or your own project
 
@@ -593,6 +797,13 @@ pnpm dev:ui           # Quasar UI on  http://localhost:5317
 Run the two dev commands in separate terminals, then open
 <http://localhost:5317> in your browser. The UI talks to the API on `:4317`.
 
+Only the app's own UI can hand the API a signed-in session (`POST /api/auth/session`, the one
+route without a bearer). The API accepts the handoff when it carries the current bearer (a
+token refresh), the desktop app's per-launch key, or — for a standalone `pnpm dev:api` — an
+`Origin` of `http://localhost:5317` / `http://127.0.0.1:5317`. Any other page in your
+browser gets `403`, even with a valid Supabase token. If you serve the dev UI from another
+origin, list it in `KERMANYCH_UI_ORIGINS` (comma-separated) for the API.
+
 > **Note:** `better-sqlite3` v13 and `node-pty` 1.1 ship N-API prebuilt binaries, so
 > switching Node versions (≥22.12) needs no rebuild.
 
@@ -600,6 +811,29 @@ Run the two dev commands in separate terminals, then open
 
 Kermanych also runs as a desktop app (Electron via Quasar): one window that
 starts the API in-process — no browser, no separate dev servers.
+
+The window opens as soon as the API's port is chosen, while the API is still starting. A
+splash shows the app mark and what is happening («Запускаю локальний сервіс…», then
+«Входжу…»), and it fades out when the app has mounted. The window background follows the
+last theme you used (`window-theme.json` in Electron's `userData`), so a light-theme user
+does not get a dark frame first. The `backend` boot file holds every request until the API
+is listening; the web build shows the same splash with «Входжу…» only.
+
+**The Dock icon calls you when an agent needs you** (spec:
+`docs/specs/2026-11-01-dock-attention.md`). Its number counts the agents whose turn it is, over
+every project: waiting for an answer, failed or stopped on a merge conflict, or finished with a
+result you have not opened yet — the sidebar marks without «працює». A result leaves the number
+once you open the agent (a design: in «Дизайн»); a failure stays until the agent is restarted,
+archived or deleted. When another agent's turn comes while you are in another app, the icon
+bounces once, and it bounces for a memory warning and a «Посіпака» pause too. A click on the icon
+brings the window back, also when it was minimised. **Налаштування → Застосунок → Сповіщення**
+switches the number and the bounce («Число на іконці», «Підстрибувати»), per machine.
+
+Pop-up notifications (an agent's turn, a memory warning, a «Посіпака» pause, while the window is
+not focused) need an app signed by an Apple team: since Electron 42 macOS refuses them otherwise.
+A release build (signed, see [Installing a release](#installing-a-release)) shows them; neither
+`pnpm dev:app` (the stock `Electron.app` from `node_modules`) nor a local unsigned `pnpm build:app`
+does. The «Сповіщення» settings page says whether the running build can.
 
 Links never open inside the desktop window: every `http(s)`/`mailto` link — Jira
 and Linear tickets, attachments, storage downloads and markdown links — opens in your
@@ -740,7 +974,12 @@ A task can also run in the harness's **own** interface instead of Kermanych's wr
 «Нова задача», set **Режим** to `omp`, `claude` or `codex` and press «Запустити»: Kermanych
 creates the worktree and branch as usual, then starts that harness's TUI there with the task
 text as its first prompt. The session's «Лог» tab is that terminal — type into it as you would
-in your own terminal. (Specs: `docs/specs/2026-10-05-native-sessions.md`,
+in your own terminal. <kbd>⌘F</kbd> (<kbd>Ctrl</kbd>+<kbd>F</kbd> off macOS) or the magnifier on
+the tab row searches its screen and scrollback: match case, whole word, <kbd>Enter</kbd> /
+<kbd>Shift</kbd>+<kbd>Enter</kbd> to step, <kbd>Esc</kbd> back to the shell. claude starts
+off its full-screen (alternate-screen) layout, which keeps no scrollback, so the whole history
+stays searchable; «Налаштування → ШІ-провайдер → Повноекранний вигляд» turns it back on, with
+find then reaching only the visible screen (from a session's next start or resume). (Specs: `docs/specs/2026-10-05-native-sessions.md`,
 `docs/specs/2026-10-16-native-codex.md`.) Each harness must be on your login shell's `PATH`;
 for codex that is `npm i -g @openai/codex` (or `brew install codex`) — the copy inside the
 ChatGPT app is not used. A missing binary shows `command not found` in the «Лог» tab.
@@ -748,7 +987,7 @@ ChatGPT app is not used. A missing binary shows `command not found` in the «Л�
 - **Nothing of Kermanych enters the agent's context**: no project skills, triggers,
   language or documentation directives, co-author trailer, model or effort flags. Your own
   `~/.claude` / `~/.omp` / `~/.codex` configuration applies unchanged; switch model with the harness's
-  own `/model`. Model, effort and images are hidden in the launcher for this mode. The
+  own `/model`. Model, effort, images and Хелпери are hidden in the launcher for this mode. The
   exceptions are the [session browser](#session-browser)'s tools, passed on the launch in the
   desktop app, and a «Глибокий аналіз» card's opening prompt: the TUI receives the task
   wrapped in the deep-analysis instructions, because that is the task you chose.
@@ -772,7 +1011,8 @@ ChatGPT app is not used. A missing binary shows `command not found` in the «Л�
   post-PR warning (see «Cloud tasks and local sessions») are managed-only.
 - **Not available** for native sessions: changing model or effort from Kermanych, harness
   commands from a composer, answering prompts outside the terminal, discussion branches,
-  review, images and the subagent map. Launches from «Дошка» and «В беклог» stay managed.
+  review and images. On the agent map a native session appears without subagents. Launches
+  from «Дошка» and «В беклог» stay managed.
 - **codex specifics.** codex trusts hooks only after review and asks about every new folder;
   Kermanych passes both answers on the command line for that launch — the session's folder as
   trusted (`-c projects={…}`) and a `trusted_hash` for exactly its own hooks
@@ -808,27 +1048,128 @@ each turn the first message becomes the thread's name, as for a managed chat.
   conversation into a worktree, and a native conversation cannot be forked. «В беклог» (⊕)
   works.
 
+## Voice conversation («Голосова розмова»)
+
+Talk to a session's agent by voice, the way ChatGPT's voice mode works (spec:
+`docs/specs/2026-11-02-voice-conversation.md`). OpenAI's GPT-Live (`gpt-live-1`) listens and
+speaks full duplex — interrupt it at any time — and hands everything about the task to the
+session's own agent (omp / claude, with the repository and its tools). GPT-Live is only the agent's
+voice: it never answers about the code itself, and asks back only when it did not hear you.
+
+- **Where.** 🎤 in the composer of every managed conversation: «Агенти» (agents, «Глибокий
+  аналіз», discussions, reviews), «Чат» and «Дизайн». Not native sessions, not «Менеджмент».
+- **The key.** Settings → Застосунок → «Голос»: your own OpenAI API key, stored in this machine's
+  SQLite (`voice_keys`) like the Jira/Linear tokens — never in the cloud, never in the window;
+  the local api exchanges the window's WebRTC offer with OpenAI (`POST /api/voice/session`).
+  `OPENAI_API_KEY` in the api's environment wins over the stored key. «Перевірити» proves the key
+  can use `gpt-live-1`. The same pane picks the voice (default `marin`); the conversation speaks
+  the agent's language («Мова спілкування агента», an ASD-STE100 level is English), or the UI
+  language when none is set.
+- **What the agent gets.** Your words since the previous hand-off, sent in the same mode typed
+  text takes — so speaking during a running turn steers it — under a short voice note (a speech
+  transcript, answer briefly, no tables). The log shows your own words with a 🎤 mark, after a
+  restart too. When the turn ends GPT-Live retells the last reply (code blocks and tables become
+  «shown in the chat»); while the agent works it gets silent progress, so «що він зараз робить?»
+  has an answer.
+- **Its questions.** A «Потрібне рішення» block is read aloud with numbered options. Answer with
+  a number («другий», «варіант три»), «так» / «ні», or free text for an input; an unclear answer
+  is asked again rather than guessed. The buttons keep working.
+- **One conversation per app**, bound to the session it started in: switch pages or agents and
+  it keeps talking to that session; a pill beside the settings gear shows it with 🔇 and ✕.
+  Starting one elsewhere asks first. It ends on «Завершити», when the session is archived,
+  removed or errors, when the window closes, and after **3 minutes of silence** (no speech either
+  way and no running turn). Ending it never stops the agent. A dropped connection is not
+  re-established.
+- **Cost.** $0.05 per minute of conversation, billed per second to your key, plus 15 s at each
+  connection start; the agent runs on your usual Claude / omp plan.
+- **macOS microphone.** The first conversation triggers the system prompt
+  (`NSMicrophoneUsageDescription`). The `.dmg` is unsigned, so macOS may ask again after
+  installing a new build. Refused once: System Settings → Privacy & Security → Microphone. The
+  embedded session browser never gets the microphone.
+
+### Voice dictation («Диктування»)
+
+Speak a task description instead of typing it (spec: `docs/specs/2026-11-03-voice-dictation.md`).
+OpenAI's streaming transcription (`gpt-live-transcribe`) turns speech into text as you talk.
+
+- **Where.** «Диктувати» under the description of every popup that creates or edits a task:
+  «Нова задача» on «Агенти» (incl. «Глибокий аналіз»), the card editor on «Дошка», «Новий
+  дизайн», a task from a document, a finding → task, and the Jira / Linear issue editors. **⌥D**
+  in the description toggles it.
+- **How text lands.** The phrase being spoken shows as a grey draft under the field; when you
+  pause (~0.8 s) its final text is inserted at the caret. The field stays editable meanwhile.
+  Hints: the agent's language («Мова спілкування агента», else the UI language) plus English for
+  technical terms. No clean-up — the text is what the model heard.
+- **Stopping.** «Зупинити» or ⌥D waits up to 5 s for the last phrase. Submitting the popup while
+  dictating lets the last phrase land first. Closing the popup drops an unfinished phrase. A
+  minute of silence stops it. A dropped connection stops it; what was inserted stays. One
+  dictation per app: starting another field stops the current one.
+- **Key, cost.** The same OpenAI key as the voice conversation (`POST /api/voice/dictation`
+  exchanges the offer with `/v1/realtime/calls`); $0.017 per minute. With no key the notice links
+  to Settings → «Голос».
+- **With a voice conversation.** Dictation mutes the conversation's microphone while it runs and
+  unmutes it afterwards (a conversation you muted stays muted), so the agent never gets the
+  description as a message.
+
+## Agent map («Карта агентів»)
+
+Every agent on this machine as one tree (spec: `docs/specs/2026-10-22-agent-map.md`):
+workspace → project → session → its discussion / review branches and the subagents it
+spawned → their nested subagents.
+
+- **Opening it.** The «◈ Карта агентів» button at the top of the «Агенти» list, beside «Нова
+  задача» (its right side counts the agents active on the whole machine), swaps the chat pane
+  for the map, pressed while open; press it again to go back. It opens fitted to the project
+  or workspace currently selected. ◈ in a session's header (shown once it has subagents)
+  opens it on that session, unfolded.
+- **What is on it.** Chips choose the buckets, the same as the «Агенти» tabs: «Агенти» by
+  default, «Завершені» on demand; the choice is remembered (a choice saved before the three
+  agent buckets merged reads as «Агенти»). A fork follows its parent's bucket, as in the
+  tabs. Chats and backlog cards are never on the map. A project with nothing under the
+  chips is not drawn; projects outside any workspace you can see hang under «Без
+  воркспейсу».
+- **Reading it.** Dashed lines mean «belongs to», solid ones «spawned». A working agent has a
+  breathing accent frame, and the path down to it flows. A session or subagent whose subtree
+  has finished starts folded (▸ +N hidden); ▾/▸ under a card folds it by hand until the window
+  closes. Scroll pans, pinch or ⌘-scroll zooms; ⤢ fits everything; a minimap sits in the
+  corner.
+- **Clicks.** A session card opens its chat (the map closes); so does any card in the list. A
+  subagent card opens its transcript and figures in a drawer over the map. Esc closes the
+  drawer, then the map.
+- **«Посіпака».** Its sessions carry the minion mark, «потрібне рішення» when they wait for
+  you, and «не потрібно» when the run found nothing to change. A strip above the map shows the
+  minion on this machine — working N of its cap, the cards waiting, the activated projects — or
+  why it is paused, with ⏸ / ▶. It is hidden while no project is activated here.
+- **Limit.** Subagent trees live in the api's memory while the session is live: they survive
+  a UI reload (the socket snapshot carries them) but not an api or app restart, «Завершити»
+  or deleting the session. A subagent's transcript opens only while its session is live.
+
 ## Session browser
 
-In the desktop app every session has its own browser (specs:
-`docs/specs/2026-10-05-embedded-browser.md`, `docs/specs/2026-10-08-session-browser-rework.md`).
-It is a real Chromium page. The agent of that session drives the same page, and you watch it
-live. The web build has no session browser.
+In the desktop app every session on «Агенти» has its own browser (specs:
+`docs/specs/2026-10-05-embedded-browser.md`, `docs/specs/2026-10-08-session-browser-rework.md`,
+`docs/specs/2026-11-03-session-browser-preview.md`). It is a real Chromium page. The agent of
+that session drives the same page, and you watch it live. The branch's
+[live preview](#live-preview) runs from the same tab. Only projects whose platform is Web or
+«Не визначено» have it: a Back-end project shows no Браузер tab, runs no preview and gives its
+agents no browser tools; a Mobile project gets the [«Пристрій» tab](#mobile-device-preview)
+instead. Switching a project away from Web stops its web previews and closes its pages.
 
 - **Where it is.** The **Браузер** tab of the session, or — with ◫ **Поруч із логом** in its
   toolbar — beside the Лог behind a draggable seam (the Браузер tab then disappears; ◫ again
   puts it back). While the agent is using the browser, a dot pulses on the tab and ◎ on the
-  session's card on the board.
+  session's card on the board; a second dot shows the preview: green while it runs, red when it
+  crashed or failed to start.
 - **Toolbar.** ← → ↻ (✕ while loading), the address (a URL, `localhost:5173`, or words to
   search), the viewport (**За розміром панелі**, or a fixed width — 390 / 768 / 1280 / 1440;
   wider than the pane, the page is laid out at that width and drawn scaled, with the
   percentage shown), **◎ Вказати**, **Агент** (pause the agent's control), ⤤ open in the
-  system browser, `</>` devtools. A narrow pane wraps it into two rows and drops the labels.
+  system browser, `</>` devtools, the magnifier for find in page. A narrow pane wraps it into
+  two rows and drops the labels.
   Keys: <kbd>⌘L</kbd> address, <kbd>⌘F</kbd> find in page, <kbd>⌘R</kbd> reload (the page,
   not the app), <kbd>⌘[</kbd> / <kbd>⌘]</kbd> back / forward; <kbd>⌘W</kbd> and zoom keys do
   nothing in the page.
-- **Preview.** ▶ starts the session's live preview and opens it here instead of the system
-  browser.
+- **Discussion and review branches** get a plain browser: no preview row and no browser tools.
 - **Point at a problem.** Press **◎ Вказати** and click an element (the click does not reach
   the page; <kbd>Shift</kbd>+click keeps picking; <kbd>Esc</kbd> cancels). Same-origin iframes
   work too. Each pick lands in a tray above the page with a cropped screenshot, its selector
@@ -838,9 +1179,9 @@ live. The web build has no session browser.
   HTML and computed styles. A managed session gets the crops as images; a native session gets
   their file paths (under `$TMPDIR/kermanych-browser/`) and, like any helper, accepts the
   message only while idle — a refusal keeps the tray. The tray survives an app reload.
-- **Who drives.** Click **Агент** to pause the agent: its browser tools refuse until you click
-  **Повернути**. The agent's page loads never take the keyboard from whatever you are typing
-  in.
+- **Who drives.** Click **Агент** to pause the agent: its browser tools, `preview_start` and
+  `preview_stop` refuse until you click **Повернути**. The agent's page loads never take the
+  keyboard from whatever you are typing in.
 - **Page dialogs.** `alert` / `confirm` show as a bar above the page; you or the agent answer
   it (the agent's action reports the dialog). «Leave site?» is always allowed; `prompt()` is
   not supported by Electron.
@@ -850,18 +1191,28 @@ live. The web build has no session browser.
   `browser_click` (refuses, naming the cover, when another element covers the target),
   `browser_type`, `browser_press`, `browser_hover`, `browser_select` (native `<select>`),
   `browser_history` (back / forward / reload), `browser_wait_for`, `browser_resize`,
-  `browser_screenshot` (viewport, full page or one element), `browser_upload`,
+  `browser_screenshot` (viewport, full page or one element; with `path` — a worktree-relative
+  `.png` under `docs/` — it writes the image into the worktree and answers with the path
+  instead of the image), `browser_upload`,
   `browser_dialog`, `browser_console` (console, failed / 4xx / 5xx requests, downloads,
-  popups, blocked links), `browser_network` (the request log) and `browser_evaluate`.
+  popups, blocked links), `browser_network` (the request log) and `browser_evaluate`. Agent
+  sessions also get the preview tools (see [Live preview](#live-preview)). A «Тестувальник» run,
+  though a review-like branch, gets the browser tools, the preview tools (acting on its doer's
+  preview) and its own `report_qa_result`, `set_qa_checklist` and `browser_type_credential`
+  (see «Тестувальник» below).
   claude shows them as `mcp__kermanych__browser_*`. Managed sessions get them on launch and
   resume; native ones via `claude --mcp-config <file>` (a per-session `0600` file) or a
   second `omp --hook`. The endpoint is `POST /api/browser/mcp` on the local API with a
-  per-session bearer; a session's calls run one at a time (dialog, console and network
-  answer at once). The same server also carries the findings tools `report_finding` and
-  `list_findings` (see «Agent findings» below). An API started without the desktop app still
-  hands the server out, but it lists only the findings tools.
+  per-session bearer; a session's calls run one at a time (dialog, console, network and the
+  preview tools answer at once). The same server also carries the findings tools
+  `report_finding` and `list_findings` (see «Agent findings» below); a Back-end project's
+  sessions get only those, a Mobile project's get the preview and device tools instead of the
+  browser ones. An API started without the desktop app still hands the server out, but it lists
+  no browser tools.
 - **Cookies** are kept per project (Electron partition `persist:kermanych-browser-<projectId>`):
-  sessions of one project share logins, projects do not. The page's user agent carries no
+  sessions of one project share logins, projects do not. A «Тестувальник» run is the exception:
+  its page lives in a temporary in-memory partition of its own (`kermanych-tester-<sessionId>`),
+  starts signed out and is gone when the run is closed. The page's user agent carries no
   `Electron/` token. `target=_blank` links load in the same page; a `window.open` popup (an
   OAuth sign-in) opens as a small window of its own that keeps `window.opener` — yours to
   complete, the agent cannot drive it. `mailto:` / `tel:` open in the OS only from your own
@@ -871,9 +1222,196 @@ live. The web build has no session browser.
 - **The browser sits above the app's own UI**, so while a menu or dialog is open it is
   replaced by a still frame of the page, and toasts move beside it. A failed load or a crashed
   page shows a panel with **Спробувати ще**. A hidden session browser keeps running — the
-  agent can work in it while you look elsewhere. At most 6 stay alive (and none idle for 20
-  minutes); a closed one remembers its last address, and the empty tab offers
-  **Відкрити знову**. It is deleted with its session.
+  agent can work in it while you look elsewhere. **✕** beside «Браузер» on the tab (shown
+  while a page is open) closes it; the tab stays. Otherwise at most 6 stay alive (and none
+  idle for 20 minutes). A closed one remembers its last address, and the empty tab offers
+  **Відкрити знову**; the agent's `browser_navigate` opens a new page, its other browser tools
+  refuse until then and name the last address. It is deleted with its session.
+
+### Live preview
+
+The branch's own app, run from the session directory (the worktree, or the main checkout of an
+in-place session) on free ports, so you see the work in progress without touching your own dev
+servers (spec: `docs/specs/2026-11-03-session-browser-preview.md`). Agent sessions of Web and
+«Не визначено» projects have it in the **Браузер** tab, Mobile projects in the
+[**Пристрій**](#mobile-device-preview) tab: a row under the toolbar shows its state
+(не налаштоване / setup… / запускається `web`… / працює / впало / зупинене), the services and
+their ports, ▶ / ◼, ↻ (restart), **Змінні**, **Логи** and, while the config is missing or broken,
+**Доручити агенту**. A finished session has no worktree, so it has no preview.
+
+- **The config is a file in the repository, `.kermanych/preview.json`**, read from the session
+  directory, so it travels with the branch whose code it builds. Kermanych's own:
+
+  ```json
+  {
+    "setup": "cd kermanych && pnpm install && pnpm --filter '@kermanych/ui^...' build",
+    "services": [
+      { "name": "api", "command": "cd kermanych && pnpm --filter @kermanych/api start",
+        "env": { "KERMANYCH_DB": "${PREVIEW_DIR}/kermanych.sqlite", "KERMANYCH_SEED": "1", "KERMANYCH_PREVIEW": "1" } },
+      { "name": "web", "open": true, "command": "cd kermanych && pnpm --filter @kermanych/ui exec quasar dev",
+        "env": { "VITE_API_BASE": "http://localhost:${PORT_API}/api", "VITE_KERMANYCH_PREVIEW": "1" } }
+    ]
+  }
+  ```
+
+  - `setup` (optional) runs before the services on every start, so it must be idempotent; it
+    has 20 minutes.
+  - `services` start in order; each gets 5 minutes to accept a connection on its `PORT` before
+    the next one starts. Exactly one has `"open": true`: the page the browser opens. It also
+    counts as ready when it prints a `http://localhost:<port>` URL whose port accepts, for dev
+    servers that ignore `PORT`.
+  - Every step gets `PORT_<NAME>` for every service (`web-app` → `PORT_WEB_APP`) and
+    `PREVIEW_DIR`, a temp directory of the session (`$TMPDIR/kermanych-preview/<sessionId>/`,
+    deleted when the session is finished or deleted); each service also gets its own `PORT`.
+    `${VAR}` in `env` expands only these names, and they cannot be overridden.
+  - A missing or invalid file shows in the row with the exact field. **Доручити агенту** sends
+    the session's agent a Kermanych prompt with the default skill `preview-config` (override it
+    like any skill): it writes the file, tries it and commits it with its work.
+- **Starting.** ▶ in the row, **Запустити превʼю** on the empty page, or the agent's
+  `preview_start`. Once it runs, the page opens it; a restart keeps the page's path on the new
+  port, so `/settings` stays `/settings`. **Логи** opens a panel under the page with one tab per
+  step (the last 2 000 lines each); after a failure it opens by itself on the failed step.
+- **Змінні** opens the same panel on the session directory's `.env`, in the table of Settings →
+  Проєкт → «Змінні середовища» (spec: `docs/specs/2026-11-04-session-env-and-tester-preview-gate.md`).
+  This is how a session picks its back end: the front end's own variable (`NEXT_PUBLIC_API_URL`,
+  `VITE_API_BASE`, …) set for this worktree only. A new session starts from the project's `.env`,
+  which Kermanych copies into its worktree; an in-place session edits the project's `.env` itself.
+  Dev servers read `.env` when they start, so a save under a running preview offers ↻ to apply
+  it; nothing restarts by itself. A key also set in `.env.local` keeps that value (Next.js and Vite
+  prefer `.env.local`). A «Тестувальник» run uses the preview of the session it tests, values
+  included.
+- **Stopping.** ◼, the agent's `preview_stop`, or by itself on «Завершити», closing a merged
+  session, deleting or archiving the session, a switch of the project to a platform the preview
+  does not fit (a web preview on Back-end or Mobile, a device preview off Mobile), and
+  quitting the app. Stopping the agent and closing the page (✕) do not stop it. A step that exits
+  while the preview runs stops the rest and the row shows «Впало» with its exit code; nothing
+  restarts by itself, and the page stays where it was. After an app restart the empty page
+  offers **Запустити превʼю** instead of the dead address.
+- **Agent tools** (agent sessions only): `preview_start` (`restart` optional; waits up to 60 s,
+  and on a failure returns the step and its last log lines), `preview_status` (`wait` up to
+  60 s), `preview_stop`, `preview_logs` (`step`, `lines`). Nothing tells the agent to use them
+  by itself: ask it, or put it in a project skill.
+- **Not limited.** Previews have no cap: each one runs until it is stopped.
+- **The web build** has no embedded page. Its Браузер tab keeps the row and the logs, ▶ opens
+  the preview in a new tab, and ⤤ opens it again.
+- **API.** `GET` / `POST` (`{ restart?, platform?, base? }`) / `DELETE /api/sessions/:id/preview`,
+  `GET /api/sessions/:id/preview/logs?step=&since=`, `POST /api/sessions/:id/preview/configure`,
+  `GET` / `PUT` (`{ set?, remove? }`) `/api/sessions/:id/env`,
+  `POST /api/sessions/:id/preview/app` (`{ action: "launch" | "terminate" | "restart" }`, Mobile);
+  the state is pushed on the socket (`preview_update`, and `previews` in the snapshot).
+
+### Mobile device preview
+
+A Mobile project's agent sessions get a **Пристрій** tab in place of «Браузер» (spec:
+`docs/specs/2026-11-03-mobile-device-preview.md`): the live preview boots the session's own copy
+of an iOS Simulator or an Android Virtual Device without a window, installs the branch's app on
+it and shows the screen live in the tab, in the desktop app and the web build alike.
+
+- **Prerequisites.** Kermanych finds, and never installs: Xcode (`xcode-select -p`) for iOS, the
+  Android SDK (`ANDROID_HOME`, then `ANDROID_SDK_ROOT`, then `~/Library/Android/sdk`) with the
+  emulator and `adb` for Android. A missing one shows in the tab with what to install. iOS runs on
+  Apple Silicon only: the screen and input go through [serve-sim](https://github.com/EvanBacon/serve-sim),
+  pinned in the api's dependencies; `KERMANYCH_SERVE_SIM=/path/to/serve-sim` uses another copy
+  (for an Xcode update that breaks the pinned one). Android uses the emulator's own gRPC API.
+- **The config** is a `device` block in `.kermanych/preview.json`:
+
+  ```json
+  {
+    "setup": "flutter pub get",
+    "services": [{ "name": "app", "device": true, "command": "flutter run -d $DEVICE_ID" }],
+    "device": { "ios": { "app": "com.acme.app" }, "android": { "app": "com.acme.app" } }
+  }
+  ```
+
+  - `device.ios` / `device.android`: `app` is the bundle id or package; `install` (optional) is a
+    command that builds and installs it and must exit 0 within 20 minutes, after which Kermanych
+    launches `app`.
+  - A service with `"device": true` installs and launches the app itself and keeps running
+    (`flutter run`); it is ready once the app's process runs (20 minutes). It and `install` are
+    mutually exclusive. With a `device` block `services` may be empty, and no service may have
+    `"open": true`.
+  - Every step also gets `DEVICE_ID` (the simulator UDID or `emulator-<port>`),
+    `DEVICE_PLATFORM` (`ios` / `android`) and, on Android, `ANDROID_SERIAL`.
+  - A Mobile project's file without a `device` block, or a `device` block in any other project,
+    is shown as invalid. The `preview-config` skill behind **Доручити агенту** covers Flutter,
+    Expo / React Native and native builds, and hot reload (`kill -USR1` of `flutter run`).
+- **Steps:** `device` (copy and boot) → `setup` → services → `install` → launch → **Працює**. The
+  screen shows as soon as the device has booted, so the build and install are visible.
+- **The session's device.** The first start copies the base device (APFS copy-on-write:
+  `simctl clone`, or a clone of the `.avd` directory) into `kermanych-<sessionId>`; the copy keeps
+  the base's sign-ins and apps and lives until «Завершити» or delete (archive keeps it). ◼ shuts
+  it down and keeps its data; ↻ keeps it running and re-runs `setup`, the services, `install` and
+  the launch. Kermanych shuts every device down when it quits; orphan copies are deleted at api
+  start.
+- **Choosing the device.** The toolbar's picker lists this machine's simulators and AVDs; the
+  choice is kept per project on this machine only. Without one, iOS takes the first iPhone of
+  the newest runtime and Android the first AVD by name. A session with a copy keeps its base;
+  choosing another base or platform in its picker asks first, then deletes the copy and makes a
+  new one. A booted base simulator or a running base AVD (Android Studio) cannot be copied: the
+  start says which to close.
+- **Using it.** Click = tap, drag = a live touch, wheel = scroll, typing while the screen has
+  focus (non-ASCII goes through the device clipboard and a paste). The toolbar has Home, Back and
+  Recents (Android), rotate, a PNG screenshot, **◎ Вказати** (the accessibility element under the
+  click with a crop, into the same picks tray as the browser) and **Агент** (pause the agent's
+  device and preview tools).
+- **The app exits** (a crash, or closed): the row turns red with «Застосунок впав» and
+  **Запустити застосунок**; the services and the device keep running. The device's own exit, or a
+  crashed service, stops everything.
+- **Agent tools** (agent sessions of Mobile projects, in both builds): `device_snapshot` (the
+  accessibility tree with `e1`… refs, in points on iOS and pixels on Android), `device_screenshot`
+  (`path` as for `browser_screenshot`), `device_tap` (ref, label / id or `x,y`; a stale ref is
+  refused), `device_swipe`, `device_type`, `device_press`, `device_wait_for`, `device_open_url`,
+  `device_app` (launch / terminate / restart) and `device_rotate`; `preview_start` takes
+  `platform`, and `preview_logs` has the step `device` (the app's log).
+- **Not limited.** Devices have no cap; each costs about 2–3 GB of RAM while booted.
+- **API.** `GET /api/sessions/:id/device`, `PUT /api/projects/:id/device-choice`,
+  `PUT /api/sessions/:id/device/pause`, `POST /api/sessions/:id/device/pick`,
+  `GET /api/sessions/:id/device/screenshot`, and the `/device` socket.io namespace (`watch`,
+  `unwatch`, `input`, `frame`), authenticated like `/terminal`.
+
+## Designs («Дизайн»)
+
+The «Дизайн» tab, right after «Чат», is where a screen is designed with an agent (spec:
+`docs/specs/2026-10-29-design-tab.md`). A design is a **prototype built on the project's own UI
+kit with fixtures**, not a drawing, so it cannot drift from the code; what lands in the
+repository is a folder that people and implementing agents read.
+
+- **The page.** Left: the selected project's designs and «+ Новий дизайн». Centre: the
+  design's session browser on the running preview, with the width presets, «◎ Вказати» and the
+  picks tray (picks go to the agent, as on «Агенти»). Right: the agent's log and composer.
+  The web build has no canvas (the session browser needs the desktop app): it shows the
+  design's saved folder instead — the screenshots and the rendered README. Opening a design
+  starts its [live preview](#live-preview) when the branch has a valid `.kermanych/preview.json`;
+  without one the canvas's preview row offers «Доручити агенту», and a Back-end or Mobile project
+  has no canvas at all. The page opens a design from a desktop notification or «Карта агентів»
+  too.
+- **A design is an agent session.** «+ Новий дизайн» asks for a topic, an optional description
+  and base branch, files a card on the board (`tasks.design`, migration
+  `20261029090000_task_design.sql`) assigned to you, and launches it. The session runs on a
+  `design/<slug>` branch in its own worktree, stamped with its folder
+  `docs/design/YYYY-MM-DD-<slug>/`. Commit, PR, finish and resume work as for any agent.
+  Designs are hidden from «Агенти» but stay on «Карта агентів», and their card on the board
+  carries the design mark. «Посіпака» never takes a design card.
+- **«Дизайнер»** (`designer` in «ШІ-команда → Агенти», editable) opens the session: reuse kit
+  components only (a missing one is a kit gap in the README), one dev-only route per screen
+  (`/__design/<design>/<screen>`), every state (data, empty, loading, error, long content,
+  narrow), and a `browser_screenshot` check at 390 and 1280 after each change. Its method and
+  README template are the default skill `design-spec`.
+- **The folder.** `README.md` (purpose, screens, states, decisions, open questions,
+  acceptance criteria, prototype files and routes, kit gaps) and
+  `screens/<screen>-<state>@<width>.png`. The prototype code stays in the app's source and is
+  merged with the design; the task that implements the screen turns it into the real one and
+  deletes it.
+- **«Зберегти дизайн»** sends the procedure `design-save` (editable too): screenshot every
+  screen and state at 390 and 1280 into `screens/`, delete stale ones, make the README match
+  the prototype, commit as `design: <topic>`. The design reaches the default branch through
+  «Створити ПР» and review, like code.
+- **From design to implementation.** «Задача →» on a design's README (on the page and in the
+  session's «Документація» tab) creates a card in the same project by default, with the README
+  as the description and the screenshots attached as card images. An
+  agent working from such a card follows the default skill `implement-from-design`: read the
+  README and screenshots, reuse the prototype, build every state, compare its own screenshots,
+  delete the prototype.
 
 ## Monorepo layout
 
@@ -903,8 +1441,52 @@ The visual source of truth lives in [`design/`](./design/):
   set from it with `python3 scripts/gen-icons.py` (stdlib only; the macOS
   `.icns` step needs `iconutil`).
 
+These HTML files are historical. New screens are designed on the «Дизайн» tab (see
+«Designs» above) and land in `docs/design/`.
+
 Custom `K*` components implement this look; Quasar is used only for the
 framework, layout, build, and state plumbing.
+
+### Async states
+
+Every wait in the UI must be visible, and nothing may look empty while it is still loading.
+An async operation without feedback reads as a bug or a frozen app. Spec:
+`docs/specs/2026-10-21-async-feedback.md`. The primitives live in `apps/ui/src`:
+
+- **An action the operator starts** (click, Enter, ⌘ shortcut, menu item) goes through
+  `useAsyncAction(fn)` (`composables/useAsyncAction.ts`), or `useKeyedAction` for per-row
+  actions. Bind `busy` to the control's `:loading`. `KBtn`, `KIconButton`, `KSelect`,
+  `KChipSelect`, `KCheckbox`, `KToggle` and `KSplitButton` all take `loading`: a spinner, a
+  disabled control and `aria-busy`. `run` ignores a second press while the first is running,
+  counts as foreground work for the top progress bar, and turns a failure into an error toast
+  (or `onError`, when a modal renders the error itself). Never `void api.x()` or
+  `.catch(() => {})` in a click handler.
+- **Data that has not arrived** renders `KSkeleton` through `useLoadPhase(notLoaded)`. The
+  skeleton appears after 150 ms and, once shown, stays at least 300 ms. Before that the area is
+  blank. An empty-state text («Немає …», «Порожньо») renders only once the data for the
+  current scope has loaded: keep «not loaded» (`undefined`) apart from «empty» (`[]`).
+- **Switching workspace or project** clears the dependent state at once and shows the
+  skeleton. Late replies for the previous scope are dropped. A refresh within the same scope
+  keeps the data on screen.
+- **Save-on-change controls** (a select, checkbox or chip that writes on change) use
+  `useOptimisticValue`. The picked value shows at once, the control spins and is locked, and a
+  failure rolls back with a toast.
+- **Results that arrive with a socket or realtime echo** (stop, delete, archive, fork, rename,
+  moving a ticket) mark the entity in `usePending()` (`stores/pending.ts`) until the store shows
+  the result, for at most 15 s. Cards take `pending`, and every action on a pending entity is
+  blocked, menu items and ⌘ shortcuts included.
+- **Modals.** A short operation keeps the modal open and `persistent` while it runs, with
+  `:loading` on the primary button. The modal closes only on success, and the error shows
+  inside it. A long operation (creating a pull request) closes the modal and shows progress on
+  the entity instead.
+- **The top progress bar** (`KProgressBar`, `stores/activity.ts`) shows only foreground work:
+  actions and the loads the operator triggered (`activity.trackLoad`). It appears after 300 ms.
+  Polling, tickers, reconcile and realtime never light it.
+- **Composer.** A sent message shows at once in the log as a muted «надсилаю…» bubble until
+  the transcript records it (`orchestrator.outgoing`). A failed send returns the text and the
+  images to the composer.
+
+The `#/kit` gallery shows each of these states live.
 
 ## Cloud tasks and local sessions
 
@@ -913,14 +1495,27 @@ developer's machine. The direction is always task → session.
 
 1. **Create** — any member of the project's workspace creates a task, from the board
    (`/#/board`) or from «Агенти» / «Чат», with a title, a description and optional launch
-   params (model, branch prefix, platform, base branch). A card filed from the board is
+   params (model, branch prefix, base branch). A card filed from the board is
    unassigned unless its author picks someone; a card filed from «Агенти» or «Чат» is
    assigned to its author, because that is the machine about to run it. Either way it is a
    row in the cloud `tasks` — there is no local-only task — so the whole workspace sees it.
-   It starts in `backlog`, which exists only in the cloud.
+   It starts in `backlog`, which exists only in the cloud. The task text (the description)
+   takes Хелпери as a chat message does: <kbd>/</kbd> on an empty field or the «/ Хелпери»
+   button opens the picker, the pick lands at the front of the text, and the launch expands it
+   into the agent's opening prompt (the «Лог» keeps the slash plus a notice naming the helper).
+   A native launch sends the text as it is.
+   A project file is named the same way: <kbd>@</kbd> at the start of a word or the «@ Файл»
+   button opens the project's tree (one folder at a time, its filter narrows the open folder),
+   and the pick lands at the caret as `@path/from/repo/root` — plain text the agent reads as
+   «this file», native launches included. It reads this machine's checkout of the project, so
+   a project not bound here has the button disabled. The agent chat's composer does the same
+   with the session's own tree (the worktree, or the checkout an in-place session runs in):
+   <kbd>@</kbd> at a word start or the **@** button.
 2. **Assign** — the assignee may hand a card over or release it, and the workspace owner
    may take one back from someone who is gone. Anyone may claim an UNASSIGNED card, and
-   pressing «Запустити» on one self-assigns it atomically. Taking a card assigned to
+   pressing «Запустити» on one self-assigns it atomically — in the same write that moves it
+   to `queued`, guarded by the status the launch read, so two machines can never both start
+   one card. Taking a card assigned to
    somebody else is refused by the database, not just by the UI — which is why the control
    is greyed out before the attempt rather than explaining afterwards. An active task
    (`queued`, `thinking`, `tool`, `waiting_input`) can be neither reassigned nor deleted.
@@ -931,8 +1526,20 @@ developer's machine. The direction is always task → session.
    `~/.kermanych/worktrees/<sessionId>`, copies the project's `carryFiles` (`.env` by
    default) into it, and spawns one `omp --mode rpc` child. From here on the session is an
    ordinary local session: it appears on the Агенти board and you drive it there. The branch
-   starts from the session's base — the card's base branch, else the project's default
-   branch, else the branch the project checkout is on, recorded on the session either way.
+   is named `<prefix>/<slug>`: the prefix is the card's (`feature` by default). The slug is the
+   card's own when its «Гілка» field in the launcher was filled in, run through `slugify`
+   (lowercase, Latin, `a-z0-9` joined with `-`, at most 40 characters; the launcher's
+   hint shows the result when it differs from what was typed), and no model is asked. Left
+   blank, the slug is a short English summary of the card's title and description written by
+   the fast model of your runtime (omp's `pi/smol` role, claude's `haiku`) in one tool-less call
+   bounded at 15 s to start and 15 s to answer. When that call fails or times out, the slug is
+   the title transliterated to Latin, cut at a whole word within 40 characters. A slug already
+   taken in the project gets `-2`, `-3`, … (Specs: `docs/specs/2026-10-26-branch-name-from-task.md`,
+   `docs/specs/2026-11-04-custom-branch-name.md`.) The model naming also applies to a chat
+   promoted to an agent and to a reopened session whose branch is
+   gone. The branch starts from the session's base — the card's base branch, else the
+   project's default branch, else the branch the project checkout is on, recorded on the
+   session either way.
    Before the fork the API fetches `origin/<base>` with this machine's own git credentials
    (15 s timeout). When origin's copy contains the local `<base>` (the local branch is only
    behind), the branch starts from `origin/<base>`, without tracking it; when the local
@@ -940,20 +1547,45 @@ developer's machine. The direction is always task → session.
    asked, the same pick is made over the last fetched `origin/<base>` and the transcript says
    the base may not be the latest. (Spec: `docs/specs/2026-10-14-create-pr-base-sync.md`.)
 5. **Status flows back** — the local API mirrors the session's coarse status
-   (`queued → thinking → tool → waiting_input → done | in_review | error | stopped |
+   (`queued → thinking → waiting_input → done | in_review | error | stopped |
    merged | conflict`) to the task, and everyone's board updates live over Supabase
-   Realtime. `in_review` is the pull-request outcome: «Завершити» → «Створити ПР» has the
+   Realtime. A session running a tool is `thinking` on the card: the switch between the two
+   happens on every tool call and stays local. While a turn runs, the machine re-pushes
+   the unchanged status every 45 s (`TASK_STATUS_KEEPALIVE_MS`), so the card's
+   `updated_at` stays fresh. Realtime and the board's list carry a card without its QA
+   checklist and «Документація» report; the card dialog and «Агенти» read those for the card
+   they show. Once a minute while the window is visible, and when it returns after a long
+   hide, the board asks only for `id, updated_at` and re-reads the cards that changed. The
+   full list is read once, at sign-in. (Spec: `docs/specs/2026-11-03-board-egress-and-lag.md`.)
+   `in_review` is the pull-request outcome: «Завершити» → «Створити ПР» has the
    agent commit, bring the latest `origin/<base>` in, push and open the PR, and when that
    turn ends the card lands in the
    board's «На ревʼю» column — settled, but waiting on a human reviewer rather than
    closed. «Завершити» itself is the other exit: it retires the session — commits loose work,
    stops the agent, removes the worktree — and lands on `merged`; nothing is merged into the
-   base branch, the branch stays for its PR. Once a session's branch has an open PR, that fact is
+   base branch, the branch stays for its PR. The moment a session lands on `merged` — from
+   «Завершити» here, a merged discussion or review, or a finish in another window — its chat
+   pane closes if it was open; an already finished session opened later from «Завершені»
+   stays open. Once a session's branch has an open PR, that fact is
    durable: the finish sheet's secondary action stays «Закоміти» (never «Створити ПР», which
    would try to open a second PR and find nothing to push), and EVERY later turn settles the
    card back on «На ревʼю» — even the plain follow-up prompts you send to fix review findings,
    which drive the card through «в роботі» mid-turn. «Закоміти» has the agent commit and push
    that follow-up work onto the same branch, updating the open PR.
+
+   **Merged PR.** Kermanych does not watch a PR on GitHub. When you select a session in
+   «Агенти» that opened a PR and is not running a turn, it asks GitHub about that PR: the URL
+   the agent replied with, or, for a session from before the URL was kept or when that PR was
+   not merged, the closed PRs of the session's branch on `origin` (targeting its base, opened
+   after the session started). It authenticates with the project's `GIT_TOKEN`, or anonymously
+   when there is none (public repositories only); GitLab and Bitbucket PRs are not checked.
+   «Сесія» shows the PR and the answer — open, merged, closed without merge, or why it could
+   not tell (no access, GitHub API limit, no network). A merged PR opens «PR змерджено» with
+   «Закрити задачу»: the API checks the merge again and retires the session as «Завершити»
+   does, without the documentation gate (the code is already in the base), so the card lands
+   in «Завершені». The popup warns when uncommitted changes or commits made after the PR's
+   last push would stay only on the branch. «Не зараз» closes it until you select the session
+   again. (Spec: `docs/specs/2026-10-26-pr-merged-close-prompt.md`.)
 6. **Reports flow back** — after every turn and on «Завершити» the local API also writes onto
    the card what the session's «Документація» and «Сесія» tabs show: the documentation it read
    and the documentation it created or changed (repository paths with +/− counts), and the
@@ -975,7 +1607,7 @@ developer's machine. The direction is always task → session.
    - the finish sheet says how many commits of `origin/<base>` the branch still lacks
      (against the last fetch, no network);
    - a turn that ends with the worktree mid-merge settles the card at `conflict` (the red dot,
-     «Помилки», the finish sheet's conflict view with «Вирішити автоматично»). It clears when
+     top of «Агенти», the finish sheet's conflict view with «Вирішити автоматично»). It clears when
      a later turn ends without unmerged files, or when the finish sheet or «Зміни» finds the
      merge resolved;
    - after the turn that lands on «На ревʼю», the API fetches `origin/<base>` and the pushed
@@ -1000,9 +1632,11 @@ through the `report_finding` tool of its `kermanych` MCP server (spec:
 reproduction commands), acceptance criteria and an optional suggested fix. It reports at once,
 without asking you first, including in the middle of a «Глибокий аналіз» interview; it asks you
 only about a part of the problem that overlaps its own task. Then it continues its task.
-`list_findings` shows it what it already reported, so it does not repeat itself. The
-tool descriptions are the agent's whole instruction, so every runtime gets the same rules,
-native sessions included. Discussion and review branches have no such tools.
+`list_findings` shows it what it already reported, so it does not repeat itself. It writes
+the finding in the agent communication language («Мова спілкування агента»; English while none
+is chosen, and for an ASD-STE100 level). The tool descriptions are the agent's whole
+instruction, so every runtime gets the same rules, native sessions included. Discussion and
+review branches have no such tools.
 
 **Nothing is filed without you.** Findings are kept only on this machine (SQLite
 `session_findings`) and are deleted with their session and with their project. A session holds
@@ -1013,9 +1647,11 @@ problems in its reply.
   «Чат»). Its counter and the ⚑ mark on the agent's session card show how many are still open.
   A new report arrives live, and it does not change the session's status or interrupt the
   agent.
-- **Створити задачу →** opens one dialog for both targets, prefilled and editable: the title,
+- **Створити задачу →** opens one dialog for every target, prefilled and editable: the title,
   and a description with Context, Acceptance criteria, Evidence, Suggested fix and the origin
-  (project, branch, session).
+  (project, branch, session). A board card also records that it came from a finding and of
+  which kind (`tasks.finding_kind`, kept as created, for later counts), and the dialog offers
+  «Дозволити автовиконання», so «Посіпака» (below) can take the card.
   - **Дошка** creates a card under your account in any project of the session's workspace
     (the session's own by default). The assignee is optional, model and effort come from the
     project's defaults, and the branch prefix is `fix` for bugs and vulnerabilities, otherwise
@@ -1025,14 +1661,201 @@ problems in its reply.
     and to Task otherwise (or to the first type the project offers). The labels are
     `kermanych-finding` plus the kind. The option is disabled, with the reason, when the
     workspace has no connected board or this machine has no token for its site.
+  - **Plane** creates a work item in a connected project through
+    `POST /api/plane/issues/:integrationId`, signed with your personal Plane token. The project
+    picker preselects the project the Plane board last showed. Priority defaults to High for
+    `bug` / `security` and to None otherwise. The type is preselected only when the project
+    has work-item types (Plane Pro) and one is named Bug / Task for the kind; otherwise the
+    item is filed untyped. The labels are `kermanych-finding` plus the kind, created in the
+    project when missing. The option is disabled, with the reason, when the workspace has no
+    connected Plane project or this machine has no token for its address and Plane workspace.
+  A tracker's «not connected» reason is shown only while the other tracker has nothing
+  connected either.
 - **Відхилити** marks a finding dismissed. This cannot be undone, and the agent sees it in
   `list_findings`.
 - **Routes.** `GET /api/sessions/:id/findings`;
-  `POST /api/sessions/:id/findings/:findingId/filed` with `{ "kind": "board", "taskId" }` or
-  `{ "kind": "jira", "key", "url" }`; `POST /api/sessions/:id/findings/:findingId/dismiss`.
+  `POST /api/sessions/:id/findings/:findingId/filed` with `{ "kind": "board", "taskId" }`,
+  `{ "kind": "jira", "key", "url" }` or `{ "kind": "plane", "key", "url" }`;
+  `POST /api/sessions/:id/findings/:findingId/dismiss`.
   An unknown session or finding answers 404, and a finding that is no longer open answers 400.
   If the card or issue is created but recording it fails, the finding stays open with the error
   shown in the dialog. The card or issue already exists then: check before filing again.
+
+### «Посіпака» (autonomous runs)
+
+«Посіпака» (code id `minion`) works your backlog while you do something else (spec:
+`docs/specs/2026-10-23-minion-auto-run.md`). On a machine where you activated it for a project,
+it takes **your own** cards that allow automatic execution and brings each one to a pull
+request with nobody watching.
+
+- **What it takes.** A card of an activated project, in `backlog`, with «Дозволити
+  автовиконання», created by the account signed in on this machine, unassigned or assigned to
+  it, neither a «Глибокий аналіз» nor a Jira/Linear ticket. The oldest one first, across all
+  activated projects. Only your own cards, because the minion runs them with your account, your
+  `.env` and your `GIT_TOKEN`: the database keeps a card's author as created, lets only the
+  author switch automatic execution on, and switches it off when anyone else edits what the
+  card asks for.
+- **Activation.** «ШІ-команда» → project → «Агенти» → «Посіпака» (its page,
+  `/ai-team/agents/minion`) → «Активувати на цій машині».
+  It is stored on this machine only (SQLite `minion_projects`), for any number of projects, and
+  needs the project bound to a local repository. Deactivating stops taking new cards; a run in
+  progress goes on.
+- **How many at once.** One cap for the whole machine, across its projects: 1 by default, up
+  to 8, set on the same page. A minion run starts only on a free agent slot and only while none
+  of your own sessions waits for one («Ресурси машини»), so your launches never queue behind it.
+- **A run.** An ordinary agent session of the card's project in a fresh worktree, on your
+  runtime, with the card's model and effort and every rule of the repository and the project
+  (CLAUDE.md / AGENTS.md, skills, docs policy, `.env`). Its instruction and assigned skills are
+  the «Посіпака» agent's in «ШІ-команда» → workspace → «Агенти». It cannot ask questions — the
+  ask tool is off — so it decides within the card, checks its work against the card's
+  acceptance criteria and the project's checks, and ends with a verdict through the
+  `report_outcome` tool of its `kermanych` MCP server:
+  - `ready`: Kermanych completes the documentation once if the project requires it and it is
+    missing, then runs «Створити ПР» as usual — the PR is opened with the project's
+    `GIT_TOKEN` from this machine, and its title starts with `[Minion]` (e.g.
+    `[Minion] fix(api): handle an empty list`) — and the card lands on «На ревʼю». A `ready`
+    with nothing changed on the branch lands there with «потрібне рішення: немає змін» instead,
+    before any PR turn;
+  - `not_needed`: the problem is already fixed, the card repeats another one, or the code it
+    names is gone. The agent changes nothing and gives the evidence; when the branch has no
+    changes, the card closes in «Завершені» with «не потрібно» and the evidence in its tooltip.
+    Changes left on the branch put it on «На ревʼю» with «потрібне рішення» instead. The
+    project's carry files (`.env`) do not count as changes;
+  - `needs_decision`: the card lands on «На ревʼю» with «потрібне рішення» and the reason.
+    Answer the session in «Агенти» like any other; the minion goes on and opens the PR when it
+    is done.
+- **Old cards and findings.** Most of what it runs is findings and old backlog cards, so its
+  default instruction has it check first that the card still applies (`not_needed` when it does
+  not, `needs_decision` when the problem does not reproduce or the code exists only on another
+  branch), make the smallest change that meets the acceptance criteria, stop with a plan instead
+  of changing a public API or a schema, adding a migration or a dependency, or spreading over
+  many files, and leave a check that already fails on the base to the PR's `## Testing` and a
+  finding. A card filed from a «Знахідка» also gets a line naming its kind and the default skill
+  `minion-findings`, with rules per kind: reproduce a bug and keep a test that fails without the
+  fix; reproduce a security problem only locally, keep secrets and exploit steps out of the PR,
+  and leave key rotation and access policy to a person; keep behaviour for tech debt; change only
+  documentation for a docs finding. «Бібліотека» or a skill of that name in the repository
+  overrides it, and switching it off drops it.
+- **When it pauses.** Two failed runs in a row pause it on this machine: a launch that fails,
+  a crash, a turn that ends without a verdict, a `ready` with no changes or without a PR, a
+  `not_needed` that left changes, or a card that runs past 2 hours. A signed-out AI provider
+  pauses it at once, before it takes a card. «Продовжити» on the «Посіпака» card or ▶ on «Карта
+  агентів» resumes it. Stopping a minion session yourself is not a failure, and the minion does
+  not take that card again.
+- **Where you see it.** The «Посіпака» mark on its cards and sessions, the `[Minion]` prefix of
+  its PR titles (any PR opened from its session, «Створити ПР» by hand too; on GitHub,
+  `is:pr Minion in:title` finds them), «потрібне рішення» on
+  the cards that wait for you and «не потрібно» on the ones it closed, the outcome in the card's
+  session report (`session_report.minion`, readable from every machine), the strip above «Карта
+  агентів», and its bot icon beside each project in the left sidebar it is activated for on this
+  machine. Routes: `GET /api/minion`, `PUT /api/minion` (`{ cap?, paused? }`),
+  `PUT /api/minion/projects/:id` (`{ active }`); the socket event `minion_update`.
+- **An always-on machine.** Install Kermanych there, sign in with **your own** account (a
+  separate account would find no cards of its own), bind the projects, put `GIT_TOKEN` into
+  their `.env`, log the AI provider in, and activate the minion. Keep the window open: closing
+  it quits Kermanych, and its runs end as `stopped`. While a run is in progress the app keeps
+  the Mac from idle sleep (the screen may turn off); otherwise the machine sleeps as usual, so
+  set macOS not to sleep on a dedicated box. The desktop app keeps its sign-in fresh while the
+  window is hidden. Signing out on one machine currently signs you out on all of them.
+
+### «Тестувальник» (QA runs)
+
+«Тестувальник» (code id `tester`) walks the card's QA checklist in the live browser, item by item,
+and records a verdict for each (spec: `docs/specs/2026-11-04-qa-tester-agent.md`).
+
+- **Where it starts.** «Виконати тестування» on the «Завершити» sheet and in the header of the
+  session's **QA** tab. It is a separate child session `тестування: <name>` next to the doer, like
+  a review: it reads the code but never edits or commits it. It needs the desktop app, a project
+  whose platform has a browser, a session started from a card, a valid `.kermanych/preview.json` in
+  the doer's directory (the preview itself may be stopped: the tester starts it), and a doer that is
+  not mid-turn; otherwise the button is disabled with the reason. One tester per session at a time:
+  while it runs, the button reads «Тестування триває» and opens it. It takes an agent slot like any
+  session.
+- **Which items.** The first run checks every item. Once items carry verdicts, the button offers
+  «Непройдені» (failed, blocked and untested — the default) or «Усі»; a run clears the old verdicts of
+  the items it is about to check. When the card has no checklist yet, the tester composes one first
+  (skill `qa-tester`), saves it to the card and walks it. A session without a card cannot be tested.
+- **The browser.** It drives the doer's live preview (starting it when it is not running) from a
+  browser of its own: a temporary partition, signed out on every run, so it never signs you out of the
+  project's browser. The back end it talks to is whatever the doer's **Змінні** (`.env`) say. Watch it
+  in the tester session's «Браузер» tab. A sign-in the agent cannot pass (OAuth, SSO) is yours to
+  complete there.
+- **Verdicts.** Each item gets ✓ passed, ✗ failed or ⏸ blocked with the agent's note (and a screenshot
+  under `docs/qa/<date>-<branch>/` for a failure), next to the human checkbox, on the QA tab and in the
+  board's card dialog. The checkbox keeps meaning «a person checked it»; the tester never ticks it.
+  Verdicts are written item by item through the `report_qa_result` tool and show up live.
+- **After the run.** ⤴ «Передати виконавцю» sends the doer one message with every failed and blocked
+  item, its note and screenshot, then closes the run; when everything passed it just closes it.
+  «Відкинути» closes it without a message. Screenshots are not committed by the tester. «Завершити» on
+  the doer stops a running tester first.
+- **Settings.** The «Тестувальник» page in «ШІ-команда» → «Агенти», project scope
+  (`/ai-team/agents/tester`): test accounts (name or role,
+  login, password, note), the sign-in page path and notes for the tester (test data, what never to
+  press). They are stored on this machine only (SQLite `tester_accounts`, `tester_settings`). The agent
+  sees account names, logins and notes, never a password: the `browser_type_credential` tool types it
+  into the page on the api side, and neither the transcript nor the tool result carries it. The
+  instruction and skills are the «Тестувальник» agent's on the workspace scope, as for every agent.
+- **The checklist is kept.** «Створити ПР» asks for a QA checklist only when the card has none, so a
+  second PR run no longer wipes ticks and verdicts. Ticks and verdicts are written per item in the
+  database (`qa_checklist_patch_items`, `qa_checklist_set_if_empty`, migration
+  `20261104090000_qa_checklist_item_functions.sql`).
+- **Routes.** `POST /api/sessions/:id/qa-run` (`{ scope?: "all" | "open" }`),
+  `GET` / `PUT /api/tester/projects/:id`; the socket event `qa_checklist_update`.
+
+### Agents («ШІ-команда → Агенти»)
+
+A short list of Kermanych's own agents (spec: `docs/specs/2026-11-03-ai-team-agent-pages.md`),
+grouped by stage of work: «Виконання», «Дизайн», «Перевірка і здача», and the two with no
+instruction of their own. Each row has the agent's icon, one line on what it does, «переписано»
+when its instruction is not Kermanych's default, and the number of assigned skills. A row opens
+the agent's page, `/ai-team/agents/<id>` (deep-linkable; an unknown id lands on the list). The
+page explains how the agent works: when it runs, what it does, what it gets (each `{{hole}}`),
+what Kermanych appends that no override changes, and how it ends.
+
+- **Workspace scope:** the page edits the agent's instruction and its skill sequence. Leaving the
+  page with an unsaved instruction asks first; switching the project or workspace in the
+  sidebar drops the draft.
+- **Project scope:** the same list, and the page is read-only. It shows what this project's
+  launch gets — the project's own row, else the workspace's, else the default (the source is
+  named) — and links to the workspace scope. «Посіпака»'s page also has its machine block
+  (activation, cap, pause); «Тестувальник»'s page has this machine's test accounts, sign-in page
+  and notes for the project.
+- **User scope:** no agent layer.
+
+### Skills («ШІ-команда → Навички»)
+
+A skill is a named instruction pack an agent can use. A session can get skills from three
+places:
+
+| Source | managed `omp` | managed `claude-code` | native session |
+| --- | --- | --- | --- |
+| the repository's `.omp/skills`, `.claude/skills`, `.agent(s)/skills`, `.codex/skills`, `.github/skills` | finds all of them itself | only `.claude/skills` | whatever the harness finds |
+| your home folders (`~/.omp/agent/skills`, `~/.claude/skills`, `~/.agents/skills`, `~/.codex/skills`) | finds them itself | only `~/.claude/skills` and plugins | whatever the harness finds |
+| the Kermanych library (user, project and workspace rows plus the defaults) | as a library the model picks from | only when the skill is assigned | no |
+
+A skill **assigned** in «Агенти» or «Тригери» is pasted into the agent's instruction on both
+managed runtimes. A repository skill with the same name always wins over a library skill.
+
+- **Import from disk.** «Імпортувати з диска…» lists the skills in the four home folders on this
+  machine. «Інша тека…» browses any folder, hidden ones included, and takes either one skill
+  folder or a folder of skills. Picking a skill opens the usual editor with its name, description
+  and text filled in. Saving stores a **copy** at the scope you are on. The copy is a snapshot:
+  later edits to the file do not reach it, and the skill's other files (`scripts/`, references)
+  are not copied. The editor lists them. An import never overwrites a skill you already have.
+  At project scope it refuses a name a repository skill owns, because that copy would never be
+  used.
+- **From the repository.** At project scope the pane shows a read-only «З репозиторію» block for
+  the bound checkout's skills. «Агенти» and «Тригери» offer those names for assignment. That is
+  how a `claude-code` session gets, say, an `.agents/skills` skill it would not find by itself.
+- **Where a library skill comes from.** A user, project or workspace row with a default's name
+  replaces that default for every session it reaches. In a session's transcript a skill read is
+  badged `бібліотека` for a default and `користувач`, `проєкт` or `воркспейс` for a library row.
+  A row that replaces a default adds `· замість дефолту`, so you know which scope's row to delete
+  to get the default back. The `SKILL.md` Kermanych writes for a library row opens with a comment
+  that names the same scope, so the agent reading `skill://<name>` sees it too.
+- **Routes.** `GET /api/skills/import/roots`, `GET /api/skills/import/scan?path=`,
+  `GET /api/skills/import/read?dir=` (reads only `SKILL.md`), and `GET /api/fs/list?hidden=1`.
+  Spec: `docs/specs/2026-10-22-skill-import.md`.
 
 ### Project documentation
 
@@ -1053,6 +1876,7 @@ default, superpowers' `docs/superpowers/specs|plans` included. Each kind has its
 | Жива документація | how the service works | `docs/schemas/` (or the project's own docs) | off · optional · required | required |
 | Фронтенд ↔ бекенд | frontend handoff | `docs/handoffs/YYYY-MM-DD-<topic>.md` | off · optional · required | optional |
 | | API extension request | `docs/api-requests/YYYY-MM-DD-<topic>.md` | off · optional | off |
+| Екрани | design folder | `docs/design/YYYY-MM-DD-<topic>/` | off · optional | optional |
 
 - **off** — the agent is not told about the kind; nothing is checked.
 - **optional** («За потреби») — the agent writes it where it applies; nothing blocks.
@@ -1078,11 +1902,18 @@ every required document is on the branch:
   document has a `## Documentation impact` section whose first line starts with `None`,
   followed by the reason. The reviewer sees that reason in the diff.
 
+A design session's branch is judged by its own folder only: it needs
+`docs/design/<date>-<slug>/README.md`, and the task-document, plan and living-documentation
+rules do not apply to it. The design rule itself never blocks: `optional` tells every other
+session where designs live and that a task naming one is implemented with
+`implement-from-design`; `off` keeps them from being told.
+
 The finish sheet («Завершити сесію») lists whatever is still missing in plain language; it has
 no documentation checkboxes. «Доповнити документацію» sends the agent one prompt naming
 exactly the missing documents and closes the sheet. You watch the agent write and commit them
 in the transcript, and it pushes them if the PR is already open. Changed documents appear in
-the session's «Документація» tab tagged специфікація / план / схема / хендоф / запит API.
+the session's «Документація» tab tagged специфікація / план / схема / хендоф / запит API /
+дизайн.
 
 The tab survives an API restart and «Завершити». The documents a session read, the documents
 it changed and the skills on «Сесія» are kept on its card (`tasks.docs_report`,
@@ -1105,8 +1936,8 @@ another project of the same workspace: by default the first one, and you pick th
 a request or the frontend for a handoff. The card's title is the document's first heading. Its
 description is the document text, read from the worktree so an uncommitted document works too,
 headed by the project, branch and path it came from. The assignee is optional, as on the
-board, and model and effort are the target project's defaults. A request card gets platform
-`backend`. That side's agent starts from the card while this session keeps working.
+board, and model and effort are the target project's defaults. That side's agent starts from
+the card while this session keeps working.
 «Копіювати текст» copies the same text for pasting into a session that is already running.
 
 The instructions for each document are the default skills `task-spec`, `task-plan`,
@@ -1130,8 +1961,8 @@ paths are defaults that user instructions override, and the policy is exactly su
 instruction, so specs and plans land in `docs/specs` / `docs/plans`. Superpowers has no notion
 of `docs/schemas`, `docs/handoffs` or `docs/api-requests` and does not add the
 `## Documentation impact` section. Those come from the policy, the skills and the gate.
-Whether the claude-code runtime loads `~/.claude` plugins at all is unverified: Kermanych sets
-no `settingSources`.
+The claude-code runtime loads the user's `~/.claude` settings, plugins included: Kermanych sets
+no `settingSources`, and the SDK then loads every settings source.
 
 **Limits.** A session that was already running when the switch or a rule changed gets the new
 policy in its system prompt on its next spawn (resume, restart). The gate applies to it
@@ -1159,7 +1990,7 @@ Local work never waits for the cloud:
   pushed. The pusher retries with exponential backoff (~2 s, doubling to a 60 s cap) and
   also retries immediately after a re-login, so a queue parked on an expired token
   resumes at sign-in.
-- The outbox keeps ONE row per task: an offline burst of `thinking → tool → thinking`
+- The outbox keeps ONE row per task: an offline burst of `thinking → waiting_input → thinking`
   collapses into the newest status, because the board has no use for the ones in between.
   A delivered push retires only the exact version it sent, so a status that arrives while
   that push is in flight survives and goes out on the next pass.
@@ -1167,13 +1998,14 @@ Local work never waits for the cloud:
   `thinking` after you quit Kermanych.
 - On the board, a grey banner means THIS BROWSER lost the cloud; an accent pill
   («Статуси цієї машини ще не відправлені: N») means this machine still owes the cloud
-  pushes; «⚠ давно без змін» on a card means the assignee's machine has gone quiet
-  (there is no heartbeat — it is the age of the task's `updated_at`).
+  pushes; «⚠ давно без змін» on a card means the assignee's machine has gone quiet: a
+  running card older than 90 s by its `updated_at`, while a live machine re-pushes it every
+  45 s.
 
 ### A task stuck «in progress»
 
-A task's status is written only by the machine running it, and there is no heartbeat by
-design — so a machine that crashes (rather than quitting cleanly) leaves its card active
+A task's status is written only by the machine running it, and only a live session keeps it
+fresh — so a machine that crashes (rather than quitting cleanly) leaves its card active
 forever, and an active task cannot be reassigned or deleted. Two people can free it with
 «Позначити зупиненою» on the card: the **assignee**, from any machine, and the
 **workspace owner**, for when the assignee is gone for good; the database refuses
@@ -1182,13 +2014,61 @@ corrects the board — it
 cannot stop a session on a machine you do not control, and if that machine is still alive
 it will simply push its real status again.
 
+## ЦУК — the avatar's control console
+
+A small character — the logo's `›_` as a face — peeks out of the window's left edge on every tab.
+Click it, press <kbd>Ctrl</kbd>/<kbd>⌘</kbd>+<kbd>K</kbd> (matched by the physical key, so the
+Ukrainian layout works; also inside a session's browser page), or draw a counter-clockwise circle
+with the mouse, no button held, and a large window opens in the middle of the screen:
+**ЦУК — «Центр управління Керманича»**, a console for Kermanych itself, with a notepad on its
+right. (Spec: `docs/specs/2026-11-04-cuk-control-console.md`.)
+
+- **One conversation for the whole app.** ЦУК sees every workspace, project and session on this
+  machine and the open board cards; whatever the header has selected is its default target
+  («запусти агента» means the selected project). Switching workspace does not end the
+  conversation; it lives until the app restarts, and «×» starts a new one.
+- **What it does.** Answers about the state («хто чекає на мою відповідь?», «що впало?», «що на
+  дошці?»); opens a tab, a Менеджмент section or any settings pane; selects a workspace or a
+  project; opens a session; files a card into the backlog or launches an agent on a task (plain or
+  «Глибокий аналіз», with the project's defaults and your launch mode); sends a message to an
+  agent; stops, resumes, restarts, archives or unarchives a session; starts or stops its preview;
+  writes to the notepad. It has no file tools — it answers from the app's state, and the agent it
+  launches reads the code — and runs on `claude-sonnet-5` for speed. It sees attached images, not
+  documents.
+- **What waits for you.** Navigation, selection and the notepad happen at once (opening a screen
+  also steps the window aside). Everything that spends the subscription or touches an agent — a
+  launch, a card, a message, stop, resume, restart, archive, unarchive, preview — appears as a card
+  under the answer: what will happen, the text editable, «Виконати» / «Скасувати». The line that
+  says what happened is written by the app after the call answered, never by the model.
+- **What it does not do.** Nothing irreversible: deleting a session or a card, finish, a pull
+  request, a merge, risks, release notes, Jira. Asked for one, it opens the screen with the button
+  and names it.
+- **The notepad is «Список дій».** The ruled page on the right is the current workspace's Action
+  List — the same list, on this machine, as the Менеджмент → Огляд tile, so a line written in one
+  is in the other. Without a workspace it asks you to pick one. Below ~900 px of window width it
+  hides behind 📝.
+- **The Менеджмент assistant is the second panel.** For the owner and managers of the current
+  workspace the window is an accordion: ЦУК expanded (every opening starts there), «Асистент
+  менеджменту» folded to its bar above it. Clicking a bar swaps them; the one composer at the
+  bottom writes to the expanded panel, and each keeps its own draft and attachments. It is the same
+  conversation as the Менеджмент tab's dock, asked as the «Огляд» section. Developers see ЦУК only.
+
+Esc, a click outside, <kbd>⌘K</kbd>, the character or another circle closes the window; a question
+in flight keeps running, the character shows it is thinking, then wears a dot until you look at
+the answer. The circle can be switched off in Settings → «Загальне» if it fires by accident; it
+does not work over a session's browser page, which the app cannot see the mouse over. The
+character is yours to pick in the same pane, under «Персонаж ЦУК»: ten drawings, from the
+terminal bot (the default) to the original glossy drop, a cowboy, a Cossack and Darth Vader; the
+choice is kept on this computer. (docs/specs/2026-11-03-assistant-mascot-choice.md)
+
 ## The Менеджмент tab and its assistant
 
 Менеджмент is the non-code half of the product: seven workspace-scoped sections
 (`packages/core/src/management.ts` is the one table that names them) plus a chat
-field docked to the foot of the page.
+field docked to the foot of the page. Owners and managers also reach the same conversation as
+the second panel of the ЦУК window (above).
 
-That field is a real assistant, and it is deliberately narrow:
+Wherever it is opened, that chat is a real assistant, and it is deliberately narrow:
 
 - **It only reads code, and it writes in exactly five places.** Its file tools are the
   read-only subset (`read`, `grep`, `glob`) — it can look at your repositories but it cannot
@@ -1239,6 +2119,18 @@ That field is a real assistant, and it is deliberately narrow:
   Authors are read as git's `%aN`, so a repository's `.mailmap` folds one person's aliases
   into one section; bots get a closing sentence naming what they updated, not a section of
   their own.
+  With «Звіт по людях» ticked the form also shows a «People» picker: the commit authors the
+  picked projects have on their branches in the period, with their commit counts, read from
+  this machine's clones by `POST /management/release-notes/authors` (git only, no model
+  turn) and re-read whenever a project, branch or date changes. It starts at «Whole team»;
+  untick people — or clear «Whole team» and tick one — to write the report about just them.
+  The pick travels as `"authors": [...]` on the generation request: only those people's
+  commits reach the model, the note's heading says it covers selected contributors, and a
+  picked project none of them committed to is left out of the note rather than refused
+  (`no_commits_by_authors` when none of them committed anywhere). `authors` is refused
+  without `"groupBy": "person"` (`authors_need_person`) or when it is not a non-empty list of
+  names (`authors_invalid`). The chat's `release.notes` action has no `authors` field: the
+  chat cannot see the commit authors, so a pick is made in the form.
   **Every change of the period is named, however long the period.** The note never writes
   «and 45 other changes»: related commits are merged into one bullet that says what changed,
   small ones become a short bullet of a few words, and a count is never a substitute. Every
@@ -1269,9 +2161,13 @@ That field is a real assistant, and it is deliberately narrow:
   written in. Commits in another language are translated; names of people, the product and
   interface labels stay as they are.
 - **It reads the team's capacity.** Team Capacity is the one section marked `read`: the
-  screen adds up the Jira board's remaining estimates (spread over business days up to
+  screen adds up the tracker's remaining estimates (spread over business days up to
   each ticket's due date) and its worklogs against 8 h per person per business day, for a
-  date range you pick, as a chart or a table, for the whole team or the people you tick
+  date range you pick. The tracker is the workspace's Jira board or Plane project; with both
+  connected, a «Jira | Plane» switch on the screen and on the Home capacity and tasks tiles
+  picks one (remembered per workspace, Jira by default). A Plane item counts as estimated only
+  with a time-type estimate. The screen shows the range as a chart or a table, for the whole
+  team or the people you tick
   in the roster picker — the chart, the table and the totals all show that same selection. The
   browser hands the assistant the same numbers by week — two weeks back, six ahead — as
   `context.capacity` on every turn, so «what's Marina's load for the next two weeks» is
@@ -1304,7 +2200,9 @@ That field is a real assistant, and it is deliberately narrow:
     project or board (or the assistant asks); a workspace with one Jira board needs no naming.
     Naming Jira in a workspace that has none — or on a machine with no personal Jira token — is
     refused with the reason, and NOT quietly filed on the native board instead: you named a
-    board, and a card on the other one is a card you will not find where you looked.
+    board, and a card on the other one is a card you will not find where you looked. Plane
+    follows the same rule: only «створи в Plane…» (or a Plane key or project) routes to
+    `plane_create_issue`, and with several connected Plane projects the request names one.
   - **The ticket is written as a project manager writes one, and the app owns its shape.**
     The action carries five named slots — a business context, an optional user flow,
     acceptance criteria, an optional out-of-scope list, and the title — and
@@ -1384,6 +2282,28 @@ That field is a real assistant, and it is deliberately narrow:
   - **Not covered** (present in some Jira MCP servers): Jira Service Management queues and
     customer requests, ProForma forms, development info (PRs/commits), moving an issue to
     another project, entity properties, dashboards and saved filters.
+- **It works in Plane live too, through `plane_*` tools on the same endpoint.** The one MCP
+  server (`kermanych-trackers`) lists the Jira tools and then the Plane tools
+  (`apps/api/src/plane/plane-tools.service.ts`) and routes each call by its name. Every Plane
+  call runs under your own Plane API key and reaches ONLY the Plane projects the workspace
+  connected — a key from any other project is refused. What that covers:
+  - **Reading.** Search (Plane's own search by name or number, narrowed on the board mirror by
+    state group, state, assignee, labels and priority; one page), a full work-item read
+    (fields by name, description and comments as markdown, attachments, links, parent,
+    sub-items, and on request worklogs and the activity log), attachment download, and the
+    vocabularies: projects, states, labels, project members, estimate points, cycles, modules.
+  - **Writing.** Create (the same five ticket slots, English rule and open-question refusal;
+    priority, labels by name, an assignee resolved among the project's members with the
+    candidates named when a name is ambiguous, estimate point, dates, parent, state,
+    attachments), update, a move to any state (`plane_set_state` — Plane has no workflow),
+    comments (add, edit, delete), worklogs (a duration like `3h 20m`, on projects with time
+    tracking), web links, attachments and delete. Plane has no sprints or versions: cycles and
+    modules stand in for them (create, add work items, remove one).
+  - **What you see.** Each Plane write prints its own line («Plane: створено WEB-12 — …»), the
+    board mirror is refreshed for items, comments, worklogs and attachments, and a write Plane
+    accepted is reported with its key even when that refresh failed. Reads stay inside
+    Plane's 60-requests-a-minute budget: the vocabularies are cached and search reads the
+    mirror.
 - **It spends the same subscription your agents spend.** It runs through the same
   `omp` on your PATH, the same provider account and the same plan; there is no second
   key to configure and no separate budget. The mono pill on the right of the field is
@@ -1401,6 +2321,23 @@ That field is a real assistant, and it is deliberately narrow:
   cannot make that sentence disappear — and a refusal aimed at a section that IS writable
   is reported as the prompt malfunction it is, not dressed in a limitation the table does
   not have.
+
+### Who sees the risk register
+
+The Risk Registry belongs to the workspace owner and its managers. A member with the
+**developer** role does not get the section in the Менеджмент rail, a link to
+`/management/risk-registry` sends them to Home, and Home has no Risk Registry tile for them.
+The Менеджмент chat does not show them the register either: their turns carry no risks, and a
+risk action the assistant emits anyway (file, edit, delete, export) is refused with «The risk
+register is open to the workspace owner and managers only». The owner changes a member's
+role in Settings → Members.
+
+The database enforces the same rule: `workspace_risks` and `workspace_risk_events` are read
+and written only by the owner or a manager (`can_access_workspace_risks`); deleting a risk
+stays owner-only. A developer who queries the tables directly gets no rows and cannot insert
+or update one. This needs migration `20261103090000_workspace_risks_managers.sql` — push it
+before shipping this UI ([Applying a migration](#applying-a-migration-to-the-teams-project)).
+Spec: `docs/specs/2026-11-03-risk-registry-managers-only.md`.
 
 ### Exporting the risk register
 

@@ -3,6 +3,16 @@ import type { SubscriptionUsage } from '@kermanych/core';
 import { api } from '../lib/api';
 import { useAuth } from '../stores/auth';
 
+export interface SubscriptionUsagePoll {
+  usage: Ref<SubscriptionUsage | undefined>;
+  /**
+   * The latest poll failed. With `usage` still `undefined` this is «asked, no answer» — a
+   * caller showing a skeleton until the first answer stops it here instead of spinning while
+   * the api is down.
+   */
+  failed: Ref<boolean>;
+}
+
 // The provider plan behind this machine's agents, polled while the caller is mounted. The
 // api answers from a one-minute cache (apps/api/src/usage/usage.service.ts), so polling at
 // the same cadence costs one `omp usage` per minute and no more.
@@ -12,8 +22,9 @@ import { useAuth } from '../stores/auth';
 //     read there signs the user out (stores/auth.ts installs that handler);
 //   * a failed poll keeps the previous value instead of blanking the chip. A dropped api
 //     connection is not news about the plan.
-export function useSubscriptionUsage(intervalMs = 60_000): Ref<SubscriptionUsage | undefined> {
+export function useSubscriptionUsage(intervalMs = 60_000): SubscriptionUsagePoll {
   const usage = ref<SubscriptionUsage | undefined>(undefined);
+  const failed = ref(false);
   const auth = useAuth();
   let timer: ReturnType<typeof setInterval> | undefined;
   let stopped = false;
@@ -21,9 +32,12 @@ export function useSubscriptionUsage(intervalMs = 60_000): Ref<SubscriptionUsage
   async function poll(): Promise<void> {
     try {
       const next = await api.subscriptionUsage();
-      if (!stopped) usage.value = next;
+      if (stopped) return;
+      usage.value = next;
+      failed.value = false;
     } catch {
       /* api down or restarting — keep the last known figures */
+      if (!stopped) failed.value = true;
     }
   }
 
@@ -39,5 +53,5 @@ export function useSubscriptionUsage(intervalMs = 60_000): Ref<SubscriptionUsage
     clearInterval(timer);
   });
 
-  return usage;
+  return { usage, failed };
 }

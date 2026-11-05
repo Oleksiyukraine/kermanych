@@ -44,7 +44,7 @@
           <p class="set__blurb">{{ t('settings.categories.' + section.key + '.blurb') }}</p>
         </div>
         <span
-          v-if="section.scope !== 'app'"
+          v-if="section.scope !== 'app' || section.key === 'app-resources'"
           class="set__saved"
           :class="{ 'set__saved--dirty': dirtyCount > 0 }"
         >{{ dirtyCount > 0 ? t('settings.head.unsaved') : t('settings.head.saved') }}</span>
@@ -91,10 +91,29 @@
             placeholder="git@github.com:org/repo.git"
             :disabled="cloudLocked"
           />
+          <!-- What the project ships (docs/specs/2026-11-03-session-browser-preview.md, decision 9).
+               A cloud field like the rest of this form, so a local-only project shows it locked;
+               publish() carries the local value across. '' is «Не визначено» (NULL). -->
+          <div class="set__group">
+            <span class="set__label">{{ t('settings.project.platform') }}</span>
+            <div class="set__seg">
+              <button
+                v-for="p in PLATFORM_CHOICES"
+                :key="p.value || 'none'"
+                type="button"
+                class="set__seg-btn"
+                :class="{ 'set__seg-btn--on': draft.platform === p.value }"
+                :aria-pressed="draft.platform === p.value"
+                :disabled="cloudLocked"
+                @click="draft.platform = p.value"
+              >{{ t(p.labelKey) }}</button>
+            </div>
+            <p class="set__note">{{ t('settings.project.platformNote') }}</p>
+          </div>
 
           <!-- DOCUMENTATION POLICY. A framed subsection of its own: the master switch
                (`docsRequired`, off by default — the operator's choice, never a migration's)
-               and, while it is on, one rule per document kind in three groups. Each kind
+               and, while it is on, one rule per document kind in four groups. Each kind
                offers exactly DOCS_RULES[key]; the note under it explains the selected rule.
                The rules keep their values while the switch is off, so turning it back on
                restores them. `required` makes the api refuse «Створити ПР», «Закоміти» and
@@ -155,7 +174,7 @@
               <span class="set__path mono" :class="{ 'set__path--empty': !boundPath }">
                 {{ boundPath || t('settings.project.notBound') }}
               </span>
-              <KBtn variant="secondary" @click="pickerOpen = true">{{ t('settings.project.choose') }}</KBtn>
+              <KBtn variant="secondary" :loading="binding" @click="pickerOpen = true">{{ t('settings.project.choose') }}</KBtn>
             </div>
             <p class="set__note">{{ t('settings.project.folderNote') }}</p>
           </div>
@@ -173,6 +192,7 @@
             :label="t('settings.git.defaultBranch')"
             :options="branches"
             :disabled="cloudLocked || !isBound"
+            :loading="branchesLoading"
             :placeholder="t('settings.git.branchPlaceholder')"
             searchable
           />
@@ -225,7 +245,10 @@
           <div class="set__group">
             <span class="set__label">{{ t('settings.git.secrets') }}</span>
             <template v-if="isBound">
-              <div class="set__row">
+              <!-- Not editable before the `.env` is read: a token typed now would be replaced
+                   by the late load (the same rule as the table in «Змінні середовища»). -->
+              <KSkeleton v-if="envPhase === 'skeleton'" variant="block" height="52px" />
+              <div v-else-if="envPhase === 'ready'" class="set__row">
                 <KField
                   v-model="gitToken"
                   class="set__grow"
@@ -248,23 +271,10 @@
           <p v-if="cloudLocked" class="set__note">{{ noCloudRowHint }}</p>
         </div>
 
-        <!-- ── PROJECT · КОМАНДИ ────────────────────────────────────────────── -->
-        <div v-else-if="section.key === 'project-commands' && draft" class="set__form">
-          <KField
-            v-model="draft.previewCommand"
-            :label="t('settings.commands.preview')"
-            placeholder="pnpm dev --port $PORT"
-            :disabled="cloudLocked"
-          />
-          <KField
-            v-model="draft.apiCommand"
-            :label="t('settings.commands.api')"
-            placeholder="pnpm dev:api"
-            :disabled="cloudLocked"
-          />
-
-          <div class="set__rule"></div>
-
+        <!-- ── PROJECT · ФАЙЛИ СЕСІЇ ────────────────────────────────────────── -->
+        <!-- The preview commands left the cloud: the preview config is the repo's own
+             `.kermanych/preview.json` (decision 2), so only the carry list stays here. -->
+        <div v-else-if="section.key === 'project-files' && draft" class="set__form">
           <div class="set__group">
             <span class="set__label">{{ t('settings.commands.carryFiles') }}</span>
             <!-- Chips, not a comma-joined line: these are PATHS, and a list of
@@ -329,7 +339,7 @@
             </i18n-t>
           </p>
           <template v-else>
-            <KEnvEditor v-model="envRows" :ignored="envFile.ignored" :flags-locked="cloudLocked" />
+            <KEnvEditor v-model="envRows" :ignored="envFile.ignored" :flags-locked="cloudLocked" :loading="envNotLoaded" />
             <p v-if="missingRequired.length" class="set__error" role="alert">
               {{ t('settings.env.missingRequired', { keys: missingRequired.join(', ') }) }}
             </p>
@@ -415,17 +425,19 @@
               <KSelect
                 v-else-if="isOwnerOfWorkspace"
                 class="set__role"
-                :model-value="m.role"
+                :model-value="roleControl(m).value"
                 :options="ROLE_OPTIONS"
-                :disabled="roleBusy === m.userId || removingMember === m.userId"
-                @update:model-value="(role: string) => changeRole(m, role as AssignableRole)"
+                :loading="roleControl(m).pending"
+                :disabled="removeAction.busyFor(m.userId)"
+                @update:model-value="(role: string) => roleControl(m).set(role)"
               />
               <KTag v-else>{{ ROLE_LABELS[m.role] }}</KTag>
               <KIconButton
                 v-if="isOwnerOfWorkspace && !isOwnerSeat(m.userId)"
                 :title="t('settings.members.remove')"
-                :disabled="removingMember === m.userId"
-                @click="removeMember(m)"
+                :loading="removeAction.busyFor(m.userId)"
+                :disabled="roleControl(m).pending"
+                @click="askRemoveMember(m)"
               >✕</KIconButton>
             </div>
             <div v-if="!membersLoading && !members.length" class="set__empty">
@@ -485,6 +497,34 @@
                  account settings, and both apply on click with no save bar. -->
             <KLangToggle />
           </div>
+          <!-- The character at the window's left edge (docs/specs/2026-11-03-assistant-mascot-
+               choice.md): each tile is the character itself. Device-local, applied on click. -->
+          <div class="set__group">
+            <span class="set__label">{{ t('settings.appGeneral.assistantMascot') }}</span>
+            <div class="set__mascots">
+              <button
+                v-for="m in ASSISTANT_MASCOTS"
+                :key="m"
+                type="button"
+                class="set__mascot"
+                :class="{ 'set__mascot--on': mascot === m }"
+                :aria-pressed="mascot === m"
+                @click="mascot = m"
+              >
+                <span class="set__mascot-art"><AssistantMascot :busy="false" :variant="m" /></span>
+                <span class="set__mascot-name">{{ t(`settings.appGeneral.assistantMascots.${m}`) }}</span>
+              </button>
+            </div>
+            <p class="set__note">{{ t('settings.appGeneral.assistantMascotNote') }}</p>
+          </div>
+          <!-- The assistant's mouse circle (docs/specs/2026-11-03-assistant-overlay.md): a
+               device-local preference like the theme, applied on click. -->
+          <div class="set__group">
+            <KCheckbox v-model="assistantGesture" :label="t('settings.appGeneral.assistantGesture')" />
+            <p class="set__note">{{ t('settings.appGeneral.assistantGestureNote') }}</p>
+          </div>
+          <!-- The app's version. It used to sit beside the logo; the header gave that room to
+               the project switcher, and «what am I running» is a settings-page question. -->
           <div class="set__group">
             <span class="set__label">{{ t('settings.appGeneral.version') }}</span>
             <div class="set__row set__row--center">
@@ -492,6 +532,30 @@
               <KBtn variant="ghost" @click="appUpdate.openAllNotes()">{{ t('settings.appGeneral.whatsNew') }}</KBtn>
             </div>
           </div>
+        </div>
+
+        <!-- ── APP · СПОВІЩЕННЯ ─────────────────────────────────────────────── -->
+        <!-- docs/specs/2026-11-01-dock-attention.md. The switches apply on click, with no save
+             bar, like the theme: both are this machine's screen preferences. -->
+        <div v-else-if="section.key === 'app-notifications'" class="set__form">
+          <template v-if="hasDock">
+            <div class="set__group">
+              <KCheckbox v-model="badgeOn" :label="t('settings.notifications.badge')" />
+              <p class="set__note">{{ t('settings.notifications.badgeNote') }}</p>
+            </div>
+            <div class="set__group">
+              <KCheckbox v-model="bounceOn" :label="t('settings.notifications.bounce')" />
+              <p class="set__note">{{ t('settings.notifications.bounceNote') }}</p>
+            </div>
+            <div class="set__group">
+              <span class="set__label">{{ t('settings.notifications.popups') }}</span>
+              <KSkeleton v-if="popupsPhase === 'skeleton'" variant="line" width="60%" />
+              <p v-else-if="popupsPhase === 'ready'" class="set__note">
+                {{ popupsBlocked ? t('settings.notifications.popupsBlocked') : t('settings.notifications.popupsAllowed') }}
+              </p>
+            </div>
+          </template>
+          <p v-else class="set__note">{{ t('settings.notifications.desktopOnly') }}</p>
         </div>
 
         <!-- ── APP · ГАРЯЧІ КЛАВІШІ ─────────────────────────────────────────── -->
@@ -514,11 +578,32 @@
                  immediately and affects new sessions. Existing sessions keep their
                  backend as noted. -->
             <KSelect
-              :model-value="auth.runtime ?? 'omp'"
+              :model-value="runtimePick.value"
               :options="RUNTIME_OPTIONS"
-              @update:model-value="pickRuntime"
+              :loading="runtimePick.pending"
+              @update:model-value="runtimePick.set"
             />
+            <p v-if="runtimeChecking" class="set__note set__checking" role="status">
+              <KSpinner :size="11" />{{ t('settings.runtime.checking') }}
+            </p>
             <p class="set__note">{{ t('settings.runtime.note') }}</p>
+          </div>
+
+          <div class="set__rule"></div>
+
+          <!-- Machine-local (api native_settings), applied when a native session next starts. -->
+          <div class="set__group">
+            <span class="set__label">{{ t('settings.runtime.nativeLabel') }}</span>
+            <KSkeleton v-if="nativePhase === 'skeleton'" variant="line" width="60%" />
+            <p v-else-if="nativeError" class="set__note" role="alert">{{ nativeError }}</p>
+            <KCheckbox
+              v-else-if="nativePhase === 'ready'"
+              :model-value="claudeFullScreenPick.value"
+              :loading="claudeFullScreenPick.pending"
+              :label="t('settings.runtime.claudeFullScreen')"
+              @update:model-value="claudeFullScreenPick.set"
+            />
+            <p class="set__note">{{ t('settings.runtime.claudeFullScreenNote') }}</p>
           </div>
 
           <div class="set__rule"></div>
@@ -528,9 +613,10 @@
             <!-- Applies on selection: the language is written to the cloud immediately and
                  injected into the system prompt of sessions launched afterwards. -->
             <KSelect
-              :model-value="auth.language ?? ''"
+              :model-value="languagePick.value"
               :options="LANGUAGE_OPTIONS"
-              @update:model-value="pickLanguage"
+              :loading="languagePick.pending"
+              @update:model-value="languagePick.set"
             />
             <p class="set__note">{{ t('settings.language.note') }}</p>
           </div>
@@ -540,6 +626,65 @@
           <!-- What the «English — ASD-STE100» entries mean. Always visible: the table is needed
                BEFORE a level is picked, not only after. -->
           <SteGuide />
+        </div>
+
+        <!-- ── APP · ГОЛОС ──────────────────────────────────────────────────── -->
+        <!-- docs/specs/2026-11-02-voice-conversation.md, decisions 3 and 11. The key lives in the
+             api on this machine; the window only learns its source and last four characters. -->
+        <div v-else-if="section.key === 'app-voice'" class="set__form">
+          <div class="set__group">
+            <span class="set__label">{{ t('settings.voice.key') }}</span>
+            <KSkeleton v-if="voiceKeyPhase === 'skeleton'" variant="line" width="60%" />
+            <template v-else-if="voiceKeyPhase === 'ready' && voiceKey">
+              <p class="set__note">
+                {{ voiceKey.source === 'env' ? t('settings.voice.keyEnv', { hint: voiceKey.hint })
+                  : voiceKey.source === 'stored' ? t('settings.voice.keyStored', { hint: voiceKey.hint })
+                  : t('settings.voice.keyNone') }}
+              </p>
+              <KField
+                v-if="voiceKey.source !== 'env'"
+                v-model="voiceKeyInput"
+                type="password"
+                placeholder="sk-…"
+                :label="voiceKey.source === 'stored' ? t('settings.voice.keyReplace') : t('settings.voice.keyField')"
+                @keydown.enter="saveVoiceKey.run()"
+              />
+              <div class="set__row">
+                <KBtn
+                  v-if="voiceKey.source !== 'env'"
+                  variant="secondary"
+                  :loading="saveVoiceKey.busy.value"
+                  :disabled="!voiceKeyInput.trim()"
+                  @click="saveVoiceKey.run()"
+                >{{ t('settings.voice.save') }}</KBtn>
+                <KBtn v-if="voiceKey.source" variant="ghost" :loading="checkVoiceKey.busy.value" @click="checkVoiceKey.run()">
+                  {{ t('settings.voice.check') }}
+                </KBtn>
+                <KBtn v-if="voiceKey.source === 'stored'" variant="ghost" :loading="removeVoiceKey.busy.value" @click="removeVoiceKey.run()">
+                  {{ t('settings.voice.remove') }}
+                </KBtn>
+              </div>
+              <p v-if="voiceCheck" class="set__note" role="status">{{ voiceCheck }}</p>
+            </template>
+            <p v-else-if="voiceKeyPhase === 'blank'" class="set__note">{{ t('settings.voice.keyUnknown') }}</p>
+            <p class="set__note">{{ t('settings.voice.keyNote') }}</p>
+          </div>
+
+          <div class="set__rule"></div>
+
+          <div class="set__group">
+            <span class="set__label">{{ t('settings.voice.voice') }}</span>
+            <!-- Applies on selection, to the next conversation: GPT-Live fixes the voice at start. -->
+            <KSelect v-model="voiceChoice" :options="VOICE_OPTIONS" searchable />
+            <p class="set__note">{{ t('settings.voice.voiceNote') }}</p>
+          </div>
+
+          <div class="set__rule"></div>
+
+          <div class="set__group">
+            <span class="set__label">{{ t('settings.voice.language') }}</span>
+            <p class="set__note">{{ t('settings.voice.languageNote', { language: voiceLanguageLabel }) }}</p>
+          </div>
         </div>
 
         <!-- ── APP · АКАУНТ ─────────────────────────────────────────────────── -->
@@ -571,20 +716,26 @@
                  provider meters a plan in. There is no token figure to show here
                  and none is invented; the cap itself lives with the provider, not
                  with Керманич, so nothing on this screen can change it. -->
-            <div v-if="!planLines.length" class="set__note">
-              {{ t('settings.plan.noWindows') }}
-            </div>
-            <div v-for="p in planLines" :key="p.provider" class="set__plan">
-              <span class="set__plan-prov">{{ p.provider }}</span>
-              <span v-for="w in p.windows" :key="w.id" class="set__plan-win mono">
-                {{ w.label }} · {{ w.percent }}<template v-if="w.resets"> · {{ w.resets }}</template>
-              </span>
-            </div>
+            <!-- Nothing until the first poll answers: «no windows» before it would be a claim
+                 about the plan made without reading it. -->
+            <KSkeleton v-if="planPhase === 'skeleton'" variant="lines" :rows="2" />
+            <template v-else-if="planPhase === 'ready'">
+              <div v-if="!planLines.length" class="set__note">
+                {{ t('settings.plan.noWindows') }}
+              </div>
+              <div v-for="p in planLines" :key="p.provider" class="set__plan">
+                <span class="set__plan-prov">{{ p.provider }}</span>
+                <span v-for="w in p.windows" :key="w.id" class="set__plan-win mono">
+                  {{ w.label }} · {{ w.percent }}<template v-if="w.resets"> · {{ w.resets }}</template>
+                </span>
+              </div>
+            </template>
           </div>
 
           <div class="set__group">
             <span class="set__label">{{ t('settings.account.outboxLabel') }}</span>
-            <p class="set__note">
+            <KSkeleton v-if="outboxPhase === 'skeleton'" variant="line" width="60%" />
+            <p v-else-if="outboxPhase === 'ready'" class="set__note">
               {{
                 outbox === null
                   ? t('settings.account.outboxNoService')
@@ -592,6 +743,14 @@
                     ? t('settings.account.outboxEmpty')
                     : t('settings.account.outboxPending', { count: outbox })
               }}
+            </p>
+          </div>
+
+          <div class="set__group">
+            <span class="set__label">{{ t('settings.categories.app-resources.label') }}</span>
+            <p class="set__note">
+              {{ t('settings.account.resourcesNote') }}
+              <a href="#" class="set__link" @click.prevent="goSection('app-resources')">{{ t('settings.account.resourcesLink') }}</a>
             </p>
           </div>
 
@@ -606,6 +765,102 @@
           </div>
         </div>
 
+        <!-- ── APP · РЕСУРСИ МАШИНИ ─────────────────────────────────────────── -->
+        <div v-else-if="section.key === 'app-resources'" class="set__form">
+          <p v-if="!resources || !resDraft" class="set__note">{{ t('settings.resources.loading') }}</p>
+          <template v-else>
+            <div class="set__group">
+              <span class="set__label">{{ t('settings.resources.detected') }}</span>
+              <p class="set__note mono">{{ hardwareLine(t, resources) }}</p>
+              <p class="set__note">{{ t('settings.resources.pressureLine', { level: pressureText }) }}</p>
+              <p class="set__note">
+                {{ t('settings.resources.slots', { running: resources.running, waiting: resources.waiting }) }}
+              </p>
+              <div class="set__row">
+                <KBtn variant="ghost" :disabled="resBusy" @click="redetectResources">
+                  {{ t('settings.resources.redetect') }}
+                </KBtn>
+                <KBtn
+                  variant="ghost"
+                  :disabled="resBusy || Object.keys(resources.overrides).length === 0"
+                  @click="resetResources"
+                >{{ t('settings.resources.reset') }}</KBtn>
+              </div>
+            </div>
+
+            <div class="set__rule"></div>
+
+            <div class="set__group">
+              <KCheckbox v-model="resDraft.applied" :label="t('settings.resources.apply')" />
+              <p class="set__note">{{ t('settings.resources.applyNote') }}</p>
+            </div>
+
+            <div class="set__group">
+              <span class="set__label">{{ t('settings.resources.agents') }}</span>
+              <KField
+                type="number"
+                :model-value="String(resDraft.agents)"
+                @update:model-value="(v: string) => setCount('agents', v)"
+              />
+              <p class="set__note">{{ t('settings.resources.agentsNote') }}</p>
+            </div>
+
+            <div class="set__group">
+              <span class="set__label">{{ t('settings.resources.subagents') }}</span>
+              <KField
+                type="number"
+                :model-value="String(resDraft.subagents)"
+                @update:model-value="(v: string) => setCount('subagents', v)"
+              />
+              <p v-for="o in resources.overriddenBy.subagents ?? []" :key="o.source" class="set__note mono">
+                {{ t('settings.resources.overridden', { source: o.source, value: o.value }) }}
+              </p>
+            </div>
+
+            <div class="set__group">
+              <KCheckbox v-model="resDraft.background" :label="t('settings.resources.background')" />
+              <p v-for="o in resources.overriddenBy.background ?? []" :key="o.source" class="set__note mono">
+                {{ t('settings.resources.overridden', { source: o.source, value: o.value }) }}
+              </p>
+            </div>
+
+            <div class="set__group">
+              <span class="set__label">{{ t('settings.resources.testWorkers') }}</span>
+              <KField
+                type="number"
+                :model-value="String(resDraft.testWorkers)"
+                @update:model-value="(v: string) => setCount('testWorkers', v)"
+              />
+              <p class="set__note">{{ t('settings.resources.nextStart') }}</p>
+            </div>
+
+            <div class="set__rule"></div>
+
+            <div class="set__group">
+              <KCheckbox v-model="resDraft.lowerPriority" :label="t('settings.resources.lowerPriority')" />
+              <p class="set__note">{{ t('settings.resources.lowerPriorityNote') }}</p>
+            </div>
+
+            <div class="set__group">
+              <KCheckbox
+                v-model="resDraft.watchdog"
+                :disabled="!resources.watchdogSupported"
+                :label="t('settings.resources.watchdog')"
+              />
+              <p v-if="!resources.watchdogSupported" class="set__note">{{ t('settings.resources.watchdogUnsupported') }}</p>
+              <template v-else>
+                <span class="set__label">{{ t('settings.resources.watchdogActionLabel') }}</span>
+                <KSelect
+                  :model-value="resDraft.watchdogAction"
+                  :options="WATCHDOG_ACTION_OPTIONS"
+                  :disabled="!resDraft.watchdog"
+                  @update:model-value="(v: string) => resDraft && (resDraft.watchdogAction = v === 'notify' ? 'notify' : 'kill')"
+                />
+              </template>
+            </div>
+          </template>
+        </div>
+
         <p v-if="paneError" class="set__error" role="alert">{{ paneError }}</p>
       </div>
 
@@ -615,8 +870,8 @@
         <span class="set__bar-text">
           {{ dirtyCount === 1 ? t('settings.bar.oneField') : t('settings.bar.manyFields', { count: dirtyCount }) }}
         </span>
-        <KBtn variant="ghost" :disabled="saving" @click="discard">{{ t('settings.bar.discard') }}</KBtn>
-        <KBtn variant="primary" :disabled="saving" @click="save">
+        <KBtn variant="ghost" :disabled="saving" @click="askDiscard">{{ t('settings.bar.discard') }}</KBtn>
+        <KBtn variant="primary" :loading="saving" @click="save">
           {{ saving ? t('settings.bar.saving') : t('settings.bar.save') }}
         </KBtn>
       </div>
@@ -626,40 +881,52 @@
          machine's binding for the selected project. -->
     <KDirPicker v-model="pickerOpen" :start="boundPath" @select="bindTo" />
 
-    <KModal v-model="deleteProjectOpen" :title="t('settings.deleteProject.title', { name: projectName })">
+    <!-- The three confirmations below are short cloud writes: each stays open and cannot be
+         dismissed while its write runs, and closes only on success — a failure is shown
+         inside, beside the button that caused it. -->
+    <KModal
+      v-model="deleteProjectOpen"
+      :title="t('settings.deleteProject.title', { name: projectName })"
+      :persistent="deletingProject"
+    >
       <div class="set__modal">
         <p class="set__error" role="alert">{{ t('settings.deleteProject.warn', { name: projectName }) }}</p>
         <p class="set__note">{{ t('settings.deleteProject.note') }}</p>
         <p v-if="deleteError" class="set__error" role="alert">{{ deleteError }}</p>
       </div>
       <template #controls>
-        <KBtn variant="ghost" @click="deleteProjectOpen = false">{{ t('settings.modal.cancel') }}</KBtn>
-        <KBtn variant="primary" :disabled="deleteBusy" @click="confirmDeleteProject">{{ t('settings.danger.delete') }}</KBtn>
+        <KBtn variant="ghost" :disabled="deletingProject" @click="deleteProjectOpen = false">{{ t('settings.modal.cancel') }}</KBtn>
+        <KBtn variant="primary" :loading="deletingProject" @click="confirmDeleteProject">{{ t('settings.danger.delete') }}</KBtn>
       </template>
     </KModal>
 
-    <KModal v-model="deleteWorkspaceOpen" :title="t('settings.deleteWorkspace.title', { name: workspaceName })">
+    <KModal
+      v-model="deleteWorkspaceOpen"
+      :title="t('settings.deleteWorkspace.title', { name: workspaceName })"
+      :persistent="deletingWorkspace"
+    >
       <div class="set__modal">
         <p class="set__error" role="alert">{{ t('settings.deleteWorkspace.warn', { name: workspaceName }) }}</p>
         <p v-if="deleteError" class="set__error" role="alert">{{ deleteError }}</p>
       </div>
       <template #controls>
-        <KBtn variant="ghost" @click="deleteWorkspaceOpen = false">{{ t('settings.modal.cancel') }}</KBtn>
-        <KBtn variant="primary" :disabled="deleteBusy" @click="confirmDeleteWorkspace">
+        <KBtn variant="ghost" :disabled="deletingWorkspace" @click="deleteWorkspaceOpen = false">{{ t('settings.modal.cancel') }}</KBtn>
+        <KBtn variant="primary" :loading="deletingWorkspace" @click="confirmDeleteWorkspace">
           {{ t('settings.danger.delete') }}
         </KBtn>
       </template>
     </KModal>
 
-    <KModal v-model="signOutOpen" :title="t('settings.signOutModal.title')">
+    <KModal v-model="signOutOpen" :title="t('settings.signOutModal.title')" :persistent="signOutBusy">
       <div class="set__modal">
         <i18n-t keypath="settings.signOutModal.body" tag="p" class="set__note">
           <template #name><span class="mono">{{ accountName }}</span></template>
         </i18n-t>
+        <p v-if="signOutError" class="set__error" role="alert">{{ signOutError }}</p>
       </div>
       <template #controls>
-        <KBtn variant="ghost" @click="signOutOpen = false">{{ t('settings.modal.cancel') }}</KBtn>
-        <KBtn variant="primary" :disabled="signOutBusy" @click="confirmSignOut">{{ t('settings.account.signOut') }}</KBtn>
+        <KBtn variant="ghost" :disabled="signOutBusy" @click="signOutOpen = false">{{ t('settings.modal.cancel') }}</KBtn>
+        <KBtn variant="primary" :loading="signOutBusy" @click="confirmSignOut">{{ t('settings.account.signOut') }}</KBtn>
       </template>
     </KModal>
   </main>
@@ -681,15 +948,16 @@
 // and a dialog cannot be left open beside the work it describes, cannot be deep
 // linked, and has no Back button.
 // WHAT IS DELIBERATELY ABSENT. Everything drawn here is backed by a real read and
-// a real write. Provider API keys, spend caps, a parallel-agent limit, a
-// context-warning threshold, harness paths and remappable keys
-// have no storage, no endpoint and no column anywhere in this repo — see
-// lib/settings.ts. A panel for them would be a control that silently forgets.
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
+// a real write. Provider API keys, spend caps, a context-warning threshold, harness
+// paths and remappable keys have no storage, no endpoint and no column anywhere in
+// this repo — see lib/settings.ts. A panel for them would be a control that silently
+// forgets. (The parallel-agent limit is real now: «Ресурси машини», `/machine/resources`.)
+import { computed, effectScope, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue';
 import { onBeforeRouteLeave, useRoute, useRouter } from 'vue-router';
 import { useI18n } from 'vue-i18n';
-import type { EnvFileView, ThinkingLevel, AgentLanguage, DocsPolicyKey, DocsRule } from '@kermanych/core';
-import { AGENT_LANGUAGES, AGENT_LANGUAGE_LABELS, DEFAULT_DOCS_POLICY, DOCS_LAYOUT, DOCS_RULES } from '@kermanych/core';
+import { confirmAction } from '../lib/confirm';
+import type { EnvFileView, ThinkingLevel, AgentLanguage, DocsPolicyKey, DocsRule, MachineResources, NativeSettings, Platform } from '@kermanych/core';
+import { AGENT_LANGUAGES, AGENT_LANGUAGE_LABELS, DEFAULT_DOCS_POLICY, DOCS_LAYOUT, DOCS_RULES, VOICE_IDS } from '@kermanych/core';
 import type { AssignableRole, WorkspaceMember, WorkspaceRole } from '@kermanych/cloud';
 import type { KTheme } from '@kermanych/tokens';
 import { useOrchestrator } from 'stores/orchestrator';
@@ -697,12 +965,21 @@ import { useProjects } from 'stores/projects';
 import { modelOptions, effortOptions } from '../lib/models';
 import { EFFORT_OPTIONS } from '../lib/effort';
 import { useAuth } from 'stores/auth';
-import { api } from '../lib/api';
+import { api, type VoiceKeyStatus } from '../lib/api';
 import { theme, setTheme } from '../lib/theme';
 import { percent, planWindow, renderWindow } from '../lib/format';
 import { until, renderTime } from '../lib/time';
 import { useNow } from '../composables/useNow';
 import { useSubscriptionUsage } from '../composables/useSubscriptionUsage';
+import { hardwareLine, useResourcesConsent } from '../composables/useResourcesConsent';
+import { errorText, useAsyncAction, useKeyedAction } from '../composables/useAsyncAction';
+import { useOptimisticValue } from '../composables/useOptimisticValue';
+import { useLoadPhase } from '../composables/useLoadPhase';
+import { dockBadgeOn, dockBounceOn } from '../lib/dock';
+import { ASSISTANT_MASCOTS, assistantGestureOn, assistantMascot } from 'stores/assistant-overlay';
+import AssistantMascot from 'components/assistant/AssistantMascot.vue';
+import { voicePick } from '../lib/voice';
+import { locale } from '../lib/locale';
 import { isMoveRefusal, memberErrorText, moveRefusalText, NO_ROWS } from '../lib/cloud-errors';
 import {
   buildEnvRows,
@@ -710,12 +987,17 @@ import {
   envEdits,
   envKeysChange,
   envRequiredKeys,
+  parseLimitCount,
+  PLATFORM_CHOICES,
+  resourcesDraft,
+  resourcesUpdate,
   setEnvValue,
   settingsScopeEntry,
   settingsSection,
   SETTINGS_CATEGORIES,
   SETTINGS_SCOPES,
   type EnvRow,
+  type ResourcesDraft,
   type SettingsScope,
 } from '../lib/settings';
 import KTopNav from 'components/kit/KTopNav.vue';
@@ -732,6 +1014,8 @@ import KIconButton from 'components/kit/KIconButton.vue';
 import KModal from 'components/kit/KModal.vue';
 import KTag from 'components/kit/KTag.vue';
 import KLangToggle from 'components/kit/KLangToggle.vue';
+import KSkeleton from 'components/kit/KSkeleton.vue';
+import KSpinner from 'components/kit/KSpinner.vue';
 import SteGuide from 'components/settings/SteGuide.vue';
 import { APP_VERSION, useAppUpdate } from 'stores/app-update';
 
@@ -753,7 +1037,6 @@ const scopeOptions = computed(() =>
 const scopeLabel = computed(() => t('settings.scope.' + section.value.scope));
 
 const paneError = ref<string | null>(null);
-const saving = ref(false);
 
 function goSection(key: string): void {
   paneError.value = null;
@@ -808,12 +1091,6 @@ const ROLE_OPTIONS = computed<KSelectOption[]>(() => [
   { value: 'developer', label: t('settings.roles.developer') },
   { value: 'manager', label: t('settings.roles.manager') },
 ]);
-// The user id whose role change is in flight, so its select disables without freezing
-// the whole roster.
-const roleBusy = ref<string | null>(null);
-// The user id whose removal is in flight, so its row controls disable without
-// freezing the whole roster.
-const removingMember = ref<string | null>(null);
 
 // The FK from projects.workspace_id is `on delete restrict`, so a group still
 // holding projects cannot go. Read off the same array useProjects.removeWorkspace
@@ -862,8 +1139,8 @@ interface ProjectDraft {
   defaultModel: string;
   defaultEffort: ThinkingLevel | '';
   conventions: string;
-  previewCommand: string;
-  apiCommand: string;
+  // What the project ships; '' is «Не визначено».
+  platform: Platform | '';
   carryFiles: string[];
   docFolders: string[];
   docsRequired: boolean;
@@ -873,17 +1150,19 @@ interface ProjectDraft {
   docsSchemas: DocsRule;
   docsHandoff: DocsRule;
   docsApiRequest: DocsRule;
+  docsDesign: DocsRule;
 }
 
-// The policy rows of the «Документація» subsection: three groups, the draft field each
+// The policy rows of the «Документація» subsection: four groups, the draft field each
 // kind edits, and the folder shown beside its label.
-type DocsDraftField = 'docsSpec' | 'docsPlan' | 'docsSchemas' | 'docsHandoff' | 'docsApiRequest';
+type DocsDraftField = 'docsSpec' | 'docsPlan' | 'docsSchemas' | 'docsHandoff' | 'docsApiRequest' | 'docsDesign';
 const DOCS_DRAFT_FIELD: Record<DocsPolicyKey, DocsDraftField> = {
   spec: 'docsSpec',
   plan: 'docsPlan',
   schemas: 'docsSchemas',
   handoff: 'docsHandoff',
   apiRequest: 'docsApiRequest',
+  design: 'docsDesign',
 };
 const DOCS_KIND_PATH: Record<DocsPolicyKey, string> = {
   spec: `${DOCS_LAYOUT.specs}/`,
@@ -891,11 +1170,15 @@ const DOCS_KIND_PATH: Record<DocsPolicyKey, string> = {
   schemas: `${DOCS_LAYOUT.schemas}/`,
   handoff: `${DOCS_LAYOUT.handoffs}/`,
   apiRequest: `${DOCS_LAYOUT.apiRequests}/`,
+  design: `${DOCS_LAYOUT.design}/`,
 };
-const DOCS_GROUPS: { key: 'task' | 'living' | 'frontBack'; kinds: DocsPolicyKey[] }[] = [
+const DOCS_GROUPS: { key: 'task' | 'living' | 'frontBack' | 'screens'; kinds: DocsPolicyKey[] }[] = [
   { key: 'task', kinds: ['spec', 'plan'] },
   { key: 'living', kinds: ['schemas'] },
   { key: 'frontBack', kinds: ['handoff', 'apiRequest'] },
+  // «Дизайн» sessions write their folder whatever the rule; it only decides whether every other
+  // session of the project is told that designs live there (policyLine).
+  { key: 'screens', kinds: ['design'] },
 ];
 
 const draft = ref<ProjectDraft | null>(null);
@@ -922,8 +1205,7 @@ function seedProject(): void {
     defaultModel: c?.defaultModel ?? row?.defaultModel ?? '',
     defaultEffort: c?.defaultEffort ?? row?.defaultEffort ?? '',
     conventions: c?.conventions ?? row?.conventions ?? '',
-    previewCommand: c?.previewCommand ?? row?.previewCommand ?? '',
-    apiCommand: c?.apiCommand ?? row?.apiCommand ?? '',
+    platform: c?.platform ?? row?.platform ?? '',
     carryFiles: [...(c?.carryFiles ?? row?.carryFiles ?? ['.env'])],
     docFolders: [...(c?.docFolders ?? row?.docFolders ?? [])],
     docsRequired: c?.docsRequired ?? row?.docsRequired ?? false,
@@ -932,6 +1214,7 @@ function seedProject(): void {
     docsSchemas: policy.schemas,
     docsHandoff: policy.handoff,
     docsApiRequest: policy.apiRequest,
+    docsDesign: policy.design,
   };
   draft.value = { ...next, carryFiles: [...next.carryFiles], docFolders: [...next.docFolders] };
   base.value = next;
@@ -953,17 +1236,34 @@ watch(
   { immediate: true },
 );
 
+// Whose repo `branches` lists. A project switch empties the list at once and a reply for
+// the project just left is dropped, so the picker never offers another repo's branches;
+// re-opening the section refetches without blanking the list it already shows.
+const branchesFor = ref<string | null>(null);
+const branchesLoading = computed(
+  () => isBound.value && !!projectId.value && branchesFor.value !== projectId.value,
+);
+
+watch(projectId, () => {
+  branches.value = [];
+  branchesFor.value = null;
+});
+
 // GET /projects/:id/branches answers `project not bound` without a binding, so do
 // not ask. Non-fatal either way: the picker degrades to the value already chosen.
 watch(
   [() => section.value.key, projectId, isBound],
   async ([key, id, bound]) => {
     if (key !== 'project-git' || !id || !bound) return;
+    let next: string[];
     try {
-      branches.value = (await store.listBranches(id)).branches;
+      next = (await store.listBranches(id)).branches;
     } catch {
-      branches.value = [];
+      next = [];
     }
+    if (projectId.value !== id) return;
+    branches.value = next;
+    branchesFor.value = id;
   },
   { immediate: true },
 );
@@ -1033,37 +1333,54 @@ const missingRequired = computed(() =>
 // silently replace typed secrets.
 const ENV_SECTIONS = new Set(['project-env', 'project-git']);
 
-watch(
-  [() => section.value.key, projectId, isBound],
-  async ([key, id, bound]) => {
-    if (!ENV_SECTIONS.has(key) || !id || !bound || envDirty.value) return;
-    try {
-      envFile.value = await store.getEnv(id);
-      envLoaded.value = true;
-      paneError.value = null;
-    } catch (e) {
-      envFile.value = { entries: [], ignored: true };
-      envLoaded.value = false;
-      paneError.value = e instanceof Error ? e.message : String(e);
-    }
-    seedEnvRows();
-  },
-  { immediate: true },
+// The project whose `.env` the table holds (read, or tried and failed). Until it is the
+// selected one the table and the GIT_TOKEN field are a skeleton and take no input — a
+// row typed into the empty table would be replaced by the late load.
+const envReadFor = ref<string | null>(null);
+const envNotLoaded = computed(
+  () => isBound.value && !!projectId.value && envReadFor.value !== projectId.value,
 );
+const envPhase = useLoadPhase(() => envNotLoaded.value);
 
 const GIT_TOKEN_KEY = 'GIT_TOKEN';
 const tokenRevealed = ref(false);
 
 // A project switch invalidates the loaded file immediately, so the table cannot
-// show one project's secrets under another's name while the fetch above is in
-// flight.
+// show one project's secrets under another's name while the fetch below is in
+// flight. Declared BEFORE the load watcher so it runs first on a switch: the
+// load's «skip while dirty» check must see the cleared table, not the edits left
+// behind in the project just left.
 watch(projectId, () => {
   envFile.value = { entries: [], ignored: true };
   envLoaded.value = false;
+  envReadFor.value = null;
   seedEnvRows();
   // Nor may a revealed token stay revealed under another project's name.
   tokenRevealed.value = false;
 });
+
+watch(
+  [() => section.value.key, projectId, isBound],
+  async ([key, id, bound]) => {
+    if (!ENV_SECTIONS.has(key) || !id || !bound || envDirty.value) return;
+    let file: EnvFileView | null = null;
+    let error: string | null = null;
+    try {
+      file = await store.getEnv(id);
+    } catch (e) {
+      error = errorText(e);
+    }
+    // Dropped: a reply for a project already left, and one that would replace rows
+    // typed while a refresh was in flight.
+    if (projectId.value !== id || envDirty.value) return;
+    envFile.value = file ?? { entries: [], ignored: true };
+    envLoaded.value = file !== null;
+    paneError.value = error;
+    envReadFor.value = id;
+    seedEnvRows();
+  },
+  { immediate: true },
+);
 
 // THE «Секрети» FIELD of «Git Налаштування»: one row of the table above, not a
 // store of its own. A token is a VALUE, and values live in the bound repo's `.env`
@@ -1137,12 +1454,26 @@ async function invite(): Promise<void> {
   }
 }
 
-async function removeMember(m: WorkspaceMember): Promise<void> {
-  const ws = workspace.value;
-  if (!ws || removingMember.value === m.userId) return;
-  const who = m.profile?.githubUsername ?? m.userId;
-  removingMember.value = m.userId;
-  try {
+// The ✕ asks first, naming who and where; only a «yes» starts the (spinning) removal.
+async function askRemoveMember(m: WorkspaceMember): Promise<void> {
+  if (removeAction.busyFor(m.userId)) return;
+  const ok = await confirmAction({
+    title: t('confirmations.removeMember.title'),
+    message: t('confirmations.removeMember.message', {
+      who: m.profile?.githubUsername ?? m.userId,
+      workspace: workspaceName.value,
+    }),
+    confirmLabel: t('confirmations.label.remove'),
+  });
+  if (ok) void removeAction.run(m.userId, m);
+}
+
+// Per member: ✕ on one row neither blocks nor spins the others.
+const removeAction = useKeyedAction(
+  async (_userId: string, m: WorkspaceMember) => {
+    const ws = workspace.value;
+    if (!ws) return;
+    const who = m.profile?.githubUsername ?? m.userId;
     await projects.removeMember(ws.id, m.userId);
     // A DELETE the owner-only policy refuses does NOT error — it matches zero rows,
     // while the store has already dropped the row locally. Re-read so the roster
@@ -1153,45 +1484,74 @@ async function removeMember(m: WorkspaceMember): Promise<void> {
       return;
     }
     store.notify(t('settings.members.removed', { handle: who }));
-  } catch (e) {
-    store.notify(memberErrorText(e), 'error', 6000);
-  } finally {
-    removingMember.value = null;
-  }
-}
+  },
+  { onError: (e) => store.notify(memberErrorText(e), 'error', 6000) },
+);
 
-async function changeRole(m: WorkspaceMember, role: AssignableRole): Promise<void> {
-  const ws = workspace.value;
-  if (!ws || m.role === role) return;
-  const who = m.profile?.githubUsername ?? m.userId;
-  roleBusy.value = m.userId;
-  try {
-    // The rpc RAISES on refusal (unlike the silent zero-rows delete), and the store
-    // updates the roster only on success — so a failure leaves the select showing the
-    // old role with nothing to roll back.
-    await projects.setMemberRole(ws.id, m.userId, role);
-    store.notify(t('settings.members.roleChanged', { handle: who, role: ROLE_LABELS.value[role] }));
-  } catch (e) {
-    store.notify(memberErrorText(e), 'error', 6000);
-  } finally {
-    roleBusy.value = null;
+// The role select of each member row is save-on-change: it shows the pick at once and spins
+// until the rpc answers. The rpc RAISES on refusal (unlike the silent zero-rows delete), and
+// the store updates the roster only on success — so a failure drops the pick and the select
+// returns to the stored role. One optimistic control per (workspace, member), created on
+// first render inside a scope this page owns, so they stop with the page.
+const roleScope = effectScope();
+type RoleControl = { value: string; pending: boolean; set: (next: string) => Promise<void> };
+const roleControls = new Map<string, RoleControl>();
+
+function roleControl(m: WorkspaceMember): RoleControl {
+  const wsId = workspace.value?.id ?? '';
+  const key = `${wsId}:${m.userId}`;
+  let control = roleControls.get(key);
+  if (!control) {
+    const current = () => projects.members[wsId]?.find((x) => x.userId === m.userId);
+    control = roleScope.run(() =>
+      reactive(
+        useOptimisticValue<string>(
+          () => current()?.role ?? '',
+          async (next) => {
+            const member = current();
+            if (!wsId || !member || member.role === next) return;
+            const role = next as AssignableRole;
+            await projects.setMemberRole(wsId, member.userId, role);
+            const who = member.profile?.githubUsername ?? member.userId;
+            store.notify(t('settings.members.roleChanged', { handle: who, role: ROLE_LABELS.value[role] }));
+          },
+          { onError: (e) => store.notify(memberErrorText(e), 'error', 6000) },
+        ),
+      ),
+    )!;
+    roleControls.set(key, control);
   }
+  return control;
 }
 
 // ── DIRTY / SAVE ────────────────────────────────────────────────────────────
-// App-scope controls apply on click and queue nothing, so the bar belongs to the
-// two scopes that write to Supabase.
+// Most app-scope controls apply on click and queue nothing; «Ресурси машини» is the one
+// app pane with a draft, because its values only make sense saved together with the switch.
 const dirtyCount = computed(() => {
   if (section.value.scope === 'project') return configDirty.value.length + (envDirty.value ? 1 : 0);
   if (section.value.scope === 'workspace') return wsDirty.value.length;
-  return 0;
+  return resDirty.value.length;
 });
+
+// The save bar's «Відкинути» — unsaved edits are lost, so it asks first.
+async function askDiscard(): Promise<void> {
+  const ok = await confirmAction({
+    title: t('confirmations.discardEdits.title'),
+    message: t('confirmations.discardEdits.message'),
+    confirmLabel: t('confirmations.label.discard'),
+  });
+  if (ok) discard();
+}
 
 function discard(): void {
   paneError.value = null;
   if (section.value.scope === 'project') {
     seedProject();
     envRows.value = envBase.value.map((r) => ({ ...r }));
+    return;
+  }
+  if (section.value.scope === 'app') {
+    if (resBase.value) resDraft.value = { ...resBase.value };
     return;
   }
   wsDraft.value = { ...wsBase.value };
@@ -1233,8 +1593,7 @@ async function saveProject(): Promise<void> {
       defaultModel: d.defaultModel,
       defaultEffort: d.defaultEffort,
       conventions: d.conventions,
-      previewCommand: d.previewCommand,
-      apiCommand: d.apiCommand,
+      platform: d.platform,
       // Never store an empty carry list: the launch path would copy nothing into
       // the worktree.
       carryFiles: d.carryFiles.length ? d.carryFiles : ['.env'],
@@ -1246,6 +1605,7 @@ async function saveProject(): Promise<void> {
         schemas: d.docsSchemas,
         handoff: d.docsHandoff,
         apiRequest: d.docsApiRequest,
+        design: d.docsDesign,
       },
       ...(envKeys ? { envKeys } : {}),
       ...(moved ? { workspaceId: d.workspaceId } : {}),
@@ -1255,10 +1615,9 @@ async function saveProject(): Promise<void> {
   seedEnvRows();
 }
 
-async function save(): Promise<void> {
-  if (dirtyCount.value === 0 || saving.value) return;
+async function doSave(): Promise<void> {
+  if (dirtyCount.value === 0) return;
   paneError.value = null;
-  saving.value = true;
   const scope = section.value.scope;
   try {
     if (scope === 'project') {
@@ -1277,6 +1636,8 @@ async function save(): Promise<void> {
       await projects.patchWorkspace(ws.id, { name, color: wsDraft.value.color, icon });
       wsBase.value = { name, color: wsDraft.value.color, icon };
       wsDraft.value = { ...wsBase.value };
+    } else if (scope === 'app') {
+      await saveResources();
     }
     store.notify(t('settings.save.saved'));
   } catch (e) {
@@ -1305,10 +1666,11 @@ async function save(): Promise<void> {
     } else {
       paneError.value = raw;
     }
-  } finally {
-    saving.value = false;
   }
 }
+
+// One guard for the button and ⌘S: a second press while the write runs does nothing.
+const { run: save, busy: saving } = useAsyncAction(doSave);
 
 // ⌘S / Ctrl+S. On `window` because the bar is at the foot of the pane and the
 // focus is wherever the operator was typing; `preventDefault` keeps the browser's
@@ -1345,83 +1707,87 @@ const BIND_ERRORS = computed<Record<string, string>>(() => ({
   'project not found': t('settings.binding.projectNotFound'),
 }));
 
-async function bindTo(path: string): Promise<void> {
-  const id = projectId.value;
-  if (!id) return;
-  try {
+// Runs after the folder picker closes; «Обрати» spins until the binding is written.
+const { run: bindTo, busy: binding } = useAsyncAction(
+  async (path: string) => {
+    const id = projectId.value;
+    if (!id) return;
     const bound = await store.setProjectBinding(id, path);
     // project_update streams back over the socket, so the path above and the
     // sidebar tile refresh themselves.
     store.notify(t('settings.binding.bound', { path: bound.localRepoPath }));
-  } catch (e) {
-    const raw = e instanceof Error ? e.message : String(e);
-    store.notify(BIND_ERRORS.value[raw] ?? raw, 'error', 6000);
-  }
-}
+  },
+  {
+    onError: (e) => {
+      const raw = errorText(e);
+      store.notify(BIND_ERRORS.value[raw] ?? raw, 'error', 6000);
+    },
+  },
+);
 
 // ── DANGER ──────────────────────────────────────────────────────────────────
 const deleteProjectOpen = ref(false);
 const deleteWorkspaceOpen = ref(false);
 const deleteError = ref<string | null>(null);
-const deleteBusy = ref(false);
 
-async function confirmDeleteProject(): Promise<void> {
-  const id = projectId.value;
-  if (!id) return;
-  deleteError.value = null;
-  deleteBusy.value = true;
-  try {
+const { run: confirmDeleteProject, busy: deletingProject } = useAsyncAction(
+  async () => {
+    const id = projectId.value;
+    if (!id) return;
+    deleteError.value = null;
     await projects.remove(id);
     deleteProjectOpen.value = false;
     // The prune emits project_removed over the socket, which clears the selection;
     // this pane then falls back to its «виберіть проєкт» state on its own.
     store.notify(t('settings.deleteProject.done'));
-  } catch (e) {
-    const raw = e instanceof Error ? e.message : String(e);
-    if (raw.startsWith('cloud delete unconfirmed')) {
-      // The delete itself did not error; only the confirming re-read did. Do not
-      // accuse the user of a refusal for something that most likely landed.
-      deleteError.value = t('settings.deleteProject.unconfirmed');
-    } else if (raw.startsWith('cloud refused the delete')) {
-      deleteError.value = t('settings.deleteProject.refused');
-    } else {
-      deleteError.value = raw;
-    }
-  } finally {
-    deleteBusy.value = false;
-  }
-}
+  },
+  {
+    onError: (e) => {
+      const raw = errorText(e);
+      if (raw.startsWith('cloud delete unconfirmed')) {
+        // The delete itself did not error; only the confirming re-read did. Do not
+        // accuse the user of a refusal for something that most likely landed.
+        deleteError.value = t('settings.deleteProject.unconfirmed');
+      } else if (raw.startsWith('cloud refused the delete')) {
+        deleteError.value = t('settings.deleteProject.refused');
+      } else {
+        deleteError.value = raw;
+      }
+    },
+  },
+);
 
-async function confirmDeleteWorkspace(): Promise<void> {
-  const ws = workspace.value;
-  if (!ws) return;
-  deleteError.value = null;
-  deleteBusy.value = true;
-  try {
+const { run: confirmDeleteWorkspace, busy: deletingWorkspace } = useAsyncAction(
+  async () => {
+    const ws = workspace.value;
+    if (!ws) return;
+    deleteError.value = null;
     // removeWorkspace confirms the delete with a re-read and clears the scope when
     // it was this group's, so nothing here navigates.
     await projects.removeWorkspace(ws.id);
     deleteWorkspaceOpen.value = false;
     store.notify(t('settings.deleteWorkspace.done', { name: ws.name }));
-  } catch (e) {
-    const raw = e instanceof Error ? e.message : String(e);
-    // The pre-check above and `workspaceHasProjects` both read the last cloud list
-    // THIS session read, so a project a teammate added since then is invisible to
-    // both: the button renders enabled and the `on delete restrict` FK is what
-    // says no — in English. The database is the authority; translate it.
-    deleteError.value = raw.includes('violates foreign key constraint')
-      ? t('settings.deleteWorkspace.hasProjects')
-      : raw;
-  } finally {
-    deleteBusy.value = false;
-  }
-}
+  },
+  {
+    onError: (e) => {
+      const raw = errorText(e);
+      // The pre-check above and `workspaceHasProjects` both read the last cloud list
+      // THIS session read, so a project a teammate added since then is invisible to
+      // both: the button renders enabled and the `on delete restrict` FK is what
+      // says no — in English. The database is the authority; translate it.
+      deleteError.value = raw.includes('violates foreign key constraint')
+        ? t('settings.deleteWorkspace.hasProjects')
+        : raw;
+    },
+  },
+);
 
 // ── APP SCOPE ───────────────────────────────────────────────────────────────
 const THEMES = computed<readonly { value: KTheme; label: string }[]>(() => [
   { value: 'dark', label: t('settings.app.themeDark') },
   { value: 'light', label: t('settings.app.themeLight') },
   { value: 'matrix', label: t('settings.app.themeMatrix') },
+  { value: 'hermes', label: t('settings.app.themeHermes') },
 ]);
 
 function pickTheme(next: KTheme, e: MouseEvent): void {
@@ -1438,24 +1804,20 @@ const RUNTIME_OPTIONS = computed<readonly KSelectOption[]>(() => [
   { value: 'claude-code', label: t('settings.runtime.claude') },
 ]);
 
-async function pickRuntime(next: string): Promise<void> {
-  if (auth.runtime === next) return;
+// The CLI self-check after a runtime switch. Deliberately AFTER the write and never
+// blocking it: the operator owns the preference, and this only spares them discovering a
+// signed-out CLI through a session that silently never answers. It can take a while (it
+// runs the CLI), so the pane says «перевіряю» meanwhile. Not a guarded action: a second pick
+// while the first check runs must check the NEW runtime, and the older check's verdict (about
+// a runtime no longer chosen) is dropped — the latest pick wins.
+const runtimeChecking = ref(false);
+let runtimeCheckRun = 0;
+async function checkRuntime(kind: 'omp' | 'claude-code'): Promise<void> {
+  const run = ++runtimeCheckRun;
+  runtimeChecking.value = true;
   try {
-    await auth.chooseRuntime(next as 'omp' | 'claude-code');
-  } catch (e) {
-    store.notify(
-      `Failed to change runtime: ${e instanceof Error ? e.message : String(e)}`,
-      'error'
-    );
-    return;
-  }
-  // The switch already applied — now say whether the backend just chosen can actually run
-  // anything here. Deliberately AFTER the write and never blocking it: the operator owns the
-  // preference, and this only spares them discovering a signed-out CLI through a session that
-  // silently never answers.
-  try {
-    const verdict = await api.checkAccountRuntime(next as 'omp' | 'claude-code');
-    if (verdict.ok) return;
+    const verdict = await api.checkAccountRuntime(kind);
+    if (run !== runtimeCheckRun || verdict.ok) return;
     const key = `errors.runtime_${verdict.code ?? ''}`;
     store.notify(
       verdict.code && te(key) ? t(key) : verdict.reason || t('onboarding.runtime.checkFailed'),
@@ -1464,8 +1826,48 @@ async function pickRuntime(next: string): Promise<void> {
   } catch {
     // The check could not run (api restarting). The preference is saved either way, and a
     // failed self-test is not something to report as a backend fault.
+  } finally {
+    if (run === runtimeCheckRun) runtimeChecking.value = false;
   }
 }
+
+const runtimePick = reactive(
+  useOptimisticValue<string>(
+    () => auth.runtime ?? 'omp',
+    async (next) => {
+      if (auth.runtime === next) return;
+      const kind = next as 'omp' | 'claude-code';
+      await auth.chooseRuntime(kind);
+      void checkRuntime(kind);
+    },
+  ),
+);
+
+// Native sessions' launch preference (api native_settings), read on entering this section.
+const nativeSettings = ref<NativeSettings | null>(null);
+const nativeError = ref('');
+const nativePhase = useLoadPhase(() => nativeSettings.value === null && !nativeError.value);
+const claudeFullScreenPick = reactive(
+  useOptimisticValue<boolean>(
+    () => nativeSettings.value?.claudeFullScreen ?? false,
+    async (next) => {
+      nativeSettings.value = await api.setNativeSettings({ claudeFullScreen: next });
+    },
+  ),
+);
+watch(
+  () => section.value.key,
+  async (key) => {
+    if (key !== 'app-runtime') return;
+    nativeError.value = '';
+    try {
+      nativeSettings.value = await api.nativeSettings();
+    } catch (e) {
+      nativeError.value = errorText(e);
+    }
+  },
+  { immediate: true },
+);
 
 // Endonym labels come from core so the picker reads the same in every app locale. The list is
 // the frozen AGENT_LANGUAGES tuple; there is no '' row, so a pick always sets a real language.
@@ -1473,17 +1875,15 @@ const LANGUAGE_OPTIONS = computed<readonly KSelectOption[]>(() =>
   AGENT_LANGUAGES.map((code) => ({ value: code, label: AGENT_LANGUAGE_LABELS[code] })),
 );
 
-async function pickLanguage(next: string): Promise<void> {
-  if (!next || auth.language === next) return;
-  try {
-    await auth.chooseLanguage(next as AgentLanguage);
-  } catch (e) {
-    store.notify(
-      `Failed to change language: ${e instanceof Error ? e.message : String(e)}`,
-      'error'
-    );
-  }
-}
+const languagePick = reactive(
+  useOptimisticValue<string>(
+    () => auth.language ?? '',
+    async (next) => {
+      if (!next || auth.language === next) return;
+      await auth.chooseLanguage(next as AgentLanguage);
+    },
+  ),
+);
 
 // Every binding the app actually listens to, and the file that owns it. A
 // read-only sheet is the honest shape: none of these is stored anywhere, so there
@@ -1497,6 +1897,9 @@ const KEYMAP: readonly { act: string; keys: string; where: string }[] = [
   { act: 'settings.keymap.acts.switchNav', keys: '← → ⇱ ⇲', where: 'settings.keymap.where.navBars' },
   { act: 'settings.keymap.acts.openRow', keys: '⏎', where: 'settings.keymap.where.tables' },
   { act: 'settings.keymap.acts.toggleFiles', keys: '⌘B', where: 'settings.keymap.where.everywhere' },
+  { act: 'settings.keymap.acts.focusMode', keys: '⌘\\', where: 'settings.keymap.where.everywhere' },
+  { act: 'settings.keymap.acts.assistant', keys: '⌘K', where: 'settings.keymap.where.everywhere' },
+  { act: 'settings.keymap.acts.assistantGesture', keys: '↺', where: 'settings.keymap.where.everywhere' },
   { act: 'settings.keymap.acts.saveSettings', keys: '⌘S', where: 'settings.keymap.where.thisScreen' },
   { act: 'settings.keymap.acts.closeWindow', keys: '⎋', where: 'settings.keymap.where.everywhere' },
 ];
@@ -1507,8 +1910,12 @@ const accountName = computed(() => {
   return handle ? `@${handle}` : (p?.displayName ?? auth.user?.id.slice(0, 8) ?? '');
 });
 
-const planUsage = useSubscriptionUsage();
+const { usage: planUsage, failed: planFailed } = useSubscriptionUsage();
 const planNow = useNow(30_000);
+// The usage poll stays `undefined` until its first answer; until then the plan lines are a
+// skeleton, never «no windows». A failed poll with nothing to show ends the skeleton (the
+// api is down — the poll keeps retrying each minute) and the pane says «no windows».
+const planPhase = useLoadPhase(() => planUsage.value === undefined && !planFailed.value);
 
 const planLines = computed(() =>
   (planUsage.value?.providers ?? []).map((p) => ({
@@ -1527,8 +1934,10 @@ const planLines = computed(() =>
 
 // How many status pushes THIS machine still owes the cloud. Only the local process
 // can see that, so it is a fetch rather than a store field. `null` means the local
-// api did not answer, which is a different statement from «нічого не чекає».
-const outbox = ref<number | null>(null);
+// api did not answer, which is a different statement from «нічого не чекає»;
+// `undefined` means it has not been asked yet — a skeleton, not «не відповів».
+const outbox = ref<number | null | undefined>(undefined);
+const outboxPhase = useLoadPhase(() => outbox.value === undefined);
 
 watch(
   () => section.value.key,
@@ -1543,24 +1952,215 @@ watch(
   { immediate: true },
 );
 
-const signOutOpen = ref(false);
-const signOutBusy = ref(false);
+// ── NOTIFICATIONS ───────────────────────────────────────────────────────────
+// The Dock icon's two switches are device-local refs (lib/dock.ts) that apply on click. Pop-ups
+// are only reported: macOS shows them for an app signed by an Apple team alone, and main reads
+// the signature once per launch. The web build has neither, and says so.
+const hasDock = typeof window !== 'undefined' && !!window.kermanych?.dock;
+const badgeOn = dockBadgeOn;
+const bounceOn = dockBounceOn;
+const assistantGesture = assistantGestureOn;
+const mascot = assistantMascot;
+// `undefined` until main answers: a skeleton, not a guess.
+const popupsBlocked = ref<boolean | undefined>(undefined);
+const popupsPhase = useLoadPhase(() => popupsBlocked.value === undefined);
+watch(
+  () => section.value.key,
+  async (key) => {
+    const read = window.kermanych?.notificationsBlocked;
+    if (key !== 'app-notifications' || !read || popupsBlocked.value !== undefined) return;
+    popupsBlocked.value = await read();
+  },
+  { immediate: true },
+);
 
-async function confirmSignOut(): Promise<void> {
-  signOutBusy.value = true;
+// ── VOICE ───────────────────────────────────────────────────────────────────
+// docs/specs/2026-11-02-voice-conversation.md. The OpenAI key is written to the api (this machine
+// only) and never read back; `undefined` until the api answers, `null` when it did not.
+const voiceKey = ref<VoiceKeyStatus | null | undefined>(undefined);
+const voiceKeyPhase = useLoadPhase(() => voiceKey.value === undefined);
+const voiceKeyInput = ref('');
+// The last «Перевірити» verdict, cleared whenever the key changes.
+const voiceCheck = ref('');
+watch(
+  () => section.value.key,
+  async (key) => {
+    if (key !== 'app-voice' || voiceKey.value) return;
+    try {
+      voiceKey.value = await api.voiceKey();
+    } catch {
+      voiceKey.value = null;
+    }
+  },
+  { immediate: true },
+);
+const saveVoiceKey = useAsyncAction(async () => {
+  if (!voiceKeyInput.value.trim()) return;
+  voiceKey.value = await api.setVoiceKey(voiceKeyInput.value);
+  voiceKeyInput.value = '';
+  voiceCheck.value = '';
+});
+const removeVoiceKey = useAsyncAction(async () => {
+  voiceKey.value = await api.setVoiceKey('');
+  voiceCheck.value = '';
+});
+const checkVoiceKey = useAsyncAction(async () => {
+  voiceCheck.value = '';
   try {
-    // signOut() ends the Supabase session and, through apply(null), drops the local
-    // api's token; the router's watcher on `auth.user` performs the navigation to
-    // /login. It only rejects on an unexpected fault (the sign-out's own network
-    // failure is swallowed by supabase-js), and then the modal must stay open.
-    await auth.signOut();
-    signOutOpen.value = false;
+    await api.checkVoiceKey();
+    voiceCheck.value = t('settings.voice.checkOk');
   } catch (e) {
-    store.notify(t('settings.account.signOutError', { error: e instanceof Error ? e.message : String(e) }), 'error');
-  } finally {
-    signOutBusy.value = false;
+    voiceCheck.value = errorText(e);
+  }
+});
+const voiceChoice = voicePick;
+const VOICE_OPTIONS: readonly KSelectOption[] = VOICE_IDS.map((id) => ({ value: id, label: id }));
+// The conversation speaks the agent's language, or the screen's when none is set (decision 11).
+const voiceLanguageLabel = computed(() =>
+  auth.language ? AGENT_LANGUAGE_LABELS[auth.language] : locale.value === 'en' ? 'English' : 'Українська',
+);
+
+// ── RESOURCES ───────────────────────────────────────────────────────────────
+// This machine's profile (spec decision 8). The saved state is the api's effective values plus
+// the decision; the draft goes through the same bar as the cloud scopes, and save sends only
+// what differs from the profile as overrides (lib/settings.ts `resourcesUpdate`).
+const consent = useResourcesConsent();
+const resources = ref<MachineResources | null>(null);
+const resBase = ref<ResourcesDraft | null>(null);
+const resDraft = ref<ResourcesDraft | null>(null);
+const resDirty = computed(() =>
+  resDraft.value && resBase.value ? changedFields(resDraft.value, resBase.value) : [],
+);
+const resBusy = ref(false);
+
+// A fresh read replaces the saved side always, and the draft only when nothing is pending:
+// the 5 s pressure poll must not wipe what the operator is typing.
+function takeResources(r: MachineResources, reseed: boolean): void {
+  resources.value = r;
+  resBase.value = resourcesDraft(r);
+  if (reseed || !resDraft.value || resDirty.value.length === 0) resDraft.value = resourcesDraft(r);
+}
+
+async function loadResources(reseed: boolean): Promise<void> {
+  try {
+    takeResources(await api.machineResources(), reseed);
+  } catch {
+    /* api down or restarting — keep the last known figures, like the plan chip */
   }
 }
+
+let resTimer: ReturnType<typeof setInterval> | undefined;
+// Bumped on every section change and on unmount. A run that awaited past a newer one (or past
+// unmount) sees a stale number and starts no timer, so at most one poll ever exists.
+let resGen = 0;
+watch(
+  () => section.value.key,
+  async (key) => {
+    const gen = ++resGen;
+    clearInterval(resTimer);
+    resTimer = undefined;
+    if (key !== 'app-resources') return;
+    await auth.ready;
+    await loadResources(false);
+    if (gen !== resGen) return;
+    seedProfileDraft();
+    // Pressure changes on its own; 5 s matches the watchdog's own sampling.
+    clearInterval(resTimer);
+    resTimer = setInterval(() => void loadResources(false), 5000);
+  },
+  { immediate: true },
+);
+
+// The popup can also open while this pane is already showing (redetect), so the flag is
+// watched on its own and not only on section entry.
+watch(
+  () => route.query.draft,
+  () => {
+    if (section.value.key === 'app-resources') seedProfileDraft();
+  },
+);
+
+// «Налаштувати» in the consent popup: the detected profile with the switch on, as an UNSAVED
+// draft. The flag is dropped at once so a reload does not re-seed over a save.
+function seedProfileDraft(): void {
+  if (route.query.draft !== 'profile' || !resources.value) return;
+  resDraft.value = resourcesDraft(resources.value, true);
+  void router.replace({ name: 'settings', params: { section: 'app-resources' } });
+}
+
+onBeforeUnmount(() => {
+  resGen += 1;
+  clearInterval(resTimer);
+});
+watch(consent.decided, () => void loadResources(true));
+
+const pressureText = computed(() => {
+  const p = resources.value?.pressure;
+  if (p == null) return t('settings.resources.pressure.unavailable');
+  return t('settings.resources.pressure.' + (p === 1 ? 'normal' : p === 2 ? 'warn' : 'critical'));
+});
+
+const WATCHDOG_ACTION_OPTIONS = computed<KSelectOption[]>(() => [
+  { value: 'kill', label: t('settings.resources.watchdogAction.kill') },
+  { value: 'notify', label: t('settings.resources.watchdogAction.notify') },
+]);
+
+function setCount(key: 'agents' | 'subagents' | 'testWorkers', text: string): void {
+  const n = parseLimitCount(text);
+  if (n !== null && resDraft.value) resDraft.value[key] = n;
+}
+
+async function redetectResources(): Promise<void> {
+  resBusy.value = true;
+  try {
+    const r = await api.redetectMachineResources();
+    takeResources(r, true);
+    if (r.askConsent) consent.open(r);
+  } catch (e) {
+    store.notify(e instanceof Error ? e.message : String(e), 'error');
+  } finally {
+    resBusy.value = false;
+  }
+}
+
+// Not a draft edit: it clears every override on the server at once, like the spec's button.
+async function resetResources(): Promise<void> {
+  const ok = await confirmAction({
+    title: t('confirmations.resetResources.title'),
+    message: t('confirmations.resetResources.message'),
+    confirmLabel: t('confirmations.label.reset'),
+  });
+  if (!ok) return;
+  resBusy.value = true;
+  try {
+    takeResources(await api.updateMachineResources({ overrides: null }), true);
+  } catch (e) {
+    store.notify(e instanceof Error ? e.message : String(e), 'error');
+  } finally {
+    resBusy.value = false;
+  }
+}
+
+async function saveResources(): Promise<void> {
+  if (!resDraft.value || !resources.value) return;
+  takeResources(await api.updateMachineResources(resourcesUpdate(resDraft.value, resources.value.profile)), true);
+}
+
+const signOutOpen = ref(false);
+const signOutError = ref<string | null>(null);
+
+// signOut() ends the Supabase session and, through apply(null), drops the local
+// api's token; the router's watcher on `auth.user` performs the navigation to
+// /login. It only rejects on an unexpected fault (the sign-out's own network
+// failure is swallowed by supabase-js), and then the modal stays open with the error.
+const { run: confirmSignOut, busy: signOutBusy } = useAsyncAction(
+  async () => {
+    signOutError.value = null;
+    await auth.signOut();
+    signOutOpen.value = false;
+  },
+  { onError: (e) => (signOutError.value = t('settings.account.signOutError', { error: errorText(e) })) },
+);
 
 // ── RAIL FURNITURE ──────────────────────────────────────────────────────────
 const scopeHint = computed(() => {
@@ -1818,6 +2418,19 @@ const badges = computed<Record<string, number | undefined>>(() => ({
   font-size: var(--k-fs-sm);
   line-height: 1.5;
   color: var(--k-faint);
+}
+
+.set__link {
+  color: var(--k-accent);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+// «перевіряю» under the runtime select: the spinner sits on the text's baseline.
+.set__checking {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--k-sp-1);
 }
 
 .set__error {
@@ -2084,6 +2697,58 @@ const badges = computed<Record<string, number | undefined>>(() => ({
   color: var(--k-text);
   background: var(--k-surface2);
   font-weight: var(--k-fw-semibold);
+}
+
+// ── ASSISTANT CHARACTER PICKER ──────────────────────────────────────────────
+.set__mascots {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--k-sp-2);
+}
+
+.set__mascot {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  width: 104px;
+  padding: 10px 6px 8px;
+  font-family: var(--k-font-ui);
+  font-size: var(--k-fs-sm);
+  color: var(--k-muted);
+  background: var(--k-surface);
+  border: var(--k-rule-thin) solid var(--k-line);
+  border-radius: var(--k-r);
+  cursor: pointer;
+  transition: border-color 0.12s, color 0.12s;
+
+  &:hover {
+    color: var(--k-text);
+    border-color: var(--k-line-strong);
+  }
+
+  &:focus-visible {
+    outline: 1px solid var(--k-accent);
+    outline-offset: 1px;
+  }
+}
+
+.set__mascot--on {
+  color: var(--k-text);
+  font-weight: var(--k-fw-medium);
+  border-color: var(--k-accent);
+  box-shadow: var(--k-glow-focus);
+}
+
+.set__mascot-art {
+  display: block;
+  width: 44px;
+  height: 44px;
+}
+
+.set__mascot-name {
+  text-align: center;
+  line-height: 1.2;
 }
 
 // ── DOCUMENTATION POLICY ────────────────────────────────────────────────────

@@ -20,7 +20,7 @@
       :tabindex="item.value === modelValue ? 0 : -1"
       @click="emit('update:modelValue', item.value)"
     >
-      {{ item.label }}
+      {{ item.label }}<span v-if="item.count !== undefined" class="k-subnav__count mono">{{ item.count }}</span>
     </button>
     <span
       v-show="ready"
@@ -44,7 +44,9 @@ import { useSlidingIndicator } from '../../composables/useSlidingIndicator';
 
 const props = defineProps<{
   modelValue: string;
-  items: { value: string; label: string }[];
+  // `count`, when given, trails the label in the muted mono the rail's counts use. An item
+  // without one is drawn without a number — absent is not «0».
+  items: { value: string; label: string; count?: number }[];
   ariaLabel?: string;
 }>();
 
@@ -132,6 +134,13 @@ function onKeydown(e: KeyboardEvent): void {
 
 .k-subnav__item--active {
   color: var(--k-text);
+}
+
+.k-subnav__count {
+  margin-left: 6px;
+  font-size: var(--k-fs-xs);
+  font-weight: var(--k-fw-regular);
+  color: var(--k-faint);
 }
 
 .k-subnav__bar {

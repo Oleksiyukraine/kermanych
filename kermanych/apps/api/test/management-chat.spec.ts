@@ -59,7 +59,9 @@ vi.mock("../src/rpc/rpc-session", () => {
 
 import { ManagementChatService } from "../src/management/management-chat.service";
 import { ManagementMcpService } from "../src/management/management-mcp.service";
-import type { JiraToolScope, JiraToolsService } from "../src/jira/jira-tools.service";
+import type { JiraToolsService } from "../src/jira/jira-tools.service";
+import type { PlaneToolsService } from "../src/plane/plane-tools.service";
+import type { ManagementToolScope } from "../src/management/tracker-tools";
 import type { HttpAdapterHost } from "@nestjs/core";
 import { RegistryService } from "../src/registry/registry.service";
 
@@ -285,24 +287,24 @@ describe("ManagementChatService", () => {
     expect(sent[2]?.text).not.toContain("── ДОЛУЧЕНІ ФАЙЛИ ──");
   });
 
-  // The Jira tools reach the child as an MCP server bound to ONE conversation: the secret it
+  // The tracker tools reach the child as an MCP server bound to ONE conversation: the secret it
   // is handed resolves to a scope that acts for this turn's operator, can upload the files the
   // operator attached (images included — they reach the model inline, but the upload needs
   // their bytes), reports every write into this turn's reply, and dies with the conversation.
-  it("binds the Jira tools to the child, the turn's operator and the conversation's files", async () => {
+  it("binds the tracker tools to the child, the turn's operator and the conversation's files", async () => {
     const registry = new RegistryService(":memory:");
     registry.upsertProject({ id: "p1", name: "Альфа", localRepoPath: "/repos/alpha" });
     let seen: { userId: string; workspaceId: string; bytes: string } | undefined;
     const tools = {
       list: () => [],
-      call: async (scope: JiraToolScope) => {
+      call: async (scope: ManagementToolScope) => {
         const f = scope.file("screen.png");
         seen = { userId: scope.userId, workspaceId: scope.workspaceId, bytes: f ? (await readFile(f.path)).toString() : "" };
         scope.changed({ text: "Jira: до KRM-1 прикріплено «screen.png»", code: "jira_attachment_added", params: { key: "KRM-1", name: "screen.png" } });
         return { text: "{}", isError: false };
       },
     } as unknown as JiraToolsService;
-    const mcp = new ManagementMcpService(tools);
+    const mcp = new ManagementMcpService(tools, { list: () => [] } as unknown as PlaneToolsService);
     const http = { httpAdapter: { getHttpServer: () => ({ address: () => ({ port: 4317 }) }) } } as unknown as HttpAdapterHost;
     const svc = new ManagementChatService(registry, mcp, http);
     const conv = (text: string): ManagementChatAsk => ({ ...ask(text), conversationId: "management:w-tools" });
@@ -318,12 +320,12 @@ describe("ManagementChatService", () => {
     );
     expect(spawned[0]?.mcp?.url).toBe("http://127.0.0.1:4317/api/management/mcp");
     expect(seen).toEqual({ userId: "u7", workspaceId: "w1", bytes: "png-bytes" });
-    expect(r.jiraChanges).toEqual([{ text: "Jira: до KRM-1 прикріплено «screen.png»", code: "jira_attachment_added", params: { key: "KRM-1", name: "screen.png" } }]);
+    expect(r.trackerChanges).toEqual([{ text: "Jira: до KRM-1 прикріплено «screen.png»", code: "jira_attachment_added", params: { key: "KRM-1", name: "screen.png" } }]);
 
     // The next turn's reply carries only ITS writes.
     duringTurn = undefined;
     turns = [reply("ок")];
-    expect((await svc.ask(conv("дякую"), "u7")).jiraChanges).toEqual([]);
+    expect((await svc.ask(conv("дякую"), "u7")).trackerChanges).toEqual([]);
 
     const token = spawned[0]!.mcp!.token;
     await svc.reset("management:w-tools");

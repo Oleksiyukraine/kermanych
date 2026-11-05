@@ -1,10 +1,13 @@
 <template>
-  <section v-if="rows.length" class="inh" :aria-label="t('aiTeam.inherited.title')">
+  <!-- While the inherited layer is still being read it holds its place with a skeleton line
+       instead of popping in under the list a moment later. -->
+  <section v-if="phase === 'skeleton' || (phase === 'ready' && rows.length)" class="inh" :aria-label="t('aiTeam.inherited.title')">
     <p class="inh__title">{{ t('aiTeam.inherited.title') }}</p>
     <!-- Read-only on purpose: these are not this scope's own rows — they are what a session at
          this scope ALSO gets (system defaults, and for a project its workspace's rows). Shown so
          the operator sees the full picture, not to edit another scope's data. -->
-    <ul class="inh__list">
+    <KSkeleton v-if="phase === 'skeleton'" variant="line" width="40%" />
+    <ul v-else class="inh__list">
       <li v-for="r in rows" :key="r.primary" class="inh__row">
         <span class="inh__name mono">{{ r.primary }}</span>
         <span class="inh__origin">{{ r.origin }}</span>
@@ -29,6 +32,8 @@ import { useI18n } from 'vue-i18n';
 import { DEFAULT_SKILLS } from '@kermanych/core';
 import { listAiSkills, listAiTriggers, type AiOwner, type AiScope } from '@kermanych/cloud';
 import { useAuth } from 'stores/auth';
+import KSkeleton from 'components/kit/KSkeleton.vue';
+import { useLoadPhase } from '../../composables/useLoadPhase';
 
 const props = defineProps<{ kind: 'skills' | 'triggers'; scope: AiScope; workspace?: AiOwner | undefined }>();
 
@@ -37,17 +42,26 @@ const auth = useAuth();
 
 type Entry = { primary: string; origin: string };
 const rows = ref<Entry[]>([]);
+// The key whose read last finished (either way). A different current key is «not loaded yet».
+const loadedFor = ref('');
+
+function currentKey(): string {
+  return `${props.kind}:${props.scope}:${props.workspace?.id ?? ''}`;
+}
+const phase = useLoadPhase(() => loadedFor.value !== currentKey());
 
 watch(
-  () => `${props.kind}:${props.scope}:${props.workspace?.id ?? ''}`,
+  currentKey,
   () => {
+    // The previous scope's inherited rows are not this scope's: dropped at once, not after the read.
+    rows.value = [];
     void load();
   },
   { immediate: true },
 );
 
 async function load(): Promise<void> {
-  const key = `${props.kind}:${props.scope}:${props.workspace?.id ?? ''}`;
+  const key = currentKey();
   try {
     // Keyed by name/slug so a workspace entry that shares a default's name is shown once, as the
     // workspace's — which is what the launch merge (workspace over default) resolves to.
@@ -65,11 +79,13 @@ async function load(): Promise<void> {
       }
     }
     // A late read for a scope/workspace the operator has since left must not paint.
-    if (key !== `${props.kind}:${props.scope}:${props.workspace?.id ?? ''}`) return;
+    if (key !== currentKey()) return;
     rows.value = [...byName.values()];
   } catch {
-    if (key !== `${props.kind}:${props.scope}:${props.workspace?.id ?? ''}`) return;
+    if (key !== currentKey()) return;
     rows.value = [];
+  } finally {
+    if (key === currentKey()) loadedFor.value = key;
   }
 }
 </script>

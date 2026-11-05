@@ -7,6 +7,15 @@
          whole control, attachment strip included. It prevents Enter itself, so mounting it
          inside a form is safe too — ManagementPage does exactly that. -->
     <KHelperPicker :open="pickerOpen" :commands="DEFAULT_COMMANDS" @select="onHelper" @close="closePicker" />
+    <!-- The «@» file panel: the session's own tree, opened by `@` at a word start or by the
+         @ button. Only when the host names a tree to read (`files`). -->
+    <KFilePicker
+      v-if="files"
+      :open="mention.open.value"
+      :source="files"
+      @select="mention.select"
+      @close="mention.close"
+    />
     <KAttachStrip
       v-if="attachImages.length"
       class="k-composer__attach"
@@ -51,6 +60,15 @@
           @click="pickerOpen = !pickerOpen"
         >/</button>
         <button
+          v-if="files"
+          type="button"
+          class="k-composer__attach-btn mono"
+          v-tip="t('kit.composer.filesTip')"
+          :aria-label="t('kit.composer.files')"
+          :disabled="disabled"
+          @click="mention.toggle"
+        >@</button>
+        <button
           type="button"
           class="k-composer__attach-btn"
           v-tip="t('kit.composer.addImage')"
@@ -58,12 +76,25 @@
           :disabled="disabled"
           @click="fileInput?.click()"
         >📎</button>
+        <!-- «Голосова розмова» (docs/specs/2026-11-02-voice-conversation.md): only where the host
+             can hold one (`voice`); lit while this session's conversation runs. -->
+        <button
+          v-if="voice"
+          type="button"
+          class="k-composer__attach-btn"
+          :class="{ 'k-composer__attach-btn--on': voiceActive }"
+          v-tip="t('kit.composer.voiceTip')"
+          :aria-label="t('kit.composer.voice')"
+          :aria-pressed="voiceActive"
+          @click="emit('voice')"
+        ><KIcon class="k-composer__voice-icon" name="mic" /></button>
         <KChipSelect
           v-if="model && modelChipOptions.length"
           :model-value="model"
           :options="modelChipOptions"
           :title="t('kit.composer.model')"
           :disabled="disabled"
+          :loading="modelLoading"
           @update:model-value="onModelPick"
         />
         <span v-else-if="model" class="k-composer__chip" v-tip="t('kit.composer.model')">
@@ -77,6 +108,7 @@
           icon="⚡"
           :title="t('kit.composer.effort')"
           :disabled="disabled"
+          :loading="effortLoading"
           @update:model-value="(level) => emit('effort', level)"
         />
         <span v-if="worktree" class="k-composer__chip" v-tip="t('kit.composer.worktree')">
@@ -89,7 +121,8 @@
           type="submit"
           class="k-composer__send"
           :aria-label="t('kit.composer.send')"
-          :disabled="disabled || !canSend"
+          :aria-busy="reading > 0 || undefined"
+          :disabled="disabled || !canSend || reading > 0"
         >↑</button>
       </div>
 
@@ -114,8 +147,10 @@ import KChipSelect from './KChipSelect.vue';
 import KModelMark from './KModelMark.vue';
 import KIcon from './KIcon.vue';
 import KHelperPicker from './KHelperPicker.vue';
+import KFilePicker from './KFilePicker.vue';
 import KTag from './KTag.vue';
 import { useImageAttach } from '../../composables/useImageAttach';
+import { useFileMention } from '../../composables/useFileMention';
 import { EFFORT_OPTIONS } from '../../lib/effort';
 import { modelOptions } from '../../lib/models';
 import { tokens, usageTokens, usd } from '../../lib/format';
@@ -138,7 +173,7 @@ const props = withDefaults(
   defineProps<{
     modelValue: string;
     placeholder?: string | undefined;
-    disabled?: boolean;
+    disabled?: boolean | undefined;
     model?: string | undefined;
     // The omp catalog for this machine (empty when unreadable): with it the model chip is a
     // picker, without it it degrades to a read-only label.
@@ -147,6 +182,9 @@ const props = withDefaults(
     // level is not known yet (a child that has not answered its first state poll), and the chip
     // stays away rather than naming a level the agent may not be running at.
     effort?: ThinkingLevel | undefined;
+    // A model / effort pick being saved: the chip spins and is blocked until it settles.
+    modelLoading?: boolean | undefined;
+    effortLoading?: boolean | undefined;
     worktree?: boolean;
     // How full the model's context window is, in percent, as omp reports it. Read straight
     // from the session rather than derived from `usage`: cached reads and summarisation move
@@ -156,8 +194,14 @@ const props = withDefaults(
     // than a token total: the row prints tokens AND money, and summing them here keeps every
     // caller from re-deriving the same two figures.
     usage?: Usage | undefined;
+    // The tree a file mention reads — the session's. Absent: no @ button, and `@` is plain text.
+    files?: { kind: 'session' | 'project'; id: string } | null | undefined;
+    // The host can start a voice conversation with this session: shows the 🎤 button.
+    voice?: boolean | undefined;
+    // This session's voice conversation is running: the button is lit.
+    voiceActive?: boolean | undefined;
   }>(),
-  { disabled: false, worktree: false, models: () => [] },
+  { disabled: false, worktree: false, models: () => [], modelLoading: false, effortLoading: false, voice: false, voiceActive: false },
 );
 
 const emit = defineEmits<{
@@ -165,6 +209,7 @@ const emit = defineEmits<{
   send: [text: string, images: ImageInput[]];
   effort: [level: ThinkingLevel];
   setModel: [patch: { model: string; provider?: string }];
+  voice: [];
 }>();
 
 const focused = ref(false);
@@ -223,6 +268,15 @@ function onHelper(name: string): void {
   emit('update:modelValue', next);
 }
 
+// Файли: `@` at a word start (or the @ button) opens the session's tree; the pick lands as an
+// `@path` token at the caret (useFileMention).
+const mention = useFileMention({
+  el: () => fieldEl.value,
+  value: () => props.modelValue,
+  set: (v) => emit('update:modelValue', v),
+  enabled: () => !!props.files && !props.disabled,
+});
+
 // Enter sends; Shift+Enter inserts a newline. Enter mid-IME-composition is
 // ignored so committing a candidate doesn't fire the message.
 function onComposerKeydown(e: KeyboardEvent): void {
@@ -232,6 +286,8 @@ function onComposerKeydown(e: KeyboardEvent): void {
     pickerOpen.value = true;
     return;
   }
+  mention.onKeydown(e);
+  if (e.defaultPrevented) return;
   if (e.key !== 'Enter' || e.shiftKey || e.isComposing) return;
   e.preventDefault();
   submit();
@@ -240,6 +296,7 @@ function onComposerKeydown(e: KeyboardEvent): void {
 const {
   images: attachImages,
   error: attachError,
+  reading,
   onPaste: onImagePaste,
   onDrop: onImageDrop,
   remove: removeImage,
@@ -253,6 +310,16 @@ function onFilePick(e: Event): void {
   if (input.files) void addImageFiles(input.files);
   input.value = '';
 }
+
+// A failed send hands its images back (KPanel.restoreDraft): rebuilt as thumbnails from the
+// same base64 bytes that went out.
+function restoreImages(list: readonly ImageInput[]): void {
+  attachImages.value = [
+    ...attachImages.value,
+    ...list.map((i, n) => ({ ...i, url: `data:${i.mimeType};base64,${i.data}`, name: `image-${n + 1}` })),
+  ];
+}
+defineExpose({ restoreImages });
 
 const canSend = computed(() => props.modelValue.trim().length > 0 || attachImages.value.length > 0);
 
@@ -279,7 +346,7 @@ const stats = computed(() => {
 });
 
 function submit(): void {
-  if (props.disabled) return;
+  if (props.disabled || reading.value > 0) return;
   const text = props.modelValue.trim();
   if (!text && !attachImages.value.length) return;
   emit('send', text, attachImages.value.map((i) => ({ data: i.data, mimeType: i.mimeType })));
@@ -315,13 +382,15 @@ function submit(): void {
   border: 1px solid var(--k-line-strong);
   border-radius: var(--k-r);
   background: var(--k-bg);
+  box-shadow: var(--k-sheen), var(--k-shadow-card);
   padding: var(--k-sp-2) var(--k-sp-3);
-  transition: border-color 0.12s;
+  transition: border-color 0.12s, box-shadow 0.12s;
 }
 
-// red border = keyboard focus lives in this composer.
+// accent border + glow = keyboard focus lives in this composer.
 .k-composer--focused .k-composer__form {
   border-color: var(--k-accent);
+  box-shadow: var(--k-sheen), var(--k-shadow-card), var(--k-glow-focus);
 }
 
 .k-composer--disabled .k-composer__form {
@@ -391,6 +460,13 @@ function submit(): void {
     cursor: default;
     opacity: 0.5;
   }
+}
+.k-composer__attach-btn--on,
+.k-composer__attach-btn--on:hover:not(:disabled) {
+  color: var(--k-accent);
+}
+.k-composer__voice-icon {
+  --k-icon-size: var(--k-icon-md);
 }
 
 // Session facts — flat, borderless chips: these are readings, so they get no hover, no caret

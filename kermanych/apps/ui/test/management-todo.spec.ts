@@ -29,6 +29,7 @@ vi.mock('../src/stores/projects', () => ({
     members: { w1: [] },
     workspaceById: new Map([['w1', { id: 'w1', name: 'Acme' }]]),
     loadMembers: vi.fn(),
+    canManageWorkspace: () => true,
   }),
 }));
 vi.mock('../src/stores/board', () => ({ useBoard: () => ({ createTask: vi.fn() }) }));
@@ -48,7 +49,7 @@ vi.mock('../src/stores/risks', () => ({
 vi.mock('../src/stores/release-notes', () => ({ useReleaseNotes: () => ({ generate: vi.fn(), byWorkspace: { w1: [] }, load: vi.fn() }) }));
 
 function reply(actions: ManagementChatReply['actions']): ManagementChatReply {
-  return { text: 'Додаю.', actions, rejected: [], notices: [], jiraChanges: [], ms: 10 };
+  return { text: 'Додаю.', actions, rejected: [], notices: [], trackerChanges: [], ms: 10 };
 }
 
 function results(entries: readonly MgmtChatEntry[]): string[] {

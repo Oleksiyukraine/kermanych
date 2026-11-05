@@ -91,6 +91,19 @@ test("an unreachable cloud degrades to no block instead of failing the launch", 
   await expect(svc.assignedFor({ projectId: P }, "review", repo)).resolves.toEqual({ block: "", view: [], missing: [] });
 });
 
+// A minion run of a finding card asks for `minion-findings` on top of what the team assigned.
+test("Kermanych's own names follow the assigned sequence once, and still arrive offline", async () => {
+  const def = DEFAULT_SKILLS[0]!;
+  const svc = service([assign("a-skill")], [row({ name: "a-skill", body: "A" })]);
+  const { view } = await svc.assignedFor({ projectId: P }, "review", repo, ["a-skill", def.name]);
+  expect(view.map((v) => v.name)).toEqual(["a-skill", def.name]);
+
+  svc.readAssignments = async () => { throw new Error("offline"); };
+  svc.readSkills = async () => { throw new Error("offline"); };
+  const offline = await svc.assignedFor({ projectId: P }, "review", repo, [def.name]);
+  expect(offline.block).toContain(def.body.split("\n")[0]!);
+});
+
 // ---- instructionFor -------------------------------------------------------------------
 // The per-project instruction, which the four launch sites render instead of the compile-time
 // default. Validated on the way OUT as well as in the editor: a row outlives the template it

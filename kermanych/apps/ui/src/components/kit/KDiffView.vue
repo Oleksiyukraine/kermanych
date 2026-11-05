@@ -1,49 +1,105 @@
 <template>
-  <section class="k-diff" :aria-label="t('kit.diff.fileChanges', { path })">
-    <header class="k-diff__head">
-      <span class="k-diff__path mono">{{ path }}</span>
-      <span class="k-diff__spacer"></span>
-      <span v-if="diff?.truncated" class="k-diff__note mono">
-        {{ t('kit.diff.truncated', { count: rowCount }) }}
-      </span>
-      <KIconButton :title="t('kit.diff.collapse')" @click="emit('close')">✕</KIconButton>
-    </header>
+  <!-- Full screen lifts this same layer over the window without moving it in the DOM
+       (useFullscreenPopover), so the section keeps its mode, scroll and loaded preview, and no
+       ancestor clip or stacking context can cage it; the host stays in the list so the caller's
+       class and spacing keep applying. role="dialog" also parks the session browser's native
+       view, which Electron paints above the DOM (useOverlayOpen). -->
+  <div class="k-diff-host">
+    <div
+      ref="layerEl"
+      popover="manual"
+      :class="maximized ? 'k-diff-overlay' : 'k-diff-inline'"
+      :role="maximized ? 'dialog' : undefined"
+      :aria-modal="maximized ? 'true' : undefined"
+    >
+      <section
+        ref="sectionEl"
+        class="k-diff"
+        :class="{ 'k-diff--max': maximized }"
+        :aria-label="t('kit.diff.fileChanges', { path })"
+        @keydown="find.onKeydown"
+      >
+        <header class="k-diff__head">
+          <span class="k-diff__path mono">{{ path }}</span>
+          <span class="k-diff__spacer"></span>
+          <span v-if="diff?.truncated" class="k-diff__note mono">
+            {{ t('kit.diff.truncated', { count: rowCount }) }}
+          </span>
+          <KIconButton
+            v-if="find.available.value"
+            :title="t('kit.fileView.find.open')"
+            :active="find.shown.value"
+            :aria-pressed="find.shown.value"
+            @click="find.toggle"
+          ><KIcon class="k-diff__icon" name="search" /></KIconButton>
+          <KIconButton
+            v-if="canPlain"
+            :title="diffOn ? t('kit.diff.hideDiff') : t('kit.diff.showDiff')"
+            :active="diffOn"
+            :aria-pressed="diffOn"
+            @click="diffOn = !diffOn"
+          ><KIcon class="k-diff__icon" name="viewDiff" /></KIconButton>
+          <span v-if="canPlain && previewable" class="k-diff__sep" aria-hidden="true"></span>
+          <KViewModeToggle v-if="previewable" :model-value="mode" @update:model-value="pickMode" />
+          <KFullscreenButton :on="maximized" @click="maximized = !maximized" />
+          <KIconButton :title="t('kit.diff.collapse')" @click="emit('close')">✕</KIconButton>
+        </header>
 
-    <p v-if="loading" class="k-diff__msg mono">{{ t('kit.diff.loading') }}</p>
-    <p v-else-if="error" class="k-diff__msg k-diff__msg--error mono" role="alert">{{ error }}</p>
-    <p v-else-if="diff?.binary" class="k-diff__msg mono">{{ t('kit.diff.binary') }}</p>
-    <p v-else-if="!diff?.hunks.length" class="k-diff__msg mono">{{ t('kit.diff.noChanges') }}</p>
-    <div v-else class="k-diff__body">
-      <div class="k-diff__grid mono">
-        <!-- The two sections. They are rows of ONE grid, not two panes: shared columns are
-             what keeps a removed line opposite the added line that replaced it, with a
-             single scrollbar for both. -->
-        <div class="k-diff__col-head">{{ t('kit.diff.original') }}</div>
-        <div class="k-diff__col-head k-diff__col-head--new">{{ t('kit.diff.changes') }}</div>
-        <template v-for="(hunk, hi) in diff.hunks" :key="hi">
-          <div class="k-diff__hunk">{{ hunk.header }}</div>
-          <template v-for="(row, ri) in hunk.rows" :key="`${hi}:${ri}`">
-            <div class="k-diff__no">{{ row.old?.no ?? '' }}</div>
-            <div
-              class="k-diff__line"
-              :class="{
-                'k-diff__line--del': row.kind === 'del' || row.kind === 'mod',
-                'k-diff__line--void': !row.old,
-              }"
-            >{{ row.old?.text ?? '' }}</div>
-            <div class="k-diff__no k-diff__no--new">{{ row.new?.no ?? '' }}</div>
-            <div
-              class="k-diff__line"
-              :class="{
-                'k-diff__line--add': row.kind === 'add' || row.kind === 'mod',
-                'k-diff__line--void': !row.new,
-              }"
-            >{{ row.new?.text ?? '' }}</div>
+        <KFindBar
+          v-if="find.shown.value"
+          v-model:query="find.query.value"
+          v-model:match-case="find.matchCase.value"
+          v-model:whole-word="find.wholeWord.value"
+          :count="find.count.value"
+          :has-hits="find.total.value > 0"
+          @step="find.step"
+          @close="find.close"
+        />
+
+        <KSplitPanes
+          class="k-diff__panes"
+          :class="`k-diff__panes--${shownMode}`"
+          :show="shownMode === 'source' ? 'start' : shownMode === 'preview' ? 'end' : 'both'"
+          storage-key="kermanych.fileView.split"
+        >
+          <template #start>
+            <div class="k-diff__source">
+              <!-- Diff off: the whole current file, highlighted, read through `load`. -->
+              <template v-if="!showDiff">
+                <div v-if="plainPhase === 'skeleton'" class="k-diff__pad">
+                  <KSkeleton variant="lines" :rows="6" />
+                </div>
+                <template v-else-if="plainPhase === 'blank'"></template>
+                <p v-else-if="plainError" class="k-diff__msg k-diff__msg--error mono" role="alert">{{ plainError }}</p>
+                <p v-else-if="plainBinary" class="k-diff__msg mono">{{ t('kit.diff.binary') }}</p>
+                <div v-else class="k-diff__body k-scroller" tabindex="0">
+                  <KCodeView :path="path" :text="plainText" :hits="find.hits.value" :current-hit="find.currentHit.value" />
+                </div>
+              </template>
+              <p v-else-if="loading" class="k-diff__msg mono">{{ t('kit.diff.loading') }}</p>
+              <p v-else-if="error" class="k-diff__msg k-diff__msg--error mono" role="alert">{{ error }}</p>
+              <p v-else-if="diff?.binary" class="k-diff__msg mono">{{ t('kit.diff.binary') }}</p>
+              <p v-else-if="!diff?.hunks.length" class="k-diff__msg mono">{{ t('kit.diff.noChanges') }}</p>
+              <div v-else class="k-diff__body k-scroller" tabindex="0">
+                <KDiffRows :diff="diff" />
+              </div>
+            </div>
           </template>
-        </template>
-      </div>
+          <template #end>
+            <KDocPreview
+              v-if="load"
+              class="k-diff__preview"
+              :path="path"
+              :load="load"
+              :refresh-key="diff"
+              :find="find.previewFind.value"
+              @found="find.setRenderedTotal"
+            />
+          </template>
+        </KSplitPanes>
+      </section>
     </div>
-  </section>
+  </div>
 </template>
 
 <script setup lang="ts">
@@ -54,10 +110,32 @@
 // Fetch state lives in the props rather than in the component: the caller owns the request
 // (and its refresh while the agent keeps editing), while the path + collapse control stay
 // visible through loading, an error and a binary file alike.
-import { computed } from 'vue';
+//
+// A Markdown/HTML/PDF file also has a rendered form: with `load` (raw bytes of a repo path)
+// the header offers source / split / preview (KViewModeToggle), and the preview re-reads
+// whenever the caller refreshes the diff.
+//
+// The diff itself is optional: with `load`, the ± button swaps the paired rows for the whole
+// current file, highlighted — the file as it reads now rather than what changed in it. That
+// view, and a Markdown preview, also have find in file (⌘F or the magnifier,
+// composables/useFindInText.ts).
+import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
+import { useFindInText } from '../../composables/useFindInText';
+import { useFullscreenPopover } from '../../composables/useFullscreenPopover';
+import { useLoadPhase } from '../../composables/useLoadPhase';
 import type { FileDiff } from '../../lib/api';
+import { diffShown, docPreviewKind, initialViewMode, rememberedViewMode, type ViewMode } from '../../lib/doc-preview';
+import KCodeView from './KCodeView.vue';
+import KDiffRows from './KDiffRows.vue';
+import KDocPreview from './KDocPreview.vue';
+import KFindBar from './KFindBar.vue';
+import KFullscreenButton from './KFullscreenButton.vue';
+import KIcon from './KIcon.vue';
 import KIconButton from './KIconButton.vue';
+import KSkeleton from './KSkeleton.vue';
+import KSplitPanes from './KSplitPanes.vue';
+import KViewModeToggle from './KViewModeToggle.vue';
 
 const { t } = useI18n();
 
@@ -66,9 +144,113 @@ const props = defineProps<{
   diff: FileDiff | null;
   loading?: boolean;
   error?: string | null;
+  load?: (path: string) => Promise<Blob>;
+  // Open already full screen — a caller restoring the view after a reload. Changes are
+  // reported through `update:maximized` so the caller can remember them.
+  startMaximized?: boolean;
 }>();
 
-const emit = defineEmits<{ close: [] }>();
+const emit = defineEmits<{ close: []; 'update:maximized': [on: boolean] }>();
+
+const previewKind = computed(() => docPreviewKind(props.path));
+// A deleted file has no session version left to render: every row is original-only.
+const deleted = computed(() => {
+  const d = props.diff;
+  return !!d && !d.binary && d.hunks.length > 0 && d.hunks.every((h) => h.rows.every((r) => !r.new));
+});
+const previewable = computed(() => !!props.load && previewKind.value !== null && !deleted.value);
+// Per view, seeded from the remembered mode; a pick here becomes the remembered one, so the
+// next file (or this one, docked ↔ full screen) opens the same way.
+const mode = ref<ViewMode>(initialViewMode(previewKind.value));
+watch(previewKind, (k) => { mode.value = initialViewMode(k); });
+// Only a click is remembered — not a PDF's automatic fall-back to `preview`.
+function pickMode(m: ViewMode): void {
+  mode.value = m;
+  rememberedViewMode.value = m;
+}
+const shownMode = computed<ViewMode>(() => (previewable.value ? mode.value : 'source'));
+
+// Diff off needs the file's current text: a binary blob has none and a deleted file has no
+// current version, so for those the diff is the only view and the button is not offered.
+// The choice itself is shared and remembered (lib/doc-preview.ts), not per file.
+const diffOn = diffShown;
+const canPlain = computed(() => !!props.load && !props.diff?.binary && !deleted.value);
+const showDiff = computed(() => diffOn.value || !canPlain.value);
+
+const plainText = ref('');
+const plainBinary = ref(false);
+const plainError = ref<string | null>(null);
+const plainFor = ref<string | null>(null);
+const plainPhase = useLoadPhase(() => plainFor.value !== props.path);
+let plainRun = 0;
+
+async function loadPlain(): Promise<void> {
+  const load = props.load;
+  if (!load) return;
+  const run = ++plainRun;
+  const path = props.path;
+  try {
+    const text = await (await load(path)).text();
+    if (run !== plainRun) return;
+    plainBinary.value = text.slice(0, 8000).includes('\0');
+    plainText.value = plainBinary.value ? '' : text;
+    plainError.value = null;
+  } catch (e) {
+    if (run !== plainRun) return;
+    // The raw route answers 404 for a file over its 4 MB cap as well as a missing one.
+    const msg = e instanceof Error ? e.message : String(e);
+    plainError.value = /not found/i.test(msg) ? t('kit.diff.fileUnavailable') : msg;
+  } finally {
+    if (run === plainRun) plainFor.value = path;
+  }
+}
+
+// Re-read on every diff refresh, as the preview does: the agent may still be editing. The
+// text already on screen stays until the new one lands, so a refresh never blanks the pane.
+watch(
+  [showDiff, () => props.diff, () => props.path],
+  ([on], prev) => {
+    if (props.path !== prev?.[2]) plainFor.value = null;
+    if (!on) void loadPlain();
+  },
+  // Immediate: a file opened while the remembered choice is «off» must read its text at once.
+  { immediate: true },
+);
+
+// Full screen. Escape drops back into the list, listening only while the overlay is up so it
+// never steals the key from anything else (the same rule as KFileManager's viewer). Escape
+// pressed inside a focused preview frame stays in that frame; the collapse button still works.
+const maximized = ref(!!props.startMaximized);
+const layerEl = ref<HTMLElement | null>(null);
+useFullscreenPopover(layerEl, maximized);
+function onKeydown(e: KeyboardEvent): void {
+  if (e.key !== 'Escape') return;
+  e.preventDefault();
+  maximized.value = false;
+}
+// Keyboard scrolling goes to the focused element; the ⤢ button that opened full screen is
+// not inside a scroller. Each switch hands focus to the block's scroller (diff, file or page).
+const sectionEl = ref<HTMLElement | null>(null);
+watch(maximized, (on, was) => {
+  if (on) window.addEventListener('keydown', onKeydown);
+  else window.removeEventListener('keydown', onKeydown);
+  if (was !== undefined) emit('update:maximized', on);
+  void nextTick(() => {
+    sectionEl.value?.querySelector<HTMLElement>('.k-scroller')?.focus({ preventScroll: !on });
+  });
+}, { immediate: true });
+onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown));
+
+// Find in file: over the whole file (± off) once its text is on screen, and over a Markdown
+// preview — not over the diff rows, an HTML page or a PDF.
+const find = useFindInText(
+  () => (!showDiff.value && plainFor.value === props.path && !plainBinary.value && !plainError.value
+    && shownMode.value !== 'preview'
+    ? plainText.value
+    : null),
+  sectionEl,
+  () => previewable.value && shownMode.value !== 'source' && previewKind.value === 'markdown',
+);
 
 // Only shown next to the truncation note, where "перші N" has to name what is on screen.
 const rowCount = computed(() =>
@@ -82,6 +264,45 @@ const rowCount = computed(() =>
   border-radius: var(--k-r);
   background: var(--k-bg);
   overflow: hidden;
+}
+
+// Closed, the popover box is dissolved; `color` still inherits through it, so the UA's
+// CanvasText is undone too.
+.k-diff-inline { display: contents; color: inherit; }
+// Open: the whole window, edge to edge, as KFileManager's full-screen viewer.
+.k-diff-overlay {
+  position: fixed;
+  inset: 0;
+  width: 100vw;
+  height: 100vh;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  overflow: hidden;
+  display: flex;
+  color: inherit;
+  background: var(--k-bg);
+}
+.k-diff--max {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  border: 0;
+  border-radius: 0;
+
+  // The fixed 60vh heights are for the inline block; full screen fills the overlay instead.
+  .k-diff__panes {
+    flex: 1;
+    min-height: 0;
+    height: auto;
+  }
+  .k-diff__body {
+    flex: 1;
+    min-height: 0;
+    max-height: none;
+  }
 }
 
 .k-diff__head {
@@ -120,63 +341,30 @@ const rowCount = computed(() =>
   overflow: auto;
 }
 
-// `max-content` minimums let a long line push the grid wider than the pane (one
-// horizontal scrollbar for both halves); the `1fr` maximums keep the two sections equal
-// whenever the lines do fit.
-.k-diff__grid {
-  display: grid;
-  grid-template-columns: auto minmax(max-content, 1fr) auto minmax(max-content, 1fr);
-  font-size: var(--k-fs-xs);
-  tab-size: 2;
+.k-diff__icon { --k-icon-size: var(--k-icon-md); }
+.k-diff__sep {
+  flex: none;
+  width: 1px;
+  height: 18px;
+  background: var(--k-line-strong);
 }
+.k-diff__pad { padding: var(--k-sp-3); }
 
-.k-diff__col-head {
-  position: sticky;
-  top: 0;
-  z-index: 1;
-  grid-column: span 2;
-  padding: 3px var(--k-sp-2);
-  background: var(--k-surface2);
-  box-shadow: inset 0 -1px 0 0 var(--k-line);
-  color: var(--k-muted);
-  font-size: var(--k-fs-xs);
+// With a preview on screen the block takes a fixed height: a rendered page or a PDF has no
+// natural height of its own to grow to.
+.k-diff__panes--split,
+.k-diff__panes--preview {
+  height: 60vh;
 }
-.k-diff__col-head--new { box-shadow: inset 1px 0 0 0 var(--k-line-strong), inset 0 -1px 0 0 var(--k-line); }
-
-.k-diff__hunk {
-  grid-column: 1 / -1;
-  padding: 2px var(--k-sp-2);
-  background: var(--k-surface);
-  color: var(--k-faint);
-  border-top: 1px solid var(--k-line);
-  border-bottom: 1px solid var(--k-line);
+.k-diff__source {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
 }
-
-// A fixed row height is load-bearing: an empty line on both sides would otherwise collapse
-// its row and slide the two columns out of step.
-.k-diff__no,
-.k-diff__line {
-  line-height: 18px;
-  min-height: 18px;
-}
-.k-diff__no {
-  padding: 0 var(--k-sp-2);
-  text-align: right;
-  color: var(--k-faint);
-  user-select: none; // keeps line numbers out of a copied selection
-}
-.k-diff__no--new { box-shadow: inset 1px 0 0 0 var(--k-line-strong); }
-
-.k-diff__line {
-  padding: 0 var(--k-sp-2);
-  color: var(--k-text);
-  white-space: pre;
-}
-.k-diff__line--del { background: color-mix(in srgb, var(--k-diff-del) 18%, transparent); }
-.k-diff__line--add { background: color-mix(in srgb, var(--k-diff-add) 18%, transparent); }
-// No counterpart on this side. A faint hatch, not a tint: a flat panel reads as an empty
-// line of code, while stripes read as "there is nothing here" at a glance.
-.k-diff__line--void {
-  background: repeating-linear-gradient(135deg, transparent 0 6px, var(--k-line) 6px 7px);
+.k-diff__panes--split .k-diff__body {
+  flex: 1;
+  min-height: 0;
+  max-height: none;
 }
 </style>

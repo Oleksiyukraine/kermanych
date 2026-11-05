@@ -28,14 +28,17 @@ const cloudTasks = new Map<string, Task>();
 const cloudProjects: CloudProject[] = [];
 vi.mock("@kermanych/cloud", () => ({
   getTask: async (_c: unknown, id: string) => cloudTasks.get(id),
-  claimTask: async (_c: unknown, id: string, userId: string) => {
+  claimTaskForLaunch: async (_c: unknown, id: string, userId: string, from: Task["status"]) => {
     const t = cloudTasks.get(id);
-    if (!t || t.assigneeId) return undefined;
-    const next = { ...t, assigneeId: userId };
+    if (!t || t.status !== from || (t.assigneeId && t.assigneeId !== userId)) return undefined;
+    const next = { ...t, status: "queued" as const, assigneeId: userId };
     cloudTasks.set(id, next);
     return next;
   },
-  patchTask: async (_c: unknown, id: string) => cloudTasks.get(id),
+  releaseLaunchClaim: async (_c: unknown, id: string, previous: { status: Task["status"]; assigneeId?: string }) => {
+    const t = cloudTasks.get(id);
+    if (t) cloudTasks.set(id, { ...t, status: previous.status, ...(previous.assigneeId ? {} : { assigneeId: undefined }) });
+  },
   listProjects: async () => cloudProjects,
 }));
 
@@ -58,6 +61,7 @@ function make() {
     createBranchHere: vi.fn().mockResolvedValue(undefined),
     checkout: vi.fn().mockResolvedValue(undefined),
     currentBranch: vi.fn().mockResolvedValue("main"),
+    workingBranch: vi.fn().mockResolvedValue(""),
     forkStart: vi.fn(async (_repo: string, base: string) => ({ ref: base, stale: false })),
     hasUncommitted: vi.fn().mockResolvedValue(false),
     unmergedFiles: vi.fn().mockResolvedValue([] as string[]),
@@ -96,6 +100,7 @@ function card(over: Partial<Task> = {}): Task {
     createdAt: "",
     updatedAt: "",
     worktree: true,
+    design: false,
     model: "claude-opus-4-8",
     effort: "high",
     ...over,
@@ -151,6 +156,19 @@ describe("a native launch", () => {
     expect(opts.args.at(-1)).toBe(deepAnalysisPrompt("wire GitHub OAuth"));
   });
 
+  // A design card opened natively: the harness starts on the design branch with the Дизайнер's
+  // instruction naming the stamped folder (docs/specs/2026-10-29-design-tab.md).
+  it("a design card opens the harness with the Дизайнер instruction", async () => {
+    const { sup, terminal } = make();
+    card({ design: true });
+    const s = await sup.createSessionFromTask("task-1", USER, undefined, "omp");
+    expect(s.branch).toBe("design/add-login");
+    expect(s.designDir).toMatch(/^docs\/design\/\d{4}-\d{2}-\d{2}-add-login$/);
+    const opts = terminal.openSession.mock.calls[0][0] as { args: string[] };
+    expect(opts.args.at(-1)).toMatch(/^You are «Дизайнер»/);
+    expect(opts.args.at(-1)).toContain(`${s.designDir}/README.md`);
+  });
+
   // docs/specs/2026-10-14-create-pr-base-sync.md, decision 6: the harness stopped with the tree
   // mid-merge, so the card reads «конфлікт» — and the harness, idle at its prompt, still takes
   // «Вирішити автоматично». A later turn that leaves no unmerged files settles as usual.
@@ -174,6 +192,28 @@ describe("a native launch", () => {
     await vi.waitFor(() => expect(worktree.unmergedFiles).toHaveBeenCalledTimes(3));
     await nextMacrotask();
     expect(status()).toBe("done");
+  });
+
+  it("takes up a branch the agent renamed in its worktree while the turn still runs", async () => {
+    const { sup, worktree, native } = make();
+    card();
+    const s = await sup.createSessionFromTask("task-1", USER, undefined, "omp");
+    const branch = () => sup.snapshot().sessions.find((x) => x.id === s.id)!.branch;
+    native.ompEvent(s.id, { event: "working" });
+
+    // `git branch -m` inside the worktree, picked up on the harness's next change — no idle.
+    worktree.workingBranch.mockImplementation(async (dir: string) => (dir === s.worktreePath ? "feature/PLAT-398-renamed" : ""));
+    native.ompEvent(s.id, { event: "tool", toolName: "Bash" });
+    native.ompEvent(s.id, { event: "tool_end" });
+    await vi.waitFor(() => expect(branch()).toBe("feature/PLAT-398-renamed"));
+    expect(sup.snapshot().sessions.find((x) => x.id === s.id)!.status).not.toBe("done");
+
+    // A worktree that names no branch (a bare detach) leaves the one on record.
+    worktree.workingBranch.mockResolvedValue("");
+    native.ompEvent(s.id, { event: "idle" });
+    await vi.waitFor(() => expect(worktree.unmergedFiles).toHaveBeenCalled());
+    await nextMacrotask();
+    expect(branch()).toBe("feature/PLAT-398-renamed");
   });
 
   it("refuses images before touching the card", async () => {

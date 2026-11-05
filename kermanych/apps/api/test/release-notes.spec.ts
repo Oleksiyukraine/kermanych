@@ -203,6 +203,16 @@ describe("buildReleaseNotesPrompt — per person", () => {
     // Small work is listed under the person, not summarised as a count.
     expect(prompt).toContain("«**Smaller changes**»");
   });
+
+  // A report about some of the team must not be titled as the product's whole release; the
+  // whole-team report says nothing of a selection.
+  it("says the report covers only the picked people, and only when people were picked", () => {
+    const mine = commits.filter((c) => c.author === "Оля");
+    const picked = buildReleaseNotesPrompt({ ...ask, sources: [{ ...repo, commits: mine }], groupBy: "person", authors: ["Оля"] });
+    expect(picked).toContain("лише про роботу обраних людей: Оля");
+    const team = buildReleaseNotesPrompt({ ...ask, sources: [{ ...repo, commits }], groupBy: "person" });
+    expect(team).not.toContain("обраних людей");
+  });
 });
 
 describe("commitsBlock", () => {

@@ -1,13 +1,14 @@
 // apps/api/src/supervisor/supervisor.service.ts
 import { GoneException, Injectable, Optional, type OnModuleDestroy, type OnModuleInit } from "@nestjs/common";
+import { HttpAdapterHost } from "@nestjs/core";
 import { spawn } from "node:child_process";
 import { rm } from "node:fs/promises";
-import { join } from "node:path";
+import { join, posix } from "node:path";
 import { Observable, Subject } from "rxjs";
 import { RegistryService } from "../registry/registry.service";
 import { WorktreeService, type ChangedFile } from "../worktree/worktree.service";
 import type { SplitDiff } from "../worktree/split-diff";
-import { createRuntime, type AgentRuntime } from "../runtime/agent-runtime";
+import { createRuntime, type AgentRuntime, type RuntimeLaunchOpts } from "../runtime/agent-runtime";
 import { BrowserMcpService } from "../browser/browser-mcp.service";
 import { browserHost } from "../browser/browser-host";
 import { resolveRuntime } from "../runtime/resolve-runtime";
@@ -59,7 +60,8 @@ import {
   deepAnalysisPrompt,
   DEEP_ANALYSIS_SKILL,
   BRANCH_PREFIXES,
-  PLATFORMS,
+  platformHasBrowser,
+  platformHasDevice,
   type BranchPrefix,
   type StatusState,
   type Project,
@@ -81,14 +83,84 @@ import {
   taskReportsWrite,
   type AgentFinding,
   type FindingTarget,
+  type MachineAlert,
+  MINION_AGENT_ID,
+  MINION_OUTCOME_CONTRACT,
+  MINION_TIME_CAP_PROMPT,
+  MINION_PR_TITLE_RULE,
+  MINION_FINDINGS_SKILL,
+  minionFindingLine,
+  MINION_TIME_CAP_MS,
+  MINION_GRACE_MS,
+  type MinionResult,
+  type MinionVerdictReport,
+  type PrCheck,
+  type PrCheckState,
+  DEFAULT_SKILLS,
+  type SkillView,
+  DESIGNER_AGENT_ID,
+  DESIGN_SAVE_AGENT_ID,
+  DESIGN_SPEC_SKILL,
+  designDirFor,
+  designCommitMessage,
+  voiceMessagePrompt,
+  TESTER_AGENT_ID,
+  testerRefusal,
+  PREVIEW_CONFIG_PATH,
+  type PreviewConfigStatus,
+  qaItemsInScope,
+  qaHandoffText,
+  qaScreenshotDir,
+  testerContract,
+  testerItemsBlock,
+  testerAccountsBlock,
+  testerLoginPathLine,
+  testerNotesBlock,
+  type QaChecklist,
+  type QaRunScope,
+  type TesterRefusal,
 } from "@kermanych/core";
-import { claimTask, createTask, getTask, listProjects, patchTask, type CloudProject, type AiTrigger, type TaskPatch } from "@kermanych/cloud";
+import { claimTaskForLaunch, createTask, getTask, listProjects, patchQaItems, patchTask, releaseLaunchClaim, setQaChecklistIfEmpty, type CloudProject, type AiTrigger, type Task } from "@kermanych/cloud";
 import { AuthService } from "../auth/auth.service";
 import { ModelsService } from "../models/models.service";
 import { NativeSessionService, nativeUnsupported } from "../native/native-session.service";
 import { CodedError } from "../management/coded-error";
-import { PR_URL_RE } from "./pr-url";
-import { CHAT_TOOLS } from "./chat-tools";
+import { todayIso } from "../management/management-prompt";
+import { firstPrUrl } from "./pr-url";
+import { launchAppendFor, launchToolsFor } from "./chat-tools";
+import { MachineResourcesService } from "../machine/machine-resources.service";
+import { WatchdogService } from "../machine/watchdog.service";
+import { BranchNameService, type BranchContext } from "./branch-name.service";
+import { noAskOverlay } from "../minion/ask-overlay";
+import { EnvFileService } from "../env/env-file.service";
+import { GithubClient, GithubHttpError, parseGithubPrUrl, parseGithubRemote, type GithubPull } from "../github/github-client";
+import { PreviewService } from "../preview/preview.service";
+import { PREVIEW_CONFIG_SKILL, previewConfigPrompt } from "../preview/preview-prompt";
+
+// Why «Виконати тестування» cannot start (core testerRefusal), in the words the api answers with.
+const TESTER_REFUSALS: Record<TesterRefusal, string> = {
+  running: "a tester of this session is already running",
+  "not-agent": "only agent sessions can be tested",
+  finished: "the session is finished — its worktree is gone",
+  "no-card": "testing works only for sessions started from a task card",
+  busy: "wait for the agent to finish its turn before testing",
+  "no-browser": "the session browser is not available: Kermanych is running without its desktop app",
+  platform: "this project's platform has no browser to test in",
+  "no-preview": `set up the live preview first: ${PREVIEW_CONFIG_PATH} is missing in the session directory`,
+};
+
+// A failed merged-PR check, in the words the UI shows (docs/specs/2026-10-26-pr-merged-close-prompt.md,
+// decision 6). A spent rate limit is a 403 too, so it is read first. `fetch` rejects with a
+// TypeError when the network is down and with a TimeoutError/AbortError when the signal fires.
+function prCheckFailure(err: unknown): PrCheck {
+  if (err instanceof GithubHttpError) {
+    if (err.rateLimited) return { state: "rate_limited" };
+    return { state: [401, 403, 404].includes(err.status) ? "no_access" : "error" };
+  }
+  const name = (err as { name?: unknown } | null)?.name;
+  if (err instanceof TypeError || name === "TimeoutError" || name === "AbortError") return { state: "offline" };
+  return { state: "error" };
+}
 
 type Live = {
   rpc: AgentRuntime;
@@ -135,6 +207,14 @@ type Live = {
   // Signature of the last `subagents_update` fanned out, so a burst of progress frames that
   // moves no field does not refan an identical list to every socket.
   subagentsSig?: string;
+  // The child's pid (RuntimeLaunchOpts.onSpawn), for the memory watchdog's process tree.
+  pid?: number;
+  // The watchdog's baseline was re-taken on the child's `ready` (onRpcEvent).
+  baselined?: boolean;
+  // A message just went to this idle child and its turn has not reported yet: the child holds
+  // an agent slot from the write, not from its first event, or a second waiting session could
+  // slip into the same slot in between. Cleared by the first status change (onRpcEvent).
+  turnPending?: boolean;
   poll?: NodeJS.Timeout;
 };
 
@@ -150,6 +230,79 @@ const MATCH_MAX_CHARS = 1 << 14;
 // How many uncommitted paths an in-place refusal names: enough to recognise the work in the
 // way, short enough for the launcher's one-line error slot.
 const DIRTY_FILES_SHOWN = 5;
+
+// One agent waiting for a slot (docs/specs/2026-10-21-machine-resource-profile.md, decision 5).
+type SlotWaiter = {
+  // Enqueue time (ms), persisted as `slot_queued_at`: the FIFO order, across restarts too.
+  at: number;
+  // The parked calls, replayed in order once a slot is granted. Each replays its WHOLE original
+  // call — a launch spawns with its fork handle, images and opening prompt, «Створити ПР» re-arms
+  // its flags after the send — not just the text.
+  jobs: (() => Promise<unknown>)[];
+  // The texts it waits to send: the persisted `pending_prompt`. Images ride only in `jobs`
+  // (memory): base64 does not belong in the registry, so after a restart the text goes alone.
+  texts: string[];
+  // What the log shows meanwhile (the messages, «чекає на слот»). Never in a Live's transcript:
+  // appendEntry needs a Live, and the real rows are appended when the delivery runs.
+  entries: TranscriptEntry[];
+};
+
+// A «Посіпака» run's place in the protocol of docs/specs/2026-10-23-minion-auto-run.md
+// (decisions 9-10). Kept beside the Live map, not on a Live: a run outlives its child (the reaper,
+// the time cap's stop, a wake for the operator's answer) and its phase must survive the respawn.
+// Memory-only: after an api restart a run starts over at `work`, attended, with no clock.
+type MinionRun = {
+  // `work`: the card's own work, ended by a verdict. `docs`: the one «Доповнити документацію»
+  // turn after `ready`. `pr`: the «Створити ПР» turn. `idle`: the run waits on a person (its
+  // own needs_decision, a failure, a stop) until the operator writes to it.
+  phase: "work" | "docs" | "pr" | "idle";
+  // The last verdict report_outcome recorded; the turn's end consumes it.
+  verdict?: MinionVerdictReport;
+  // The operator wrote to the run: no time cap from then on, and a turn they started that ends
+  // without a verdict is an ordinary turn, not a failed run.
+  attended?: boolean;
+  // The docs turn went out: a gate still failing afterwards hands the run to a person.
+  docsSent?: boolean;
+  // The time cap was reached: the run counts as failed, whatever verdict follows.
+  capped?: boolean;
+  // Between a turn's end and the send of the docs or PR turn it leads to: still running.
+  advancing?: boolean;
+  // The launch has not returned yet: a child that dies now is the launch's failure, which
+  // launchTask undoes and MinionService counts — not a run to fail a second time.
+  starting?: boolean;
+  capTimer?: NodeJS.Timeout;
+  graceTimer?: NodeJS.Timeout;
+};
+
+// A minion run's result as MinionService counts it toward the pause (decision 9).
+export type MinionRunResult = {
+  sessionId: string;
+  // The card's title, for the pause's detail.
+  title: string;
+  result: MinionResult;
+  // `success` resets the consecutive failures, `failure` adds one, `neutral` (an operator's
+  // stop, delete or finish) neither.
+  effect: "success" | "failure" | "neutral";
+  // The child died signed out of its provider: the minion pauses at once.
+  signedOut?: boolean;
+};
+
+// The transcript badge for a library skill: where the text the agent read comes from. A
+// library row names its owner scope, and one that replaces a Kermanych default says so too —
+// that is the row to delete to get the default back, and without the scope the operator has
+// to go looking for it in the cloud tables.
+const SKILL_SOURCE_STAT: Record<SkillView["source"], string> = {
+  default: "бібліотека",
+  user: "користувач",
+  project: "проєкт",
+  workspace: "воркспейс",
+};
+
+function skillStat(v: Pick<SkillView, "name" | "source">): string {
+  const stat = SKILL_SOURCE_STAT[v.source];
+  if (v.source === "default" || !DEFAULT_SKILLS.some((d) => d.name === v.name)) return stat;
+  return `${stat} · замість дефолту`;
+}
 
 @Injectable()
 export class SupervisorService implements OnModuleInit, OnModuleDestroy {
@@ -168,6 +321,22 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
   private lastStamp = 0;
   private events = new Subject<ServerEvent>();
   events$: Observable<ServerEvent> = this.events.asObservable();
+  // Agent slots (docs/specs/2026-10-21-machine-resource-profile.md, decisions 4-5). `waiting`:
+  // the sessions parked for a slot. `slotHolds`: the sessions whose start is in flight — a
+  // granted slot is held from the gate to the moment the child's own status says it runs, so
+  // the await in between cannot hand the same slot out twice. A count, because a replayed call
+  // passes the gate again inside the hold that started it.
+  private waiting = new Map<string, SlotWaiter>();
+  private slotHolds = new Map<string, number>();
+  // The pid each session is tracked under by the memory watchdog.
+  private tracked = new Map<string, number>();
+  // The pid of each native harness whose spawn was seen but which has not reported since.
+  private nativeSpawned = new Map<string, number>();
+  // «Посіпака» runs on this machine, by session id, and the results MinionService counts. The
+  // supervisor never knows MinionService (it depends on this service, not the other way round).
+  private minionRuns = new Map<string, MinionRun>();
+  private minionResults = new Subject<MinionRunResult>();
+  readonly minionResult$: Observable<MinionRunResult> = this.minionResults.asObservable();
 
   // A finished session's omp child stays resident so a follow-up resumes instantly — but a
   // live `omp --mode rpc` process is by far the largest thing this service keeps alive (a big
@@ -193,10 +362,40 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     // launches and resumes get its MCP binding; discussion/review forks do not. Optional so
     // specs construct the supervisor without it — then no session gets the tools.
     @Optional() private browser?: BrowserMcpService,
+    // The machine resource profile (docs/specs/2026-10-21-machine-resource-profile.md): agent
+    // slots, in-agent limits, priority and the prompt paragraph come from it, and the memory
+    // watchdog's kills are told to the agent here. Optional so specs construct the supervisor
+    // without them — then nothing is limited.
+    @Optional() private resources?: MachineResourcesService,
+    @Optional() private watchdog?: WatchdogService,
+    // A restart's waiting sessions start once the api listens: a native harness needs its port.
+    @Optional() private http?: HttpAdapterHost,
+    // Names a new branch from what its task is about (docs/specs/2026-10-26-branch-name-from-task.md).
+    // Optional so specs construct the supervisor without it — then the branch is the
+    // transliterated title and no model is asked.
+    @Optional() private branchNames?: BranchNameService,
+    // The merged-PR check reads the bound repo's `GIT_TOKEN` from its `.env`
+    // (docs/specs/2026-10-26-pr-merged-close-prompt.md, decision 5). Optional so specs construct
+    // the supervisor without it — then GitHub is asked anonymously.
+    @Optional() private envFile?: EnvFileService,
+    // The live preview (docs/specs/2026-11-03-session-browser-preview.md, decision 7): its state
+    // rides the snapshot and `events$`, and the session lifecycle stops it. Optional so specs
+    // construct the supervisor without it — then no session has a preview.
+    @Optional() private preview?: PreviewService,
   ) {
     this.native?.events$.subscribe((e) => {
-      if (e.type === "changed") return this.pushUpdate(e.sessionId);
+      if (e.type === "changed") {
+        // A native agent holds its slot while its TUI lives, so its start and its death both
+        // move the queue; the watchdog follows the same process.
+        this.onNativeChange(e.sessionId);
+        this.pushUpdate(e.sessionId);
+        this.drainSlots();
+        // A native turn's tool calls surface only as these changes.
+        void this.syncBranch(e.sessionId).catch(() => {});
+        return;
+      }
       if (e.type === "settled") {
+        this.onNativeChange(e.sessionId);
         void this.checkTurnEnd(e.sessionId, e.status, false).catch((err: unknown) =>
           console.warn(`[supervisor] turn-end check skipped for session ${e.sessionId}: ${(err as Error).message}`),
         );
@@ -210,6 +409,18 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     });
     // «Знахідки»: a report changes the session's open counter, which the UI reads off the row.
     this.browser?.findingReported$.subscribe((id) => this.pushUpdate(id));
+    // «Посіпака»: a run's verdict waits for the end of its turn (onMinionTurnEnd).
+    this.browser?.outcomeReported$.subscribe(({ sessionId, report }) => this.onMinionVerdict(sessionId, report));
+    // «Тестувальник»: a verdict or a composed checklist reaches every open card view.
+    this.browser?.qaChecklistChanged$.subscribe(({ taskId, checklist }) => this.events.next({ type: "qa_checklist_update", taskId, checklist }));
+    // A raised limit starts waiting sessions at once, a lowered one stops nothing (decision 5);
+    // switching priority on renices what already runs (decision 9).
+    this.resources?.onChange(() => {
+      this.drainSlots();
+      if (this.resources?.active()?.lowerPriority) this.watchdog?.reniceTracked();
+    });
+    this.watchdog?.events$.subscribe((alert) => this.onMachineAlert(alert));
+    this.preview?.changes$.subscribe(({ sessionId, state }) => this.events.next({ type: "preview_update", sessionId, state }));
   }
 
   private requireNative(): NativeSessionService {
@@ -228,7 +439,7 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
         // says so and points at it.
         if (v.shadowedByRepo) labels.set(v.name, { stat: "репо", intent: v.shadowedByRepo });
         else {
-          const stat = v.source === "default" ? "бібліотека" : "проєкт";
+          const stat = skillStat(v);
           // A degraded materialise may not have written this name's SKILL.md, and a link to a
           // file that is not there is worse than no link. The shadowed rows above keep theirs:
           // a repository path came from a scan that found the file.
@@ -266,16 +477,18 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
   // Never throws, for the same reason as ompSkills: the service degrades on its own for a
   // project reason (offline cloud, unreadable repository file, an override gone stale) and
   // throws for a caller error (an invalid project id), and neither may cost an agent its run.
-  // No template and an empty block is "this project customised nothing".
+  // No template and an empty block is "this project customised nothing". `extra` are skills
+  // Kermanych adds to this one launch, after the assigned sequence (SkillsService.assignedFor).
   private async agentPrompt(
     projectId: string,
     agentId: string,
     cwd: string,
+    extra: readonly string[] = [],
   ): Promise<{ template?: string; block: string }> {
     try {
       const scope = this.aiScope(projectId);
       const [assigned, template] = await Promise.all([
-        this.skills.assignedFor(scope, agentId, cwd),
+        this.skills.assignedFor(scope, agentId, cwd, extra),
         this.skills.instructionFor(scope, agentId),
       ]);
       return { ...(template !== undefined ? { template } : {}), block: assigned.block };
@@ -307,10 +520,12 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     // on-use sweep never reaches, so this one rides a timer.
     this.reaper = setInterval(() => this.reapIdleChildren(), 60_000);
     this.reaper.unref();
+    this.restoreSlotQueue();
   }
 
   onModuleDestroy(): void {
     clearInterval(this.reaper);
+    for (const run of this.minionRuns.values()) this.clearMinionClock(run);
     for (const live of this.map.values()) {
       this.stopPoll(live);
       void live.rpc.stop();
@@ -340,21 +555,370 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
   }
 
   snapshot() {
+    const subagents: Record<string, SubagentNode[]> = {};
+    for (const [id, l] of this.map) {
+      if (l.subagents?.size) subagents[id] = this.subagentList(l);
+    }
     return {
       projects: this.registry.listProjects(),
       sessions: this.registry.listSessions().map((s) => this.merge(s)),
+      subagents,
+      previews: this.preview?.states() ?? {},
     };
   }
 
   private merge(s: Session): Session {
+    let merged: Session;
     // A native row's live state (status, current tool, its pty) comes from its harness's hooks.
-    if (s.native) return { ...s, ...this.native?.live(s.id) };
-    const l: Partial<Session> = this.map.get(s.id)?.live ?? {};
-    return { ...s, ...l, status: l.status ?? s.status };
+    if (s.native) merged = { ...s, ...this.native?.live(s.id) };
+    else {
+      const l: Partial<Session> = this.map.get(s.id)?.live ?? {};
+      merged = { ...s, ...l, status: l.status ?? s.status };
+    }
+    // A session waiting for a slot reads `queued` (decision 5: no status of its own) and says
+    // where it stands; the field is simply absent once it starts.
+    return this.waiting.has(s.id) ? { ...merged, status: "queued", slotWait: this.slotWait(s.id) } : merged;
   }
   private pushUpdate(id: string) {
     const s = this.registry.listSessions().find((x) => x.id === id);
     if (s) this.events.next({ type: "session_update", session: this.merge(s) });
+  }
+
+  // ── Agent slots (docs/specs/2026-10-21-machine-resource-profile.md, decisions 4-5) ──────────
+
+  // The agents whose turn runs, and how many wait. Counted: `kind: "agent"`, managed or native,
+  // holding a slot, and a «Тестувальник» run (docs/specs/2026-11-04-qa-tester-agent.md, decision
+  // 12: it drives a browser and a preview like an agent). Not counted: chats, other reviews,
+  // discussions — their tools cannot run a test suite, and making them queue behind agents would
+  // stall a conversation for nothing.
+  slotCounts(): { running: number; waiting: number } {
+    let running = 0;
+    for (const s of this.registry.listSessions()) if ((s.kind === "agent" || s.tester === true) && !this.waiting.has(s.id) && this.holdsSlot(s)) running++;
+    return { running, waiting: this.waiting.size };
+  }
+
+  // «Посіпака» (docs/specs/2026-10-23-minion-auto-run.md, decision 8): a minion run starts only
+  // in a free agent slot and only while no session waits for one, so it never gets ahead of the
+  // operator's own launches. With no limit (the profile declined) there are no slots at all.
+  minionSlotFree(): boolean {
+    const limit = this.resources?.active()?.agents;
+    if (limit === undefined) return true;
+    const { running, waiting } = this.slotCounts();
+    return waiting === 0 && running < limit;
+  }
+
+  // The minion runs whose turn runs now — starting, mid-turn, or just sent a message the child
+  // has not answered yet — or which are between a turn and the docs or PR turn it leads to: the
+  // count the minion's cap is measured against.
+  minionRunning(): number {
+    let n = 0;
+    for (const s of this.registry.listSessions())
+      if (s.minion && (ACTIVE_STATUSES.includes(this.merge(s).status) || this.holdsSlot(s) || this.minionRuns.get(s.id)?.advancing)) n++;
+    return n;
+  }
+
+  // Whether a session of THIS machine runs the card now. The cloud status says the same for the
+  // other machines, but this machine's own push may not have landed yet.
+  runsTask(taskId: string): boolean {
+    return this.registry.listSessions().some((s) => s.taskId === taskId && ACTIVE_STATUSES.includes(this.merge(s).status));
+  }
+
+  // An event of another service on the same stream the socket forwards (MinionService's state).
+  publish(e: ServerEvent): void {
+    this.events.next(e);
+  }
+
+  // A turn runs: a live child mid-turn (`queued` while starting, thinking, tool, waiting_input —
+  // the last is mid-turn too, blocked on the operator), or a native TUI that lives. A `done` child
+  // the reaper has not reached yet holds nothing.
+  private turnRunning(s: Session): boolean {
+    if (s.native) return this.native?.isRunning(s.id) === true;
+    // A plain wake (opening an old agent) respawns the child but starts no turn; its rebuilt
+    // reducer briefly reads `queued`. A wake for a message holds a slot through slotHolds instead.
+    if (this.resuming.has(s.id)) return false;
+    const l = this.map.get(s.id);
+    return !!l && l.rpc.isAlive() && (l.turnPending === true || ACTIVE_STATUSES.includes(l.live.status ?? "done"));
+  }
+
+  private holdsSlot(s: Session): boolean {
+    return this.slotHolds.has(s.id) || this.turnRunning(s);
+  }
+
+  private slotWait(id: string): NonNullable<Session["slotWait"]> {
+    const order = [...this.waiting].sort(([, a], [, b]) => a.at - b.at).map(([k]) => k);
+    return { position: order.indexOf(id) + 1, running: this.slotCounts().running, limit: this.resources?.active()?.agents ?? 0 };
+  }
+
+  // Run `op` — what starts an agent's turn or its native TUI — in an agent slot, or park
+  // `replay` until one frees up; false when parked. A session that already holds a slot (its turn
+  // runs, or this is the replay that was granted one) keeps it across `op`. Other kinds (but a
+  // tester run) are never counted, and with no limit (decision `declined`) nothing waits.
+  private async withSlot(
+    s: Session,
+    op: () => Promise<unknown>,
+    replay: () => Promise<unknown>,
+    message?: { text: string; images?: ImageInput[] },
+  ): Promise<boolean> {
+    if (s.kind !== "agent" && s.tester !== true) {
+      await op();
+      return true;
+    }
+    const limit = this.resources?.active()?.agents;
+    const free = !this.waiting.has(s.id) && (this.holdsSlot(s) || limit === undefined || this.slotCounts().running < limit);
+    if (!free) {
+      this.park(s.id, replay, message);
+      return false;
+    }
+    await this.inSlot(s.id, op);
+    return true;
+  }
+
+  // Hold an agent slot for the session across `op`: the granted half of withSlot, and a minion
+  // launch's start, which never waits (MinionService checked the slot before claiming the card).
+  private async inSlot(id: string, op: () => Promise<unknown>): Promise<void> {
+    this.slotHolds.set(id, (this.slotHolds.get(id) ?? 0) + 1);
+    try {
+      await op();
+    } finally {
+      this.release(id);
+    }
+  }
+
+  // The start is over: from here the child's own status says whether it holds the slot (a
+  // turn that started) or not (`/compact`, a launch with no opening prompt), so the queue moves.
+  private release(id: string): void {
+    const n = (this.slotHolds.get(id) ?? 1) - 1;
+    if (n > 0) this.slotHolds.set(id, n);
+    else this.slotHolds.delete(id);
+    this.drainSlots();
+  }
+
+  // Put a call on the session's wait. Its message shows in the log at once, «надіслано, чекає
+  // на слот» (the entries are served by getTranscript, never appended to a Live), and its text is
+  // written to the row so a restart does not lose it.
+  private park(id: string, job: () => Promise<unknown>, message?: { text: string; images?: ImageInput[] }, at = Date.now()): void {
+    const first = !this.waiting.has(id);
+    const w = this.waiting.get(id) ?? { at, jobs: [], texts: [], entries: [] };
+    this.waiting.set(id, w);
+    w.jobs.push(job);
+    const added: TranscriptEntry[] = [];
+    if (message) {
+      // Only text is persisted: an image-only message has nothing a restart could replay.
+      if (message.text.trim()) w.texts.push(message.text);
+      if (message.text.trim() || message.images?.length) added.push(this.userEntry(message.text, message.images));
+    }
+    if (first) {
+      const { running } = this.slotCounts();
+      const limit = this.resources?.active()?.agents ?? 0;
+      added.push(
+        this.noticeEntry({ text: `Повідомлення чекає на вільний слот: працюють ${running} з ${limit}.`, code: "slot_wait", params: { running, limit } }),
+      );
+    }
+    w.entries.push(...added);
+    for (const entry of added) this.events.next({ type: "transcript_append", sessionId: id, entry });
+    this.registry.setPendingPrompt(id, w.texts.join("\n\n"), w.at);
+    this.pushUpdate(id);
+  }
+
+  // Take a session off the wait — it starts, stops or goes away: its pending message leaves the
+  // row, and the client's log loses the «чекає на слот» rows (the real ones follow if it runs).
+  private unpark(id: string): SlotWaiter | undefined {
+    const w = this.waiting.get(id);
+    if (!w) return undefined;
+    this.waiting.delete(id);
+    const s = this.registry.listSessions().find((x) => x.id === id);
+    if (!s) return w;
+    this.registry.setPendingPrompt(id, undefined);
+    if (s.native)
+      void this.sessionTranscript(id)
+        .then((entries) => this.events.next({ type: "transcript_reset", sessionId: id, entries }))
+        .catch(() => {});
+    // A parked launch has no conversation yet: an empty log, not the dormant notice whose
+    // «send a message» does not apply to an agent that is about to start.
+    else if (!this.map.has(id) && s.status === "queued") this.events.next({ type: "transcript_reset", sessionId: id, entries: [] });
+    else this.events.next({ type: "transcript_reset", sessionId: id, entries: this.getTranscript(id) });
+    return w;
+  }
+
+  // Start waiting sessions, oldest first, while slots are free. Called wherever a slot can free
+  // up — a settled turn, a dead child or TUI, a stop, a delete, a finish, a start that ran no
+  // turn — and when the limit changes.
+  private drainSlots(): void {
+    if (!this.waiting.size) return;
+    const limit = this.resources?.active()?.agents;
+    let { running } = this.slotCounts();
+    for (const [id] of [...this.waiting].sort(([, a], [, b]) => a.at - b.at)) {
+      if (limit !== undefined && running >= limit) break;
+      running++;
+      void this.runWaiter(id);
+    }
+    // Whoever still waits moved up the queue, or sees another running count.
+    for (const id of this.waiting.keys()) this.pushUpdate(id);
+  }
+
+  // Grant the session its slot and replay its parked calls in order. Nobody awaits them any more
+  // (the HTTP request that parked them returned long ago), so a failure is logged; the replayed
+  // call itself already put its own error state on the session.
+  private async runWaiter(id: string): Promise<void> {
+    const w = this.unpark(id);
+    if (!w) return;
+    this.slotHolds.set(id, (this.slotHolds.get(id) ?? 0) + 1);
+    this.pushUpdate(id);
+    try {
+      for (const job of w.jobs)
+        await job().catch((err: unknown) => console.warn(`[supervisor] a call that waited for a slot failed for session ${id}: ${(err as Error).message}`));
+    } finally {
+      this.release(id);
+    }
+  }
+
+  // «Запустити зараз»: start a waiting session past the limit, this once.
+  async runNow(id: string): Promise<Session> {
+    if (!this.registry.listSessions().some((x) => x.id === id)) throw new Error("session not found");
+    if (!this.waiting.has(id)) throw new Error("session is not waiting for a slot");
+    await this.runWaiter(id);
+    const s = this.registry.listSessions().find((x) => x.id === id);
+    if (!s) throw new Error("session not found");
+    return this.merge(s);
+  }
+
+  // App restart: the previous process's waiting sessions wait again, in their original order —
+  // every agent row holding a pending prompt, plus a managed launch left `queued` that never got
+  // a child (no session handle: one that had a child crashed mid-turn, and is not a launch to
+  // repeat). A `queued` row is a parked launch, any other a parked message (replayed as the
+  // operator's: that is what nearly every one is, and its triggers and helpers never ran).
+  private restoreSlotQueue(): void {
+    const queuedAt = this.registry.slotQueuedAt();
+    const at = (s: Session) => queuedAt.get(s.id) ?? Date.parse(s.createdAt);
+    const rows = this.registry.listSessions().filter((s) => {
+      if ((s.kind !== "agent" && s.tester !== true) || this.waiting.has(s.id)) return false;
+      // A «Тестувальник» run waits with its whole opening prompt on the row (runTester parks it
+      // with it); without one there is nothing to start it with.
+      if (s.tester === true) return s.status === "queued" && !!s.pendingPrompt?.trim();
+      // A managed message with no text (its images did not survive) has nothing to send; a
+      // native one is its «Продовжити», a resume with no prompt.
+      if (s.pendingPrompt !== undefined && !s.pendingPrompt.trim() && !s.native && s.status !== "queued") {
+        this.registry.setPendingPrompt(s.id, undefined);
+        return false;
+      }
+      if (s.pendingPrompt !== undefined) return true;
+      const handle = managedRuntime(s.runtime) === "claude-code" ? s.ompSessionId : s.ompSessionFile;
+      return !s.native && s.status === "queued" && !handle && (!s.worktree || !!s.worktreePath);
+    });
+    for (const s of rows.sort((a, b) => at(a) - at(b))) {
+      const text = s.pendingPrompt ?? s.task;
+      const job =
+        s.tester === true
+          ? () => this.startTester(s, this.testerCwd(s), text)
+          : s.status === "queued"
+            ? () => this.relaunch(s.id, text)
+            : () => this.deliver(s.id, text, "prompt", undefined, true);
+      this.park(s.id, job, { text }, at(s));
+    }
+    // Started once the api listens, not here: a native harness is handed the api's port.
+    const server = this.http?.httpAdapter?.getHttpServer() as { listening?: boolean; once(e: "listening", cb: () => void): void } | undefined;
+    if (server && !server.listening) server.once("listening", () => this.drainSlots());
+    else this.drainSlots();
+  }
+
+  // ── Machine resource profile at spawn (decision 6) and the memory watchdog (decision 7) ──────
+
+  // The profile's part of one managed spawn, spread into createRuntime opts at every site like
+  // systemAppendOpts: the omp overlays (the project's skill library, then the machine limits —
+  // later wins), claude's CLAUDE_CODE_* limits, and right after the spawn the renice plus the pid
+  // the watchdog will follow. Every kind gets it, chats included; only agents count for slots.
+  // A «Посіпака» run also loses its ask tool here, on its first spawn and on every wake alike
+  // (docs/specs/2026-10-23-minion-auto-run.md, decision 9): omp through a third overlay,
+  // claude through `disallowedTools`.
+  private async spawnOpts(id: string, runtime: AgentRuntimeKind, cwd: string, skillsConfig: string | undefined): Promise<Pick<RuntimeLaunchOpts, "configPaths" | "env" | "onSpawn" | "disallowedTools">> {
+    const minion = this.registry.listSessions().find((x) => x.id === id)?.minion === true;
+    const overlay = runtime === "omp" ? await this.resources?.ompOverlay(cwd) : undefined;
+    const noAsk = minion && runtime === "omp" ? await noAskOverlay() : undefined;
+    const configPaths = [skillsConfig, overlay, noAsk].filter((p): p is string => !!p);
+    const env = runtime === "claude-code" ? this.resources?.claudeEnv() : undefined;
+    return {
+      ...(configPaths.length ? { configPaths } : {}),
+      ...(env ? { env } : {}),
+      ...(minion && runtime === "claude-code" ? { disallowedTools: ["AskUserQuestion"] } : {}),
+      onSpawn: (pid) => {
+        this.resources?.renice(pid);
+        // wireLive ran before start(), so this is the Live of the child just spawned.
+        const l = this.map.get(id);
+        if (l) l.pid = pid;
+      },
+    };
+  }
+
+  // start() plus the watchdog's baseline: what the child runs once it is ready (MCP servers,
+  // workers, the Python kernel) is never a victim; what it starts later is a candidate.
+  private async startChild(id: string, rpc: AgentRuntime): Promise<void> {
+    await rpc.start();
+    const pid = this.map.get(id)?.pid;
+    if (pid !== undefined) this.trackChild(id, pid);
+  }
+
+  // `again`: the same child, now initialised — the watchdog takes its baseline anew, so what
+  // it started since (claude's MCP servers come up only with its first turn) is never a victim.
+  private trackChild(id: string, pid: number, again = false): void {
+    if (!this.watchdog || (!again && this.tracked.get(id) === pid)) return;
+    this.tracked.set(id, pid);
+    this.watchdog.track(id, this.registry.listSessions().find((x) => x.id === id)?.name ?? id, pid);
+  }
+
+  // A native harness is tracked once it is up, not at its spawn: the first `changed` is the pty
+  // spawn itself, before the harness started its MCP servers; any later one comes from its own
+  // hooks, so by then they run and land in the baseline.
+  private onNativeChange(id: string): void {
+    const pid = this.native?.pid(id);
+    if (pid === undefined) {
+      this.nativeSpawned.delete(id);
+      this.untrackChild(id);
+    } else if (this.nativeSpawned.get(id) !== pid) this.nativeSpawned.set(id, pid);
+    else this.trackChild(id, pid);
+  }
+
+  // `pid`: untrack only if that process is still the tracked one — a restarted session's old
+  // child reports its exit after the new one was already tracked.
+  private untrackChild(id: string, pid?: number): void {
+    if (!this.tracked.has(id) || (pid !== undefined && this.tracked.get(id) !== pid)) return;
+    this.tracked.delete(id);
+    this.watchdog?.untrack(id);
+  }
+
+  // Every watchdog finding goes to the UI; a killed command is also told to its agent, so it
+  // knows why the command died and runs it smaller (the agent itself stays alive).
+  private onMachineAlert(alert: MachineAlert): void {
+    this.events.next({ type: "machine_alert", alert });
+    if (!alert.killed || !alert.sessionId) return;
+    const id = alert.sessionId;
+    const command = alert.command ?? "";
+    const rss = alert.rssBytes ?? 0;
+    const size = rss >= 1024 ** 3 ? `${(rss / 1024 ** 3).toFixed(1)} GB` : `${Math.round(rss / 1024 ** 2)} MB`;
+    void this.tellKilled(id, command, size).catch((err: unknown) =>
+      console.warn(`[supervisor] could not tell session ${id} about the killed command: ${(err as Error).message}`),
+    );
+  }
+
+  // Model-facing, so it is plain prose the agent acts on. Managed: a steer while the turn runs,
+  // the next prompt otherwise (which takes a slot like any). Native: typed into the TUI, which
+  // queues it behind a running turn.
+  private async tellKilled(id: string, command: string, size: string): Promise<void> {
+    const s = this.registry.listSessions().find((x) => x.id === id);
+    if (!s) return;
+    const text = `Команду \`${command}\` зупинено: на машині закінчилась пам'ять. Повтори її з меншою кількістю воркерів або частинами.`;
+    if (s.native) {
+      this.native?.typeRaw(id, text);
+      return;
+    }
+    if (this.map.has(id))
+      this.appendEntry(
+        id,
+        this.noticeEntry(
+          { text: `Керманич зупинив команду \`${command}\` (${size}): на машині закінчилась пам'ять.`, code: "watchdog_killed", params: { command, size } },
+          "warn",
+        ),
+      );
+    await this.sendAsKermanych(id, text, this.turnRunning(s) ? "steer" : "prompt");
   }
 
   // Every project lookup used to be an inline registry find plus a hand-rolled
@@ -378,7 +942,7 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     this.events.next({ type: "project_removed", projectId: id });
   }
 
-  async updateProject(id: string, patch: { name?: string; color?: string; previewCommand?: string; apiCommand?: string; carryFiles?: string[]; docFolders?: string[]; docsRequired?: boolean; docsPolicy?: DocsPolicy; defaultBranch?: string; defaultModel?: string; defaultEffort?: ThinkingLevel | ""; conventions?: string }): Promise<Project> {
+  async updateProject(id: string, patch: { name?: string; color?: string; carryFiles?: string[]; docFolders?: string[]; docsRequired?: boolean; docsPolicy?: DocsPolicy; defaultBranch?: string; defaultModel?: string; defaultEffort?: ThinkingLevel | ""; conventions?: string }): Promise<Project> {
     if (patch.name !== undefined) {
       const name = patch.name.trim();
       if (!name) throw new Error("project name cannot be empty");
@@ -411,8 +975,7 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
         workspaceId: c.workspaceId,
         name: c.name,
         color: c.color,
-        previewCommand: c.previewCommand,
-        apiCommand: c.apiCommand,
+        platform: c.platform,
         carryFiles: c.carryFiles,
         docFolders: c.docFolders,
         docsRequired: c.docsRequired,
@@ -423,6 +986,9 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
         conventions: c.conventions,
       });
       this.events.next({ type: "project_update", project });
+      // A platform switch stops the previews whose kind no longer fits (decision 9; mobile
+      // decision 8): a web preview on a back-end or Mobile project, a device on any other.
+      await this.preview?.stopUnfit(project.id, project.platform);
     }
     if (prune) {
       const known = new Set(cloud.map((c) => c.id));
@@ -526,18 +1092,43 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     // status push may not have landed yet. Terminal and backlog cards stay launchable —
     // retrying an errored or stopped task is the point of the board.
     if (ACTIVE_STATUSES.includes(task.status)) throw new Error("task is already running");
-    const mine = this.registry.listSessions().some((s) => s.taskId === taskId && ACTIVE_STATUSES.includes(this.merge(s).status));
-    if (mine) throw new Error("task is already running");
-    // Did THIS call take the assignment? Only a claim we made may be rolled back below.
-    let claimed = false;
-    if (!task.assigneeId) {
-      // Atomic self-assign (`update … where assignee_id is null`). A lost race is not a DB
-      // error, it is zero updated rows — hence `undefined` rather than a throw.
-      const won = await claimTask(client, taskId, userId);
-      if (!won) throw new Error("task already claimed");
-      claimed = true;
+    if (this.runsTask(taskId)) throw new Error("task is already running");
+    // The launch claim (docs/specs/2026-10-23-minion-auto-run.md, decision 7): `queued` and the
+    // assignee in one UPDATE guarded by the status just read, so a ▶ here and «Посіпака» on
+    // another machine cannot both start the card. A lost race is not a DB error, it is zero
+    // updated rows — hence `undefined` rather than a throw — and the card as it is now says why.
+    const won = await claimTaskForLaunch(client, taskId, userId, task.status);
+    if (!won) {
+      const now = await getTask(client, taskId).catch(() => undefined);
+      throw new Error(now && ACTIVE_STATUSES.includes(now.status) ? "task is already running" : "task already claimed");
     }
+    try {
+      return await this.launchTask(task, userId, { images, native });
+    } catch (err) {
+      // A launch that never started must not leave the card `queued`, nor pinned to whoever
+      // failed to start it. The previous status comes back first; the assignee is cleared only
+      // when this launch took it — a pre-existing assignment is somebody's deliberate state.
+      await releaseLaunchClaim(client, taskId, { status: task.status, assigneeId: task.assigneeId }).catch((e: unknown) =>
+        console.warn(`[supervisor] could not release the claim on task ${taskId}: ${(e as Error).message}`),
+      );
+      throw err;
+    }
+  }
 
+  // «Посіпака» starts a card it has just claimed (MinionService, which also checked the cap and
+  // the slot, and releases the claim when this throws). The ordinary task launch with four
+  // differences (docs/specs/2026-10-23-minion-auto-run.md, decision 9): the row is a minion run,
+  // it always gets a worktree, it is never native, and it starts at once instead of queueing for
+  // a slot. Its opening prompt is the minion's instruction (openingPrompt).
+  launchMinion(task: Task, userId: string): Promise<Session> {
+    return this.launchTask(task, userId, { minion: true });
+  }
+
+  // The one launch of a claimed card, shared by the operator's ▶ and the minion: the binding,
+  // the project refresh, the launch parameters, the row, and its removal when the launch fails.
+  private async launchTask(task: Task, userId: string, opts: { images?: ImageInput[]; native?: NativeHarness; minion?: boolean }): Promise<Session> {
+    const { images, native, minion } = opts;
+    const client = this.auth.cloudClient();
     const local = this.registry.listProjects().find((p) => p.id === task.projectId);
     if (!local?.localRepoPath) throw new Error("project not bound");
 
@@ -548,8 +1139,7 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
       ? this.registry.patchProject(local.id, {
           name: cloudProject.name,
           color: cloudProject.color,
-          previewCommand: cloudProject.previewCommand,
-          apiCommand: cloudProject.apiCommand,
+          platform: cloudProject.platform ?? null,
           carryFiles: cloudProject.carryFiles,
           docsRequired: cloudProject.docsRequired,
           docsPolicy: cloudProject.docsPolicy,
@@ -559,26 +1149,31 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
           conventions: cloudProject.conventions,
         })
       : local;
+    // The refresh may be the first to see a platform switch (decision 9; mobile decision 8).
+    await this.preview?.stopUnfit(project.id, project.platform);
 
     // The board stores launch params as free text; validate them against the local
     // vocabularies instead of casting, so a bad card cannot produce a bogus branch prefix.
-    const prefix: BranchPrefix = (BRANCH_PREFIXES as readonly string[]).includes(task.prefix ?? "")
-      ? (task.prefix as BranchPrefix)
-      : "feature";
-    const platform = (PLATFORMS as readonly string[]).includes(task.platform ?? "")
-      ? (task.platform as Session["platform"])
-      : undefined;
+    // A design card is always a `design/` branch, whatever the card says
+    // (docs/specs/2026-10-29-design-tab.md); a minion never runs one (its queries skip them).
+    const design = task.design && !minion;
+    const prefix: BranchPrefix = design
+      ? "design"
+      : (BRANCH_PREFIXES as readonly string[]).includes(task.prefix ?? "")
+        ? (task.prefix as BranchPrefix)
+        : "feature";
 
     // A shared card must never commandeer another developer's checkout, which is what the
     // hardcoded `true` here used to guarantee. The in-place option is personal, so it
     // survives exactly for the person who filed the card — for anybody else the card is
-    // isolated, whatever it says.
-    const inPlace = task.worktree === false && task.createdBy === userId;
+    // isolated, whatever it says. A minion run is always isolated: the operator works in that
+    // checkout.
+    const inPlace = !minion && task.worktree === false && task.createdBy === userId;
     const worktree = !inPlace;
 
     const { branch, baseBranch } = await this.resolveLaunchParams(
       project,
-      task.title,
+      { title: task.title, description: task.description, branchSlug: task.branchSlug },
       prefix,
       worktree,
       undefined,
@@ -590,6 +1185,9 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     // than running the wrong provider's model; an unreadable catalog keeps the id untouched.
     // A native session carries neither model nor effort: the harness's own `/model` owns them.
     const model = native ? undefined : await this.models.validModel(this.runtimeFor(), task.model);
+    // The design's folder is named once, from the launch day and the branch's own slug (already
+    // made unique), and stays on the row: a resume or a slot replay reads it back, never re-derives.
+    const designDir = design ? designDirFor(todayIso(), branch.slice("design/".length)) : undefined;
     const session = this.registry.createSession({
       projectId: project.id,
       taskId: task.id,
@@ -605,26 +1203,27 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
       // model left selected from a previous session.
       effort: native ? undefined : task.effort,
       prefix,
-      platform,
       runtime,
       ...(native ? { native: true } : {}),
-      // A «Глибокий аналіз» card opens with the wrapped prompt (launch → openingPrompt).
-      ...(task.deepAnalysis ? { deepAnalysis: true } : {}),
+      // A «Глибокий аналіз» card opens with the wrapped prompt (launch → openingPrompt). The
+      // minion never takes one: that agent interviews a person.
+      ...(task.deepAnalysis && !minion ? { deepAnalysis: true } : {}),
+      ...(designDir ? { designDir } : {}),
+      ...(minion ? { minion: true } : {}),
+      // A minion run of a finding card carries the kind for its opening prompt (decision 14).
+      ...(minion && task.findingKind ? { findingKind: task.findingKind } : {}),
     });
+    if (minion) this.minionRuns.set(session.id, { phase: "work", starting: true });
     try {
-      return await this.launch(session, project, { images });
+      const launched = await this.launch(session, project, { images, ...(minion ? { direct: true } : {}) });
+      const run = this.minionRuns.get(session.id);
+      if (run) run.starting = false;
+      return launched;
     } catch (err) {
+      this.forgetMinionRun(session.id);
       this.browser?.revoke(session.id);
       this.registry.removeSession(session.id);
       this.events.next({ type: "session_removed", sessionId: session.id });
-      // A launch that never started must not leave the card pinned to whoever failed to
-      // start it — nobody else could then pick it up. Release ONLY a claim we just made;
-      // a pre-existing assignment is somebody's deliberate state and stays. The cloud
-      // status is still `backlog` here, so `tasks_guard()` permits the write.
-      if (claimed)
-        await patchTask(client, taskId, { assigneeId: null }).catch((e: unknown) =>
-          console.warn(`[supervisor] could not release the claim on task ${taskId}: ${(e as Error).message}`),
-        );
       throw err;
     }
   }
@@ -646,10 +1245,11 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     const configPath = await this.ompSkills(project.id, project.localRepoPath, session.id);
     const extensionPath = await this.ompTriggers(project.id, project.localRepoPath, session.id);
     const browserMcp = this.browser?.bindingFor(session.id);
-    const rpc = createRuntime(managedRuntime(session.runtime), { cwd: project.localRepoPath, tools: CHAT_TOOLS, ...(configPath ? { configPath } : {}), ...(extensionPath ? { extensionPath } : {}), ...(browserMcp ? { mcp: browserMcp } : {}), ...this.systemAppendOpts(project.id) });
+    const runtime = managedRuntime(session.runtime);
+    const rpc = createRuntime(runtime, { cwd: project.localRepoPath, ...launchToolsFor("chat"), ...(await this.spawnOpts(session.id, runtime, project.localRepoPath, configPath)), ...(extensionPath ? { extensionPath } : {}), ...(browserMcp ? { mcp: browserMcp } : {}), ...this.systemAppendOpts(project.id, "chat") });
     const live = this.wireLive(session.id, rpc, "queued");
     try {
-      await rpc.start();
+      await this.startChild(session.id, rpc);
       // Let the startup event burst (ready/setWidget/available_commands) flow through onRpcEvent
       // first, then mark the chat idle-ready — otherwise those events reset live status to "queued".
       await this.refreshState(session.id);
@@ -706,12 +1306,18 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     if (chat.native) throw nativeUnsupported();
     const project = this.boundProject(chat.projectId);
 
-    let chatFile = chat.ompSessionFile;
-    if (!chatFile) {
+    // The fork continues on the chat's own backend (R1/R2), the same per-backend handle
+    // branchSession reads: omp forks the session FILE, claude the session UUID (stored in
+    // ompSessionId — claude never reports a file). launch spawns on session.runtime, which
+    // the promotion leaves as the chat's.
+    const chatRuntime = managedRuntime(chat.runtime);
+    let forkHandle = chatRuntime === "claude-code" ? chat.ompSessionId : chat.ompSessionFile;
+    if (!forkHandle) {
       await this.refreshState(chatId);
-      chatFile = this.registry.listSessions().find((x) => x.id === chatId)?.ompSessionFile;
+      const fresh = this.registry.listSessions().find((x) => x.id === chatId);
+      forkHandle = chatRuntime === "claude-code" ? fresh?.ompSessionId : fresh?.ompSessionFile;
     }
-    if (!chatFile)
+    if (!forkHandle)
       throw new Error("chat has no omp session yet — send a message before starting implementation");
 
     const live = this.map.get(chatId);
@@ -721,7 +1327,7 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     // Everything the launcher used to ask for is derived: the chat's opening message is the
     // task, its first line the name, and the rest are the project's defaults.
     const name = taskNameFromText(chat.task) || chat.name;
-    const { branch, baseBranch } = await this.resolveLaunchParams(project, name, "feature", true, chatId);
+    const { branch, baseBranch } = await this.resolveLaunchParams(project, { title: name, description: chat.task }, "feature", true, chatId);
     const { template, block } = await this.agentPrompt(chat.projectId, "promote", project.localRepoPath);
     const prompt = renderInstruction(agentById("promote")!, { branch }, template) + block;
 
@@ -745,7 +1351,7 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
       taskId, name, kind: "agent", worktree: true, branch, baseBranch, worktreePath: "", prefix: "feature", status: "queued",
     });
     try {
-      return await this.launch(session, project, { fork: chatFile, firstPrompt: prompt });
+      return await this.launch(session, project, { fork: forkHandle, firstPrompt: prompt });
     } catch (err) {
       // Back to being a chat, and back to being unlinked: the row keeps its conversation, and
       // the next message resumes its read-only omp child through doResume.
@@ -760,10 +1366,13 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
 
   // In-place guards + a de-duplicated branch name, shared by every birth path of an agent
   // (createSessionFromTask, promoteChatToAgent) and by attaching a worktree to an existing
-  // session. excludeId keeps a session from colliding with or blocking itself.
+  // session. excludeId keeps a session from colliding with or blocking itself. The name is the
+  // card's own when the launcher's «Гілка» box was filled in (slugified, so a typed value is
+  // always a valid ref; docs/specs/2026-11-04-custom-branch-name.md), else it comes from the task
+  // (BranchNameService), else from its transliterated title.
   private async resolveLaunchParams(
     project: Project,
-    name: string,
+    task: BranchContext & { branchSlug?: string },
     prefix: BranchPrefix,
     worktree: boolean,
     excludeId?: string,
@@ -807,10 +1416,15 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
       // and «Зміни» always know the base; only a detached HEAD leaves none (fork from HEAD).
       baseBranch = requestedBase || project.defaultBranch || (await this.worktree.currentBranch(project.localRepoPath)) || undefined;
     }
+    // Named after the guards, so a refused launch spends no model call; the taken set is read
+    // after the answer, so it includes whatever launched while the model was thinking. A name the
+    // operator typed spends none either.
+    const typed = task.branchSlug?.trim();
+    const slug = typed ? slugify(typed) : ((await this.branchNames?.suggest(task)) ?? slugify(task.title));
     const existing = new Set(
       this.registry.listSessions(project.id).filter((s) => s.id !== excludeId).map((s) => s.branch).filter(Boolean),
     );
-    const branch = uniqueSlug(branchName(slugify(name), prefix), existing);
+    const branch = uniqueSlug(branchName(slug, prefix), existing);
     return { branch, baseBranch };
   }
 
@@ -821,15 +1435,17 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
 
   // The system-prompt append for one spawn, shaped for a spread into any createRuntime() opts:
   // the user's agent communication language, then — when the project's documentation switch is
-  // on — the policy built from its per-kind rules (docsPolicyAppend). Every createRuntime site
+  // on — the policy built from its per-kind rules (docsPolicyAppend), then what the session
+  // kind's tool restriction means for the model (launchAppendFor). Every createRuntime site
   // passes it, so the policy reaches chats, agents, discussions, reviews and resumes alike on
-  // both runtimes. Empty object when neither applies, so the agent keeps its own default. Read
+  // both runtimes. Empty object when nothing applies, so the agent keeps its own default. Read
   // fresh per spawn: a preference or setting change takes on the next spawn without a restart.
-  private systemAppendOpts(projectId: string): { appendSystemPrompt?: string } {
+  private systemAppendOpts(projectId: string, kind: Session["kind"]): { appendSystemPrompt?: string } {
     const language = languageAppendFor(this.registry.getAuthSession()?.agentLanguage);
     const project = this.registry.listProjects().find((p) => p.id === projectId);
     const docs = project?.docsRequired ? docsPolicyAppend(docsPolicy(project.docsPolicy)) : undefined;
-    const append = [language, docs].filter(Boolean).join("\n\n");
+    // The machine resource paragraph (test workers, no watch mode) while limits apply.
+    const append = [language, docs, this.resources?.promptParagraph(), launchAppendFor(kind)].filter(Boolean).join("\n\n");
     return append ? { appendSystemPrompt: append } : {};
   }
 
@@ -838,13 +1454,17 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
   // rehydrates its history; `firstPrompt` overrides the opening message sent (defaults to the
   // task), and an empty one lands the session idle — a forked agent that just continues the
   // chat. On failure it undoes any git side effects and rethrows; the caller owns the
-  // registry-row rollback (remove vs return-to-backlog).
+  // registry-row rollback (remove vs return-to-backlog). The spawn takes an agent slot
+  // (docs/specs/2026-10-21-machine-resource-profile.md, decision 5): with none free the worktree
+  // and branch still exist at once, the row stays `queued`, and this returns normally — the
+  // caller's rollback is for a launch that failed, not one that waits. `direct` (a minion run)
+  // starts in a slot at once and never waits: its caller already found one free.
   private async launch(
     session: Session,
     project: Project,
-    opts: { images?: ImageInput[]; fork?: string; firstPrompt?: string } = {},
+    opts: { images?: ImageInput[]; fork?: string; firstPrompt?: string; direct?: boolean } = {},
   ): Promise<Session> {
-    const { id, branch, worktree, baseBranch, task, model, effort } = session;
+    const { id, branch, worktree, baseBranch, task } = session;
     if (!project.localRepoPath) throw new Error("project not bound");
     const { images, fork } = opts;
     const firstPrompt = opts.firstPrompt ?? task;
@@ -872,31 +1492,57 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
       throw err;
     }
     const saved = worktree ? this.registry.updateSession(id, { worktreePath: wtDir }) : session;
+    const plan = { images, fork, firstPrompt, staleFrom };
+    if (opts.direct) await this.inSlot(id, () => this.spawnLaunched(saved, project, plan, true));
+    else
+      await this.withSlot(
+        saved,
+        () => this.spawnLaunched(saved, project, plan, true),
+        // Replayed with everything this call had (fork handle, images, opening prompt) but not its
+        // git: that is done. A row restored after a restart takes the relaunch path instead.
+        () => this.deferredLaunch(id, () => this.spawnLaunched(this.registry.listSessions().find((x) => x.id === id) ?? saved, project, plan, false)),
+        { text: firstPrompt, images },
+      );
+    return this.merge(this.registry.listSessions().find((x) => x.id === id) ?? saved);
+  }
+
+  // The spawn half of launch: start the child (or the native harness) in the prepared tree and
+  // send the opening prompt. `rollback`: a failure undoes the git too — only while the launch
+  // request still waits for it; a launch replayed after waiting for a slot keeps its tree.
+  private async spawnLaunched(
+    saved: Session,
+    project: Project,
+    opts: { images?: ImageInput[]; fork?: string; firstPrompt: string; staleFrom: string },
+    rollback: boolean,
+  ): Promise<Session> {
+    const { id, worktree, baseBranch, model, effort } = saved;
+    const { images, fork, firstPrompt, staleFrom } = opts;
+    const cwd = worktree ? saved.worktreePath : project.localRepoPath;
 
     // A native session gets nothing of Kermanych's: no skills, triggers, system append or
     // directives — its harness starts in the worktree with the task text as its first prompt.
     // The one exception is a deep-analysis card's wrapped prompt: it is part of the task the
     // operator chose, not Kermanych's scaffolding.
-    if (session.native) {
+    if (saved.native) {
       try {
-        const prompt = await this.openingPrompt(session, firstPrompt, saved.worktreePath || project.localRepoPath);
+        const prompt = await this.openingPrompt(saved, firstPrompt, cwd);
         await this.requireNative().start(saved, { prompt, resume: false });
       } catch (err) {
-        await this.rollbackLaunchGit(project, saved, wtDir);
+        if (rollback) await this.rollbackLaunchGit(project, saved, saved.worktreePath);
         throw err;
       }
       this.pushUpdate(id);
       return this.merge(this.registry.listSessions().find((x) => x.id === id) ?? saved);
     }
 
-    const cwd = worktree ? wtDir : project.localRepoPath;
     const configPath = await this.ompSkills(project.id, cwd, id);
     const extensionPath = await this.ompTriggers(project.id, cwd, id);
     const browserMcp = this.browser?.bindingFor(id);
-    const rpc = createRuntime(managedRuntime(session.runtime), { cwd, model, ...(effort ? { thinking: effort } : {}), ...(fork ? { fork } : {}), ...(configPath ? { configPath } : {}), ...(extensionPath ? { extensionPath } : {}), ...(browserMcp ? { mcp: browserMcp } : {}), ...this.systemAppendOpts(project.id) });
+    const runtime = managedRuntime(saved.runtime);
+    const rpc = createRuntime(runtime, { cwd, model, ...(effort ? { thinking: effort } : {}), ...(fork ? { fork } : {}), ...(await this.spawnOpts(id, runtime, cwd, configPath)), ...(extensionPath ? { extensionPath } : {}), ...(browserMcp ? { mcp: browserMcp } : {}), ...this.systemAppendOpts(project.id, saved.kind) });
     const live = this.wireLive(id, rpc, "queued");
     try {
-      await rpc.start();
+      await this.startChild(id, rpc);
       // A forked child inherits the source conversation — surface its history before the turn.
       if (fork) {
         this.rehydrate(live, id, await rpc.getAllMessages());
@@ -921,9 +1567,16 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
         // documentation current is deterministic, not left to the model reading the librarian
         // skill. A locally-created session with no card carries the trailer alone.
         this.appendEntry(id, this.userEntry(firstPrompt, images));
-        const directives = session.taskId ? `${COAUTHOR_DIRECTIVE}\n\n${DOC_MAINTAIN_DIRECTIVE}` : COAUTHOR_DIRECTIVE;
-        const modelPrompt = await this.openingPrompt(session, firstPrompt, cwd);
+        // A task's text is the operator's ask, so a leading Хелпер (`/el10`, picked in the
+        // launcher or the board editor) expands here exactly as in a chat message: the row
+        // keeps the slash, a notice says what was added, the model reads the instruction.
+        const helped = expandHelpers(firstPrompt);
+        if (helped.used.length) this.appendEntry(id, this.noticeEntry(helperNotice(helped.used)));
+        const directives = saved.taskId ? `${COAUTHOR_DIRECTIVE}\n\n${DOC_MAINTAIN_DIRECTIVE}` : COAUTHOR_DIRECTIVE;
+        const modelPrompt = await this.openingPrompt(saved, helped.text, cwd);
         rpc.prompt(`${modelPrompt}\n\n${directives}`, images);
+        // A minion run's time cap counts from this spawn to its first verdict (decision 9).
+        if (saved.minion) this.startMinionClock(id);
       } else {
         // No opening message (a forked agent continuing the chat) — sit idle, ready for input.
         live.live.status = "done";
@@ -932,21 +1585,67 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     } catch (err) {
       this.stopPoll(live);
       await rpc.stop().catch(() => {});
-      await this.rollbackLaunchGit(project, session, wtDir);
+      if (rollback) await this.rollbackLaunchGit(project, saved, saved.worktreePath);
       this.map.delete(id);
       this.toolDetails.dropSession(id);
       this.skillLabels.delete(id);
       throw err;
     }
     this.pushUpdate(id);
-    return this.merge(saved);
+    return this.merge(this.registry.listSessions().find((x) => x.id === id) ?? saved);
+  }
+
+  // A launch replayed after waiting for a slot has nobody awaiting it, so a failure lands on the
+  // row: `error`, with the worktree kept — the next message starts the agent there.
+  private async deferredLaunch(id: string, spawn: () => Promise<unknown>): Promise<void> {
+    try {
+      await spawn();
+    } catch (err) {
+      console.warn(`[supervisor] launch of session ${id} failed after waiting for a slot: ${(err as Error).message}`);
+      if (!this.registry.listSessions().some((x) => x.id === id)) return;
+      this.registry.updateSession(id, { status: "error" });
+      this.pushUpdate(id);
+    }
+  }
+
+  // A parked launch restored after an api restart: its git is done, only the spawn is left. The
+  // fork handle is the row's own — a promoted chat keeps its conversation there until the
+  // agent's first child records one; images did not survive the restart.
+  private async relaunch(id: string, firstPrompt: string): Promise<void> {
+    const s = this.registry.listSessions().find((x) => x.id === id);
+    if (!s) return;
+    const project = this.boundProject(s.projectId);
+    const fork = s.native ? undefined : managedRuntime(s.runtime) === "claude-code" ? s.ompSessionId : s.ompSessionFile;
+    await this.deferredLaunch(id, () => this.spawnLaunched(s, project, { firstPrompt, staleFrom: "", ...(fork ? { fork } : {}) }, false));
   }
 
   // The opening text the MODEL receives (docs/specs/2026-10-08-deep-analysis-task.md). An
   // ordinary session gets `firstPrompt` unchanged; a deep-analysis one gets it wrapped in the
   // deep-analysis instruction plus the resolved `deep-analysis` skill, so a project, workspace
   // or repository override wins. Degrades like completeDocs: the wrapper alone is a complete ask.
+  // A «Посіпака» run gets the minion's instruction around the card — the «ШІ-команда» override
+  // and assigned skills like every agent — and Kermanych's outcome contract after it, which no
+  // override can drop (docs/specs/2026-10-23-minion-auto-run.md, decision 11). A card filed from
+  // a «Знахідка» also gets, right after the card, Kermanych's line naming the kind, and the
+  // `minion-findings` skill after the assigned ones (decision 14): a repository, project,
+  // workspace or user skill of that name wins, and a team that switched it off gets the line alone.
   private async openingPrompt(session: Session, firstPrompt: string, cwd: string): Promise<string> {
+    if (session.minion && firstPrompt.trim()) {
+      const kind = session.findingKind;
+      const { template, block } = await this.agentPrompt(session.projectId, MINION_AGENT_ID, cwd, kind ? [MINION_FINDINGS_SKILL] : []);
+      const card = firstPrompt.trim() === session.name.trim() ? session.name : `${session.name}\n\n${firstPrompt}`;
+      const about = kind ? `\n\n${minionFindingLine(kind)}` : "";
+      return `${renderInstruction(agentById(MINION_AGENT_ID)!, { task: card }, template)}${about}${block}\n\n${MINION_OUTCOME_CONTRACT}`;
+    }
+    // A «Дизайн» session (docs/specs/2026-10-29-design-tab.md) opens with the Дизайнер's
+    // instruction around the card — its folder, topic and description — plus the `design-spec`
+    // skill after the assigned ones, like the minion's extra. Native sessions take it too: the
+    // instruction is the task the operator chose, as with deep analysis.
+    if (session.designDir && firstPrompt.trim()) {
+      const { template, block } = await this.agentPrompt(session.projectId, DESIGNER_AGENT_ID, cwd, [DESIGN_SPEC_SKILL]);
+      const description = firstPrompt.trim() === session.name.trim() ? "" : firstPrompt.trim();
+      return renderInstruction(agentById(DESIGNER_AGENT_ID)!, { designDir: session.designDir, topic: session.name, description }, template).trimEnd() + block;
+    }
     if (!session.deepAnalysis || !firstPrompt.trim()) return firstPrompt;
     let block = "";
     try {
@@ -988,9 +1687,7 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     }
     if (!forkHandle) throw new Error("agent has no omp session yet — send a first message before branching");
 
-    const live = this.map.get(parentId);
-    if (live && (live.state.status === "thinking" || live.state.status === "tool"))
-      throw new Error("wait for the agent to finish its turn before branching");
+    this.assertTurnEnded(parentId, "branching");
 
     const cwd = s.worktreePath || g.localRepoPath;
     const child = this.registry.createSession({
@@ -1007,10 +1704,10 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
 
     const configPath = await this.ompSkills(s.projectId, cwd, child.id);
     const extensionPath = await this.ompTriggers(s.projectId, cwd, child.id);
-    const rpc = createRuntime(parentRuntime, { cwd, fork: forkHandle, noTools: true, ...(configPath ? { configPath } : {}), ...(extensionPath ? { extensionPath } : {}), ...this.systemAppendOpts(s.projectId) });
+    const rpc = createRuntime(parentRuntime, { cwd, fork: forkHandle, ...launchToolsFor("discussion"), ...(await this.spawnOpts(child.id, parentRuntime, cwd, configPath)), ...(extensionPath ? { extensionPath } : {}), ...this.systemAppendOpts(s.projectId, "discussion") });
     const childLive = this.wireLive(child.id, rpc, "queued");
     try {
-      await rpc.start();
+      await this.startChild(child.id, rpc);
       // Both backends now re-render the parent transcript: omp forks the session file, claude
       // forks the session UUID, and getAllMessages() reads either back through the same seam.
       this.rehydrate(childLive, child.id, await rpc.getAllMessages());
@@ -1030,6 +1727,14 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     }
     this.pushUpdate(child.id);
     return this.merge(child);
+  }
+
+  // A fork copies the parent's conversation as it stands, so it must not be taken mid-turn:
+  // the copy would carry half a turn (a tool call with no result yet).
+  private assertTurnEnded(parentId: string, action: string): void {
+    const live = this.map.get(parentId);
+    if (live && (live.state.status === "thinking" || live.state.status === "tool"))
+      throw new Error(`wait for the agent to finish its turn before ${action}`);
   }
 
   // Request an INDEPENDENT reviewer for a finished agent: spawn a FRESH omp session
@@ -1071,10 +1776,11 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
 
     const configPath = await this.ompSkills(s.projectId, cwd, child.id);
     const extensionPath = await this.ompTriggers(s.projectId, cwd, child.id);
-    const rpc = createRuntime(managedRuntime(child.runtime), { cwd, tools: ["read", "grep", "glob"], ...(configPath ? { configPath } : {}), ...(extensionPath ? { extensionPath } : {}), ...this.systemAppendOpts(s.projectId) });
+    const childRuntime = managedRuntime(child.runtime);
+    const rpc = createRuntime(childRuntime, { cwd, ...launchToolsFor("review"), ...(await this.spawnOpts(child.id, childRuntime, cwd, configPath)), ...(extensionPath ? { extensionPath } : {}), ...this.systemAppendOpts(s.projectId, "review") });
     const childLive = this.wireLive(child.id, rpc, "queued");
     try {
-      await rpc.start();
+      await this.startChild(child.id, rpc);
       this.appendEntry(child.id, this.userEntry(prompt));
       rpc.prompt(prompt);
     } catch (err) {
@@ -1090,8 +1796,148 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     this.pushUpdate(child.id);
     return this.merge(child);
   }
+
+  // «Виконати тестування» (docs/specs/2026-11-04-qa-tester-agent.md, decisions 1, 9, 11, 12): a
+  // FRESH `review` child stamped `tester` in the doer's worktree, read-only like «Ревізор» but
+  // handed the session browser, the doer's preview and the QA tools. The in-scope verdicts of the
+  // card are cleared first (they describe old code). It takes an agent slot and waits for one in
+  // the queue like any agent launch.
+  async runTester(parentId: string, scope: QaRunScope): Promise<Session> {
+    const s = this.registry.listSessions().find((x) => x.id === parentId);
+    if (!s) throw new Error("session not found");
+    const g = this.boundProject(s.projectId);
+    const live = this.map.get(parentId);
+    const midTurn = live && (live.state.status === "thinking" || live.state.status === "tool") ? live.state.status : undefined;
+    // The doer's preview config (docs/specs/2026-11-04-session-env-and-tester-preview-gate.md,
+    // decision 3). A session the preview refuses (finished, not an agent, no browser) is refused
+    // by an earlier reason, so an unreadable one stays unknown here.
+    let previewConfig: PreviewConfigStatus | undefined;
+    try {
+      previewConfig = this.preview?.info(parentId).config;
+    } catch {
+      previewConfig = undefined;
+    }
+    const refusal = testerRefusal({
+      kind: s.kind,
+      status: midTurn ?? s.status,
+      worktree: s.worktree,
+      worktreePath: s.worktreePath,
+      taskId: s.taskId,
+      runningTester: this.registry.listSessions().some((x) => x.parentSessionId === parentId && x.tester === true && x.status !== "merged"),
+      browserHost: !!browserHost(),
+      platformHasBrowser: platformHasBrowser(g.platform),
+      previewConfig: previewConfig?.kind,
+    });
+    if (refusal === "no-preview" && previewConfig?.kind === "invalid") throw new Error(`set up the live preview first: ${PREVIEW_CONFIG_PATH} is invalid: ${previewConfig.error}`);
+    if (refusal) throw new Error(TESTER_REFUSALS[refusal]);
+    const taskId = s.taskId!;
+
+    const client = this.auth.cloudClient();
+    const card = await getTask(client, taskId);
+    if (!card) throw new Error("the task card is not visible");
+    const items = card.qaChecklist?.items ?? [];
+    const inScope = qaItemsInScope(items, scope);
+    if (items.length && !inScope.length) throw new Error("nothing to test: every checklist item passed — run all items instead");
+    if (inScope.length) {
+      const checklist = await patchQaItems(client, taskId, inScope.map((i) => i.id), {}, ["agent"]);
+      this.events.next({ type: "qa_checklist_update", taskId, checklist });
+    }
+
+    const cwd = s.worktreePath || g.localRepoPath;
+    const settings = this.registry.getTesterSettings(s.projectId);
+    // A card with no checklist yet: the tester composes one by the `qa-tester` skill first.
+    const { template, block } = await this.agentPrompt(s.projectId, TESTER_AGENT_ID, cwd, items.length ? [] : ["qa-tester"]);
+    const prompt =
+      renderInstruction(
+        agentById(TESTER_AGENT_ID)!,
+        {
+          task: s.task,
+          loginPath: testerLoginPathLine(settings.loginPath),
+          accounts: testerAccountsBlock(settings.accounts),
+          notes: testerNotesBlock(settings.notes),
+          items: testerItemsBlock(inScope),
+        },
+        template,
+      ) +
+      `\n\n${testerContract(qaScreenshotDir(new Date(), s.branch))}` +
+      block;
+
+    const child = this.registry.createSession({
+      projectId: s.projectId,
+      name: `тестування: ${s.name}`,
+      task: s.task,
+      worktreePath: "",
+      branch: "",
+      worktree: false,
+      kind: "review",
+      parentSessionId: parentId,
+      runtime: this.runtimeFor(),
+      tester: true,
+    });
+    // Run now in a free slot, or replayed by the queue when one frees up.
+    const start = () => this.startTester(child, cwd, prompt);
+    // The prompt rides the wait so an api restart can start the run (restoreSlotQueue).
+    await this.withSlot(child, start, start, { text: prompt });
+    this.pushUpdate(child.id);
+    return this.merge(child);
+  }
+
+  // Where a tester run works: its parent's worktree, or the project checkout of an in-place parent.
+  private testerCwd(child: Session): string {
+    const parent = this.registry.listSessions().find((x) => x.id === child.parentSessionId);
+    return parent?.worktreePath || this.boundProject(child.projectId).localRepoPath;
+  }
+
+  // Spawn a tester child with its opening prompt; a failed spawn removes the row like «Ревізор».
+  private async startTester(child: Session, cwd: string, prompt: string): Promise<void> {
+    if (!this.registry.listSessions().some((x) => x.id === child.id)) return; // discarded while it waited
+    const configPath = await this.ompSkills(child.projectId, cwd, child.id);
+    const extensionPath = await this.ompTriggers(child.projectId, cwd, child.id);
+    const childRuntime = managedRuntime(child.runtime);
+    const browserMcp = this.browser?.bindingFor(child.id);
+    const rpc = createRuntime(childRuntime, { cwd, ...launchToolsFor("review"), ...(await this.spawnOpts(child.id, childRuntime, cwd, configPath)), ...(extensionPath ? { extensionPath } : {}), ...(browserMcp ? { mcp: browserMcp } : {}), ...this.systemAppendOpts(child.projectId, "review") });
+    const childLive = this.wireLive(child.id, rpc, "queued");
+    try {
+      await this.startChild(child.id, rpc);
+      this.appendEntry(child.id, this.userEntry(prompt));
+      rpc.prompt(prompt);
+    } catch (err) {
+      this.stopPoll(childLive);
+      await rpc.stop().catch(() => {});
+      this.map.delete(child.id);
+      this.toolDetails.dropSession(child.id);
+      this.skillLabels.delete(child.id);
+      this.browser?.revoke(child.id);
+      this.registry.removeSession(child.id);
+      this.events.next({ type: "session_removed", sessionId: child.id });
+      throw err;
+    }
+  }
+
+  // A tester run ends: its child stops, its row is history (`merged`), and its browser view goes
+  // with its in-memory partition (decision 7). ⤴ on a tester, and the parent's finish, end here.
+  private async retireTester(id: string): Promise<void> {
+    this.unpark(id);
+    const live = this.map.get(id);
+    if (live) {
+      live.live.status = "stopped";
+      this.stopPoll(live);
+      await live.rpc.stop();
+      this.map.delete(id);
+      this.toolDetails.dropSession(id);
+      this.skillLabels.delete(id);
+    }
+    browserHost()?.close(id);
+    this.browser?.revoke(id);
+    this.registry.updateSession(id, { status: "merged" });
+    this.pushUpdate(id);
+    this.drainSlots();
+  }
+
   // Pour a discussion or review child back into its parent: inject a (reviewed) summary
   // as a message into the parent's live conversation, then retire the child as merged.
+  // A tester's message is built from its verdicts on the card, not its last words
+  // (docs/specs/2026-11-04-qa-tester-agent.md, decision 13); when every item passed, nothing is sent.
   async mergeDiscussion(childId: string, summary?: string): Promise<{ merged: true }> {
     const c = this.registry.listSessions().find((x) => x.id === childId);
     if (!c) throw new Error("session not found");
@@ -1099,6 +1945,19 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
       throw new Error("not a discussion or review branch");
     const parentId = c.parentSessionId;
 
+    if (c.tester === true) {
+      const taskId = this.registry.listSessions().find((x) => x.id === parentId)?.taskId;
+      // A card that cannot be read throws here and leaves the child intact.
+      const card = taskId ? await getTask(this.auth.cloudClient(), taskId) : undefined;
+      const handoff = qaHandoffText(c.name, c.id, card?.qaChecklist?.items ?? []);
+      if (handoff) {
+        const parentLive = this.map.get(parentId);
+        const busy = parentLive && (parentLive.state.status === "thinking" || parentLive.state.status === "tool");
+        await this.sendAsKermanych(parentId, handoff, busy ? "follow_up" : "prompt");
+      }
+      await this.retireTester(childId);
+      return { merged: true };
+    }
     const live = this.map.get(childId);
     const last = [...(live?.transcript ?? [])]
       .reverse()
@@ -1193,9 +2052,13 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
 
   // Echo the user's own message (initial task or follow-up) into the transcript so
   // the log reads as a full conversation. Images ride along as data URLs for render.
-  private userEntry(text: string, images?: ImageInput[]): TranscriptEntry {
+  private userEntry(text: string, images?: ImageInput[], voice?: boolean): TranscriptEntry {
     const at = this.stamp();
-    return { kind: "user_text", id: `u${at}`, at, text, ...(images?.length ? { images: images.map((i) => `data:${i.mimeType};base64,${i.data}`) } : {}) };
+    return {
+      kind: "user_text", id: `u${at}`, at, text,
+      ...(images?.length ? { images: images.map((i) => `data:${i.mimeType};base64,${i.data}`) } : {}),
+      ...(voice ? { via: "voice" as const } : {}),
+    };
   }
 
   // A Kermanych-authored row in the conversation. A fired trigger changed what the child was
@@ -1226,6 +2089,7 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
       this.mergeTaskDetails(l, (e as Extract<RpcEvent, { type: "tool_execution_end" }>).result?.details);
       this.emitSubagents(id, l);
     }
+    if (e.type === "tool_execution_end") void this.syncBranch(id).catch(() => {});
     // Progress heartbeat (in-memory) — distinct from last_activity_at, which user sends also
     // bump. The UI uses this to spot a wedged turn. `response` frames are replies to the
     // supervisor's OWN commands (chiefly the 2s get_state poll below), not agent progress:
@@ -1248,6 +2112,15 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     }
     const before = l.state.status;
     l.state = reduceStatus(l.state, e);
+    // The child reported on the turn it was sent: its status alone says whether it holds a slot.
+    if (l.state.status !== before) l.turnPending = false;
+    // claude reports `ready` only with its first turn, when its MCP servers have started: the
+    // watchdog re-takes its baseline then (omp's comes before start() resolves, same effect).
+    // Once per child — a later baseline would spare the very commands the watchdog is for.
+    if (e.type === "ready" && l.pid !== undefined && !l.baselined) {
+      l.baselined = true;
+      this.trackChild(id, l.pid, true);
+    }
     // One reducer for the live stream and for rehydrated history, so a session that
     // streamed and the same session after a reload produce identical entries.
     const reduced = reduceRpcEvents([e], {
@@ -1286,22 +2159,16 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     // tool result. `agent_end` reads this to choose `in_review` over `done`; scanning here
     // (not there) catches the URL even when the PR turn is followed by more turns.
     if (l.prRequested === true && l.prOpened !== true) {
-      for (const entry of reduced.entries) {
-        if (entry.kind === "assistant_text" && PR_URL_RE.test(entry.text)) {
-          l.prOpened = true;
-          break;
-        }
-        if (entry.kind === "tool" && (reduced.full.get(entry.id) ?? []).some((ln) => "text" in ln && PR_URL_RE.test(ln.text))) {
-          l.prOpened = true;
-          break;
-        }
-      }
+      const prUrl = firstPrUrl(reduced.entries, reduced.full);
       // Once the URL surfaces, remember it durably on the row. The `in_review` status a later
       // follow-up turn overwrites is transient; the FACT that a PR exists must outlive it, so
       // the finish sheet keeps offering «Закоміти» and every later turn settles back on review.
-      if (l.prOpened === true) {
+      // The URL itself is what the merged-PR check later asks GitHub about.
+      if (prUrl) {
+        l.prOpened = true;
         l.live.prOpened = true;
-        this.registry.updateSession(id, { prOpened: true });
+        l.live.prUrl = prUrl;
+        this.registry.updateSession(id, { prOpened: true, prUrl });
       }
     }
     // Task artifacts an agent attaches to its card via the shared kermanych-action mechanism —
@@ -1346,9 +2213,14 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
       // more work onto that PR (reviewPending). Reading the durable flag (not the transient
       // live one, cleared on the previous settle) is what keeps EVERY follow-up turn on review
       // rather than dropping the card to `done` after the first PR turn.
-      const hasPr = this.registry.listSessions().find((x) => x.id === id)?.prOpened === true;
-      const review = hasPr || l.reviewPending === true;
-      const settled: Session["status"] = review ? "in_review" : "done";
+      const row = this.registry.listSessions().find((x) => x.id === id);
+      const hasPr = row?.prOpened === true;
+      // A «Посіпака» run decides from its verdict whether this turn waits on a person (decided
+      // before the settle, so the row, the session_update and the card all read `in_review`).
+      const minionStep = row?.minion ? this.onMinionTurnEnd(id, hasPr) : undefined;
+      const review = hasPr || l.reviewPending === true || minionStep?.review === true;
+      // A minion run that goes on with its docs or PR turn holds `queued` instead (onMinionTurnEnd).
+      const settled: Session["status"] = review ? "in_review" : minionStep?.hold ? "queued" : "done";
       if (review) {
         l.prRequested = false;
         l.prOpened = false;
@@ -1357,6 +2229,8 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
       l.state = { status: settled };
       l.live.status = settled;
       this.registry.updateSession(id, { status: settled });
+      // …and then records the result, or sends the docs or PR turn the verdict leads to.
+      minionStep?.after();
       this.refreshState(id);
       this.stopPoll(l);
       // A turn cannot end with a tool still running, so anything left here belongs to a call
@@ -1366,6 +2240,8 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
       void this.checkTurnEnd(id, settled, review).catch((err: unknown) =>
         console.warn(`[supervisor] turn-end check skipped for session ${id}: ${(err as Error).message}`),
       );
+      // A settled turn frees its agent slot.
+      this.drainSlots();
     }
     if ((l.state.status === "thinking" || l.state.status === "tool") && !l.poll)
       l.poll = setInterval(() => this.refreshState(id), 2000);
@@ -1380,6 +2256,8 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
   // — the pushed branch, freshly fetched — has origin's base. A failed fetch leaves the refs the
   // agent's own fetch wrote, so the check still compares against something recent.
   private async checkTurnEnd(id: string, settled: Session["status"], review: boolean): Promise<void> {
+    // Best effort: a branch it could not read must not cost the conflict check below.
+    await this.syncBranch(id).catch(() => {});
     const s = this.registry.listSessions().find((x) => x.id === id);
     const g = s && this.registry.listProjects().find((p) => p.id === s.projectId);
     if (!s || !g || s.kind !== "agent") return;
@@ -1416,6 +2294,22 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
           "warn",
         ),
       );
+  }
+
+  // The agent may rename its branch (`git branch -m`, asked to match the ticket). Its own
+  // worktree is the truth, so the record follows it — the panels show it, and merge, PR and
+  // delete name it. Run after every tool call (a rename is one) and at turn end, so a long
+  // turn does not leave the panels stale. Only a session's own worktree: an agent on the
+  // project checkout has no worktreePath, and a branch there may be the operator's own switch.
+  private async syncBranch(id: string): Promise<void> {
+    const path = this.registry.listSessions().find((x) => x.id === id)?.worktreePath;
+    if (!path) return;
+    const head = await this.worktree.workingBranch(path);
+    // Re-read: the row may have moved (finished, merged) while git ran.
+    const s = this.registry.listSessions().find((x) => x.id === id);
+    if (!head || !s || s.worktreePath !== path || head === s.branch) return;
+    this.registry.updateSession(id, { branch: head });
+    this.pushUpdate(id);
   }
 
   private stopPoll(l: Live) {
@@ -1496,8 +2390,9 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
   async resume(id: string): Promise<{ ok: true }> {
     const s = this.registry.listSessions().find((x) => x.id === id);
     if (s?.native) {
-      // Starts the harness on its saved conversation; a running one is left alone.
-      await this.requireNative().start(s, { resume: true });
+      // Starts the harness on its saved conversation; a running one is left alone. «Продовжити»
+      // of a native agent starts its TUI, so it takes an agent slot.
+      await this.withSlot(s, () => this.requireNative().start(s, { resume: true }), () => this.resume(id));
       return { ok: true };
     }
     await this.liveOrResume(id);
@@ -1506,8 +2401,11 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
 
   // The OPERATOR's own message. Everything Kermanych sends itself goes through
   // `sendAsKermanych`, which is the same delivery with the operator's own affordances off.
-  async sendMessage(id: string, text: string, mode: "prompt" | "follow_up" | "steer", images?: ImageInput[]) {
-    await this.deliver(id, text, mode, images, true);
+  // `voice`: said in a voice conversation (docs/specs/2026-11-02-voice-conversation.md, decision 6).
+  async sendMessage(id: string, text: string, mode: "prompt" | "follow_up" | "steer", images?: ImageInput[], opts: { voice?: boolean } = {}) {
+    // The operator took over a «Посіпака» run: it works again, with no clock from here on.
+    this.attendMinionRun(id);
+    await this.deliver(id, text, mode, images, true, undefined, opts);
   }
 
   // Kermanych's own prompt into a session: a fired trigger's agent, a PR request, a merged
@@ -1518,19 +2416,44 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
   // flag on the session: a genuine operator message arriving while this send is still in
   // flight is treated as normal, because a trigger that silently does not fire is the failure
   // this feature exists to remove.
-  private async sendAsKermanych(id: string, text: string, mode: "prompt" | "follow_up" | "steer") {
-    await this.deliver(id, text, mode, undefined, false);
+  // `replay`: see deliver.
+  private async sendAsKermanych(id: string, text: string, mode: "prompt" | "follow_up" | "steer", replay?: () => Promise<unknown>): Promise<boolean> {
+    return this.deliver(id, text, mode, undefined, false, replay);
   }
 
+  // False when the message waits for an agent slot (docs/specs/2026-10-21-machine-resource-profile.md,
+  // decision 5): an agent whose turn is not running starts one only in a free slot; a steer or
+  // follow-up into a running turn always goes through. The parked call is `replay` when the
+  // caller has more to do after the send (createPullRequest arms its flags then), else this very
+  // delivery — sent as a follow-up if an earlier parked call started a turn meanwhile.
   private async deliver(
     id: string,
     text: string,
     mode: "prompt" | "follow_up" | "steer",
     images: ImageInput[] | undefined,
     fromOperator: boolean,
-  ) {
+    replay?: () => Promise<unknown>,
+    opts: { voice?: boolean } = {},
+  ): Promise<boolean> {
     const row = this.registry.listSessions().find((x) => x.id === id);
-    if (row?.native) return this.deliverNative(id, text, images, fromOperator);
+    if (!row) throw new Error("session not found");
+    // Refused now, not after a wait: a parked message the harness cannot take would vanish on
+    // replay with nobody left to tell (deliverNative's own check).
+    if (row.native && (images?.length || (fromOperator && parseCommand(text)))) throw nativeUnsupported();
+    const parked = replay ?? (() => this.deliver(id, text, mode === "prompt" && this.turnRunning(row) ? "follow_up" : mode, images, fromOperator, undefined, opts));
+    return this.withSlot(row, () => this.deliverNow(row, text, mode, images, fromOperator, opts), parked, { text, images });
+  }
+
+  private async deliverNow(
+    row: Session,
+    text: string,
+    mode: "prompt" | "follow_up" | "steer",
+    images: ImageInput[] | undefined,
+    fromOperator: boolean,
+    opts: { voice?: boolean } = {},
+  ): Promise<void> {
+    const id = row.id;
+    if (row.native) return this.deliverNative(id, text, images, fromOperator);
     const l = await this.liveOrResume(id);
     try {
       this.registry.touchSession(id);
@@ -1542,7 +2465,8 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     // intercepted BEFORE the task-name capture and the trigger/helper passes: `/compact` is not
     // the ask, so it must neither name a fresh chat nor match an operator trigger. The typed
     // command line stays in the transcript, the way a helper's slash does.
-    if (fromOperator) {
+    // A voice transcript is never a command: speech that happens to start with a slash is speech.
+    if (fromOperator && !opts.voice) {
       const cmd = parseCommand(text);
       if (cmd) {
         this.appendEntry(id, this.userEntry(text));
@@ -1553,7 +2477,7 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     // A chat's opening message IS the ask. Record it once, so promoting the chat can name the
     // agent and its branch after the thing being built, and so review/PR prompts have a task.
     if (text.trim() && s?.kind === "chat" && !s.task.trim()) this.registry.updateSession(id, { task: text.trim() });
-    if (text.trim() || images?.length) this.appendEntry(id, this.userEntry(text, images));
+    if (text.trim() || images?.length) this.appendEntry(id, this.userEntry(text, images, opts.voice));
 
     // Operator-sourced triggers run BEFORE the message reaches the child: Kermanych is the
     // only party that sees the operator's text, and an `agent` action has to be Kermanych's
@@ -1569,7 +2493,13 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     // the operator wrote, so the guidance is read before the request it applies to. The
     // transcript keeps the operator's own text as the visible row and the notices above say
     // what was prepended to it.
-    const body = fired?.body ? `${fired.body}\n\n${helped.text}` : helped.text;
+    const prompted = fired?.body ? `${fired.body}\n\n${helped.text}` : helped.text;
+    // The voice note goes in front of everything, so the history re-read after a restart can
+    // recognise the message by its first line and show the operator's words again
+    // (messages-to-transcript.ts).
+    const body = opts.voice ? voiceMessagePrompt(prompted) : prompted;
+    // An idle child starts a turn from this write; it holds its agent slot from now (Live.turnPending).
+    if (!ACTIVE_STATUSES.includes(l.live.status ?? "done")) l.turnPending = true;
     if (mode === "steer") l.rpc.steer(body, images);
     else if (mode === "follow_up") l.rpc.followUp(body, images);
     else l.rpc.prompt(body, images);
@@ -1700,12 +2630,15 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
   // forwards the operator's text rather than swallowing it.
   private async runTriggerAgent(id: string, trigger: AiTrigger): Promise<boolean> {
     try {
-      // The four agents a trigger can run. `finish` and `summary` are automations with no
+      // The five agents a trigger can run. `finish` and `summary` are automations with no
       // model and no session of their own, so they are not reachable from here.
       if (trigger.agentId === "review") await this.reviewSession(id);
       else if (trigger.agentId === "promote") await this.promoteChatToAgent(id, await this.promotionCard(id));
       else if (trigger.agentId === "pull-request") await this.createPullRequest(id);
+      else if (trigger.agentId === "commit") await this.commitChanges(id);
       else if (trigger.agentId === "resolve-conflict") await this.resolveConflict(id);
+      // «Посіпака» (MINION_AGENT_ID) is not runnable from here: it needs a card, not a message,
+      // so a trigger naming it is refused like an unknown agent.
       else throw new Error(`агента «${trigger.agentId}» не існує`);
       return true;
     } catch (err) {
@@ -1844,11 +2777,25 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     // not asked to produce one. The pull-request agent is the same running child that did the
     // work, so it knows what to test. onRpcEvent captures whichever block it emits.
     // A native session has no event stream to capture the block from, so it is not asked.
-    const artifacts = s.taskId && !s.native ? `\n\n${QA_CHECKLIST_DIRECTIVE}` : "";
+    // The directive goes only to a card with no checklist yet (docs/specs/2026-11-04-qa-tester-agent.md,
+    // decision 10): a second «Створити ПР» must not regenerate one over the ticks and verdicts. A
+    // card that cannot be read is not asked either — never risk the overwrite.
+    let artifacts = "";
+    if (s.taskId && !s.native) {
+      try {
+        const card = await getTask(this.auth.cloudClient(), s.taskId);
+        if (card && !card.qaChecklist?.items.length) artifacts = `\n\n${QA_CHECKLIST_DIRECTIVE}`;
+      } catch (err) {
+        console.warn(`[supervisor] could not read task ${s.taskId} for its QA checklist: ${(err as Error).message}`);
+      }
+    }
     // Kermanych's base sync (docs/specs/2026-10-14-create-pr-base-sync.md, decision 8) goes right
     // after the instruction, whatever its source, so an overridden PR agent still brings the base in.
     const base = this.syncBase(s, g);
     const sync = base ? `\n\n${baseSyncBlock(base)}` : "";
+    // A «Посіпака» session's PR is told apart by its title (docs/specs/2026-10-23-minion-auto-run.md,
+    // decision 10); appended like the sync, so neither an override nor the repo's conventions drop it.
+    const title = s.minion ? `\n\n${MINION_PR_TITLE_RULE}` : "";
     const prompt =
       renderInstruction(
         agentById("pull-request")!,
@@ -1858,9 +2805,11 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
           baseLine,
         },
         template,
-      ) + sync + block + artifacts;
+      ) + sync + title + block + artifacts;
 
-    await this.sendAsKermanych(id, prompt, "prompt");
+    // A send parked for an agent slot replays this whole call later, so the flags below are armed
+    // for the turn that call starts, not now on a child that is not running it.
+    if (!(await this.sendAsKermanych(id, prompt, "prompt", () => this.createPullRequest(id)))) return { ok: true };
     // After the send, never before: the flag must belong to the turn this call just started,
     // and `deliver` awaits a respawn for a dormant session — a stale `agent_end` arriving
     // during that await must not consume it. `deliver` ends in a synchronous `rpc.prompt`,
@@ -1879,11 +2828,13 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
   // bookkeeping write on that path — a cloud hiccup must never break the event stream, and an
   // artifact is best-effort, not a lifecycle signal. Provenance (session, timestamp) is stamped
   // here so the emitting skill never has to.
+  // Through qa_checklist_set_if_empty (docs/specs/2026-11-04-qa-tester-agent.md, decision 10): a
+  // block that races in after the card got a checklist can never wipe its ticks and verdicts.
   private async applyTaskArtifact(taskId: string, sessionId: string, action: TaskAction): Promise<void> {
-    const meta = { generatedAt: new Date().toISOString(), sessionId };
-    const patch: TaskPatch = { qaChecklist: buildQaChecklist(action.items, meta) };
+    const checklist = buildQaChecklist(action.items, { generatedAt: new Date().toISOString(), sessionId });
     try {
-      await patchTask(this.auth.cloudClient(), taskId, patch);
+      if (await setQaChecklistIfEmpty(this.auth.cloudClient(), taskId, checklist))
+        this.events.next({ type: "qa_checklist_update", taskId, checklist });
     } catch (err) {
       console.warn(`[supervisor] could not attach ${action.kind} to task ${taskId}: ${(err as Error).message}`);
     }
@@ -1918,7 +2869,8 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
         template,
       ) + (base ? `\n\n${baseSyncBlock(base)}` : "") + block;
 
-    await this.sendAsKermanych(id, prompt, "prompt");
+    // Parked for an agent slot: replayed whole later, flags included (see createPullRequest).
+    if (!(await this.sendAsKermanych(id, prompt, "prompt", () => this.commitChanges(id)))) return { ok: true };
     // After the send, for the same reason createPullRequest arms its flag there: the flag must
     // belong to the turn this call just started, and a stale `agent_end` arriving during a
     // dormant-session respawn must not consume it.
@@ -1930,11 +2882,40 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     }
     return { ok: true };
   }
+
+  // «Зберегти дизайн» (docs/specs/2026-10-29-design-tab.md): one Kermanych prompt into the
+  // Дизайнер — screenshots of every listed screen and state, the README brought in line with the
+  // prototype, one commit `design: <topic>`. Ungated, like «Написати хендоф»: saving is how the
+  // README the gate wants gets written. Nothing is armed: the agent commits on its own branch, so
+  // the turn settles like any other.
+  async saveDesign(id: string): Promise<{ sent: true }> {
+    const s = this.registry.listSessions().find((x) => x.id === id);
+    if (!s) throw new Error("session not found");
+    if (s.kind !== "agent" || !s.designDir) throw new Error(`only design sessions can save a design (this is ${s.kind === "agent" ? "an ordinary agent" : `a ${s.kind}`})`);
+    const dir = s.worktreePath || this.project(s.projectId).localRepoPath;
+    const { template, block } = await this.agentPrompt(s.projectId, DESIGN_SAVE_AGENT_ID, dir);
+    const prompt =
+      renderInstruction(agentById(DESIGN_SAVE_AGENT_ID)!, { designDir: s.designDir, branch: s.branch, message: designCommitMessage(s.name) }, template) + block;
+    // Parked for an agent slot: replayed whole later, like commitChanges.
+    await this.sendAsKermanych(id, prompt, "prompt", () => this.saveDesign(id));
+    return { sent: true };
+  }
   answerUi(id: string, res: RpcExtensionUIResponse) {
     if (this.registry.listSessions().find((x) => x.id === id)?.native) throw nativeUnsupported();
     this.map.get(id)?.rpc.answerUi(res);
   }
   async stopSession(id: string) {
+    // The operator's stop ends a «Посіпака» run; the result is written while the turn still runs.
+    await this.endMinionRun(id);
+    // A session waiting for a slot has nothing running: stopping it takes it off the queue and
+    // drops its pending message. A parked launch never got a child, so its row rests `stopped`.
+    if (this.unpark(id)) {
+      const row = this.registry.listSessions().find((x) => x.id === id);
+      if (row?.status === "queued" && !this.map.has(id) && !this.native?.isRunning(id)) this.registry.updateSession(id, { status: "stopped" });
+      this.pushUpdate(id);
+      this.drainSlots();
+      return;
+    }
     if (this.registry.listSessions().find((x) => x.id === id)?.native) {
       // Resolves once the harness exited; its exit already wrote `stopped`.
       await this.requireNative().stop(id);
@@ -1955,9 +2936,13 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
   async restartSession(id: string): Promise<{ ok: true }> {
     const s = this.registry.listSessions().find((x) => x.id === id);
     if (s?.native) {
-      await this.requireNative().restart(s);
+      // A TUI respawn: a running agent keeps its slot across it, a stopped one waits for one.
+      const native = this.requireNative();
+      await this.withSlot(s, () => native.restart(s), () => this.restartSession(id));
       return { ok: true };
     }
+    // A restart is the operator stepping in: the old child's exit is not the run failing.
+    this.attendMinionRun(id, "idle");
     const l = this.map.get(id);
     if (l) {
       this.stopPoll(l);
@@ -1974,6 +2959,12 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     for (const child of this.registry.listSessions().filter((x) => x.parentSessionId === id))
       await this.deleteSession(child.id);
 
+    // Off the slot queue first, so nothing starts it while it is being torn down.
+    this.unpark(id);
+    await this.endMinionRun(id);
+    // Before the worktree goes: the preview runs in it. PREVIEW_DIR goes too (decision 3), and
+    // the device's clone (mobile decision 4).
+    await this.preview?.forget(id);
     const s = this.registry.listSessions().find((x) => x.id === id);
     if (s?.native) await this.native?.stop(id);
     const l = this.map.get(id);
@@ -2006,7 +2997,10 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     browserHost()?.close(id);
     this.browser?.revoke(id);
     this.registry.removeSession(id);
+    this.forgetMinionRun(id);
     this.events.next({ type: "session_removed", sessionId: id });
+    this.untrackChild(id);
+    this.drainSlots();
   }
 
   // Archive/unarchive is a pure hide flag: it never touches the worktree or the omp
@@ -2020,6 +3014,9 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
       throw new Error("cannot archive an active agent");
     }
     if (archived && s.native && s.kind === "chat") await this.native?.stop(id);
+    // An archived session leaves the board, and its preview with it (decision 7): the device
+    // shuts down and keeps its clone (mobile decision 11).
+    if (archived) await this.preview?.stop(id);
     this.registry.updateSession(id, { archived });
     this.pushUpdate(id);
   }
@@ -2080,7 +3077,7 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     const dirty = await this.worktree.hasUncommitted(dir);
     const conflicts = await this.worktree.unmergedFiles(dir);
     const files = await this.worktree.changedFiles(dir, from);
-    const docsGate = await this.evaluateDocsGate(g, dir, files);
+    const docsGate = await this.evaluateDocsGate(g, dir, files, s.designDir);
     if (!conflicts.length) this.clearConflict(s);
     return { branch: s.branch, target, ahead, behind, dirty, conflicts, files, docsGate };
   }
@@ -2113,7 +3110,11 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
           });
         }
       }
-      const write = taskReportsWrite({ session: this.merge(row), at: new Date().toISOString(), entries, changedFiles });
+      // The facts are read again after the diff: two writes queued close together (a turn's end,
+      // then the minion result it produced) can finish their diffs in either order, and the one
+      // that enqueues last must carry the session as it is now — not as it was when it started.
+      const now = this.registry.listSessions().find((x) => x.id === id) ?? row;
+      const write = taskReportsWrite({ session: this.merge(now), at: new Date().toISOString(), entries, changedFiles });
       this.registry.enqueueTaskReport(row.taskId, write);
     } catch (err) {
       console.warn(`[supervisor] could not queue the card report of ${id}: ${(err as Error).message}`);
@@ -2131,22 +3132,25 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     const g = this.boundProject(s.projectId);
     if (s.worktree && !s.worktreePath) throw new Error("session has no worktree — reopen it to continue");
     const { dir, from } = await this.branchBase(s, g);
-    return this.evaluateDocsGate(g, dir, await this.worktree.changedFiles(dir, from));
+    return this.evaluateDocsGate(g, dir, await this.worktree.changedFiles(dir, from), s.designDir);
   }
 
   // The pure gate (core docsGateFailures) over an already-listed change set. Only the changed
   // task documents are read — for their `## Documentation impact` declaration; a deleted or
-  // unreadable one reads as empty, so it can never declare `None`.
-  private async evaluateDocsGate(project: Project, dir: string, files: readonly ChangedFile[]): Promise<DocsGate> {
+  // unreadable one reads as empty, so it can never declare `None`. A design session
+  // (`designDir`) is checked for its own folder's README only (docs/specs/2026-10-29-design-tab.md).
+  private async evaluateDocsGate(project: Project, dir: string, files: readonly ChangedFile[], designDir?: string): Promise<DocsGate> {
     if (!project.docsRequired) return { enabled: false, failures: [] };
     const policy = docsPolicy(project.docsPolicy);
     const paths = files.map((f) => f.path);
-    const specBodies = await Promise.all(
-      paths
-        .filter((p) => docsLayoutKind(p) === "spec" && isMarkupPath(p))
-        .map((p) => this.worktree.readFileContent(dir, p).then((f) => f.content, () => "")),
-    );
-    return { enabled: true, failures: docsGateFailures({ policy, paths, specBodies }) };
+    const specBodies = designDir
+      ? []
+      : await Promise.all(
+          paths
+            .filter((p) => docsLayoutKind(p) === "spec" && isMarkupPath(p))
+            .map((p) => this.worktree.readFileContent(dir, p).then((f) => f.content, () => "")),
+        );
+    return { enabled: true, failures: docsGateFailures({ policy, paths, specBodies, ...(designDir ? { designDir } : {}) }) };
   }
 
   // PR, commit-to-PR and finish refuse while the gate fails — right after each action's own
@@ -2177,8 +3181,30 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
         console.warn(`[supervisor] no documentation skills for ${id}: ${(err as Error).message}`);
       }
     }
-    await this.sendAsKermanych(id, docsCompletionPrompt(failures) + block, "prompt");
+    // The core ask says "the design folder your instruction names"; the folder is named here too,
+    // because the instruction may be far back in a long conversation.
+    const folder = failures.includes("design-readme") && s.designDir ? `\n\nThe design folder is \`${s.designDir}\`.` : "";
+    await this.sendAsKermanych(id, docsCompletionPrompt(failures) + folder + block, "prompt");
     return { sent: true, failures };
+  }
+
+  // «Доручити агенту» (docs/specs/2026-11-03-session-browser-preview.md, decision 4): the same
+  // path as writeDoc, for `.kermanych/preview.json`, with the `preview-config` skill inlined and
+  // the file's current validation error, if any, in the prompt.
+  async configurePreview(id: string): Promise<{ sent: true }> {
+    const s = this.registry.listSessions().find((x) => x.id === id);
+    if (!s) throw new Error("session not found");
+    if (s.kind !== "agent") throw new Error(`only agent sessions can configure the live preview (this is a ${s.kind})`);
+    const config = this.preview?.info(id).config;
+    let block = "";
+    try {
+      block = (await this.skills.assignedForNames(this.aiScope(s.projectId), [PREVIEW_CONFIG_SKILL], s.worktreePath || this.project(s.projectId).localRepoPath)).block;
+    } catch (err) {
+      console.warn(`[supervisor] no preview-config skill for ${id}: ${(err as Error).message}`);
+    }
+    const mobile = platformHasDevice(this.registry.listProjects().find((p) => p.id === s.projectId)?.platform);
+    await this.sendAsKermanych(id, previewConfigPrompt(config?.kind === "invalid" ? config.error : undefined, mobile) + block, "prompt");
+    return { sent: true };
   }
 
   // «Написати запит на API» / «Написати хендоф» (Документація tab): one Kermanych prompt for
@@ -2244,6 +3270,16 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     return this.worktree.readFileContent(dir, path);
   }
 
+  // Same resolution as sessionFile; the bytes back the viewer's preview mode (PDF).
+  async sessionRaw(id: string, path: string): Promise<{ bytes: Buffer; contentType: string } | null> {
+    const s = this.registry.listSessions().find((x) => x.id === id);
+    if (!s) throw new Error("session not found");
+    const g = this.boundProject(s.projectId);
+    if (s.worktree && !s.worktreePath) throw new Error("session has no worktree — reopen it to continue");
+    const dir = s.worktreePath || g.localRepoPath;
+    return this.worktree.readFileBytes(dir, path);
+  }
+
   // The file-manager dock with no session selected: the project's own checkout on this
   // machine. Same readers (and so the same path guard) as the session reads above.
   async projectTree(projectId: string, path: string): Promise<TreeEntry[]> {
@@ -2254,19 +3290,26 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     return this.worktree.readFileContent(this.boundProject(projectId).localRepoPath, path);
   }
 
+  async projectRaw(projectId: string, path: string): Promise<{ bytes: Buffer; contentType: string } | null> {
+    return this.worktree.readFileBytes(this.boundProject(projectId).localRepoPath, path);
+  }
+
   // Retire the session: commit whatever is loose so nothing is lost, stop the omp child and
   // drop the worktree (in-place: hand the project repo back to its base branch). Nothing is
   // merged anywhere — code leaves Kermanych through a pull request only, so the BRANCH is
   // kept: it is what the PR points at, and reopening the session continues on it. The row
   // stays as `merged` history.
-  async finishSession(id: string): Promise<{ finished: true; branch: string }> {
+  // `skipDocsGate` is internal: only closeMerged passes it, after GitHub confirmed the merge —
+  // documentation commits would land on a branch that is already merged. The public finish
+  // route keeps the gate.
+  async finishSession(id: string, opts: { skipDocsGate?: boolean } = {}): Promise<{ finished: true; branch: string }> {
     const s = this.registry.listSessions().find((x) => x.id === id);
     if (!s) throw new Error("session not found");
     const g = this.boundProject(s.projectId);
     if (s.kind !== "agent")
       throw new Error(`${s.kind} branches can't be finished — merge or discard instead`);
     if (s.worktree && !s.worktreePath) throw new Error("session has no worktree");
-    await this.assertDocsGate(id);
+    if (!opts.skipDocsGate) await this.assertDocsGate(id);
 
     const dir = s.worktreePath || g.localRepoPath;
     const base = s.worktree ? "" : (s.baseBranch ?? "");
@@ -2287,8 +3330,19 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     // in-place checkout handed back to its base) and the Live with its transcript dropped. A
     // session dormant after a restart has no Live; its write carries no reads or skills and
     // the card keeps the ones earlier turns sent.
+    // A «Посіпака» run still in flight ends `stopped`; one that already ended keeps its result.
+    await this.endMinionRun(id);
+    // A «Тестувальник» run of this session stops before the worktree it tests in goes
+    // (docs/specs/2026-11-04-qa-tester-agent.md, decision 13). closeMerged finishes through here.
+    for (const t of this.registry.listSessions().filter((x) => x.parentSessionId === id && x.tester === true && x.status !== "merged"))
+      await this.retireTester(t.id);
     await this.queueTaskReport(id, this.map.get(id)?.transcript);
 
+    // A finished session waits for nothing: its parked calls and pending message go.
+    this.unpark(id);
+    // Before the worktree goes: the preview runs in it (decision 7). The device's clone goes
+    // with it (mobile decision 4).
+    await this.preview?.retire(id);
     if (s.native) await this.native?.stop(id);
     const l = this.map.get(id);
     if (l) { l.live.status = "stopped"; this.stopPoll(l); await l.rpc.stop(); this.map.delete(id); this.toolDetails.dropSession(id); this.skillLabels.delete(id); }
@@ -2300,7 +3354,92 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
       this.registry.updateSession(id, { status: "merged" });
     }
     this.pushUpdate(id);
+    this.drainSlots();
     return { finished: true, branch: s.branch };
+  }
+
+  // Is the session's pull request merged on GitHub? (docs/specs/2026-10-26-pr-merged-close-prompt.md)
+  // Asked when the operator selects the session in «Агенти»; a `merged` answer offers
+  // «Закрити задачу». Only an agent session that opened a PR, is not retired, still has its
+  // tree and is not working right now is checked (decision 9); anything else is `unsupported`.
+  // The PR is the stored GitHub URL's, else (or when that one is not merged — closed and
+  // replaced) the latest merged PR of the session's branch on its base, opened no earlier than
+  // the session (decision 4). GitHub failures become states, never exceptions: the UI only
+  // shows them. The token is the bound repo's `GIT_TOKEN` (decision 5) and leaves no trace.
+  async prCheck(id: string): Promise<PrCheck> {
+    const row = this.registry.listSessions().find((x) => x.id === id);
+    if (!row) throw new Error("session not found");
+    const s = this.merge(row);
+    const g = this.registry.listProjects().find((p) => p.id === s.projectId);
+    if (
+      s.kind !== "agent" || !s.prOpened || s.status === "merged" || ACTIVE_STATUSES.includes(s.status) ||
+      (s.worktree && !s.worktreePath) || !g?.localRepoPath
+    )
+      return { state: "unsupported" };
+    const dir = s.worktreePath || g.localRepoPath;
+    const gh = new GithubClient(await this.gitToken(g.localRepoPath));
+    const stored = s.prUrl ? parseGithubPrUrl(s.prUrl) : null;
+    const report = (p: GithubPull, state: PrCheckState): PrCheck => ({ state, url: p.html_url, number: p.number });
+    const merged = async (p: GithubPull): Promise<PrCheck> => ({ ...report(p, "merged"), leftover: await this.prLeftover(dir, s.branch, p.head.sha) });
+    try {
+      let storedPull: GithubPull | undefined;
+      if (stored) {
+        storedPull = await gh.pull(stored.owner, stored.repo, stored.number);
+        if (storedPull.merged_at) return await merged(storedPull);
+      }
+      // The branch lookup reads owner/repo from `origin`; a stored GitHub URL names them too
+      // when the remote is not a GitHub one.
+      const remote = parseGithubRemote(await this.worktree.originUrl(g.localRepoPath)) ?? stored;
+      if (!remote || !s.branch) return storedPull ? report(storedPull, storedPull.state) : { state: "unsupported" };
+      let closed: GithubPull[];
+      try {
+        closed = await gh.closedPullsByHead(remote.owner, remote.repo, `${remote.owner}:${s.branch}`);
+      } catch (err) {
+        // The stored PR's own answer stands when only the fallback failed.
+        if (storedPull) return report(storedPull, storedPull.state);
+        throw err;
+      }
+      // Only a PR into the session's base (when one is known), opened since the session — an
+      // old PR from a reused branch name is somebody else's history. Newest first.
+      const base = s.baseBranch || g.defaultBranch || "";
+      const since = Date.parse(s.createdAt);
+      const ours = closed
+        .filter((p) => (!base || p.base.ref === base) && Date.parse(p.created_at) >= since)
+        .sort((a, b) => Date.parse(b.merged_at ?? b.created_at) - Date.parse(a.merged_at ?? a.created_at));
+      const replacement = ours.find((p) => p.merged_at);
+      if (replacement) return await merged(replacement);
+      if (storedPull) return report(storedPull, storedPull.state);
+      return ours[0] ? report(ours[0], "closed") : { state: "not_found" };
+    } catch (err) {
+      return prCheckFailure(err);
+    }
+  }
+
+  // «Закрити задачу»: the server re-checks the merge itself, so the UI cannot use this route to
+  // finish around the documentation gate (decision 3). Everything else is finishSession's.
+  async closeMerged(id: string): Promise<{ finished: true; branch: string }> {
+    if ((await this.prCheck(id)).state !== "merged") throw new Error("pr is not merged");
+    return this.finishSession(id, { skipDocsGate: true });
+  }
+
+  // Work the merged PR does not carry (decision 8): uncommitted changes, or a local branch head
+  // that is neither the PR's head nor behind it. A head GitHub knows but this clone does not
+  // fails isAncestor and so counts as unpushed. A branch that no longer resolves holds nothing.
+  private async prLeftover(dir: string, branch: string, prHead: string): Promise<{ dirty: boolean; unpushed: boolean }> {
+    const dirty = await this.worktree.hasUncommitted(dir);
+    const local = await this.worktree.revParse(dir, `refs/heads/${branch}`);
+    const unpushed = !!local && local !== prHead && !(await this.worktree.isAncestor(dir, local, prHead));
+    return { dirty, unpushed };
+  }
+
+  // The bound repo's `GIT_TOKEN`, "" without one (or without the env service, as in specs).
+  private async gitToken(repoPath: string): Promise<string> {
+    try {
+      const env = await this.envFile?.read(repoPath);
+      return env?.entries.find((e) => e.key === "GIT_TOKEN")?.value.trim() ?? "";
+    } catch {
+      return "";
+    }
   }
 
   // Reopen a retired worktree agent: bring the worktree back ON THE SESSION'S OWN BRANCH,
@@ -2318,8 +3457,12 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     const kept = !!s.branch && (await this.worktree.refExists(g.localRepoPath, `refs/heads/${s.branch}`));
     const { branch, baseBranch } = kept
       ? { branch: s.branch, baseBranch: s.baseBranch }
-      : await this.resolveLaunchParams(g, s.name, s.prefix ?? "feature", true, id, s.baseBranch);
+      : await this.resolveLaunchParams(g, { title: s.name, description: s.task }, s.prefix ?? "feature", true, id, s.baseBranch);
     const wtDir = worktreeDir(id);
+    // The row owns no worktree, so anything at its path is what the retirement left behind — a
+    // tree from before removeWorktree cleaned up after itself, or one a stray process (a dev
+    // server the agent started) wrote back into. `git worktree add` refuses an existing path.
+    await this.worktree.removeWorktree(g.localRepoPath, wtDir);
     try {
       if (kept) await this.worktree.attachWorktree(g.localRepoPath, wtDir, branch);
       else await this.worktree.addWorktree(g.localRepoPath, wtDir, branch, baseBranch ? (await this.worktree.forkStart(g.localRepoPath, baseBranch)).ref : undefined);
@@ -2354,11 +3497,17 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     if (!s?.native || !this.native) return this.getTranscript(id);
     const { entries, full } = await this.native.transcript(s);
     for (const [callId, lines] of full) this.toolDetails.put(id, callId, lines);
-    return entries;
+    // A native agent waiting for a slot shows what it waits to send after its history.
+    return [...entries, ...(this.waiting.get(id)?.entries ?? [])];
   }
 
   getTranscript(id: string): TranscriptEntry[] {
     const l = this.map.get(id);
+    // Waiting for a slot: the history it has, then the message(s) it waits to send and the
+    // «чекає на слот» notice. Without a Live there is no history yet — not the dormant notice,
+    // whose «send a message» the operator has just done.
+    const w = this.waiting.get(id);
+    if (w) return [...(l?.transcript ?? []), ...w.entries];
     if (l) return l.transcript;
     // Dormant: in the registry but no live process (e.g. after an api restart).
     const s = this.registry.listSessions().find((x) => x.id === id);
@@ -2385,20 +3534,6 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     const lines = this.toolDetails.get(id, callId);
     if (!lines) throw new GoneException("вивід більше недоступний");
     return { lines, totalLines: lines.length };
-  }
-
-  // omp's subagent registry, merged with the task-tool details captured from the stream, as
-  // the agent map lists it. A fresh open re-snapshots the live registry so status is current.
-  async getSubagents(sessionId: string): Promise<SubagentNode[]> {
-    const l = this.map.get(sessionId);
-    if (!l) return [];
-    try {
-      this.mergeRegistry(l, await l.rpc.getSubagents());
-      this.emitSubagents(sessionId, l);
-    } catch {
-      // Dead/dormant child: return whatever the stream already captured rather than fail.
-    }
-    return this.subagentList(l);
   }
 
   // One subagent's transcript, rendered through the SAME reducer as the main one. The full
@@ -2493,22 +3628,340 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
+  // ── «Посіпака» runs (docs/specs/2026-10-23-minion-auto-run.md, decisions 9-10) ─────────────
+  //
+  // A minion run works its card, reports a verdict through `report_outcome`, and Kermanych acts
+  // on that verdict when the turn ends: `ready` → one «Доповнити документацію» turn when the
+  // gate fails → «Створити ПР» → `in_review` with the PR; `needs_decision`, no verdict, a PR turn
+  // without a PR, the time cap, a dead child → `in_review` (or `error`) with the reason. Every
+  // result is persisted on the row, sent to the card's session report and told to MinionService
+  // (minionResult$), which counts the failures and pauses.
+
+  // The run of a minion session. A run this process did not launch (an api restart) starts over
+  // at `work`, attended: nobody knows when it was spawned, and the operator is the one to act.
+  private minionRun(id: string): MinionRun | undefined {
+    let run = this.minionRuns.get(id);
+    if (!run && this.registry.listSessions().find((x) => x.id === id)?.minion) {
+      run = { phase: "work", attended: true };
+      this.minionRuns.set(id, run);
+    }
+    return run;
+  }
+
+  private forgetMinionRun(id: string): void {
+    const run = this.minionRuns.get(id);
+    if (run) this.clearMinionClock(run);
+    this.minionRuns.delete(id);
+  }
+
+  private clearMinionClock(run: MinionRun): void {
+    clearTimeout(run.capTimer);
+    clearTimeout(run.graceTimer);
+    run.capTimer = undefined;
+    run.graceTimer = undefined;
+  }
+
+  // report_outcome accepted a verdict: it waits for the end of the turn, and the clock stops —
+  // the time cap runs from the spawn to the first verdict.
+  private onMinionVerdict(id: string, report: MinionVerdictReport): void {
+    const run = this.minionRun(id);
+    if (!run) return;
+    run.verdict = report;
+    this.clearMinionClock(run);
+  }
+
+  private startMinionClock(id: string): void {
+    const run = this.minionRuns.get(id);
+    if (!run || run.attended) return;
+    this.clearMinionClock(run);
+    run.capTimer = setTimeout(() => void this.minionTimeCap(id), MINION_TIME_CAP_MS);
+    run.capTimer.unref();
+  }
+
+  // The cap: tell the run to stop and report where it stands, the way the watchdog tells a
+  // session — a steer into a running turn, a prompt otherwise — and stop the turn after the grace.
+  private async minionTimeCap(id: string): Promise<void> {
+    const run = this.minionRuns.get(id);
+    if (!run) return;
+    run.capTimer = undefined;
+    const s = this.registry.listSessions().find((x) => x.id === id);
+    if (!s || run.attended || run.verdict || run.phase !== "work") return;
+    run.capped = true;
+    run.graceTimer = setTimeout(() => void this.minionAbort(id), MINION_GRACE_MS);
+    run.graceTimer.unref();
+    await this.sendAsKermanych(id, MINION_TIME_CAP_PROMPT, this.turnRunning(s) ? "steer" : "prompt").catch((err: unknown) =>
+      console.warn(`[supervisor] could not tell minion session ${id} its time is up: ${(err as Error).message}`),
+    );
+  }
+
+  // Still no verdict after the grace: the turn is stopped the way the reaper stops a settled
+  // child — the row rests on review first, so the child's exit reads as a clean end, and the Live
+  // stays for the operator, whose next message respawns it on the same conversation.
+  private async minionAbort(id: string): Promise<void> {
+    const run = this.minionRuns.get(id);
+    if (!run) return;
+    run.graceTimer = undefined;
+    if (run.attended || run.verdict || !this.registry.listSessions().some((x) => x.id === id)) return;
+    run.phase = "idle";
+    const l = this.map.get(id);
+    if (l) {
+      this.stopPoll(l);
+      l.state = { status: "in_review" };
+      l.live.status = "in_review";
+      l.turnPending = false;
+    }
+    this.registry.updateSession(id, { status: "in_review" });
+    const recorded = this.recordMinionResult(id, { outcome: "needs_decision", code: "time_cap" }, "failure");
+    if (l) await l.rpc.stop().catch(() => {});
+    this.drainSlots();
+    await recorded;
+  }
+
+  // The operator wrote to the run (`work`: its next verdict drives the same flow) or restarted
+  // it (`idle`: the old child's exit is theirs, not a failed run). Either way no clock any more,
+  // and nothing Kermanych was about to do after the last verdict (`advancing`) goes ahead.
+  private attendMinionRun(id: string, phase: "work" | "idle" = "work"): void {
+    const run = this.minionRun(id);
+    if (!run) return;
+    run.attended = true;
+    run.phase = phase;
+    run.advancing = false;
+    this.clearMinionClock(run);
+  }
+
+  // At a minion turn's end, before the settle: whether the turn waits on a person (`review`),
+  // whether the run goes on (`hold`: it settles `queued`, not `done`, so the card never flashes to
+  // the closed lane and stays active for every machine while Kermanych checks the branch and
+  // sends the docs or PR turn), and what to do once it has settled (`after`). Consumes the turn's
+  // verdict.
+  private onMinionTurnEnd(id: string, hasPr: boolean): { review: boolean; hold?: boolean; after: () => void } {
+    const run = this.minionRun(id);
+    if (!run) return { review: false, after: () => {} };
+    const verdict = run.verdict;
+    run.verdict = undefined;
+    const record = (result: MinionResult, effect: MinionRunResult["effect"]) => () => void this.recordMinionResult(id, result, effect);
+    const hold = (next: () => Promise<void>) => {
+      run.advancing = true;
+      return { review: false, hold: true, after: () => void next() };
+    };
+    switch (run.phase) {
+      // Waiting on a person already (a stopped or capped turn's late end): stay on review. A PR
+      // the operator opened from here («Створити ПР» on the finish sheet) is still the card's
+      // result; it was the operator's doing, so it counts neither way.
+      case "idle":
+        if (hasPr && this.registry.listSessions().find((x) => x.id === id)?.minionResult?.outcome !== "pr")
+          return { review: true, after: record({ outcome: "pr" }, "neutral") };
+        return { review: true, after: () => {} };
+      case "docs":
+        return hold(() => this.advanceMinion(id, run));
+      case "pr":
+        run.phase = "idle";
+        // The agent's own words, when it reported why the PR did not open, are the reason. A run
+        // that reached the time cap counts as failed even when its PR opened (decision 9).
+        return hasPr
+          ? { review: true, after: record({ outcome: "pr" }, run.capped ? "failure" : "success") }
+          : { review: true, after: record({ outcome: "needs_decision", code: "no_pr", ...(verdict ? { reason: verdict.summary } : {}) }, "failure") };
+      case "work":
+        if (verdict?.outcome === "ready") return hold(() => this.advanceMinion(id, run, verdict.summary));
+        if (verdict?.outcome === "not_needed") return hold(() => this.closeNotNeeded(id, run, verdict.summary));
+        if (verdict) {
+          run.phase = "idle";
+          // The agent's own call resets the failures — unless the time cap made it.
+          return {
+            review: true,
+            after: record({ outcome: "needs_decision", ...(run.capped ? { code: "time_cap" as const } : {}), reason: verdict.summary }, run.capped ? "failure" : "success"),
+          };
+        }
+        // A PR this turn opened is the run's result even without a verdict — the operator may
+        // have pressed «Створити ПР» themselves.
+        if (hasPr && this.registry.listSessions().find((x) => x.id === id)?.minionResult?.outcome !== "pr") {
+          run.phase = "idle";
+          return { review: true, after: record({ outcome: "pr" }, "success") };
+        }
+        // A turn the operator started that ends without a verdict is theirs: an ordinary settle.
+        if (run.attended) return { review: false, after: () => {} };
+        run.phase = "idle";
+        return { review: true, after: record({ outcome: "needs_decision", code: run.capped ? "time_cap" : "no_outcome" }, "failure") };
+    }
+  }
+
+  // After a `ready` (or the docs turn): a branch with nothing on it goes to a person (decision
+  // 14), then one docs turn while the gate fails, then the PR. Called once the turn has settled,
+  // so both sends start a fresh turn. `summary` is the `ready`'s, for the no-changes reason.
+  private async advanceMinion(id: string, run: MinionRun, summary?: string): Promise<void> {
+    try {
+      // Only right after the `ready`: once the docs turn ran, the branch holds at least the docs.
+      if (run.phase === "work") {
+        const changes = await this.minionChanges(id);
+        if (!run.advancing) return;
+        if (!changes.length) {
+          run.phase = "idle";
+          this.settleMinionRest(id, "in_review");
+          await this.recordMinionResult(id, { outcome: "needs_decision", code: "no_changes", ...(summary ? { reason: summary } : {}) }, "failure");
+          return;
+        }
+      }
+      let { failures } = await this.docsGate(id);
+      if (!run.advancing) return;
+      if (failures.length && !run.docsSent) {
+        run.docsSent = true;
+        run.phase = "docs";
+        const docs = await this.completeDocs(id);
+        if (docs.sent) return;
+        // The gate passed meanwhile: nothing was missing any more.
+        failures = docs.failures;
+      }
+      if (failures.length) {
+        run.phase = "idle";
+        this.settleMinionRest(id, "in_review");
+        await this.recordMinionResult(id, { outcome: "needs_decision", code: "docs_gate", reason: failures.join(", ") }, "failure");
+        return;
+      }
+      run.phase = "pr";
+      await this.createPullRequest(id);
+    } catch (err) {
+      run.phase = "idle";
+      this.settleMinionRest(id, "in_review");
+      await this.recordMinionResult(id, { outcome: "failed", code: "session_error", reason: (err as Error).message }, "failure");
+    } finally {
+      run.advancing = false;
+      this.pushUpdate(id);
+    }
+  }
+
+  // After a `not_needed` (decision 14): the card closes at `done` only when the branch holds
+  // nothing. Changes left on it hand the run to a person, as a failure: the agent said there was
+  // nothing to change, and did change something.
+  private async closeNotNeeded(id: string, run: MinionRun, summary: string): Promise<void> {
+    try {
+      const changes = await this.minionChanges(id);
+      if (!run.advancing) return;
+      run.phase = "idle";
+      if (changes.length) {
+        this.settleMinionRest(id, "in_review");
+        await this.recordMinionResult(id, { outcome: "needs_decision", code: "has_changes", reason: summary }, "failure");
+        return;
+      }
+      this.settleMinionRest(id, "done");
+      // A run that reached the time cap counts as failed, whatever it reported (decision 9).
+      await this.recordMinionResult(id, { outcome: "not_needed", reason: summary }, run.capped ? "failure" : "success");
+    } catch (err) {
+      run.phase = "idle";
+      this.settleMinionRest(id, "in_review");
+      await this.recordMinionResult(id, { outcome: "failed", code: "session_error", reason: (err as Error).message }, "failure");
+    } finally {
+      run.advancing = false;
+      this.pushUpdate(id);
+    }
+  }
+
+  // What a minion run has left on its branch (decision 14): what finishInfo lists, against the
+  // same base, without the project's carry files — Kermanych copied those into the worktree
+  // itself, and one the repository does not ignore would read as the agent's change. A carry
+  // entry names a repository-relative file the way git lists it once normalised (`./.env`).
+  private async minionChanges(id: string): Promise<ChangedFile[]> {
+    const s = this.registry.listSessions().find((x) => x.id === id);
+    if (!s) throw new Error("session not found");
+    const g = this.boundProject(s.projectId);
+    if (s.worktree && !s.worktreePath) throw new Error("session has no worktree — reopen it to continue");
+    const { dir, from } = await this.branchBase(s, g);
+    const carried = new Set((g.carryFiles ?? [".env"]).map((f) => posix.normalize(f.replaceAll("\\", "/"))));
+    return (await this.worktree.changedFiles(dir, from)).filter((f) => !carried.has(f.path));
+  }
+
+  // A run that rests between turns (`queued` while Kermanych checks its branch or sends its next
+  // turn) settles where it ended: on review when it waits on a person, at `done` when a
+  // `not_needed` closed it — unless a turn has started meanwhile. `turnRunning` cannot tell: the
+  // `queued` hold itself reads as a running turn. The hold held an agent slot, which is free now.
+  private settleMinionRest(id: string, to: "in_review" | "done"): void {
+    const s = this.registry.listSessions().find((x) => x.id === id);
+    if (!s) return;
+    const status = this.merge(s).status;
+    if (status !== "queued" && status !== "done") return;
+    const l = this.map.get(id);
+    if (l && (l.turnPending || l.state.status === "thinking" || l.state.status === "tool" || l.state.status === "waiting_input")) return;
+    if (l) {
+      l.state = { status: to };
+      l.live.status = to;
+    }
+    this.registry.updateSession(id, { status: to });
+    this.pushUpdate(id);
+    this.drainSlots();
+  }
+
+  // Persist a run's result, show it, send it to the card, and tell MinionService how it counts.
+  private async recordMinionResult(id: string, result: MinionResult, effect: MinionRunResult["effect"], signedOut = false): Promise<void> {
+    const row = this.registry.listSessions().find((x) => x.id === id);
+    if (!row?.minion) return;
+    const run = this.minionRuns.get(id);
+    if (run) this.clearMinionClock(run);
+    this.registry.updateSession(id, { minionResult: result });
+    this.pushUpdate(id);
+    this.minionResults.next({ sessionId: id, title: row.name, result, effect, ...(signedOut ? { signedOut } : {}) });
+    await this.queueTaskReport(id, this.map.get(id)?.transcript);
+  }
+
+  // The child died (wireLive's onExit flipped the row to `error`). A run that already waits on
+  // a person, or that the operator is restarting, does not fail by it.
+  private onMinionDeath(id: string, reason: string, signedOut: boolean): void {
+    const run = this.minionRun(id);
+    if (!run || run.phase === "idle") return;
+    run.phase = "idle";
+    // A verdict the dead turn reported never reached its end: the operator's next turn starts clean.
+    run.verdict = undefined;
+    void this.recordMinionResult(id, { outcome: "failed", code: "session_error", ...(reason ? { reason } : {}) }, "failure", signedOut);
+  }
+
+  // The operator stops, deletes or finishes a minion session. A run still in flight — a turn
+  // running, a branch check or a docs or PR turn on its way, or no result yet — ends `stopped`,
+  // which counts for nothing, and what was on its way does not go ahead; a run that already ended
+  // keeps its result.
+  private async endMinionRun(id: string): Promise<void> {
+    const row = this.registry.listSessions().find((x) => x.id === id);
+    const run = row?.minion ? this.minionRun(id) : undefined;
+    if (!row || !run) return;
+    const inFlight = !row.minionResult || run.advancing === true || ACTIVE_STATUSES.includes(this.merge(row).status) || this.turnRunning(row);
+    run.phase = "idle";
+    run.attended = true;
+    run.advancing = false;
+    run.verdict = undefined;
+    this.clearMinionClock(run);
+    if (inFlight) await this.recordMinionResult(id, { outcome: "stopped" }, "neutral");
+  }
+
   // Shared live-session wiring (fresh create + resume): build the Live, register it,
   // and route exit + events. onExit marks error unless the session ended cleanly.
   private wireLive(sessionId: string, rpc: AgentRuntime, status: Session["status"]): Live {
     const live: Live = { rpc, state: INITIAL_STATUS, transcript: [], live: { status, lastEventAt: Date.now() }, textBuf: "", thinkBuf: "", toolStarted: new Map(), toolArgs: new Map(), subagents: new Map() };
     this.map.set(sessionId, live);
-    rpc.onExit((_code, reason) => {
+    rpc.onExit((_code, reason, cause) => {
       this.stopPoll(live);
+      // A sign-out is never a clean end, whatever the row said a moment ago: a chat sits at
+      // `done` between turns, so its first turn on a signed-out CLI died «done» and the operator
+      // saw nothing. Only `stopped` (the operator's own stop) outranks it.
+      const signedOut = cause === "claude_not_authenticated" || cause === "omp_not_authenticated";
+      // A minion child that dies before its launch returned is that launch's failure: launchTask
+      // removes the row and MinionService puts the card back in the backlog. An `error` pushed
+      // from here would race that release to the card (and lose to tasks_guard once the card is
+      // unassigned again), so the row is left for the launch to remove.
+      const launchFailure = this.minionRuns.get(sessionId)?.starting === true;
       // `in_review` counts as ended cleanly: the PR turn finished, and the reaper stops that
       // child on purpose (a review takes as long as a human takes). Without it here, every
       // reaped review session would flip to `error` on its own child's exit.
-      if (live.live.status !== "stopped" && live.live.status !== "done" && live.live.status !== "in_review") {
+      const settled = live.live.status === "stopped" || live.live.status === "done" || live.live.status === "in_review";
+      if (!launchFailure && live.live.status !== "stopped" && (signedOut || !settled)) {
         live.live.status = "error";
         live.live.error = reason;
+        if (cause) live.live.errorCode = cause;
         this.registry.updateSession(sessionId, { status: "error" });
         this.pushUpdate(sessionId);
+        // A minion run that dies is a failed run; a signed-out one also pauses the minion.
+        this.onMinionDeath(sessionId, reason, signedOut);
       }
+      live.turnPending = false;
+      this.untrackChild(sessionId, live.pid);
+      // A dead child frees its agent slot, whatever it died of.
+      this.drainSlots();
     });
     rpc.onEvent((e) => this.onRpcEvent(sessionId, e));
     return live;
@@ -2520,7 +3973,11 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
   private resumeSession(id: string): Promise<Live> {
     const inflight = this.resuming.get(id);
     if (inflight) return inflight;
-    const p = this.doResume(id).finally(() => this.resuming.delete(id));
+    // A wake holds no slot, but while it ran a waiting session may have been passed over.
+    const p = this.doResume(id).finally(() => {
+      this.resuming.delete(id);
+      this.drainSlots();
+    });
     this.resuming.set(id, p);
     return p;
   }
@@ -2531,26 +3988,42 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     const g = this.boundProject(s.projectId);
     if (s.kind === "agent" && s.worktree && !s.worktreePath)
       throw new Error("session was merged and its worktree retired — reopen it to continue");
-    const dir = s.worktreePath || g.localRepoPath;
+    // Discussion/review branches have no directory of their own: they were spawned in the
+    // parent's (its worktree, or the project root for an in-place agent) and wake there too.
+    // Deleting a parent deletes its branches, so the parent is there; a retired parent
+    // worktree (merged) falls back to the project root.
+    const parent =
+      (s.kind === "discussion" || s.kind === "review") && s.parentSessionId
+        ? this.registry.listSessions().find((x) => x.id === s.parentSessionId)
+        : undefined;
+    const dir = s.worktreePath || parent?.worktreePath || g.localRepoPath;
     if (s.kind === "agent" && !s.worktree && (await this.worktree.currentBranch(g.localRepoPath)) !== s.branch)
       throw new Error(`project is not on ${s.branch} — switch to it or delete the agent`);
-    const configPath = await this.ompSkills(s.projectId, dir, id);
-    const extensionPath = await this.ompTriggers(s.projectId, dir, id);
     // A fork can only continue on its own backend (R1/R2): omp reloads its saved session FILE
     // through switch_session; claude resumes the same session UUID (stored in ompSessionId) in
     // place via opts.resume at start(), where switch_session is a no-op. One resume handle,
     // read per backend, so both re-render their prior transcript on wake.
     const runtimeKind = managedRuntime(s.runtime);
     const resumeHandle = runtimeKind === "claude-code" ? s.ompSessionId : s.ompSessionFile;
-    // Forks (discussion/review) never get the session browser; agents and chats do.
-    const browserMcp = s.kind === "discussion" || s.kind === "review" ? undefined : this.browser?.bindingFor(id);
-    const rpc = createRuntime(runtimeKind, { cwd: dir, ...(s.kind === "chat" ? { tools: CHAT_TOOLS } : {}), ...(runtimeKind === "claude-code" && resumeHandle ? { resume: resumeHandle } : {}), ...(configPath ? { configPath } : {}), ...(extensionPath ? { extensionPath } : {}), ...(browserMcp ? { mcp: browserMcp } : {}), ...this.systemAppendOpts(s.projectId) });
+    // The SDK mints a claude fork's own id only on its first turn, so a discussion woken before
+    // the operator wrote to it has nothing to resume. Fork the parent again, as branchSession
+    // did — a blank session would lose the parent's transcript and the agent's context.
+    const refork = runtimeKind === "claude-code" && s.kind === "discussion" && !resumeHandle ? parent?.ompSessionId : undefined;
+    if (refork && parent) this.assertTurnEnded(parent.id, "waking this branch");
+    const configPath = await this.ompSkills(s.projectId, dir, id);
+    const extensionPath = await this.ompTriggers(s.projectId, dir, id);
+    // Forks (discussion/review) never get the session browser; agents, chats and a «Тестувальник»
+    // run (docs/specs/2026-11-04-qa-tester-agent.md, decision 8) do.
+    const browserMcp = (s.kind === "discussion" || s.kind === "review") && s.tester !== true ? undefined : this.browser?.bindingFor(id);
+    const handle = refork ? { fork: refork } : runtimeKind === "claude-code" && resumeHandle ? { resume: resumeHandle } : {};
+    const rpc = createRuntime(runtimeKind, { cwd: dir, ...launchToolsFor(s.kind), ...handle, ...(await this.spawnOpts(id, runtimeKind, dir, configPath)), ...(extensionPath ? { extensionPath } : {}), ...(browserMcp ? { mcp: browserMcp } : {}), ...this.systemAppendOpts(s.projectId, s.kind) });
     const live = this.wireLive(id, rpc, s.status);
     try {
-      await rpc.start();
-      if (resumeHandle) {
-        // omp loads the saved file into the freshly spawned child; claude already resumed at start().
-        if (runtimeKind !== "claude-code") await rpc.switchSession(resumeHandle);
+      await this.startChild(id, rpc);
+      if (resumeHandle || refork) {
+        // omp loads the saved file into the freshly spawned child; claude already resumed (or
+        // forked) at start(), and a fork with no id of its own reads the parent's history.
+        if (runtimeKind !== "claude-code" && resumeHandle) await rpc.switchSession(resumeHandle);
         this.rehydrate(live, id, await rpc.getAllMessages());
       }
       // Re-assert the chosen effort AFTER switch_session: the reloaded session file carries its

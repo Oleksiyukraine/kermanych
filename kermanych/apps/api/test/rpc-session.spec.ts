@@ -45,6 +45,21 @@ test("start() rejects with the exit reason when the child exits before ready", a
   await expect(rpc.start()).rejects.toThrow(/startup failure|code 2/);
 });
 
+// What a signed-out omp (18.2.11) does: prints this to stderr and exits 1 before `ready`. The
+// launch rejection must carry the cause, or the operator sees a raw sentence instead of
+// «omp is not signed in — run omp login».
+test("start() names a signed-out omp in the rejection's code", async () => {
+  const omp = fakeOmp(
+    "signed-out.mjs",
+    `process.stderr.write("No models available. Use /login or set an API key environment variable. Then use /model to select a model.\\n");process.exit(1);`,
+  );
+  const rpc = new RpcSession({ cwd: dir, ompPath: omp });
+  rpc.onExit(() => {});
+  const err = await rpc.start().catch((e: unknown) => e as Error & { code?: string });
+  expect(err.code).toBe("omp_not_authenticated");
+  expect(err.message).toMatch(/No models available/);
+});
+
 test("command() rejects when a ready child never answers (wedged RPC)", async () => {
   // Emits `ready` (so start() resolves) then goes deaf — ignores every command. getState()
   // must reject via the timeout instead of hanging forever.

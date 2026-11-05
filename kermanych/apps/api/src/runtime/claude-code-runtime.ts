@@ -1,11 +1,13 @@
 // apps/api/src/runtime/claude-code-runtime.ts
-import { query as sdkQuery, getSessionMessages as sdkGetSessionMessages, getSubagentMessages as sdkGetSubagentMessages, type SDKMessage, type SDKUserMessage, type Query, type Options, type ModelInfo, type SessionMessage, type GetSessionMessagesOptions, type GetSubagentMessagesOptions } from "@anthropic-ai/claude-agent-sdk";
+import { spawn } from "node:child_process";
+import { StringDecoder } from "node:string_decoder";
+import { query as sdkQuery, getSessionMessages as sdkGetSessionMessages, getSubagentMessages as sdkGetSubagentMessages, type SDKMessage, type SDKUserMessage, type Query, type Options, type ModelInfo, type SessionMessage, type GetSessionMessagesOptions, type GetSubagentMessagesOptions, type SpawnOptions, type SpawnedProcess } from "@anthropic-ai/claude-agent-sdk";
 import type { RpcEvent, RpcExtensionUIResponse, ImageInput, ThinkingLevel, SubagentInfo, SubagentMessagesPage, SubagentNode } from "@kermanych/core";
 import type { AgentRuntime, RpcStateData, RuntimeLaunchOpts } from "./agent-runtime";
 import { initClaudeMapState, mapSdkMessage, type ClaudeMapState } from "./claude-event-map";
 import { toClaudeEffort, toClaudeThinking, fromClaudeEffort } from "./effort-map";
 import { claudeHistoryToOmp } from "./claude-history";
-import { authFailureCode } from "./auth-failure";
+import { AuthFailure, authFailureCode, type AuthFailureCode } from "./auth-failure";
 
 type QueryFn = (params: { prompt: AsyncIterable<SDKUserMessage>; options?: Options }) => Query;
 type GetSessionMessagesFn = (sessionId: string, options?: GetSessionMessagesOptions) => Promise<SessionMessage[]>;
@@ -56,14 +58,49 @@ export function claudeToolName(name: string): string {
   return CLAUDE_TOOL_NAMES[name] ?? name;
 }
 
+// Whether `p` settles within `ms` — a bounded wait that never rejects.
+async function settlesWithin(p: Promise<unknown>, ms: number): Promise<boolean> {
+  const { promise: timeout, resolve } = Promise.withResolvers<false>();
+  const timer = setTimeout(resolve, ms, false);
+  try {
+    return await Promise.race([p.then(() => true, () => true), timeout]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+// The CLI's stderr ends up in the transcript notice, the exit reason and the HTTP launch error.
+// The SDK redacts its own stderr tail; ours (spawnProcess) is collected outside the SDK, so the
+// same kinds of secret are masked here: auth header values, Bearer/Basic credentials, API keys.
+function redactSecrets(text: string): string {
+  return text
+    .replace(/(authorization\s*:\s*)[^\r\n]*/gi, "$1[redacted]")
+    .replace(/\b(bearer|basic)\s+[A-Za-z0-9._~+/=-]+/gi, "$1 [redacted]")
+    .replace(/\bsk-[A-Za-z0-9_-]+/g, "sk-[redacted]");
+}
+
+// The in-turn signature of a signed-out account: the CLI's own synthetic assistant message
+// (`model: "<synthetic>"`, no API call made) flagged `authentication_failed`, whose text is
+// the CLI's instruction, e.g. "Not logged in · Please run /login". Returns that text, or
+// undefined for every other message.
+function signedOutText(msg: SDKMessage): string | undefined {
+  if (msg.type !== "assistant" || msg.error !== "authentication_failed") return undefined;
+  const content = (msg.message?.content ?? []) as Array<{ type?: string; text?: string }>;
+  return content.filter((b) => b.type === "text" && b.text).map((b) => b.text).join(" ").trim() || "authentication failed";
+}
+
 export class ClaudeCodeRuntime implements AgentRuntime {
   readonly droppedFrames = 0;
   private input = new InputQueue();
   private q?: Query;
   private mapState: ClaudeMapState = initClaudeMapState();
   private eventCbs: ((e: RpcEvent) => void)[] = [];
-  private exitCbs: ((code: number | null, reason: string) => void)[] = [];
+  private exitCbs: ((code: number | null, reason: string, cause?: AuthFailureCode) => void)[] = [];
   private alive = false;
+  // Settles once the SDK stream has ended — the CLI has exited and closed its stdout. stop()
+  // waits on it; `stopping` marks that end as asked for, not a death to report.
+  private drained?: Promise<void>;
+  private stopping = false;
   private sessionId?: string;
   private model?: string;
   private thinking: ThinkingLevel;
@@ -71,6 +108,13 @@ export class ClaudeCodeRuntime implements AgentRuntime {
   // also the id listSubagents/getSubagentMessages use). The omp backend keeps this in the
   // supervisor; here it lives on the runtime because only the runtime sees the SDK stream.
   private subagents = new Map<string, SubagentNode>();
+  // The CLI's stderr, last STDERR_TAIL chars. The SDK keeps this tail itself only for its own
+  // spawn; ours (spawnProcess, needed for the pid) hands stderr to us, so a launch failure would
+  // otherwise lose the words authFailureCode classifies ("Please run /login").
+  private stderrTail = "";
+  // Settles once the CLI's stderr closed: its exit can be reported before the last stderr chunk
+  // is read, so the failure path waits for this (bounded) before reading the tail.
+  private stderrClosed?: Promise<void>;
 
   constructor(
     private opts: RuntimeLaunchOpts,
@@ -89,7 +133,7 @@ export class ClaudeCodeRuntime implements AgentRuntime {
   }
 
   onEvent(cb: (e: RpcEvent) => void): void { this.eventCbs.push(cb); }
-  onExit(cb: (code: number | null, reason: string) => void): void { this.exitCbs.push(cb); }
+  onExit(cb: (code: number | null, reason: string, cause?: AuthFailureCode) => void): void { this.exitCbs.push(cb); }
   isAlive(): boolean { return this.alive; }
 
   private emit(e: RpcEvent): void { for (const cb of this.eventCbs) cb(e); }
@@ -100,6 +144,41 @@ export class ClaudeCodeRuntime implements AgentRuntime {
   // window buys the difference between "created a dead session" and "told the operator why"
   // at a cost no operator can perceive.
   private static readonly START_GRACE_MS = 250;
+  // stop(): how long a CLI whose input was closed gets to exit on its own (the omp backend's
+  // SIGTERM delay), then how long close() — which SIGKILLs the CLI's whole process group,
+  // background shells included — gets before stop() returns regardless.
+  private static readonly STOP_GRACE_MS = 1000;
+  private static readonly STOP_KILL_MS = 3000;
+  private static readonly STDERR_TAIL = 4096;
+  // How long a failure waits for the dead CLI's stderr to close before it reports without it.
+  private static readonly STDERR_CLOSE_MS = 200;
+
+  // The SDK's own local spawn, verbatim (`spawn(command, args, { cwd, stdio, signal, env,
+  // windowsHide })`), plus the two things it does not give back: the pid, for renice and the
+  // memory watchdog (the SDK exposes no CLI pid anywhere), and the stderr tail. Not detached, like
+  // the SDK's, so close() still reaches the CLI. A missing binary still surfaces through the
+  // returned process's 'error' event, which the SDK classifies the same way as with its own spawn.
+  private spawnProcess = (o: SpawnOptions): SpawnedProcess => {
+    const child = spawn(o.command, o.args, { cwd: o.cwd, stdio: ["pipe", "pipe", "pipe"], signal: o.signal, env: o.env, windowsHide: true });
+    const dec = new StringDecoder("utf8");
+    const { promise: closed, resolve } = Promise.withResolvers<void>();
+    this.stderrClosed = closed;
+    // Drained always: an unread pipe fills and blocks the CLI on its next stderr write.
+    child.stderr.on("data", (b: Buffer) => { this.stderrTail = (this.stderrTail + dec.write(b)).slice(-ClaudeCodeRuntime.STDERR_TAIL); });
+    child.stderr.on("error", () => {});
+    child.stderr.once("close", () => resolve());
+    if (child.pid !== undefined) this.opts.onSpawn?.(child.pid);
+    return child;
+  };
+
+  // A failure reason with the CLI's own stderr, the way the SDK words it for its own spawn
+  // (". stderr: …"). Left alone when the SDK already carried a tail, or there is none.
+  private async withStderr(reason: string): Promise<string> {
+    if (/stderr:/i.test(reason)) return reason;
+    if (this.stderrClosed) await settlesWithin(this.stderrClosed, ClaudeCodeRuntime.STDERR_CLOSE_MS);
+    const tail = redactSecrets(this.stderrTail.trim());
+    return tail ? `${reason}. stderr: ${tail}` : reason;
+  }
 
   async start(): Promise<void> {
     const effort = toClaudeEffort(this.thinking);
@@ -117,6 +196,8 @@ export class ClaudeCodeRuntime implements AgentRuntime {
       ...(this.opts.tools ? { tools: this.opts.tools.map(claudeToolName), allowedTools: this.opts.tools.map(claudeToolName) } : {}),
       // noTools wins over a stray `tools` allowlist: an empty base set = no built-in tools.
       ...(this.opts.noTools ? { tools: [], allowedTools: [] } : {}),
+      // Denied outright, whatever the allowlists say: a «Посіпака» run's AskUserQuestion.
+      ...(this.opts.disallowedTools?.length ? { disallowedTools: this.opts.disallowedTools } : {}),
       // MCP tools are not built-ins, so the restriction above leaves them available.
       ...(this.opts.mcp
         ? {
@@ -138,6 +219,10 @@ export class ClaudeCodeRuntime implements AgentRuntime {
       ...(this.opts.appendSystemPrompt
         ? { systemPrompt: { type: "preset" as const, preset: "claude_code" as const, append: this.opts.appendSystemPrompt } }
         : {}),
+      // The machine resource limits (CLAUDE_CODE_* vars). The SDK's `env` replaces the child's
+      // environment, so process.env goes first; the operator's settings `env` still beats both.
+      ...(this.opts.env ? { env: { ...process.env, ...this.opts.env } } : {}),
+      spawnClaudeCodeProcess: this.spawnProcess,
     };
     const q = this.queryFn({ prompt: this.input, options });
     this.q = q;
@@ -153,7 +238,7 @@ export class ClaudeCodeRuntime implements AgentRuntime {
     // start() does NOT await `ready`: the streaming query() only emits system/init after the
     // first input turn is consumed, but callers send prompt() only after start() resolves.
     // Awaiting ready here would deadlock. Events (ready included) still flow via onEvent.
-    (async () => {
+    this.drained = (async () => {
       try {
         for await (const msg of q) {
           if (msg.type === "system") {
@@ -161,18 +246,36 @@ export class ClaudeCodeRuntime implements AgentRuntime {
             if ("model" in msg && typeof msg.model === "string") this.model = msg.model;
             this.ingestSubagentTask(msg);
           }
+          // A signed-out (or revoked) account does not kill the child: it answers the turn with
+          // a synthetic assistant message flagged `authentication_failed` and then idles. The
+          // stream only rejects once the input closes, which a live session never does, so
+          // without this the turn ended empty and the session looked merely quiet. The child is
+          // ended here, before the loop unwinds into the iterator's return(): the next send
+          // respawns it with `resume` and retries on whatever credentials the operator has then.
+          const signedOut = signedOutText(msg);
+          if (signedOut !== undefined) {
+            this.input.close();
+            q.close();
+            throw new AuthFailure("claude_not_authenticated", `Claude Code is not signed in: ${signedOut}`);
+          }
           for (const e of mapSdkMessage(msg, this.mapState)) this.emit(e);
         }
         this.alive = false;
         for (const cb of this.exitCbs) cb(0, "claude query ended");
       } catch (err) {
         this.alive = false;
-        const reason = (err as Error).message ?? "claude query failed";
+        // A stream torn down by stop() (close() past the grace window) is the exit stop() asked
+        // for: no warning on the transcript, no launch to fail.
+        if (this.stopping) {
+          for (const cb of this.exitCbs) cb(0, "claude query closed");
+          return;
+        }
+        const reason = await this.withStderr((err as Error).message ?? "claude query failed");
         // The notice still fires: a child that dies mid-session (after start() long returned)
         // has no launch to fail, and the transcript row is the only account of it.
-        const code = authFailureCode(reason);
+        const code = err instanceof AuthFailure ? err.code : authFailureCode(reason);
         this.emit({ type: "notice", level: "warn", message: reason, ...(code ? { code } : {}) });
-        for (const cb of this.exitCbs) cb(null, reason);
+        for (const cb of this.exitCbs) cb(null, reason, code);
         onDeath(this.launchError(reason, code));
       }
     })();
@@ -293,9 +396,16 @@ export class ClaudeCodeRuntime implements AgentRuntime {
     this.subagents.set(id, node);
     this.emit({ type: "subagent_progress", subagentId: id });
   }
-
+  // Resolves once the CLI has exited, as the omp backend's stop() does: callers retire the
+  // worktree right after (finish, delete), and a CLI still shutting down in it — its background
+  // shells not yet reaped — races the removal and can write the tree back. Closing the input
+  // asks for a clean exit; past the grace window close() kills the CLI's process group.
   async stop(): Promise<void> {
+    this.stopping = true;
     try { await this.q?.interrupt().catch(() => {}); } finally { this.input.close(); this.alive = false; }
+    if (!this.drained || (await settlesWithin(this.drained, ClaudeCodeRuntime.STOP_GRACE_MS))) return;
+    this.q?.close();
+    await settlesWithin(this.drained, ClaudeCodeRuntime.STOP_KILL_MS);
   }
 
   // The claude model catalog for GET /models. There is no top-level SDK export for this
@@ -303,10 +413,28 @@ export class ClaudeCodeRuntime implements AgentRuntime {
   // the control channel — this does NOT consume a prompt turn, so it answers without any
   // input — then tear it down. `queryFn` is injectable so the test can fake the SDK.
   static async supportedModels(queryFn: QueryFn = sdkQuery): Promise<ModelInfo[]> {
+    return ClaudeCodeRuntime.control(queryFn, (q) => q.supportedModels());
+  }
+
+  // The preflight's question, on one throwaway child: is an account signed in, and which
+  // models does it offer. The catalog alone cannot tell — a signed-out child lists every model
+  // (measured) — while accountInfo() names no token for it: `tokenSource: "none"` with no
+  // `apiKeySource`. Only the first-party API needs that login; Bedrock, Vertex and gateway
+  // setups authenticate outside Claude Code, so they always count as signed in here.
+  static async probe(queryFn: QueryFn = sdkQuery): Promise<{ signedIn: boolean; models: ModelInfo[] }> {
+    return ClaudeCodeRuntime.control(queryFn, async (q) => {
+      const account = await q.accountInfo();
+      const firstParty = (account.apiProvider ?? "firstParty") === "firstParty";
+      const signedIn = !firstParty || account.tokenSource !== "none" || Boolean(account.apiKeySource);
+      return { signedIn, models: await q.supportedModels() };
+    });
+  }
+
+  private static async control<T>(queryFn: QueryFn, ask: (q: Query) => Promise<T>): Promise<T> {
     const input = new InputQueue();
     const q = queryFn({ prompt: input, options: { includePartialMessages: false } });
     try {
-      return await q.supportedModels();
+      return await ask(q);
     } finally {
       input.close();
       await q.interrupt?.().catch(() => {});

@@ -2,9 +2,9 @@
 // The Project Documentation screen, on two levels — one per tab:
 //
 //   * Repository — PROJECT level: the workspace's projects are listed, and selecting one
-//     renders its configured doc folders as a browsable tree + a faithful GitHub-style preview
-//     of the actual repository files (decision A — read live from THIS machine's bound
-//     checkout; nothing is uploaded);
+//     shows its configured doc folders in the file manager's tree, and the open file in the
+//     file manager's viewer, docked in the right pane (decision A — read live from THIS
+//     machine's bound checkout; nothing is uploaded);
 //   * Links — WORKSPACE level: pages that live outside every repository (a Google Doc, a Figma
 //     file, a published artifact). They are cloud rows shared by the whole workspace team, so
 //     the tab is always present — with no project selected, with no checkout bound, even in a
@@ -12,15 +12,17 @@
 //
 // Each tab has its own list on the left and its own selection in the preview pane. A link
 // opens embedded in an iframe and can be blown up to the whole window.
-import { computed, onBeforeUnmount, ref, watch } from 'vue';
+import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
+import { confirmAction } from '../lib/confirm';
 import type { TreeEntry } from '@kermanych/core';
 import { useProjects } from 'stores/projects';
 import { useOrchestrator } from 'stores/orchestrator';
 import { useProjectDocs, type DocSource } from 'stores/project-docs';
-import { DOC_MARKUP_RE, isSvgRef, renderDoc } from '../lib/markdown';
+import KFileTree from 'components/kit/KFileTree.vue';
 import KFileView from 'components/kit/KFileView.vue';
-import DocTreeNode, { type DocNode } from './DocTreeNode.vue';
+import { useFileTreeKeys } from '../composables/useFileTreeKeys';
+import { useFullscreenPopover } from '../composables/useFullscreenPopover';
 import { useAuth } from 'stores/auth';
 import { getDocIndexState, type DocIndexState } from '@kermanych/cloud';
 import { api } from '../lib/api';
@@ -30,7 +32,11 @@ import KModal from 'components/kit/KModal.vue';
 import KField from 'components/kit/KField.vue';
 import KBtn from 'components/kit/KBtn.vue';
 import KIconButton from 'components/kit/KIconButton.vue';
+import KFullscreenButton from 'components/kit/KFullscreenButton.vue';
 import KTabs from 'components/kit/KTabs.vue';
+import KSkeleton from 'components/kit/KSkeleton.vue';
+import { errorText, useAsyncAction, useKeyedAction } from '../composables/useAsyncAction';
+import { useLoadPhase } from '../composables/useLoadPhase';
 
 const props = defineProps<{ workspaceId: string; workspaceName: string }>();
 const { t } = useI18n();
@@ -70,22 +76,36 @@ function select(id: string): void {
 // the operator's own JWT (RLS scopes it), the same way every other cloud read in the ui works.
 const auth = useAuth();
 const indexState = ref<DocIndexState | null>(null);
+// The project whose index state has answered. Until it is the selected one the line is a
+// skeleton, never «not indexed yet»; a reply for a project the operator already left is dropped.
+const indexStateFor = ref('');
+let indexSeq = 0;
 const reindexing = ref(false);
 const reindexMsg = ref<{ level: 'ok' | 'error'; text: string } | null>(null);
 
 async function loadIndexState(id: string): Promise<void> {
-  indexState.value = null;
+  const seq = ++indexSeq;
+  // A re-read of the same project (after a reindex) keeps the line on screen until it is replaced.
+  if (id !== indexStateFor.value) {
+    indexState.value = null;
+    indexStateFor.value = '';
+  }
   reindexMsg.value = null;
   if (!id) return;
+  let state: DocIndexState | null;
   try {
-    indexState.value = await getDocIndexState(auth.client, id);
+    state = await getDocIndexState(auth.client, id);
   } catch {
     // An unreachable cloud reads as "unknown"; the tab shows nothing rather than a false state.
-    indexState.value = null;
+    state = null;
   }
+  if (seq !== indexSeq) return;
+  indexState.value = state;
+  indexStateFor.value = id;
 }
 
 watch(selectedId, (id) => void loadIndexState(id), { immediate: true });
+const indexPhase = useLoadPhase(() => indexStateFor.value !== selectedId.value);
 
 // Manual "reindex everything": the api walks the bound checkout and re-embeds every published
 // doc file. Blocks (with a spinner) so the freshly-built state and any error are visible.
@@ -106,96 +126,70 @@ async function reindex(): Promise<void> {
   }
 }
 
-// Root folder nodes; each folder lazily loads its one level of children when expanded
-// (DocTreeNode handles the recursion and click semantics).
-const roots = ref<DocNode[]>([]);
+// ── Repository tree + viewer ─────────────────────────────────────────────────
 
-// `immediate`: the pre-focus watch above selects a project SYNCHRONOUSLY during setup (before
-// this watch exists), so without it a page entered with a project already selected would build
-// no root nodes and render an empty tree even though docFolders is set.
-watch([selectedId, docFolders, isBound], () => {
-  // Roots start collapsed; DocTreeNode fetches a folder's one level on its first click.
-  roots.value = docFolders.value.map((f) => ({ folder: f, path: '', name: f, type: 'dir' as const }));
-}, { immediate: true });
-
-// A pull can add or remove files under an already-expanded folder (spec §3.6). When the store
-// signals a refresh, walk every open dir and re-fetch its level, preserving expansion state.
-async function refreshNode(node: DocNode): Promise<void> {
-  if (node.type !== 'dir' || !node.open) return;
-  const entries: TreeEntry[] = await docs.treeOf(selectedId.value, node.folder, node.path);
-  const prev = new Map((node.children ?? []).map((c) => [c.path, c]));
-  node.children = entries.map((e) => {
-    const path = node.path ? `${node.path}/${e.name}` : e.name;
-    const old = prev.get(path);
-    if (old && old.type === e.type) return old;
-    return { folder: node.folder, path, name: e.name, type: e.type };
-  });
-  for (const child of node.children) await refreshNode(child);
+// The tree speaks one path space, as in the file manager: each doc folder is a top-level
+// folder, and a file is `<folder>/<path in it>`. The api takes the two apart again; the
+// longest matching folder wins, so a configured `docs/specs` beside `docs` is its own root.
+// null for a path outside every doc folder (a doc's `../README.md`): the api serves only the
+// published folders, so there is nothing to ask it for.
+function splitDocPath(full: string): { folder: string; path: string } | null {
+  let folder = '';
+  for (const f of docFolders.value) {
+    if ((full === f || full.startsWith(`${f}/`)) && f.length > folder.length) folder = f;
+  }
+  return folder ? { folder, path: full.slice(folder.length + 1) } : null;
 }
 
-watch(() => docs.refreshNonce, () => { for (const r of roots.value) void refreshNode(r); });
+const treeRoot = computed<TreeEntry[]>(() => docFolders.value.map((f) => ({ name: f, type: 'dir' as const })));
 
-const isMarkdown = computed(() => DOC_MARKUP_RE.test(docs.openPath));
-const previewHtml = computed(() => {
-  const f = docs.file;
-  if (!f || f.binary || f.truncated || !isMarkdown.value) return '';
-  const slash = docs.openPath.lastIndexOf('/');
-  const dir = slash === -1 ? '' : docs.openPath.slice(0, slash);
-  return renderDoc(f.content, { folder: docs.openFolder, dir });
-});
-
-// After v-html paints, resolve relative images (authed blob → object URL) and wire relative
-// doc links to in-app navigation. Re-run whenever the rendered HTML changes.
-const previewEl = ref<HTMLElement | null>(null);
-watch([previewHtml, previewEl], async () => {
-  const el = previewEl.value;
-  if (!el) return;
-  for (const img of Array.from(el.querySelectorAll<HTMLImageElement>('img[data-doc-path]'))) {
-    const folder = img.getAttribute('data-doc-folder')!;
-    const path = img.getAttribute('data-doc-path')!;
-    try { img.src = await docs.rawUrl(selectedId.value, folder, path); } catch { continue; /* leave broken */ }
-    markZoomable(img, path, path);
-  }
-  for (const img of Array.from(el.querySelectorAll<HTMLImageElement>('img:not([data-doc-path])'))) {
-    const src = img.getAttribute('src') ?? '';
-    markZoomable(img, src, img.alt || src);
-  }
-  for (const a of Array.from(el.querySelectorAll<HTMLAnchorElement>('a[data-doc-path]'))) {
-    a.addEventListener('click', (ev) => {
-      ev.preventDefault();
-      const folder = a.getAttribute('data-doc-folder')!;
-      const path = a.getAttribute('data-doc-path')!;
-      void docs.openFile(selectedId.value, folder, path);
-    });
-  }
-});
-
-// Click-to-enlarge for SVG diagrams: the picture opens in an overlay of ~85% of the window,
-// scaled to fit (vector art stays sharp). The overlay reuses the preview's own object URL, so
-// it closes whenever the preview changes — a new file, or a pull re-reading the open one,
-// revokes that URL. Backdrop, Esc and a click on the enlarged picture all close it.
-const zoom = ref<{ src: string; label: string } | null>(null);
-const zoomOpenFile = computed(() => isSvgRef(docs.openPath));
-watch([() => docs.openPath, () => docs.imageUrl, previewHtml], () => { zoom.value = null; });
-
-// An SVG inside a link is a badge or a pointer: the click belongs to the link, not the zoom.
-function markZoomable(img: HTMLImageElement, target: string, label: string): void {
-  if (!isSvgRef(target) || img.closest('a')) return;
-  img.classList.add('docs__zoomable');
-  img.tabIndex = 0;
-  img.setAttribute('role', 'button');
-  img.setAttribute('aria-label', t('docsPage.zoomHint', { name: label }));
-  img.dataset.zoomLabel = label;
+function loadTreeLevel(full: string): Promise<TreeEntry[]> {
+  const at = splitDocPath(full);
+  return at ? docs.treeOf(selectedId.value, at.folder, at.path) : Promise.resolve([]);
 }
 
-// One delegated handler for the open SVG file and SVGs inside a rendered doc (v-html content
-// has no template to bind to). Enter/Space make the keyboard path match the click.
-function openZoom(ev: MouseEvent | KeyboardEvent): void {
-  const img = ev.target;
-  if (!(img instanceof HTMLImageElement) || !img.classList.contains('docs__zoomable')) return;
-  if (ev instanceof KeyboardEvent && ev.key !== 'Enter' && ev.key !== ' ') return;
-  ev.preventDefault();
-  zoom.value = { src: img.currentSrc || img.src, label: img.dataset.zoomLabel ?? '' };
+// Raw bytes for the viewer's preview (a rendered doc, its images, a picture).
+function loadRaw(full: string): Promise<Blob> {
+  const at = splitDocPath(full);
+  return at ? api.projectDocsRaw(selectedId.value, at.folder, at.path) : Promise.reject(new Error('not found'));
+}
+
+// The open file, store-held: a citation in the management chat opens one from outside too.
+const openFull = computed(() => (docs.openFolder && docs.openPath ? `${docs.openFolder}/${docs.openPath}` : ''));
+
+function openDoc(full: string): void {
+  const at = splitDocPath(full);
+  if (at?.path) void docs.openFile(selectedId.value, at.folder, at.path);
+}
+
+const treeEl = ref<{ $el: HTMLElement; reveal: (path: string) => Promise<void> } | null>(null);
+const { onTreeKeydown, focusTree } = useFileTreeKeys(treeEl);
+
+// However a file was opened — a row, a link in a rendered doc, a citation in the management
+// chat — the tree opens down to it, so the selection stays visible beside the viewer. A click
+// on a row finds its folders already open.
+watch(
+  [openFull, treeEl],
+  async ([full, tree]) => {
+    if (!full || !tree) return;
+    await tree.reveal(full);
+    await nextTick();
+    tree.$el.querySelector<HTMLElement>(`[data-path="${CSS.escape(full)}"]`)?.scrollIntoView({ block: 'nearest' });
+  },
+  { immediate: true, flush: 'post' },
+);
+
+// Docked in the right pane by default; «full screen» lifts this same viewer over the whole
+// window (useFullscreenPopover), so it keeps its mode and scroll position.
+const fileMax = ref(false);
+const fileEl = ref<HTMLElement | null>(null);
+useFullscreenPopover(fileEl, fileMax);
+watch(openFull, (p) => { if (!p) fileMax.value = false; });
+
+function closeFile(): void {
+  const closed = openFull.value;
+  docs.closeFile();
+  focusTree(closed);
 }
 
 // ── Source tabs ──────────────────────────────────────────────────────────────
@@ -209,10 +203,15 @@ const sourceTab = computed({
   set: (v: string) => { docs.source = v === 'links' ? 'links' : 'repo'; },
 });
 const linksShown = computed(() => showSources.value && docs.source === 'links');
+// The links count appears only once the list has answered: a «0» while it loads is a false empty.
+const linksLoaded = computed(() => docs.linksLoadedFor === props.workspaceId);
 const sourceTabs = computed(() => [
   { value: 'repo', label: t('docsPage.repoTab') },
-  { value: 'links', label: t('docsPage.linksTab'), count: docs.links.length },
+  { value: 'links', label: t('docsPage.linksTab'), ...(linksLoaded.value ? { count: docs.links.length } : {}) },
 ]);
+// The preview pane's link area: a skeleton until the list answers, never «no links yet». A
+// failed load is not «not loaded» — its error is shown in the list column.
+const linksPhase = useLoadPhase(() => !linksLoaded.value && !docs.linksError);
 
 // ── Links ────────────────────────────────────────────────────────────────────
 
@@ -254,12 +253,7 @@ const forceEmbed = ref(false);
 // and the reader would lose their place in the page.
 const fullPage = ref(false);
 const viewerEl = ref<HTMLElement | null>(null);
-watch([fullPage, viewerEl], ([full, el]) => {
-  if (!el?.isConnected) return;
-  const open = el.matches(':popover-open');
-  if (full && !open) el.showPopover();
-  else if (!full && open) el.hidePopover();
-});
+useFullscreenPopover(viewerEl, fullPage);
 watch(() => docs.openLinkId, () => {
   forceEmbed.value = false;
   if (!docs.openLinkId) fullPage.value = false;
@@ -267,8 +261,21 @@ watch(() => docs.openLinkId, () => {
 // Leaving the Links tab unmounts the viewer; it must not come back already full-screen.
 watch(() => docs.source, (s) => { if (s !== 'links') fullPage.value = false; });
 
+// Escape steps back: out of a full-screen link, else it closes the open file — always while
+// it is full screen, docked only while focus is in its pane, as in the file manager. An
+// Escape inside a dialog (the enlarged picture) is the dialog's.
+const previewPane = ref<HTMLElement | null>(null);
 function onKey(ev: KeyboardEvent): void {
-  if (ev.key === 'Escape' && fullPage.value) fullPage.value = false;
+  if (ev.key !== 'Escape' || ev.defaultPrevented) return;
+  if (fullPage.value) {
+    fullPage.value = false;
+    return;
+  }
+  const target = ev.target instanceof Element ? ev.target : null;
+  if (!openFull.value || docs.source !== 'repo' || target?.closest('.q-dialog')) return;
+  if (!fileMax.value && !previewPane.value?.contains(target)) return;
+  ev.preventDefault();
+  closeFile();
 }
 window.addEventListener('keydown', onKey);
 onBeforeUnmount(() => window.removeEventListener('keydown', onKey));
@@ -278,7 +285,6 @@ const editorOpen = ref(false);
 const editingId = ref('');
 const urlInput = ref('');
 const titleInput = ref('');
-const saving = ref(false);
 const editorError = ref<string | null>(null);
 const parsedUrl = computed(() => parseDocLinkUrl(urlInput.value));
 watch(urlInput, () => { editorError.value = null; });
@@ -294,7 +300,20 @@ function openEditor(id = ''): void {
   editorOpen.value = true;
 }
 
-async function saveLink(): Promise<void> {
+// One guarded run for the button and Enter in either field (the hidden submit), so a second
+// press while the first save is in flight cannot add the same link twice. The dialog stays
+// open (and persistent) until the cloud accepts the row; a failure is shown inside it.
+const save = useAsyncAction(
+  async (title: string, url: string): Promise<void> => {
+    if (editingId.value) await docs.saveLink(editingId.value, { title, url });
+    else docs.openLink((await docs.addLink(props.workspaceId, title, url)).id);
+    editorOpen.value = false;
+  },
+  { onError: (e) => { editorError.value = errorText(e); } },
+);
+
+function saveLink(): void {
+  if (save.busy.value) return;
   const url = parsedUrl.value;
   if (!url) {
     editorError.value = t('docsPage.linkUrlInvalid');
@@ -303,30 +322,27 @@ async function saveLink(): Promise<void> {
   // An untitled link is named after its provider (or host) rather than refused: the URL is
   // the part that matters, and «Google Docs» is a fair name until someone gives a better one.
   const title = titleInput.value.trim() || describeDocLink(url).label;
-  saving.value = true;
   editorError.value = null;
-  try {
-    if (editingId.value) await docs.saveLink(editingId.value, { title, url });
-    else docs.openLink((await docs.addLink(props.workspaceId, title, url)).id);
-    editorOpen.value = false;
-  } catch (e) {
-    editorError.value = e instanceof Error ? e.message : String(e);
-  } finally {
-    saving.value = false;
-  }
+  void save.run(title, url);
 }
+
+// Per link, so the × spins on the link being removed and a second press is ignored; a failure
+// is a toast.
+const remove = useKeyedAction((id: string) => docs.removeLink(id));
 
 async function removeLink(id: string): Promise<void> {
   const link = docs.links.find((l) => l.id === id);
-  if (!link || !window.confirm(t('docsPage.removeConfirm', { title: link.title }))) return;
-  try {
-    await docs.removeLink(id);
-  } catch (e) {
-    local.notify(e instanceof Error ? e.message : String(e), 'error');
-  }
+  if (!link || remove.busyFor(id)) return;
+  // The dialog renders under the top layer, so the full-screen viewer steps back first.
+  fullPage.value = false;
+  const ok = await confirmAction({
+    title: t('confirmations.removeLink'),
+    message: t('docsPage.removeConfirm', { title: link.title }),
+    confirmLabel: t('confirmations.label.remove'),
+  });
+  if (ok) void remove.run(id);
 }
 
-onBeforeUnmount(() => docs.releaseUrls());
 </script>
 
 <template>
@@ -374,7 +390,8 @@ onBeforeUnmount(() => docs.releaseUrls());
 
         <div v-if="selectedId && isBound" class="docs__index">
           <div class="docs__index-head">{{ t('docsPage.indexHeading') }}</div>
-          <p class="docs__index-state">
+          <KSkeleton v-if="indexPhase === 'skeleton'" variant="line" width="80%" />
+          <p v-else-if="indexPhase === 'ready'" class="docs__index-state">
             <template v-if="indexState && indexState.fileCount > 0">
               {{ t('docsPage.indexSummary', { files: indexState.fileCount, when: (indexState.lastIndexedAt || '').slice(0, 10) }) }}
             </template>
@@ -395,19 +412,26 @@ onBeforeUnmount(() => docs.releaseUrls());
           <template v-else-if="!selectedId"><p class="docs__empty">{{ t('docsPage.pickProject') }}</p></template>
           <template v-else-if="!isBound"><p class="docs__empty">{{ t('docsPage.bindPrompt') }}</p></template>
           <template v-else-if="!docFolders.length"><p class="docs__empty">{{ t('docsPage.noFolders') }}</p></template>
-          <ul v-else class="docs__nodes">
-            <DocTreeNode
-              v-for="n in roots"
-              :key="n.folder"
-              :project-id="selectedId"
-              :node="n"
-            />
-          </ul>
+          <!-- Keyed by project: a switch starts from a collapsed tree. -->
+          <KFileTree
+            v-else
+            :key="selectedId"
+            ref="treeEl"
+            class="docs__files k-scroller"
+            tabindex="0"
+            :entries="treeRoot"
+            base=""
+            :selected="openFull || null"
+            :load="loadTreeLevel"
+            :refresh-key="docs.refreshNonce"
+            @keydown="onTreeKeydown"
+            @open="openDoc"
+          />
         </nav>
       </template>
     </aside>
 
-    <section class="docs__preview" @click="openZoom" @keydown="openZoom">
+    <section ref="previewPane" class="docs__preview">
       <template v-if="linksShown">
         <!-- An open link. A manual popover only so «full screen» can lift this same element
              into the top layer (see `fullPage`); closed, the stylesheet keeps it in the page flow. -->
@@ -419,13 +443,15 @@ onBeforeUnmount(() => docs.releaseUrls());
               <span class="docs__link-host">{{ openEntry.view.label === openEntry.view.host ? openEntry.view.host : `${openEntry.view.label} · ${openEntry.view.host}` }}</span>
             </div>
             <a class="docs__open" :href="openEntry.link.url" target="_blank" rel="noopener noreferrer">{{ t('docsPage.openInBrowser') }} ↗</a>
-            <KIconButton :title="t('docsPage.editLink')" @click="openEditor(openEntry.link.id)">✎</KIconButton>
-            <KIconButton :title="t('docsPage.removeLink')" @click="removeLink(openEntry.link.id)">×</KIconButton>
-            <KIconButton
-              :title="fullPage ? t('docsPage.exitFullPage') : t('docsPage.fullPage')"
+            <KIconButton :title="t('docsPage.editLink')" :disabled="remove.busyFor(openEntry.link.id)" @click="openEditor(openEntry.link.id)">✎</KIconButton>
+            <KIconButton :title="t('docsPage.removeLink')" :loading="remove.busyFor(openEntry.link.id)" @click="removeLink(openEntry.link.id)">×</KIconButton>
+            <KFullscreenButton
+              :on="fullPage"
+              :enter-title="t('docsPage.fullPage')"
+              :exit-title="t('docsPage.exitFullPage')"
               :active="fullPage"
               @click="fullPage = !fullPage"
-            >{{ fullPage ? '⤡' : '⤢' }}</KIconButton>
+            />
           </header>
           <div class="docs__viewer-body">
             <p v-if="!openCheck" class="docs__empty">{{ t('docsPage.checking') }}</p>
@@ -488,7 +514,9 @@ onBeforeUnmount(() => docs.releaseUrls());
             </button>
           </div>
         </div>
-        <p v-else-if="docs.linksLoading" class="docs__empty">{{ t('docsPage.loading') }}</p>
+        <div v-else-if="linksPhase !== 'ready'" class="docs__links-loading">
+          <KSkeleton v-if="linksPhase === 'skeleton'" variant="card" :rows="3" />
+        </div>
         <div v-else-if="!docs.linksError" class="docs__empty">
           <p>{{ t('docsPage.linksEmpty') }}</p>
           <KBtn variant="primary" @click="openEditor()">{{ t('docsPage.addLink') }}</KBtn>
@@ -496,36 +524,32 @@ onBeforeUnmount(() => docs.releaseUrls());
       </template>
 
       <template v-else>
-        <p v-if="docs.loadingFile" class="docs__empty">{{ t('docsPage.loading') }}</p>
-        <p v-else-if="docs.fileError" class="docs__empty docs__empty--error">{{ docs.fileError }}</p>
-        <!-- An <img> never runs an SVG's scripts or loads its external resources, so a
-             repository SVG is drawn without being trusted. -->
-        <div v-else-if="docs.imageUrl" class="docs__image">
-          <img
-            :src="docs.imageUrl"
-            :alt="docs.openPath"
-            :class="{ docs__zoomable: zoomOpenFile }"
-            :tabindex="zoomOpenFile ? 0 : undefined"
-            :role="zoomOpenFile ? 'button' : undefined"
-            :aria-label="zoomOpenFile ? t('docsPage.zoomHint', { name: docs.openPath }) : undefined"
-            :data-zoom-label="docs.openPath"
-          >
+        <!-- The file manager's viewer, docked here. Closed, the popover's UA styles are undone
+             so it fills the pane; «full screen» opens it over the window (see `fileMax`). -->
+        <div v-if="openFull" ref="fileEl" popover="manual" class="docs__file" :role="fileMax ? 'dialog' : undefined">
+          <KFileView
+            :path="openFull"
+            :file="docs.file"
+            :loading="docs.loadingFile"
+            :error="docs.fileError"
+            :maximized="fileMax"
+            :load="loadRaw"
+            rendered
+            @close="closeFile"
+            @toggle-maximize="fileMax = !fileMax"
+            @open="openDoc"
+          />
         </div>
-        <template v-else-if="docs.file && !docs.file.binary && !docs.file.truncated && isMarkdown">
-          <!-- renderDoc keeps html:false, so v-html output is a controlled tag set. -->
-          <div ref="previewEl" class="k-log__markdown" v-html="previewHtml"></div>
-        </template>
-        <KFileView
-          v-else-if="docs.file && !docs.file.binary"
-          :path="docs.openPath"
-          :file="docs.file"
-        />
-        <p v-else-if="docs.file && docs.file.binary" class="docs__empty">{{ t('docsPage.binary') }}</p>
         <p v-else class="docs__empty">{{ t('docsPage.pickFile') }}</p>
       </template>
     </section>
 
-    <KModal v-model="editorOpen" :title="editingId ? t('docsPage.editLink') : t('docsPage.addLink')" width="520px">
+    <KModal
+      v-model="editorOpen"
+      :title="editingId ? t('docsPage.editLink') : t('docsPage.addLink')"
+      width="520px"
+      :persistent="save.busy.value"
+    >
       <form class="docs__editor" @submit.prevent="saveLink">
         <KField v-model="urlInput" :label="t('docsPage.linkUrl')" :placeholder="t('docsPage.linkUrlPlaceholder')" />
         <KField v-model="titleInput" :label="t('docsPage.linkTitle')" :placeholder="parsedUrl ? describeDocLink(parsedUrl).label : ''" />
@@ -535,22 +559,13 @@ onBeforeUnmount(() => docs.releaseUrls());
         <button type="submit" hidden />
       </form>
       <template #controls>
-        <KBtn variant="ghost" @click="editorOpen = false">{{ t('docsPage.cancel') }}</KBtn>
-        <KBtn variant="primary" :loading="saving" :disabled="!urlInput.trim()" @click="saveLink">
-          {{ saving ? t('docsPage.saving') : t('docsPage.save') }}
+        <KBtn variant="ghost" :disabled="save.busy.value" @click="editorOpen = false">{{ t('docsPage.cancel') }}</KBtn>
+        <KBtn variant="primary" :loading="save.busy.value" :disabled="!urlInput.trim()" @click="saveLink">
+          {{ save.busy.value ? t('docsPage.saving') : t('docsPage.save') }}
         </KBtn>
       </template>
     </KModal>
 
-    <KModal
-      :model-value="!!zoom"
-      :title="zoom?.label ?? ''"
-      width="85vw"
-      flush
-      @update:model-value="(open: boolean) => { if (!open) zoom = null; }"
-    >
-      <img v-if="zoom" class="docs__zoom" :src="zoom.src" :alt="zoom.label" @click="zoom = null">
-    </KModal>
   </div>
 </template>
 
@@ -564,21 +579,15 @@ onBeforeUnmount(() => docs.releaseUrls());
 .docs__project { text-align: left; background: none; border: 1px solid var(--k-line); color: var(--k-text); cursor: pointer; padding: 4px 6px; border-radius: 6px; font: inherit; }
 .docs__project--on { background: var(--k-surface2); }
 .docs__project:hover { background: var(--k-surface2); }
-.docs__nodes { list-style: none; margin: 0; padding-left: 0; }
+.docs__files { flex: 1; min-height: 0; overflow: auto; }
 .docs__preview { overflow: auto; min-height: 0; }
-.docs__image { padding: var(--k-sp-3); img { display: block; max-width: 100%; height: auto; } }
-// Hover/focus ring says «this opens bigger»; :deep because rendered-doc images come from v-html.
-.docs__preview :deep(.docs__zoomable) {
-  cursor: zoom-in;
-  border-radius: 4px;
-  outline: 1px solid transparent;
-  outline-offset: 4px;
-  transition: outline-color 0.12s;
-  &:hover, &:focus-visible { outline-color: var(--k-accent); }
+// The docked viewer fills the pane; full screen it covers the window, like the file manager's.
+.docs__file {
+  position: static; inset: auto; margin: 0; padding: 0; border: 0; overflow: hidden;
+  display: block; width: auto; height: 100%; min-height: 0;
+  color: inherit; background: var(--k-bg);
 }
-// The overlay body: 85vh minus KModal's title bar (88px), so the panel as a whole takes 85% of
-// the window each way; object-fit scales the SVG up or down to fit without distortion.
-.docs__zoom { display: block; width: 100%; height: calc(85vh - 88px); object-fit: contain; padding: var(--k-sp-4); cursor: zoom-out; }
+.docs__file:popover-open { position: fixed; inset: 0; width: 100vw; height: 100vh; }
 .docs__empty { color: var(--k-muted); font-size: 13px; padding: var(--k-sp-3); &--error { color: var(--k-danger); } p { margin: 0 0 var(--k-sp-3); } }
 .docs__index { display: flex; flex-direction: column; gap: 4px; padding-bottom: var(--k-sp-2); border-bottom: 1px solid var(--k-line); }
 .docs__index-head { font-size: 12px; font-weight: 600; color: var(--k-muted); text-transform: uppercase; letter-spacing: 0.04em; }
@@ -650,4 +659,5 @@ onBeforeUnmount(() => docs.releaseUrls());
 .docs__card-mark { font-size: 28px; font-weight: 800; color: var(--docs-brand); }
 .docs__card-meta { display: flex; align-items: center; gap: 8px; padding: 8px 10px; min-width: 0; }
 .docs__editor { display: flex; flex-direction: column; gap: 12px; }
+.docs__links-loading { padding: var(--k-sp-3); }
 </style>

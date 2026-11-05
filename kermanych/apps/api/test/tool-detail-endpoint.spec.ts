@@ -8,14 +8,14 @@ import type { ToolDetailCache } from "../src/supervisor/tool-detail-cache";
 
 test("returns cached lines for a call id", () => {
   const sup = { getToolDetail: vi.fn().mockReturnValue({ lines: [{ t: "ctx", text: "x" }], totalLines: 1 }) };
-  const c = new SessionsController(sup as never, {} as never, {} as never);
+  const c = new SessionsController(sup as never, {} as never, {} as never, {} as never);
   expect(c.toolDetail("s1", "c1")).toEqual({ lines: [{ t: "ctx", text: "x" }], totalLines: 1 });
   expect(sup.getToolDetail).toHaveBeenCalledWith("s1", "c1");
 });
 
 test("propagates a cache miss as 410 Gone", () => {
   const sup = { getToolDetail: vi.fn(() => { throw new GoneException("вивід більше недоступний"); }) };
-  const c = new SessionsController(sup as never, {} as never, {} as never);
+  const c = new SessionsController(sup as never, {} as never, {} as never, {} as never);
   expect(() => c.toolDetail("s1", "gone")).toThrow(GoneException);
 });
 
@@ -37,7 +37,7 @@ test("the service serves cached lines and 410s on an unknown call id or session 
 // the caller of this POST.
 test("the effort route refuses a level omp has no rung for and never reaches the supervisor", async () => {
   const sup = { setEffort: vi.fn() };
-  const c = new SessionsController(sup as never, {} as never, {} as never);
+  const c = new SessionsController(sup as never, {} as never, {} as never, {} as never);
   await expect(c.effort("s1", { level: "ludicrous" })).rejects.toThrow(/ludicrous/);
   expect(sup.setEffort).not.toHaveBeenCalled();
   await c.effort("s1", { level: "xhigh" });

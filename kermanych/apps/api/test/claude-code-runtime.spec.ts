@@ -80,6 +80,38 @@ describe("ClaudeCodeRuntime", () => {
     expect(received).toEqual([]); // close() must NOT push a bogus undefined into the prompt stream
     expect(events.some((e) => e.type === "notice" && e.level === "warn")).toBe(false);
   });
+
+  // finish removes the worktree the moment stop() resolves; a CLI still alive in it can write
+  // the tree back, and the next reopen then fails on an existing path.
+  it("stop() resolves only once the CLI has exited, killing one that outlives its closed input", async () => {
+    let closes = 0;
+    const { promise: killed, resolve: kill } = Promise.withResolvers<void>();
+    // A CLI that ignores the end of its input: its stream ends only when close() kills it, and
+    // then with the error the real SDK raises for a torn-down process.
+    const queryFn = () => {
+      const gen = (async function* () {
+        yield { type: "system", subtype: "init" } as unknown as SDKMessage;
+        await killed;
+        throw new Error("Claude Code process terminated by signal SIGKILL");
+      })() as AsyncGenerator<SDKMessage, void> & Record<string, unknown>;
+      gen.interrupt = async () => undefined;
+      gen.close = () => { closes++; kill(); };
+      return gen;
+    };
+    const rt = new ClaudeCodeRuntime({ cwd: "/tmp/x", startGraceMs: 0 }, queryFn as never);
+    const events: RpcEvent[] = [];
+    const exits: { code: number | null; reason: string }[] = [];
+    rt.onEvent((e) => events.push(e));
+    rt.onExit((code, reason) => exits.push({ code, reason }));
+    await rt.start();
+
+    await rt.stop();
+
+    expect(closes).toBe(1);
+    expect(exits).toHaveLength(1); // the exit already happened when stop() returned
+    expect(exits[0].code).toBe(0); // asked for, not a crash
+    expect(events.some((e) => e.type === "notice" && e.level === "warn")).toBe(false);
+  });
 });
 
 // A child that cannot launch at all: query() itself never throws (verified against the real
@@ -128,6 +160,45 @@ describe("ClaudeCodeRuntime start() over a child that cannot launch", () => {
     rt.onEvent(() => {});
     await rt.start();
     expect(rt.isAlive()).toBe(true);
+  });
+});
+
+// A signed-out account does NOT kill the child (measured against the real SDK 0.3.259): the
+// first turn is answered with the CLI's synthetic assistant message below, the stream then
+// idles, and it rejects only once the input closes — which a live session never does. The
+// session used to end that turn empty, with nothing telling the operator to log in.
+describe("ClaudeCodeRuntime over a signed-out account", () => {
+  const signedOut: SDKMessage[] = [
+    { type: "system", subtype: "init", session_id: "sess-1" } as unknown as SDKMessage,
+    {
+      type: "assistant",
+      message: { model: "<synthetic>", role: "assistant", content: [{ type: "text", text: "Not logged in · Please run /login" }] },
+      parent_tool_use_id: null,
+      error: "authentication_failed",
+      is_api_error_message: true,
+    } as unknown as SDKMessage,
+    { type: "result", subtype: "success", is_error: true, result: "Not logged in · Please run /login", modelUsage: {} } as unknown as SDKMessage,
+  ];
+
+  it("ends the child and reports the sign-out as its exit cause and a coded notice", async () => {
+    const { queryFn } = fakeQuery(signedOut);
+    let closes = 0;
+    const closingQuery = (params: Parameters<typeof queryFn>[0]) => Object.assign(queryFn(params), { close: () => { closes++; } });
+    const rt = new ClaudeCodeRuntime({ cwd: "/tmp/x", startGraceMs: 0 }, closingQuery as never);
+    const events: RpcEvent[] = [];
+    const exits: { code: number | null; reason: string; cause?: string }[] = [];
+    rt.onEvent((e) => events.push(e));
+    rt.onExit((code, reason, cause) => exits.push({ code, reason, cause }));
+    await rt.start();
+
+    rt.prompt("do it");
+
+    await vi.waitFor(() => expect(exits).toHaveLength(1));
+    expect(exits[0]).toMatchObject({ code: null, cause: "claude_not_authenticated" });
+    expect(exits[0].reason).toMatch(/Please run \/login/);
+    expect(events).toContainEqual(expect.objectContaining({ type: "notice", level: "warn", code: "claude_not_authenticated" }));
+    expect(rt.isAlive()).toBe(false);
+    expect(closes).toBe(1);
   });
 });
 
@@ -189,6 +260,73 @@ describe("ClaudeCodeRuntime tool options", () => {
   });
 });
 
+// The machine resource profile reaches claude through two options (docs/specs/2026-10-21-machine-resource-profile.md,
+// decision 6): its CLAUDE_CODE_* limits in `env`, and the runtime's own spawner, which renices the
+// CLI by pid and keeps the stderr the SDK no longer collects for a custom spawn.
+describe("ClaudeCodeRuntime machine resource options", () => {
+  it("passes env merged over the api's own environment, and none when not given", async () => {
+    const withEnv = captureQuery();
+    await new ClaudeCodeRuntime({ cwd: "/tmp/x", startGraceMs: 0, env: { CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS: "2" } }, withEnv.queryFn as never).start();
+    const env = withEnv.captured.options?.env as Record<string, string | undefined>;
+    expect(env.CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS).toBe("2");
+    // The SDK's `env` replaces the child's environment: dropping PATH would lose the CLI itself.
+    expect(env.PATH).toBe(process.env.PATH);
+
+    const without = captureQuery();
+    await new ClaudeCodeRuntime({ cwd: "/tmp/x", startGraceMs: 0 }, without.queryFn as never).start();
+    expect("env" in (without.captured.options ?? {})).toBe(false);
+  });
+
+  // What the SDK does with a custom spawner: it runs it, and on a non-zero exit reports only
+  // "exited with code N" — the stderr tail it appends for its own spawn is missing.
+  function spawningQuery(script: string) {
+    return (params: { prompt: AsyncIterable<SDKUserMessage>; options?: unknown }) => {
+      const options = params.options as { spawnClaudeCodeProcess: (o: unknown) => { on(e: "exit", cb: (code: number | null) => void): void } };
+      const gen = (async function* (): AsyncGenerator<SDKMessage, void> {
+        const child = options.spawnClaudeCodeProcess({ command: process.execPath, args: ["-e", script], cwd: process.cwd(), env: process.env, signal: new AbortController().signal });
+        const exited = Promise.withResolvers<number | null>();
+        child.on("exit", exited.resolve);
+        const code = await exited.promise;
+        throw new Error(`Claude Code process exited with code ${code}`);
+      })() as AsyncGenerator<SDKMessage, void> & Record<string, unknown>;
+      gen.interrupt = async () => undefined;
+      return gen;
+    };
+  }
+
+  it("hands the CLI's pid to onSpawn and appends its stderr to a launch failure", async () => {
+    const pids: number[] = [];
+    const rt = new ClaudeCodeRuntime(
+      { cwd: "/tmp/x", startGraceMs: 10_000, onSpawn: (pid) => pids.push(pid) },
+      spawningQuery(`process.stderr.write("Invalid API key · Please run /login"); process.exit(1)`) as never,
+    );
+    rt.onEvent(() => {});
+    const err = await rt.start().catch((e: unknown) => e as Error & { code?: string });
+    expect(err.message).toBe("Claude Code process exited with code 1. stderr: Invalid API key · Please run /login");
+    // The signed-out code still classifies, as it did when the SDK spawned the CLI itself.
+    expect(err.code).toBe("claude_not_authenticated");
+    expect(pids).toHaveLength(1);
+    expect(pids[0]).toBeGreaterThan(0);
+  });
+
+  it("leaves a failure with no stderr as the SDK worded it", async () => {
+    const rt = new ClaudeCodeRuntime({ cwd: "/tmp/x", startGraceMs: 10_000 }, spawningQuery("process.exit(3)") as never);
+    rt.onEvent(() => {});
+    await expect(rt.start()).rejects.toThrow(/^Claude Code process exited with code 3$/);
+  });
+
+  // The tail reaches the transcript and the HTTP error; the SDK redacted it when it collected it.
+  it("redacts keys and credentials in the stderr it appends", async () => {
+    const rt = new ClaudeCodeRuntime(
+      { cwd: "/tmp/x", startGraceMs: 10_000 },
+      spawningQuery(`process.stderr.write("key sk-ant-abc123 rejected; sent Authorization: Bearer tok.123"); process.exit(1)`) as never,
+    );
+    rt.onEvent(() => {});
+    const err = await rt.start().catch((e: unknown) => e as Error);
+    expect(err.message).toBe("Claude Code process exited with code 1. stderr: key sk-[redacted] rejected; sent Authorization: [redacted]");
+  });
+});
+
 describe("ClaudeCodeRuntime.supportedModels", () => {
   it("runs a throwaway query, returns its catalog, and tears it down", async () => {
     const script = [
@@ -207,6 +345,38 @@ describe("ClaudeCodeRuntime.supportedModels", () => {
     const models = await ClaudeCodeRuntime.supportedModels(queryFn as never);
     expect(models).toEqual(script);
     expect(interrupts).toBe(1);
+  });
+});
+
+// The preflight cannot use the catalog to tell a signed-out claude: that child lists every model.
+// The account shapes below are what the real accountInfo() returned (SDK 0.3.259): signed in
+// names no tokenSource at all, signed out says "none", an API key in the env adds apiKeySource.
+describe("ClaudeCodeRuntime.probe", () => {
+  function accountQuery(account: Record<string, unknown>) {
+    return (params: { prompt: AsyncIterable<SDKUserMessage>; options?: unknown }) => {
+      const gen = (async function* () {
+        for await (const _ of params.prompt) { /* drain */ }
+      })() as AsyncGenerator<SDKMessage, void> & Record<string, unknown>;
+      gen.accountInfo = async () => account;
+      gen.supportedModels = async () => [{ value: "default" }];
+      gen.interrupt = async () => undefined;
+      return gen;
+    };
+  }
+
+  it("reads a first-party account with no token as signed out", async () => {
+    const r = await ClaudeCodeRuntime.probe(accountQuery({ tokenSource: "none", apiProvider: "firstParty" }) as never);
+    expect(r.signedIn).toBe(false);
+  });
+
+  it("counts an OAuth login, an API key, and a third-party provider as signed in", async () => {
+    for (const account of [
+      { email: "a@b.c", subscriptionType: "Claude Max", apiProvider: "firstParty" },
+      { tokenSource: "none", apiKeySource: "ANTHROPIC_API_KEY", apiProvider: "firstParty" },
+      { tokenSource: "none", apiProvider: "bedrock" },
+    ]) {
+      expect((await ClaudeCodeRuntime.probe(accountQuery(account) as never)).signedIn).toBe(true);
+    }
   });
 });
 

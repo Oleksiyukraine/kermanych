@@ -67,17 +67,23 @@ declare global {
     // text-only agent (native session) can open it.
     screenshot?: { data: string; mimeType: 'image/png'; path: string };
   }
-  // A key press in the page that belongs to the app (the address bar, find): main forwards it.
-  type KermanychBrowserShortcut = 'focus-address' | 'find';
+  // A key press in the page that belongs to the app (the address bar, find, the assistant's
+  // ⌘K — docs/specs/2026-11-03-assistant-overlay.md): main forwards it.
+  type KermanychBrowserShortcut = 'focus-address' | 'find' | 'assistant';
   interface KermanychBrowserBridge {
     // Attach the session's view at `bounds` (creating it on first use) and park any other.
-    show: (sessionId: string, projectId: string, bounds: KermanychBrowserBounds) => void;
+    // `ephemeral` (here and below, on calls that may create the view): a «Тестувальник» run's
+    // view gets its own in-memory partition instead of the project's persistent one.
+    show: (sessionId: string, projectId: string, bounds: KermanychBrowserBounds, ephemeral?: boolean) => void;
     // Park whichever view is shown (it keeps running, invisible). With `freeze`, resolves with a
     // PNG data URL of what it showed, captured just before parking, for the pane to display in
     // its place while an overlay is open; otherwise (or when capture fails) null.
     hide: (opts?: { freeze?: boolean }) => Promise<string | null>;
     // Rejects with the load error; the pane also gets it as `state.error`.
-    navigate: (sessionId: string, projectId: string, url: string) => Promise<void>;
+    navigate: (sessionId: string, projectId: string, url: string, ephemeral?: boolean) => Promise<void>;
+    // Open the session's live preview at `url` (creating the view on first use). A page on the
+    // previous preview's origin keeps its path on the new one; never takes the keyboard.
+    openPreview: (sessionId: string, projectId: string, url: string, ephemeral?: boolean) => Promise<void>;
     back: (sessionId: string) => void;
     forward: (sessionId: string) => void;
     reload: (sessionId: string) => void;
@@ -90,17 +96,20 @@ declare global {
     // null cancels the sign-in.
     answerAuth: (sessionId: string, id: string, credentials: { username: string; password: string } | null) => void;
     setAgentPaused: (sessionId: string, paused: boolean) => void;
-    setViewport: (sessionId: string, projectId: string, viewport: KermanychBrowserViewport) => void;
+    setViewport: (sessionId: string, projectId: string, viewport: KermanychBrowserViewport, ephemeral?: boolean) => void;
     // Highlight matches of `query` (next/previous with `forward`); empty query or stopFind clears.
     find: (sessionId: string, query: string, forward: boolean) => void;
     stopFind: (sessionId: string) => void;
+    // Close the session's page (no-op without one). Its last URL stays, as after an idle close.
+    close: (sessionId: string) => void;
     // Current state, or null when the session has no browser yet.
     state: (sessionId: string) => Promise<KermanychBrowserState | null>;
     // The URL the session's browser was last at (kept across restarts and idle closes), or null.
-    lastUrl: (sessionId: string) => Promise<string | null>;
+    // `preview`: it is on the origin of the session's last live preview.
+    lastUrl: (sessionId: string) => Promise<{ url: string; preview: boolean } | null>;
     // Every state change of every session's browser; returns the unsubscribe.
     onState: (cb: (state: KermanychBrowserState) => void) => () => void;
-    // A session's browser was closed (deleted session, idle close); its state is gone.
+    // A session's browser was closed (deleted session, idle close, the operator's ✕); its state is gone.
     onClosed: (cb: (sessionId: string) => void) => () => void;
     onShortcut: (cb: (sessionId: string, shortcut: KermanychBrowserShortcut) => void) => () => void;
     // A download the page started finished saving.
@@ -122,10 +131,22 @@ declare global {
     changelog: (version: string) => Promise<string | null>;
     onState: (cb: (state: KermanychUpdateState) => void) => () => void;
   }
+  // Start-up progress main reports to the splash: the local api is starting, then it listens.
+  type KermanychBootStatus = 'backend' | 'ready';
   interface Window {
     kermanych?: {
       apiBase: string;
+      // Electron only: the per-launch secret the local api requires on POST /auth/session
+      // (apps/api/src/auth/ui-proof.ts). Absent in the web build, whose dev origin is trusted.
+      uiKey?: string;
       focus: () => void;
+      // Electron only (optional like the rest: a stale preload must not break the web path).
+      // Resolves once main's local api listens; rejects when it failed to start.
+      backendReady?: () => Promise<void>;
+      // Every boot status, the latest replayed at once; returns the unsubscribe.
+      onBootStatus?: (cb: (status: KermanychBootStatus) => void) => () => void;
+      // The applied theme's canvas colour, kept by main as the next launch's window background.
+      reportTheme?: (background: string) => void;
       // Electron only. The renderer cannot receive a browser redirect, so main
       // runs a one-shot loopback listener and resolves with the PKCE code.
       // Optional so a stale packaged preload degrades to the browser flow
@@ -135,6 +156,15 @@ declare global {
       // window and resolves with its PDF bytes. Optional for the same stale-preload
       // reason; lib/export-file.ts falls back to the print dialog without it.
       printToPdf?: (html: string) => Promise<Uint8Array>;
+      // Electron only, optional for the same stale-preload reason. The Dock icon's number (0 hides
+      // it) and one bounce (docs/specs/2026-11-01-dock-attention.md); macOS draws both.
+      dock?: { setBadge: (count: number) => void; bounce: () => void };
+      // Electron only. Resolves true while macOS refuses this app's pop-up notifications: the app
+      // has no Apple team signature. Read once per launch.
+      notificationsBlocked?: () => Promise<boolean>;
+      // Electron only, optional for the same stale-preload reason. macOS's microphone permission
+      // for the voice conversation: asked on first use, false once refused in System Settings.
+      voice?: { requestMic: () => Promise<boolean> };
       // Electron only. Optional for the same stale-preload reason; the Браузер tab is hidden
       // without it.
       browser?: KermanychBrowserBridge;

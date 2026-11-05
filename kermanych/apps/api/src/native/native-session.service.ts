@@ -19,12 +19,13 @@ import { TerminalService } from "../terminal/terminal.service";
 import { CodedError } from "../management/coded-error";
 import { claudeHistoryToOmp } from "../runtime/claude-history";
 import { messagesToTranscript, type OmpMessage, type Rehydrated } from "../supervisor/messages-to-transcript";
-import { PR_URL_RE } from "../supervisor/pr-url";
+import { firstPrUrl } from "../supervisor/pr-url";
 import { CHAT_TOOLS } from "../supervisor/chat-tools";
 import { claudeToolName } from "../runtime/claude-code-runtime";
 import { claudeMcpConfigPath, claudeSettingsPath, codexConfigArgs, codexHookPath, NATIVE_TOKEN_ENV, NATIVE_URL_ENV, ompExtensionPath } from "./native-hooks";
 import { BrowserMcpService } from "../browser/browser-mcp.service";
 import { MCP_TOKEN_ENV, MCP_URL_ENV, ompMcpBridgePath } from "../runtime/omp-mcp-bridge";
+import { MachineResourcesService } from "../machine/machine-resources.service";
 
 // `settled`: a turn just came to rest at `status` — the supervisor checks the tree for a merge
 // left mid-way (docs/specs/2026-10-14-create-pr-base-sync.md, decision 6) and may call
@@ -34,11 +35,16 @@ export type NativeEvent =
   | { type: "transcript"; sessionId: string; transcript: Rehydrated }
   | { type: "settled"; sessionId: string; status: SessionStatus };
 
+// claude's switch off the alternate screen (core NativeSettings.claudeFullScreen).
+export const CLAUDE_INLINE_ENV = "CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN";
+
 // The live overlay the supervisor merges over a native row while its harness runs.
 export type NativeLive = Pick<Session, "status" | "currentTool" | "error" | "terminalId">;
 
 type Run = {
   terminalId?: string;
+  // The harness's own pid (the pty execs it), for the memory watchdog's process tree.
+  pid?: number;
   token: string;
   status: SessionStatus;
   currentTool?: string;
@@ -269,6 +275,10 @@ export class NativeSessionService implements OnModuleInit, OnModuleDestroy {
     // The session browser's tools — a deliberate exception to «nothing of Kermanych enters a
     // native session» (docs/specs/2026-10-05-embedded-browser.md → Who gets the tools).
     @Optional() private browser?: BrowserMcpService,
+    // The machine resource profile (docs/specs/2026-10-21-machine-resource-profile.md): native
+    // claude gets the same CLAUDE_CODE_* limits as a managed one, and every harness the lower
+    // priority. Optional so specs construct the service without it — then nothing is limited.
+    @Optional() private resources?: MachineResourcesService,
   ) {
     this.sub = this.terminal.events$.subscribe((e) => {
       if (e.type !== "exit") return;
@@ -276,10 +286,12 @@ export class NativeSessionService implements OnModuleInit, OnModuleDestroy {
     });
   }
 
-  // A native row left active by the previous api process: its pty died with that process.
+  // A native row left active by the previous api process: its pty died with that process. A row
+  // holding a pending prompt is the supervisor's: it waits for an agent slot and is re-enqueued
+  // there (SupervisorService.onModuleInit), so it keeps its `queued`.
   onModuleInit(): void {
     for (const s of this.registry.listSessions()) {
-      if (s.native && ACTIVE_STATUSES.includes(s.status)) this.registry.updateSession(s.id, { status: "stopped" });
+      if (s.native && s.pendingPrompt === undefined && ACTIVE_STATUSES.includes(s.status)) this.registry.updateSession(s.id, { status: "stopped" });
     }
   }
 
@@ -293,6 +305,10 @@ export class NativeSessionService implements OnModuleInit, OnModuleDestroy {
 
   isRunning(id: string): boolean {
     return !!this.runs.get(id)?.terminalId;
+  }
+
+  pid(id: string): number | undefined {
+    return this.runs.get(id)?.pid;
   }
 
   live(id: string): NativeLive | undefined {
@@ -340,9 +356,19 @@ export class NativeSessionService implements OnModuleInit, OnModuleDestroy {
           // omp's bridge reads the browser server from here, and codex its bearer
           // (`bearer_token_env_var`); claude has both in its --mcp-config.
           ...(mcp && session.runtime !== "claude-code" ? { [MCP_URL_ENV]: mcp.url, [MCP_TOKEN_ENV]: mcp.token } : {}),
+          // claude's subagent/background limits, as a managed claude gets them through the SDK.
+          ...(session.runtime === "claude-code" ? this.resources?.claudeEnv() : undefined),
+          // Off the alternate screen unless the operator chose claude's full-screen layout: that
+          // screen keeps no scrollback, so the Лог's find would reach only the rows on screen.
+          ...(session.runtime === "claude-code" && !this.registry.getNativeSettings().claudeFullScreen
+            ? { [CLAUDE_INLINE_ENV]: "1" }
+            : undefined),
         },
       });
       run.terminalId = info.id;
+      run.pid = info.pid;
+      // Right after the spawn, so the MCP servers and tools the harness starts inherit it.
+      this.resources?.renice(info.pid);
     } catch (err) {
       this.runs.delete(session.id);
       throw err;
@@ -437,6 +463,17 @@ export class NativeSessionService implements OnModuleInit, OnModuleDestroy {
     setTimeout(() => this.terminal.write(terminalId, "\r"), SUBMIT_DELAY_MS);
     // Busy from here, so a second helper is refused until the harness settles again.
     this.setStatus(id, run, "queued");
+  }
+
+  // Type a Kermanych message into the TUI whatever it is doing — the memory watchdog telling the
+  // agent that its command was killed. Unlike send(), a running turn does not refuse it: the
+  // harness queues typed input behind its turn, which is the moment the agent needs it.
+  typeRaw(id: string, text: string): boolean {
+    const terminalId = this.runs.get(id)?.terminalId;
+    if (!terminalId) return false;
+    this.terminal.write(terminalId, `\x1b[200~${text}\x1b[201~`);
+    setTimeout(() => this.terminal.write(terminalId, "\r"), SUBMIT_DELAY_MS);
+    return true;
   }
 
   // A helper prompt was just handed over: its outcome decides how the turn settles.
@@ -648,22 +685,20 @@ export class NativeSessionService implements OnModuleInit, OnModuleDestroy {
       const first = transcript.entries.find((e) => e.kind === "user_text" && e.text.trim());
       if (first?.kind === "user_text") this.registry.updateSession(id, { task: first.text.trim() });
     }
-    if (run?.prRequested && !session.prOpened && this.mentionsPr(messages.slice(run.prFrom ?? 0))) {
+    const prUrl = run?.prRequested && !session.prOpened ? this.prUrlIn(messages.slice(run.prFrom ?? 0)) : undefined;
+    if (run && prUrl) {
       run.prRequested = false;
-      this.registry.updateSession(id, { prOpened: true });
+      this.registry.updateSession(id, { prOpened: true, prUrl });
       if (run.status === "done") this.setStatus(id, run, "in_review");
     }
     this.events$.next({ type: "transcript", sessionId: id, transcript });
     this.events$.next({ type: "changed", sessionId: id });
   }
 
-  private mentionsPr(messages: OmpMessage[]): boolean {
+  // The first PR URL in the messages since «Створити ПР» was pasted, stored with `prOpened`.
+  private prUrlIn(messages: OmpMessage[]): string | undefined {
     const { entries, full } = messagesToTranscript(messages);
-    return entries.some(
-      (e) =>
-        (e.kind === "assistant_text" && PR_URL_RE.test(e.text)) ||
-        (e.kind === "tool" && (full.get(e.id) ?? []).some((ln) => "text" in ln && PR_URL_RE.test(ln.text))),
-    );
+    return firstPrUrl(entries, full);
   }
 
   // The rest state after a turn: on review when the branch has a PR or a «Закоміти» landed.

@@ -8,14 +8,28 @@
       :role="t.kind === 'error' ? 'alert' : 'status'"
       @click="emit('dismiss', t.id)"
     >
-      {{ t.message }}
+      <button
+        v-tip="tr('kit.toast.close')"
+        type="button"
+        class="k-toast__close"
+        :aria-label="tr('kit.toast.close')"
+        @click.stop="emit('dismiss', t.id)"
+      >✕</button>
+      <span>{{ t.message }}</span>
+      <!-- `.stop`: the action consumes the toast itself, so the host's dismiss-on-click must
+           not fire a second time around it. -->
+      <button v-if="t.action" type="button" class="k-toast__action" @click.stop="act(t)">
+        {{ t.action.label }}
+      </button>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
 // Transient notification stack (bottom-right). Presentational for the queue: the store owns
-// it and the auto-dismiss; here we render it and emit a dismiss on click.
+// it and the auto-dismiss; here we render it and emit a dismiss on click. A toast may carry
+// one action (the watchdog's «Зупинити команду»); pressing it runs it and dismisses. The ✕ in
+// the corner is the explicit dismiss — the whole card still dismisses on click too.
 //
 // The one thing it reads on its own is where the session browser's view is shown
 // (stores/browser.ts `shownRect`): that view is a native layer painted above the whole DOM, so
@@ -23,11 +37,19 @@
 // its right when the strip there holds a toast, else to its left, else above it — instead of
 // parking the page for every message (composables/useOverlayOpen.ts).
 import { computed, onBeforeUnmount, onMounted, ref, type CSSProperties } from 'vue';
+import { useI18n } from 'vue-i18n';
 import type { Toast } from 'stores/orchestrator';
 import { useSessionBrowser } from 'stores/browser';
 
 defineProps<{ toasts: Toast[] }>();
 const emit = defineEmits<{ dismiss: [id: string] }>();
+// `tr`, not `t`: the template's loop variable is already `t`.
+const { t: tr } = useI18n();
+
+function act(t: Toast): void {
+  void t.action?.run();
+  emit('dismiss', t.id);
+}
 
 // The stack's own geometry (see the styles): 20px from the window edge, toasts 240–360px wide.
 const EDGE = 20;
@@ -68,11 +90,13 @@ const placement = computed<CSSProperties | undefined>(() => {
 }
 
 .k-toast {
+  position: relative;
   pointer-events: auto;
   min-width: 240px; // TOAST_MIN
   max-width: 360px; // TOAST_MAX
-  padding: 12px 14px;
-  background: var(--k-surface2);
+  // The right padding leaves room for the ✕ so the message never runs under it.
+  padding: 12px 30px 12px 14px;
+  background: var(--k-grad-raise), var(--k-surface2);
   border: 1px solid var(--k-line-strong);
   border-left-width: 3px;
   border-radius: var(--k-r-lg);
@@ -81,7 +105,54 @@ const placement = computed<CSSProperties | undefined>(() => {
   font-size: 13px;
   line-height: 1.5;
   cursor: pointer;
-  box-shadow: var(--k-shadow-toast);
+  box-shadow: var(--k-sheen), var(--k-shadow-toast);
+}
+
+// Same small faint ✕ as a closable tab (KTabs `.k-tabs__close`), pinned top-right.
+.k-toast__close {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  border: none;
+  border-radius: var(--k-r-sm);
+  background: transparent;
+  color: var(--k-faint);
+  font-size: var(--k-icon-xs);
+  line-height: 1;
+  cursor: pointer;
+  transition: color 0.12s;
+
+  &:hover {
+    color: var(--k-accent);
+  }
+
+  &:focus-visible {
+    outline: 1px solid var(--k-accent);
+    outline-offset: 1px;
+  }
+}
+
+.k-toast__action {
+  display: block;
+  margin-top: 8px;
+  padding: 4px 10px;
+  background: transparent;
+  border: 1px solid var(--k-line-strong);
+  border-radius: var(--k-r);
+  color: var(--k-text);
+  font: inherit;
+  font-weight: var(--k-fw-medium);
+  cursor: pointer;
+
+  &:hover {
+    border-color: var(--k-accent);
+  }
 }
 
 // error — accent rail; info — neutral rail.

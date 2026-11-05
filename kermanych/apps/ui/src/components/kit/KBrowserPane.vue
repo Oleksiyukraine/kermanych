@@ -1,5 +1,11 @@
 <template>
-  <div class="k-browser">
+  <!-- Full screen moves the same pane (toolbar, page box, trays) into a layer on <body> that
+       covers the window; the host stays behind so the parent's layout and class keep applying.
+       Not role="dialog": that would read as an overlay (useOverlayOpen) and park the very page
+       this is for. -->
+  <div class="k-browser-host">
+  <Teleport to="body" :disabled="!fullscreen">
+  <div class="k-browser" :class="{ 'k-browser--max': fullscreen }">
     <div class="k-browser__bar">
       <KIconButton :title="t('agents.browser.back')" :disabled="!state?.canGoBack" @click="bridge.back(session.id)">←</KIconButton>
       <KIconButton :title="t('agents.browser.forward')" :disabled="!state?.canGoForward" @click="bridge.forward(session.id)">→</KIconButton>
@@ -20,12 +26,13 @@
       />
       <span class="k-browser__break" aria-hidden="true"></span>
       <KChipSelect
-        :model-value="viewportValue"
+        :model-value="viewportPick.value.value"
         :options="viewportOptions"
         :title="t('agents.browser.viewportTitle')"
         :disabled="!state"
+        :loading="viewportPick.pending.value"
         placement="down"
-        @update:model-value="setViewport"
+        @update:model-value="viewportPick.set"
       />
       <span
         v-if="state && state.scale < 1"
@@ -46,45 +53,53 @@
         v-if="state"
         type="button"
         class="k-browser__btn k-browser__agent"
-        :class="{ 'k-browser__agent--live': agentLive && !state.agentPaused, 'k-browser__btn--on': state.agentPaused }"
-        v-tip="state.agentPaused ? t('agents.browser.agentPausedTip') : agentLive ? t('agents.browser.agentLiveTip') : t('agents.browser.agentIdleTip')"
-        @click="bridge.setAgentPaused(session.id, !state.agentPaused)"
+        :class="{ 'k-browser__agent--live': agentLive && !pausedShown, 'k-browser__btn--on': pausedShown }"
+        v-tip="pausedShown ? t('agents.browser.agentPausedTip') : agentLive ? t('agents.browser.agentLiveTip') : t('agents.browser.agentIdleTip')"
+        :disabled="pausedPick.pending.value"
+        @click="pausedPick.set(!pausedShown)"
       >
-        <template v-if="state.agentPaused">⏸ <span class="k-browser__label">{{ t('agents.browser.agentPaused') }} · </span><u>{{ t('agents.browser.agentResume') }}</u></template>
+        <template v-if="pausedShown">⏸ <span class="k-browser__label">{{ t('agents.browser.agentPaused') }} · </span><u>{{ t('agents.browser.agentResume') }}</u></template>
         <template v-else>
           <span class="k-browser__agent-dot" aria-hidden="true"></span><span class="k-browser__label">{{ agentLive ? t('agents.browser.agentLive') : t('agents.browser.agentIdle') }}</span>
         </template>
       </button>
+      <KIconButton
+        :title="t('agents.browser.find.open')"
+        :active="findOpen"
+        :aria-pressed="findOpen"
+        :disabled="!state"
+        @click="findOpen ? closeFind() : openFind()"
+      ><KIcon class="k-browser__icon" name="search" /></KIconButton>
       <KIconButton :title="t('agents.browser.external')" :disabled="!externalUrl" @click="openExternal(externalUrl)">⤤</KIconButton>
       <KIconButton :title="t('agents.browser.devtools')" :disabled="!state" @click="bridge.openDevTools(session.id)">
         <span class="mono">&lt;/&gt;</span>
       </KIconButton>
       <KIconButton
+        v-if="splittable"
         :title="browser.split ? t('agents.browser.splitOff') : t('agents.browser.splitOn')"
         :active="browser.split"
         @click="browser.setSplit(!browser.split)"
       >◫</KIconButton>
+      <KFullscreenButton :on="fullscreen" @click="fullscreen = !fullscreen" />
       <!-- Indeterminate: Chromium reports no load progress worth showing. Absolute, so it
            never shifts the page box (and the native view laid over it). -->
       <span v-if="state?.loading" class="k-browser__progress" aria-hidden="true"></span>
     </div>
 
-    <div v-if="findOpen" class="k-browser__find">
-      <input
-        ref="findEl"
-        v-model="findQuery"
-        class="k-browser__find-input"
-        type="text"
-        spellcheck="false"
-        :placeholder="t('agents.browser.find.placeholder')"
-        @keydown.enter.prevent="findStep(!$event.shiftKey)"
-        @keydown.esc.prevent="closeFind"
-      />
-      <span class="k-browser__find-count mono">{{ findCount }}</span>
-      <KIconButton :title="t('agents.browser.find.prev')" :disabled="!findQuery" @click="findStep(false)">↑</KIconButton>
-      <KIconButton :title="t('agents.browser.find.next')" :disabled="!findQuery" @click="findStep(true)">↓</KIconButton>
-      <KIconButton :title="t('agents.browser.find.close')" @click="closeFind">✕</KIconButton>
-    </div>
+    <!-- The live preview of an `agent` session (forks get the plain browser). -->
+    <KPreviewRow v-if="preview" :preview="preview" />
+
+    <KFindBar
+      v-if="findOpen"
+      ref="findBarEl"
+      v-model:query="findQuery"
+      plain
+      :placeholder="t('agents.browser.find.placeholder')"
+      :count="findCount"
+      :has-hits="!!findQuery && (state?.find?.matches ?? 0) > 0"
+      @step="findStep"
+      @close="closeFind"
+    />
 
     <!-- The page is blocked on alert/confirm until someone answers: the operator here, or the
          agent through its tools (the bar goes away when main reports it answered). -->
@@ -95,71 +110,18 @@
         <span class="k-browser__dialog-note">{{ t('agents.browser.dialog.agentNote') }}</span>
       </div>
       <div class="k-browser__dialog-actions">
-        <KBtn variant="primary" @click="answerDialog(true)">{{ t('agents.browser.dialog.ok') }}</KBtn>
-        <KBtn v-if="state.dialog.type !== 'alert'" variant="ghost" @click="answerDialog(false)">{{ t('agents.browser.dialog.cancel') }}</KBtn>
+        <KBtn variant="primary" :loading="dialogAnswering === true" :disabled="dialogAnswering !== null" @click="answerDialog(true)">{{ t('agents.browser.dialog.ok') }}</KBtn>
+        <KBtn
+          v-if="state.dialog.type !== 'alert'"
+          variant="ghost"
+          :loading="dialogAnswering === false"
+          :disabled="dialogAnswering !== null"
+          @click="answerDialog(false)"
+        >{{ t('agents.browser.dialog.cancel') }}</KBtn>
       </div>
     </div>
 
-    <!-- The tray sits between the toolbar and the page, so a pick never covers what it was
-         taken from; it scrolls on its own past a few entries, and folds to one row. -->
-    <section v-if="picks.length" class="k-browser__tray" :class="{ 'k-browser__tray--folded': trayFolded }">
-      <button
-        type="button"
-        class="k-browser__tray-head"
-        :aria-expanded="!trayFolded"
-        v-tip="trayFolded ? t('agents.browser.tray.expand') : t('agents.browser.tray.collapse')"
-        @click="trayFolded = !trayFolded"
-      >
-        <span class="k-browser__tray-caret" aria-hidden="true">{{ trayFolded ? '▸' : '▾' }}</span>
-        {{ t('agents.browser.tray.title', { n: picks.length }) }}
-      </button>
-      <template v-if="!trayFolded">
-        <div class="k-browser__tray-list">
-          <div v-for="p in picks" :key="p.id" class="k-browser__pick">
-            <img
-              v-if="p.pick.screenshot?.data"
-              class="k-browser__thumb"
-              :src="`data:${p.pick.screenshot.mimeType};base64,${p.pick.screenshot.data}`"
-              alt=""
-            />
-            <div v-else class="k-browser__thumb k-browser__thumb--none mono">&lt;{{ p.pick.tag.toLowerCase() }}&gt;</div>
-            <div class="k-browser__pick-body">
-              <span class="k-browser__pick-sel mono" v-tip="p.pick.selector">{{ p.pick.selector }}</span>
-              <span v-if="p.pick.source" class="k-browser__pick-src mono">
-                {{ p.pick.source.line != null ? `${p.pick.source.file}:${p.pick.source.line}` : p.pick.source.file }}
-              </span>
-              <input
-                class="k-browser__comment"
-                type="text"
-                :value="p.comment"
-                :placeholder="t('agents.browser.commentPlaceholder')"
-                @input="browser.setComment(session.id, p.id, ($event.target as HTMLInputElement).value)"
-                @keydown.enter="sendOnModEnter"
-              />
-            </div>
-            <button
-              type="button"
-              class="k-browser__pick-x"
-              :title="t('agents.browser.removePick')"
-              :aria-label="t('agents.browser.removePick')"
-              @click="browser.removePick(session.id, p.id)"
-            >✕</button>
-          </div>
-        </div>
-        <input
-          class="k-browser__comment k-browser__note"
-          type="text"
-          :value="browser.notes[session.id] ?? ''"
-          :placeholder="t('agents.browser.tray.notePlaceholder')"
-          @input="browser.setNote(session.id, ($event.target as HTMLInputElement).value)"
-          @keydown.enter="sendOnModEnter"
-        />
-      </template>
-      <div class="k-browser__tray-actions">
-        <KBtn variant="primary" :loading="sending" @click="emit('send')">{{ t('agents.browser.send') }}</KBtn>
-        <KBtn variant="ghost" :disabled="sending" @click="browser.clearPicks(session.id)">{{ t('agents.browser.clear') }}</KBtn>
-      </div>
-    </section>
+    <KPicksTray :session-id="session.id" :sending="sending" @send="emit('send')" />
 
     <!-- The native view is laid over this box by Electron main. The box shows something of its
          own only while the view is parked: a still frame of the page while an overlay is open,
@@ -177,21 +139,46 @@
         </p>
         <span v-if="failedUrl" class="k-browser__failure-url mono" v-tip="failedUrl">{{ failedUrl }}</span>
         <div class="k-browser__failure-actions">
-          <KBtn variant="primary" @click="retry">{{ t('agents.browser.failure.retry') }}</KBtn>
+          <KBtn variant="primary" :loading="retryAction.busy.value" @click="retryAction.run()">{{ t('agents.browser.failure.retry') }}</KBtn>
           <KBtn v-if="/^https?:/i.test(failedUrl)" variant="ghost" @click="openExternal(failedUrl)">{{ t('agents.browser.external') }}</KBtn>
         </div>
       </div>
       <img v-else-if="frozen" class="k-browser__frozen" :src="frozen" alt="" />
     </div>
+    <!-- Until main has answered whether a view (and a last address) exists — and, for a session
+         with a preview, whether its config is valid — the empty pane's offer would be a guess. -->
+    <div v-else-if="emptyPhase !== 'ready'" class="k-browser__empty">
+      <KSkeleton v-if="emptyPhase === 'skeleton'" variant="lines" :rows="3" width="320px" />
+    </div>
     <div v-else class="k-browser__empty">
       <p class="k-browser__empty-text">{{ t('agents.browser.empty') }}</p>
-      <template v-if="lastUrl">
-        <KBtn variant="primary" @click="navigate(lastUrl)">{{ t('agents.browser.reopen') }}</KBtn>
-        <span class="k-browser__empty-url mono" v-tip="lastUrl">{{ lastUrl }}</span>
+      <KBtn
+        v-if="previewUrl"
+        variant="primary"
+        :loading="opening === previewUrl"
+        :disabled="opening !== null"
+        @click="openUrl(previewUrl, true)"
+      >{{ t('agents.preview.open') }}</KBtn>
+      <KBtn
+        v-else-if="canStart"
+        variant="primary"
+        :loading="starting"
+        :disabled="opening !== null"
+        @click="preview?.start()"
+      >{{ t('agents.preview.start') }}</KBtn>
+      <template v-if="reopenUrl">
+        <KBtn
+          :variant="previewUrl || canStart ? 'secondary' : 'primary'"
+          :loading="opening === reopenUrl"
+          :disabled="opening !== null"
+          @click="openUrl(reopenUrl)"
+        >{{ t('agents.browser.reopen') }}</KBtn>
+        <span class="k-browser__empty-url mono" v-tip="reopenUrl">{{ reopenUrl }}</span>
       </template>
-      <KBtn v-if="previewUrl" :variant="lastUrl ? 'secondary' : 'primary'" @click="navigate(previewUrl)">{{ t('agents.browser.openPreview') }}</KBtn>
-      <p v-if="!lastUrl && !previewUrl" class="k-browser__empty-hint">{{ t('agents.browser.emptyHint') }}</p>
+      <p v-if="!previewUrl && !canStart && !reopenUrl" class="k-browser__empty-hint">{{ t('agents.browser.emptyHint') }}</p>
     </div>
+
+    <KPreviewPanel v-if="preview && panelOpen" :session="session" :preview="preview" @resizing="panelResizing = $event" />
 
     <!-- HTTP sign-in (basic/digest, a proxy). A KModal is role="dialog", so opening it parks
          the view by itself (useOverlayOpen); closing it any way but «Увійти» cancels. -->
@@ -211,36 +198,58 @@
       </template>
     </KModal>
   </div>
+  </Teleport>
+  </div>
 </template>
 
 <script setup lang="ts">
 // The session browser of a session (docs/specs/2026-10-05-embedded-browser.md): a toolbar,
-// the find / page-dialog bars, the operator's picks tray, and a placeholder box the session's
-// Electron WebContentsView is laid over. Desktop only — the parent renders it only when
-// `window.kermanych.browser` exists, either as the Браузер tab or beside the Лог («Поруч із
-// логом», stores/browser.ts `split`).
+// the live-preview row and its logs panel (an `agent` session's only;
+// docs/specs/2026-11-03-session-browser-preview.md), the find / page-dialog bars, the
+// operator's picks tray, and a placeholder box the session's Electron WebContentsView is laid
+// over. Desktop only — the parent renders it only when `window.kermanych.browser` exists,
+// either as the Браузер tab or beside the Лог («Поруч із логом», stores/browser.ts `split`).
 //
 // The native view is painted above the whole DOM, so this component owns when it shows: it
 // reports the placeholder's bounds while mounted and nothing covers it, and parks the view
 // (`hide`) when an overlay opens (useOverlayOpen) or the parent holds it (`hold`: a seam
-// drag, whose pointer would otherwise vanish into the page), when the page failed to load,
-// and when the pane unmounts — the parent unmounts it on every other tab, with no session,
-// and when the route leaves Агенти. An overlay or a hold parks it with a still frame of the
-// page in the box, so the pane does not blink empty for every menu; the rest park it plainly.
+// drag, whose pointer would otherwise vanish into the page — the logs panel's seam holds it
+// the same way), when the page failed to load, and when the pane unmounts — the parent
+// unmounts it on every other tab, with no session, and when the route leaves Агенти. An
+// overlay or a hold parks it with a still frame of the page in the box, so the pane does not
+// blink empty for every menu; the rest park it plainly.
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import type { Session } from '@kermanych/core';
 import KBtn from './KBtn.vue';
+import KSkeleton from './KSkeleton.vue';
+import KPreviewPanel from './KPreviewPanel.vue';
+import KPicksTray from './KPicksTray.vue';
+import KPreviewRow from './KPreviewRow.vue';
 import KChipSelect from './KChipSelect.vue';
 import KField from './KField.vue';
+import KFindBar from './KFindBar.vue';
+import KFullscreenButton from './KFullscreenButton.vue';
+import KIcon from './KIcon.vue';
 import KIconButton from './KIconButton.vue';
 import KModal from './KModal.vue';
 import { useSessionBrowser } from 'stores/browser';
 import { useOrchestrator } from 'stores/orchestrator';
 import { useOverlayOpen } from '../../composables/useOverlayOpen';
+import { errorText, useAsyncAction } from '../../composables/useAsyncAction';
+import { useOptimisticValue } from '../../composables/useOptimisticValue';
+import { useLoadPhase } from '../../composables/useLoadPhase';
+import { useSessionPreview } from '../../composables/useSessionPreview';
+import { PENDING_TIMEOUT_MS } from 'stores/pending';
 import { addressToUrl } from '../../lib/browser-url';
 
-const props = withDefaults(defineProps<{ session: Session; sending: boolean; hold?: boolean }>(), { hold: false });
+// `splittable`: the host page has a Браузер tab that ◫ «Поруч із логом» can move beside the Лог;
+// the «Дизайн» page lays the pane beside its log already and has no such tab, so it hides the
+// toggle.
+const props = withDefaults(
+  defineProps<{ session: Session; sending: boolean; hold?: boolean; splittable?: boolean }>(),
+  { hold: false, splittable: true },
+);
 const emit = defineEmits<{ send: [] }>();
 
 const { t } = useI18n();
@@ -250,16 +259,34 @@ const store = useOrchestrator();
 const bridge = window.kermanych!.browser!;
 
 const state = computed(() => browser.states[props.session.id]);
-const picks = computed(() => browser.picks[props.session.id] ?? []);
-const previewUrl = computed(() => store.previews[props.session.id]);
+// Only `agent` sessions have a preview (spec decision 8). The pane is keyed by the session, so
+// its kind never changes under it.
+const preview = props.session.kind === 'agent' ? useSessionPreview(() => props.session) : null;
+const previewUrl = computed(() => preview?.url.value ?? null);
+const panelOpen = computed(() => !!preview?.panel.value);
+// The bottom panel's seam is being dragged: the page is parked like for the parent's `hold`.
+const panelResizing = ref(false);
 const agentLive = computed(() => browser.agentLive.has(props.session.id));
 const externalUrl = computed(() => (state.value && /^https?:/i.test(state.value.url) ? state.value.url : ''));
 
 function fail(e: unknown): void {
-  store.notify(e instanceof Error ? e.message : String(e), 'error');
+  store.notify(errorText(e), 'error');
 }
-function navigate(url: string): void {
-  browser.navigate(props.session.id, props.session.projectId, url);
+function navigate(url: string): Promise<boolean> {
+  return browser.navigate(props.session.id, props.session.projectId, url, props.session.tester === true);
+}
+// Resolves at main's next state push for this session (or after the pending cap): the end of
+// an action main reports only through state — a reload, a first load.
+function nextState(): Promise<void> {
+  return new Promise((resolve) => {
+    const done = (): void => {
+      stop();
+      clearTimeout(timer);
+      resolve();
+    };
+    const stop = watch(state, done);
+    const timer = setTimeout(done, PENDING_TIMEOUT_MS);
+  });
 }
 function openExternal(url: string): void {
   // The app routes every window.open to the OS browser (external-links.ts).
@@ -306,7 +333,7 @@ function go(e: KeyboardEvent): void {
   submitted = true;
   address.value = url;
   (e.target as HTMLInputElement).blur();
-  navigate(url);
+  void navigate(url);
 }
 
 // ── Viewport ─────────────────────────────────────────────────────────────
@@ -329,9 +356,22 @@ const viewportOptions = computed(() => {
   return options;
 });
 const scalePct = computed(() => Math.round((state.value?.scale ?? 1) * 100));
-function setViewport(value: string): void {
-  bridge.setViewport(props.session.id, props.session.projectId, value === 'fit' ? null : { width: Number(value) });
-}
+// Save-on-change: the chip shows the picked width at once and holds it until main's state
+// reports the viewport (or the pending cap) — `setViewport` answers only through state.
+const viewportPick = useOptimisticValue(
+  () => viewportValue.value,
+  async (value: string) => {
+    bridge.setViewport(props.session.id, props.session.projectId, value === 'fit' ? null : { width: Number(value) }, props.session.tester === true);
+  },
+);
+// «Агент веде / пауза», the same way: the toggle flips at once, main's state confirms it.
+const pausedPick = useOptimisticValue(
+  () => state.value?.agentPaused ?? false,
+  async (paused: boolean) => {
+    bridge.setAgentPaused(props.session.id, paused);
+  },
+);
+const pausedShown = computed(() => pausedPick.value.value);
 
 // ── Picking ──────────────────────────────────────────────────────────────
 // The picker resolves with the clicked element or null (Esc in the page, cancelPick, a
@@ -359,29 +399,23 @@ async function togglePick(): Promise<void> {
   }
 }
 
-// ── Tray ─────────────────────────────────────────────────────────────────
-const trayFolded = ref(false);
-function sendOnModEnter(e: KeyboardEvent): void {
-  if (!(e.metaKey || e.ctrlKey) || props.sending) return;
-  e.preventDefault();
-  emit('send');
-}
-
 // ── Find in page ─────────────────────────────────────────────────────────
 const findOpen = ref(false);
 const findQuery = ref('');
-const findEl = ref<HTMLInputElement | null>(null);
+const findBarEl = ref<{ $el: HTMLElement } | null>(null);
 const findCount = computed(() => {
   const f = state.value?.find;
-  return f && findQuery.value && f.query === findQuery.value ? `${f.active} / ${f.matches}` : '';
+  if (!f || !findQuery.value || f.query !== findQuery.value) return '';
+  return f.matches === 0 ? t('kit.fileView.find.none') : `${f.active} / ${f.matches}`;
 });
 // Reopened with the last query still in the field: its highlights come back with it.
 async function openFind(): Promise<void> {
   if (!findOpen.value && findQuery.value) bridge.find(props.session.id, findQuery.value, true);
   findOpen.value = true;
   await nextTick();
-  findEl.value?.focus();
-  findEl.value?.select();
+  const input = findBarEl.value?.$el.querySelector<HTMLInputElement>('.k-find-bar__input');
+  input?.focus();
+  input?.select();
 }
 function closeFind(): void {
   if (!findOpen.value) return;
@@ -397,9 +431,20 @@ watch(findQuery, (query) => {
 });
 
 // ── Page dialogs and sign-in ─────────────────────────────────────────────
+// Which answer is out (true = OK, false = Cancel) until main reports the dialog gone — the bar
+// would otherwise stay clickable for a beat and take a second answer.
+const answeredDialog = ref<{ dialog: NonNullable<KermanychBrowserState['dialog']>; accept: boolean } | null>(null);
+const dialogAnswering = computed<boolean | null>(() =>
+  answeredDialog.value && state.value?.dialog === answeredDialog.value.dialog ? answeredDialog.value.accept : null,
+);
 function answerDialog(accept: boolean): void {
-  if (!state.value?.dialog) return;
-  bridge.answerDialog(props.session.id, accept).catch(fail);
+  const dialog = state.value?.dialog;
+  if (!dialog || dialogAnswering.value !== null) return;
+  answeredDialog.value = { dialog, accept };
+  bridge.answerDialog(props.session.id, accept).catch((e: unknown) => {
+    answeredDialog.value = null;
+    fail(e);
+  });
 }
 
 // Closed as soon as it is answered, not when main's next state arrives.
@@ -425,31 +470,77 @@ function answerAuth(submit: boolean): void {
 const failed = computed(() => !!state.value && (!!state.value.error || state.value.crashed));
 const failedUrl = computed(() => state.value?.error?.url || state.value?.url || '');
 // A failed load is retried at the address that failed (the view may still be on the page
-// before it); a crashed renderer comes back with a reload.
-function retry(): void {
-  if (state.value?.error?.url) navigate(state.value.error.url);
-  else bridge.reload(props.session.id);
-}
+// before it); a crashed renderer comes back with a reload, whose only answer is the next state.
+const retryAction = useAsyncAction(async () => {
+  if (state.value?.error?.url) await navigate(state.value.error.url);
+  else {
+    const settled = nextState();
+    bridge.reload(props.session.id);
+    await settled;
+  }
+});
 
 // ── Empty state ──────────────────────────────────────────────────────────
 // Where the session's browser was before it closed (an idle close, an app restart): offered
-// as the way back. Asked again whenever the view goes away.
-const lastUrl = ref<string | null>(null);
+// as the way back. Asked again whenever the view goes away. `preview`: it is on the origin of
+// the session's last live preview.
+const lastUrl = ref<{ url: string; preview: boolean } | null>(null);
+// The last address has been asked for and answered since the view last went away.
+const lastUrlKnown = ref(false);
 watch(
   () => !!state.value,
   (has) => {
     if (has) return;
-    bridge
+    // Its find bar went with the page (the ✕ on the tab closes the page while it is shown).
+    findOpen.value = false;
+    lastUrlKnown.value = false;
+    void bridge
       .lastUrl(props.session.id)
-      .then((url) => {
-        lastUrl.value = url;
+      .then((last) => {
+        lastUrl.value = last;
       })
       .catch(() => {
         lastUrl.value = null;
+      })
+      .finally(() => {
+        lastUrlKnown.value = true;
       });
   },
   { immediate: true },
 );
+// Whether main has answered the mount's state query (`refreshed`) — a view may exist that this
+// window has not heard of yet. Until every answer is in (the preview config too, for a session
+// that has one), the empty pane is a skeleton.
+const refreshed = ref(false);
+const emptyPhase = useLoadPhase(
+  () => !refreshed.value || !lastUrlKnown.value || (!!preview && preview.config.value === undefined && preview.configError.value === null),
+);
+// The empty pane's offers (spec decisions 6–7): «Відкрити превʼю» while it runs; else
+// «Запустити превʼю» when the file is valid (spinning while it starts — by the row's ▶, this
+// button or the agent); «Відкрити знову» for an ordinary last address. A last address on a
+// dead preview origin is not offered: starting the preview brings the page back there, path
+// kept.
+const starting = computed(() => !!preview && (preview.startAction.busy.value || preview.state.value?.phase === 'starting'));
+const canStart = computed(() => !!preview && (preview.configOk.value || starting.value));
+const reopenUrl = computed(() => {
+  const last = lastUrl.value;
+  if (!last) return null;
+  return last.preview && (previewUrl.value || canStart.value) ? null : last.url;
+});
+
+// «Відкрити знову» / «Відкрити превʼю»: the pressed button spins until the first state push
+// (the pane then shows the page) or main refuses the load. One at a time.
+const opening = ref<string | null>(null);
+async function openUrl(url: string, asPreview = false): Promise<void> {
+  if (opening.value) return;
+  opening.value = url;
+  try {
+    const load = asPreview ? browser.openPreview(props.session.id, props.session.projectId, url, props.session.tester === true) : navigate(url);
+    await Promise.race([load, nextState()]);
+  } finally {
+    opening.value = null;
+  }
+}
 
 // ── Keyboard ─────────────────────────────────────────────────────────────
 // Cmd/Ctrl+L and Cmd/Ctrl+F belong to the browser while the pane is on screen: here when the
@@ -457,6 +548,8 @@ watch(
 // Ukrainian layout works too. Esc with focus in the app (not in the page, where the picker
 // handles it) cancels picking.
 function runShortcut(shortcut: KermanychBrowserShortcut): void {
+  // ⌘K is the shell's (components/assistant/AssistantLauncher.vue listens for it itself).
+  if (shortcut === 'assistant') return;
   if (shortcut === 'find') {
     if (state.value) void openFind();
     return;
@@ -469,6 +562,15 @@ function onKey(e: KeyboardEvent): void {
     bridge.cancelPick(props.session.id);
     return;
   }
+  // Esc leaves full screen — not from the address bar or the find field, whose own Esc
+  // (reset the address, close find) comes first. With focus in the page, ⤡ does it.
+  if (e.key === 'Escape' && fullscreen.value) {
+    const el = e.target as HTMLElement | null;
+    if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA')) return;
+    e.preventDefault();
+    fullscreen.value = false;
+    return;
+  }
   if (!(e.metaKey || e.ctrlKey) || e.altKey || e.shiftKey) return;
   if (e.code === 'KeyL') {
     e.preventDefault();
@@ -478,6 +580,30 @@ function onKey(e: KeyboardEvent): void {
     runShortcut('find');
   }
 }
+
+// ── Full screen ──────────────────────────────────────────────────────────
+// The pane over the whole window (the Teleport above). Remembered per session on this device,
+// so a reload — or coming back to this agent's Браузер tab — opens it the way it was left; a
+// session switch, another tab or leaving Агенти unmounts the pane and takes it down meanwhile.
+// The native view needs nothing extra — the page box changes size, the ResizeObserver below
+// reports it, and the view follows.
+const fullscreenKey = `kermanych.browser.fullscreen.${props.session.id}`;
+function readFullscreen(): boolean {
+  try {
+    return localStorage.getItem(fullscreenKey) === '1';
+  } catch {
+    return false;
+  }
+}
+const fullscreen = ref(readFullscreen());
+watch(fullscreen, (on) => {
+  try {
+    if (on) localStorage.setItem(fullscreenKey, '1');
+    else localStorage.removeItem(fullscreenKey);
+  } catch {
+    /* storage unavailable: full screen just is not restored */
+  }
+});
 
 // ── Placing the native view ──────────────────────────────────────────────
 const viewEl = ref<HTMLElement | null>(null);
@@ -508,7 +634,7 @@ function park(freeze: boolean): void {
 function sync(): void {
   const el = viewEl.value;
   if (!el || failed.value) return park(false);
-  if (overlayOpen.value || props.hold) return park(true);
+  if (overlayOpen.value || props.hold || panelResizing.value) return park(true);
   const r = el.getBoundingClientRect();
   const bounds = { x: Math.round(r.left), y: Math.round(r.top), width: Math.round(r.width), height: Math.round(r.height) };
   if (bounds.width < 1 || bounds.height < 1) return park(false);
@@ -518,7 +644,7 @@ function sync(): void {
   freezeGen += 1;
   frozen.value = null;
   browser.shownRect = bounds;
-  bridge.show(props.session.id, props.session.projectId, bounds);
+  bridge.show(props.session.id, props.session.projectId, bounds, props.session.tester === true);
 }
 
 const resize = new ResizeObserver(() => sync());
@@ -527,11 +653,16 @@ watch(viewEl, (el, old) => {
   if (el) resize.observe(el);
   sync();
 }, { flush: 'post' });
-watch([overlayOpen, () => props.hold, failed], () => sync(), { flush: 'post' });
+watch([overlayOpen, () => props.hold, panelResizing, failed, fullscreen], () => sync(), { flush: 'post' });
 
 let offShortcut: (() => void) | undefined;
 onMounted(() => {
-  void browser.refresh(props.session.id).catch(fail);
+  void browser
+    .refresh(props.session.id)
+    .catch(fail)
+    .finally(() => {
+      refreshed.value = true;
+    });
   window.addEventListener('resize', sync);
   // Capture: an ancestor scrolling (none does today) moves the box without resizing it.
   window.addEventListener('scroll', sync, true);
@@ -556,6 +687,13 @@ onBeforeUnmount(() => {
 </script>
 
 <style scoped lang="scss">
+.k-browser-host {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
 .k-browser {
   flex: 1;
   min-width: 0;
@@ -564,6 +702,13 @@ onBeforeUnmount(() => {
   flex-direction: column;
   // The toolbar's narrow layout keys off the pane's own width, not the window's.
   container: k-browser / inline-size;
+}
+// Edge to edge over the app, under the tooltip layer and the file viewers' overlays.
+.k-browser--max {
+  position: fixed;
+  inset: 0;
+  z-index: 4000;
+  background: var(--k-bg);
 }
 
 // One row while it fits. Narrower (beside the Лог the pane can be a third of the window) it is
@@ -695,38 +840,7 @@ onBeforeUnmount(() => {
   50% { opacity: 0.3; }
 }
 
-.k-browser__find {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  padding: 4px 6px 4px 12px;
-  border-bottom: 1px solid var(--k-line);
-  flex: none;
-}
-.k-browser__find-input {
-  flex: 1;
-  min-width: 0;
-  max-width: 320px;
-  height: 26px;
-  padding: 0 8px;
-  font-family: var(--k-font-ui);
-  font-size: var(--k-fs-sm);
-  color: var(--k-text);
-  background: var(--k-surface);
-  border: 1px solid var(--k-line);
-  border-radius: var(--k-r-sm);
-  outline: none;
-
-  &:focus {
-    border-color: var(--k-accent);
-  }
-}
-.k-browser__find-count {
-  min-width: 48px;
-  font-size: var(--k-fs-xs);
-  color: var(--k-muted);
-  text-align: center;
-}
+.k-browser__icon { --k-icon-size: var(--k-icon-md); }
 
 .k-browser__dialog {
   display: flex;
@@ -766,134 +880,6 @@ onBeforeUnmount(() => {
   color: var(--k-faint);
 }
 .k-browser__dialog-actions {
-  display: flex;
-  gap: 8px;
-  flex: none;
-}
-
-.k-browser__tray {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  padding: 8px 12px;
-  border-bottom: 1px solid var(--k-line);
-  flex: none;
-  max-height: 40%;
-}
-// Folded: the header and the actions share one row.
-.k-browser__tray--folded {
-  flex-direction: row;
-  align-items: center;
-  justify-content: space-between;
-}
-
-.k-browser__tray-head {
-  align-self: flex-start;
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 0;
-  font-family: var(--k-font-ui);
-  font-size: var(--k-fs-xs);
-  font-weight: var(--k-fw-medium);
-  color: var(--k-muted);
-  background: transparent;
-  border: none;
-  cursor: pointer;
-
-  &:hover {
-    color: var(--k-text);
-  }
-}
-.k-browser__tray--folded .k-browser__tray-head {
-  align-self: center;
-}
-.k-browser__tray-caret {
-  width: 10px;
-}
-
-.k-browser__tray-list {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  overflow-y: auto;
-  min-height: 0;
-}
-
-.k-browser__pick {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-}
-
-.k-browser__thumb {
-  flex: none;
-  width: 64px;
-  height: 40px;
-  object-fit: contain;
-  background: var(--k-surface);
-  border: 1px solid var(--k-line);
-  border-radius: var(--k-r-sm);
-}
-.k-browser__thumb--none {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: var(--k-fs-xs);
-  color: var(--k-faint);
-}
-
-.k-browser__pick-body {
-  flex: 1;
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-
-.k-browser__pick-sel,
-.k-browser__pick-src {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: var(--k-fs-xs);
-}
-.k-browser__pick-sel { color: var(--k-text); }
-.k-browser__pick-src { color: var(--k-muted); }
-
-.k-browser__comment {
-  height: 24px;
-  padding: 0 6px;
-  font-family: var(--k-font-ui);
-  font-size: var(--k-fs-sm);
-  color: var(--k-text);
-  background: transparent;
-  border: 1px solid var(--k-line);
-  border-radius: var(--k-r-sm);
-  outline: none;
-
-  &:focus {
-    border-color: var(--k-accent);
-  }
-}
-.k-browser__note {
-  flex: none;
-  height: 28px;
-}
-
-.k-browser__pick-x {
-  flex: none;
-  border: none;
-  background: transparent;
-  color: var(--k-faint);
-  cursor: pointer;
-
-  &:hover {
-    color: var(--k-danger);
-  }
-}
-
-.k-browser__tray-actions {
   display: flex;
   gap: 8px;
   flex: none;

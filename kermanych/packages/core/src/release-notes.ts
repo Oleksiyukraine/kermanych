@@ -72,6 +72,34 @@ export type ReleaseNotesAsk = {
   rangeTo: string;
   // How the note is laid out (see `ReleaseGrouping`). Absent means `topic`.
   groupBy?: ReleaseGrouping;
+  // `person` only: the commit authors the report is about, named exactly as
+  // `ReleaseNotesAuthorsReply` lists them (git's `%aN`). Absent means the whole team — every
+  // author in the period. Present, only these people's commits reach the note; a project
+  // none of them committed to is left out of it.
+  authors?: string[];
+};
+
+// What the browser sends to POST /management/release-notes/authors: the same projects,
+// branches and period as the note it is about to ask for, so the people it offers are
+// exactly the authors the generation would find.
+export type ReleaseNotesAuthorsAsk = {
+  sources: ReleaseSource[];
+  rangeFrom: string;
+  rangeTo: string;
+};
+
+// One commit author of the period across every asked project, with their commit count.
+export type ReleaseAuthor = {
+  // As git printed it (`%aN`, so a repository's .mailmap already folds one person's aliases)
+  // — the very string `ReleaseNotesAsk.authors` is matched against.
+  name: string;
+  commits: number;
+};
+
+// Most commits first, ties by name — the order the per-person note writes its sections.
+// Empty when no picked project has a commit in the period.
+export type ReleaseNotesAuthorsReply = {
+  authors: ReleaseAuthor[];
 };
 
 // The generated document, NOT a stored row: the api has no cloud credentials, so the

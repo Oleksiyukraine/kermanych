@@ -1,6 +1,6 @@
 // apps/ui/src/stores/orchestrator.ts
 import { defineStore } from 'pinia';
-import { ref } from 'vue';
+import { ref, watch } from 'vue';
 import type { Socket } from 'socket.io-client';
 import type {
   NativeHarness,
@@ -14,18 +14,64 @@ import type {
   RpcExtensionUIResponse,
   ModelOption,
   DocsWriteKind,
+  MachineAlert,
+  PreviewState,
+  DevicePlatform,
+  QaRunScope,
+  TesterSettings,
 } from '@kermanych/core';
-// Import from core's status module directly (not the barrel): @kermanych/core is a CJS
-// workspace dep whose named exports vite/rollup only sees once its dist is commonjs-
-// transformed (see quasar.config commonjsOptions.include); status.js has a direct export.
-import { shouldNotify } from '@kermanych/core/status';
 import { connectSocket } from '../lib/socket';
 import { api, type MessageMode } from '../lib/api';
 import { applyTranscriptUpdate } from './transcript-update';
+import { machineAlertView } from '../lib/machine-alert';
 import { globalTr } from '../boot/i18n';
-import type { Bucket } from '../lib/buckets';
+import { readBucket, type Bucket } from '../lib/buckets';
+import { unsettledOutgoing, type OutgoingMessage } from '../lib/outgoing';
+import { PENDING_TIMEOUT_MS } from './pending';
+import { confirmAction } from '../lib/confirm';
+import { isYourTurnEvent } from '../lib/attention';
+import { bounceDock } from '../lib/dock';
 
-export type Toast = { id: string; message: string; kind: 'error' | 'info' };
+// The persisted selection (see `savedSelection` in the store). Guarded both ways: a missing
+// or unreadable value is simply «nothing selected».
+const SELECTION_KEY = 'kermanych.selection';
+// A bucket saved before «Активні», «Очікують» and «Помилки» merged reads as «Агенти»
+// (lib/buckets.ts readBucket), so the operator lands where those cards went.
+type SavedSelection = { workspace?: string; project?: string; session?: string; bucket?: Bucket };
+const str = (v: unknown): string | undefined => (typeof v === 'string' && v ? v : undefined);
+function readSelection(): SavedSelection {
+  try {
+    const raw = JSON.parse(localStorage.getItem(SELECTION_KEY) ?? '{}') as Record<string, unknown>;
+    const out: SavedSelection = {};
+    const workspace = str(raw.workspace);
+    const project = str(raw.project);
+    const session = str(raw.session);
+    const bucket = readBucket(raw.bucket);
+    if (workspace) out.workspace = workspace;
+    if (project) out.project = project;
+    if (session) out.session = session;
+    if (bucket) out.bucket = bucket;
+    return out;
+  } catch {
+    return {};
+  }
+}
+function writeSelection(sel: { workspace: string | undefined; project: string | undefined; session: string | undefined; bucket: Bucket }): void {
+  try {
+    localStorage.setItem(SELECTION_KEY, JSON.stringify(sel));
+  } catch {
+    // storage refused: the selection still holds until the next reload
+  }
+}
+
+// `action`: one button on the toast (the watchdog's «Зупинити команду»); pressing it runs
+// `run` and dismisses the toast.
+export type Toast = {
+  id: string;
+  message: string;
+  kind: 'error' | 'info';
+  action?: { label: string; run: () => void | Promise<void> };
+};
 
 // i18n keys for the attention-worthy statuses shouldNotify() fires on. Resolved through
 // globalTr at notification time (point-in-time copy), the same adapter the api client uses.
@@ -44,24 +90,42 @@ export const useOrchestrator = defineStore('orchestrator', () => {
   const projects = ref<Project[]>([]);
   const sessions = ref<Session[]>([]);
   const transcripts = ref<Record<string, TranscriptEntry[]>>({});
-  // Per-session subagent tree for the agent map, streamed over `subagents_update` and primed
-  // by loadSubagents(). Keyed by session id, same as `transcripts`.
+  // Messages sent from the composer that the transcript does not hold yet — rendered as the
+  // «надсилаю…» bubble (lib/outgoing.ts). Keyed by session id, like `transcripts`.
+  const outgoing = ref<Record<string, OutgoingMessage[]>>({});
+  // The socket's first `snapshot` has arrived. Until then an empty `sessions` / `projects`
+  // means «not loaded», not «none», and the board / sidebar show a skeleton.
+  const snapshotReceived = ref(false);
+  // Per-session subagent tree for the agent map: the socket snapshot carries every live
+  // session's tree, `subagents_update` keeps each fresh. Keyed by session id, as `transcripts`.
   const subagents = ref<Record<string, SubagentNode[]>>({});
-  const selectedProjectId = ref<string | undefined>(undefined);
-  const selectedWorkspaceId = ref<string | undefined>(undefined);
+  // The selection (workspace / project / agent) and the Агенти bucket survive a reload and a
+  // restart: read once here, written on every change below. An id that no longer exists is
+  // dropped once the first snapshot shows what does (see `reduce`).
+  const savedSelection = readSelection();
+  const selectedProjectId = ref<string | undefined>(savedSelection.project);
+  const selectedWorkspaceId = ref<string | undefined>(savedSelection.workspace);
   // projectId -> workspaceId, pushed in by useProjects.load(). This store must NOT
   // import useProjects — that store already depends on this one for notify() and the
   // registry sync — so the map travels one way, downwards.
   const projectWorkspace = ref<Record<string, string>>({});
-  const selectedSessionId = ref<string | undefined>(undefined);
-  const previews = ref<Record<string, string>>({});
+  const selectedSessionId = ref<string | undefined>(savedSelection.session);
+  // Every session's live-preview state, owned by the api (docs/specs/2026-11-03-session-browser-
+  // preview.md, decision 7): the snapshot carries it and `preview_update` keeps it fresh, so a
+  // reloaded window shows what runs. No entry = not started since the api started.
+  const previews = ref<Record<string, PreviewState>>({});
   const toasts = ref<Toast[]>([]);
   // The omp model catalog for THIS machine (see loadModels). Empty until it lands — and empty
   // for good if omp cannot be read — so every picker built on it degrades to «за замовчуванням».
   const models = ref<ModelOption[]>([]);
-  // Which Агенти bucket the sidebar shows. Lives here because the sidebar (MainLayout) sets
-  // it while the filter lives in AgentsPage. See lib/buckets.ts for what each bucket holds.
-  const selectedBucket = ref<Bucket>('active');
+  // Which «Агенти» tab the page shows. Lives here, not in AgentsPage, because launching from
+  // Чат (promote, «В беклог») picks the tab before the page mounts. See lib/buckets.ts for
+  // what each bucket holds.
+  const selectedBucket = ref<Bucket>(savedSelection.bucket ?? 'agents');
+  watch(
+    [selectedWorkspaceId, selectedProjectId, selectedSessionId, selectedBucket],
+    ([workspace, project, session, bucket]) => writeSelection({ workspace, project, session, bucket }),
+  );
   function setBucket(b: Bucket): void { selectedBucket.value = b; }
 
   // File-manager dock: a global panel (KFileManager) that shows the selected session's
@@ -88,11 +152,35 @@ export const useOrchestrator = defineStore('orchestrator', () => {
 
   let socket: Socket | undefined;
 
+  // Stores that keep a slice of the api's state of their own (stores/minion.ts) listen here
+  // rather than being imported: they need `notify` from this store, and an import both ways
+  // would make the two modules circular. Called after `reduce` has applied the event.
+  const listeners = new Set<(e: ServerEvent) => void>();
+  function onServerEvent(fn: (e: ServerEvent) => void): () => void {
+    listeners.add(fn);
+    return () => listeners.delete(fn);
+  }
+  function dispatch(e: ServerEvent): void {
+    reduce(e);
+    for (const fn of listeners) fn(e);
+  }
+
   // Reduce a ServerEvent into state — mirrors the legacy MVP store exactly.
   function reduce(e: ServerEvent): void {
     if (e.type === 'snapshot') {
       projects.value = e.projects;
       sessions.value = e.sessions;
+      // The snapshot is the whole truth on (re)connect: trees of sessions gone meanwhile go too.
+      subagents.value = e.subagents;
+      // A restored selection may name a project or agent deleted since (here or by a teammate).
+      if (selectedProjectId.value && !e.projects.some((p) => p.id === selectedProjectId.value)) {
+        selectedProjectId.value = undefined;
+      }
+      if (selectedSessionId.value && !e.sessions.some((x) => x.id === selectedSessionId.value)) {
+        selectedSessionId.value = undefined;
+      }
+      snapshotReceived.value = true;
+      previews.value = e.previews;
     } else if (e.type === 'project_update') {
       projects.value = [
         ...projects.value.filter((p) => p.id !== e.project.id),
@@ -116,34 +204,39 @@ export const useOrchestrator = defineStore('orchestrator', () => {
         ...sessions.value.filter((x) => x.id !== e.session.id),
         e.session,
       ];
-      // Native notification on an attention-worthy transition, only while the desktop
-      // window is unfocused. Guarded so the browser build (no Notification) never throws.
-      if (
-        shouldNotify(prev, e.session.status) &&
-        typeof document !== 'undefined' &&
-        !document.hasFocus() &&
-        typeof Notification !== 'undefined'
-      ) {
-        const key = STATUS_LABEL_KEY[e.session.status];
-        const n = new Notification(e.session.name, {
-          body: key ? globalTr.t(key) : e.session.status,
-        });
-        n.onclick = () => {
-          window.kermanych?.focus();
-          selectProject(e.session.projectId);
-          selectSession(e.session.id);
-        };
+      // A completed session («Завершити», a merged discussion/review) closes its chat pane:
+      // there is nothing left to do in it. Only on the transition, so opening an already
+      // merged card from «Завершені» (to read it or ↻ restore it) still shows the chat.
+      // Covers every source — this window's finish, another window, the api — because the
+      // api echoes each status change here.
+      if (prev !== undefined && prev !== 'merged' && e.session.status === 'merged' && selectedSessionId.value === e.session.id) {
+        selectedSessionId.value = undefined;
+      }
+      // The operator's turn (docs/specs/2026-11-01-dock-attention.md, decisions 4 and 7): one Dock
+      // bounce, and a native notification while the window is unfocused — same trigger for both,
+      // over the sessions the sidebar tracks. Guarded so the browser build (no Notification) never
+      // throws. A snapshot (every socket (re)connect) never gets here: it only sets the number.
+      const parent = (id: string): Session | undefined => sessions.value.find((x) => x.id === id);
+      if (isYourTurnEvent(prev, e.session, parent)) {
+        bounceDock();
+        if (typeof document !== 'undefined' && !document.hasFocus() && typeof Notification !== 'undefined') {
+          const key = STATUS_LABEL_KEY[e.session.status];
+          const n = new Notification(e.session.name, {
+            body: key ? globalTr.t(key) : e.session.status,
+          });
+          n.onclick = () => {
+            window.kermanych?.focus();
+            selectProject(e.session.projectId);
+            selectSession(e.session.id);
+          };
+        }
       }
     } else if (e.type === 'session_removed') {
       sessions.value = sessions.value.filter((x) => x.id !== e.sessionId);
-      if (previews.value[e.sessionId]) {
-        const next = { ...previews.value };
-        delete next[e.sessionId];
-        previews.value = next;
-      }
-      // Free the removed session's transcript too — previews above already do this. Left
-      // behind, the map kept every deleted/merged session's entries for the window's whole
-      // life, and a long-running board only ever added to it.
+      if (previews.value[e.sessionId]) previews.value = withoutKey(previews.value, e.sessionId);
+      // Free the removed session's transcript too. Left behind, the map kept every
+      // deleted/merged session's entries for the window's whole life, and a long-running board
+      // only ever added to it.
       if (transcripts.value[e.sessionId]) {
         const next = { ...transcripts.value };
         delete next[e.sessionId];
@@ -160,8 +253,10 @@ export const useOrchestrator = defineStore('orchestrator', () => {
         ...transcripts.value,
         [e.sessionId]: [...(transcripts.value[e.sessionId] ?? []), e.entry],
       };
+      settleOutgoing(e.sessionId);
     } else if (e.type === 'transcript_reset') {
       transcripts.value = { ...transcripts.value, [e.sessionId]: e.entries };
+      settleOutgoing(e.sessionId);
     } else if (e.type === 'transcript_update') {
       const list = transcripts.value[e.sessionId];
       if (list) {
@@ -170,12 +265,71 @@ export const useOrchestrator = defineStore('orchestrator', () => {
       }
     } else if (e.type === 'subagents_update') {
       subagents.value = { ...subagents.value, [e.sessionId]: e.subagents };
+    } else if (e.type === 'machine_alert') {
+      onMachineAlert(e.alert);
+    } else if (e.type === 'preview_update') {
+      previews.value = e.state ? { ...previews.value, [e.sessionId]: e.state } : withoutKey(previews.value, e.sessionId);
+    }
+  }
+
+  function withoutKey<T>(map: Record<string, T>, key: string): Record<string, T> {
+    const next = { ...map };
+    delete next[key];
+    return next;
+  }
+
+  // A watchdog finding (spec decision 7): an in-app toast, plus a Dock bounce and a native
+  // notification while the window is unfocused — the operator is likely in the very app eating
+  // the memory.
+  function onMachineAlert(alert: MachineAlert): void {
+    const view = machineAlertView(alert, (k, named) => globalTr.t(k, named ?? {}));
+    const { sessionId, pid } = alert;
+    const action =
+      view.killable && sessionId && pid !== undefined
+        ? { label: globalTr.t('machineAlert.kill'), run: () => void confirmKill(view.message, sessionId, pid) }
+        : undefined;
+    // Long enough to read a command name and reach for the button.
+    notify(view.message, view.kind, 15_000, action);
+    // A warn-level kill is the echo of the operator's own click: they are looking already.
+    const ownKill = alert.killed && alert.level === 'warn';
+    if (!ownKill) bounceDock();
+    if (!ownKill && typeof document !== 'undefined' && !document.hasFocus() && typeof Notification !== 'undefined') {
+      const n = new Notification(globalTr.t('machineAlert.title'), { body: view.message });
+      n.onclick = () => {
+        window.kermanych?.focus();
+        const s = sessionId ? sessions.value.find((x) => x.id === sessionId) : undefined;
+        if (s) {
+          selectProject(s.projectId);
+          selectSession(s.id);
+        }
+      };
+    }
+  }
+
+  // The toast's «Kill» asks first, quoting the alert (which names the command): killing a
+  // process is not undoable, and the agent sees its command fail.
+  async function confirmKill(alertText: string, sessionId: string, pid: number): Promise<void> {
+    const ok = await confirmAction({
+      title: globalTr.t('confirmations.killCommand.title'),
+      message: globalTr.t('confirmations.killCommand.message', { alert: alertText }),
+      confirmLabel: globalTr.t('confirmations.label.kill'),
+    });
+    if (ok) await killAgentCommand(sessionId, pid);
+  }
+
+  // Success needs no toast here: the api echoes it as a `machine_alert` with `killed`.
+  async function killAgentCommand(sessionId: string, pid: number): Promise<void> {
+    try {
+      const { ok } = await api.killAgentCommand(sessionId, pid);
+      if (!ok) notify(globalTr.t('machineAlert.killGone'), 'error');
+    } catch (err) {
+      notify(err instanceof Error ? err.message : String(err), 'error');
     }
   }
 
   function connect(): void {
     if (socket) return;
-    socket = connectSocket(reduce);
+    socket = connectSocket(dispatch);
     // The catalog describes this machine's omp install, not registry state, so the connect
     // that warms the store pulls it too.
     void loadModels();
@@ -219,13 +373,6 @@ export const useOrchestrator = defineStore('orchestrator', () => {
     selectedSessionId.value = id;
   }
 
-  // Actions delegating to the REST api. There is deliberately no createProject/
-  // deleteProject: projects are born and die in the cloud (stores/projects.ts), and the
-  // local rows follow through syncProjects.
-  function patchProject(id: string, body: { name?: string; color?: string; previewCommand?: string; apiCommand?: string; carryFiles?: string[]; docFolders?: string[]; docsRequired?: boolean; defaultBranch?: string; conventions?: string }) {
-    return api.patchProject(id, body);
-  }
-
   function setProjectBinding(id: string, localRepoPath: string) {
     return api.setProjectBinding(id, localRepoPath);
   }
@@ -242,8 +389,43 @@ export const useOrchestrator = defineStore('orchestrator', () => {
     return api.promoteChat(id, taskId);
   }
 
-  function sendMessage(id: string, text: string, mode: MessageMode, images?: ImageInput[]) {
-    return api.sendMessage(id, text, mode, images);
+  function setOutgoing(id: string, list: OutgoingMessage[]): void {
+    const next = { ...outgoing.value };
+    if (list.length) next[id] = list;
+    else delete next[id];
+    outgoing.value = next;
+  }
+
+  // Drops the bubbles the transcript now shows as real entries.
+  function settleOutgoing(id: string): void {
+    const list = outgoing.value[id];
+    if (!list?.length) return;
+    const left = unsettledOutgoing(list, transcripts.value[id] ?? []);
+    if (left.length !== list.length) setOutgoing(id, left);
+  }
+
+  // The bubble shows at once; the real user entry replaces it when the transcript reports it.
+  // A failed send removes the bubble and rethrows, so the caller can hand the text back to the
+  // composer. A bubble the transcript never confirms (a native session pastes into its TUI and
+  // records nothing) is dropped after PENDING_TIMEOUT_MS.
+  async function sendMessage(id: string, text: string, mode: MessageMode, images?: ImageInput[], opts: { voice?: boolean } = {}) {
+    const msg: OutgoingMessage = {
+      id: `${Date.now()}-${Math.random().toString(36).slice(2)}`,
+      text,
+      images: images ?? [],
+      at: Date.now(),
+    };
+    setOutgoing(id, [...(outgoing.value[id] ?? []), msg]);
+    const drop = () => setOutgoing(id, (outgoing.value[id] ?? []).filter((m) => m.id !== msg.id));
+    try {
+      const res = await api.sendMessage(id, text, mode, images, opts.voice);
+      settleOutgoing(id);
+      if (outgoing.value[id]?.some((m) => m.id === msg.id)) setTimeout(drop, PENDING_TIMEOUT_MS);
+      return res;
+    } catch (e) {
+      drop();
+      throw e;
+    }
   }
 
   // The composer's effort chip. No optimistic patch: the api answers with the saved row AND
@@ -294,6 +476,20 @@ export const useOrchestrator = defineStore('orchestrator', () => {
     return api.mergeBranch(id, summary);
   }
 
+  // «Виконати тестування» (docs/specs/2026-11-04-qa-tester-agent.md): the api answers with the
+  // tester child, which the caller selects. The child's own row also arrives as session_update.
+  function runTester(id: string, scope: QaRunScope) {
+    return api.runTester(id, scope);
+  }
+
+  function getTesterSettings(projectId: string) {
+    return api.getTesterSettings(projectId);
+  }
+
+  function putTesterSettings(projectId: string, settings: TesterSettings) {
+    return api.putTesterSettings(projectId, settings);
+  }
+
   function archiveSession(id: string) {
     return api.archiveSession(id);
   }
@@ -309,6 +505,7 @@ export const useOrchestrator = defineStore('orchestrator', () => {
   async function loadTranscript(id: string) {
     const entries = await api.loadTranscript(id);
     transcripts.value = { ...transcripts.value, [id]: entries };
+    settleOutgoing(id);
     return entries;
   }
 
@@ -320,17 +517,65 @@ export const useOrchestrator = defineStore('orchestrator', () => {
     return loadTranscript(id);
   }
 
-  async function startPreview(id: string) {
-    const res = await api.startPreview(id);
-    if (res.url) previews.value = { ...previews.value, [id]: res.url };
-    return res;
+  // «Запустити зараз» on a session waiting for an agent slot: the api starts it past the
+  // limit and returns the row, which also arrives as `session_update`.
+  async function runSessionNow(id: string) {
+    const s = await api.runSessionNow(id);
+    sessions.value = [...sessions.value.filter((x) => x.id !== s.id), s];
+  }
+
+  // The answer of a start/stop comes first; the state change it causes arrives as
+  // `preview_update`. Each resolves once the store shows that change (or after the pending
+  // cap), so the ▶ / ◼ keeps spinning until the row can show the result.
+  function untilPreview(id: string, done: (s: PreviewState | undefined) => boolean): Promise<void> {
+    if (done(previews.value[id])) return Promise.resolve();
+    return new Promise((resolve) => {
+      const finish = (): void => {
+        stop();
+        clearTimeout(timer);
+        resolve();
+      };
+      const stop = watch(() => previews.value[id], (s) => {
+        if (done(s)) finish();
+      });
+      const timer = setTimeout(finish, PENDING_TIMEOUT_MS);
+    });
+  }
+  const previewLive = (s: PreviewState | undefined): boolean => s?.phase === 'starting' || s?.phase === 'running';
+
+  // `restart`: stop first (↻). An already starting/running preview answers with its state.
+  // `device`: the platform and base device of a Mobile start (KDevicePane); a base other than
+  // the session's clone re-clones it (docs/specs/2026-11-03-mobile-device-preview.md, decision 6).
+  async function startPreview(id: string, restart = false, device: { platform?: DevicePlatform; base?: string } = {}) {
+    const before = previews.value[id];
+    const state = await api.startPreview(id, { restart, ...device });
+    if (restart || !previewLive(before)) await untilPreview(id, (s) => s !== before && s !== undefined);
+    return state;
+  }
+
+  // «Запустити застосунок» after the app exited (decision 11): resolves once the store shows a
+  // state other than the one it was pressed on — the app running again, or anything that ended it.
+  async function launchPreviewApp(id: string) {
+    const before = previews.value[id];
+    await api.previewApp(id, 'launch');
+    await untilPreview(id, (s) => s !== before);
   }
 
   async function stopPreview(id: string) {
     await api.stopPreview(id);
-    const next = { ...previews.value };
-    delete next[id];
-    previews.value = next;
+    await untilPreview(id, (s) => !previewLive(s));
+  }
+
+  function previewInfo(id: string) {
+    return api.previewInfo(id);
+  }
+
+  function previewLogs(id: string, step: string, since: number) {
+    return api.previewLogs(id, step, since);
+  }
+
+  function configurePreview(id: string) {
+    return api.configurePreview(id);
   }
 
   function listBranches(id: string) {
@@ -349,8 +594,20 @@ export const useOrchestrator = defineStore('orchestrator', () => {
     return api.saveEnv(id, patch);
   }
 
+  function getSessionEnv(id: string) {
+    return api.getSessionEnv(id);
+  }
+
+  function saveSessionEnv(id: string, edits: { set?: Record<string, string>; remove?: string[] }) {
+    return api.saveSessionEnv(id, edits);
+  }
+
   function finishInfo(id: string) {
     return api.finishInfo(id);
+  }
+
+  function prCheck(id: string) {
+    return api.prCheck(id);
   }
 
   function fileDiff(id: string, path: string) {
@@ -365,6 +622,10 @@ export const useOrchestrator = defineStore('orchestrator', () => {
     return api.sessionFile(id, path);
   }
 
+  function sessionRaw(id: string, path: string) {
+    return api.sessionRaw(id, path);
+  }
+
   function projectTree(id: string, path: string) {
     return api.projectTree(id, path);
   }
@@ -373,15 +634,17 @@ export const useOrchestrator = defineStore('orchestrator', () => {
     return api.projectFile(id, path);
   }
 
-  async function finishSession(id: string) {
-    const res = await api.finish(id);
-    // preview is stopped server-side on finish; drop its local url too.
-    if (previews.value[id]) {
-      const next = { ...previews.value };
-      delete next[id];
-      previews.value = next;
-    }
-    return res;
+  function projectRaw(id: string, path: string) {
+    return api.projectRaw(id, path);
+  }
+
+  // The api stops the preview on finish and on close; `preview_update` reports it.
+  function finishSession(id: string) {
+    return api.finish(id);
+  }
+
+  function closeMerged(id: string) {
+    return api.closeMerged(id);
   }
 
   function createPr(id: string) {
@@ -400,11 +663,15 @@ export const useOrchestrator = defineStore('orchestrator', () => {
     return api.writeDoc(id, kind);
   }
 
+  function saveDesign(id: string) {
+    return api.saveDesign(id);
+  }
+
   // Minimal transient notifications. notify() pushes a toast that auto-dismisses;
   // components read `toasts` and may dismiss one early.
-  function notify(message: string, kind: Toast['kind'] = 'info', ms = 4000) {
+  function notify(message: string, kind: Toast['kind'] = 'info', ms = 4000, action?: Toast['action']) {
     const id = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
-    toasts.value = [...toasts.value, { id, message, kind }];
+    toasts.value = [...toasts.value, { id, message, kind, ...(action ? { action } : {}) }];
     setTimeout(() => dismissToast(id), ms);
   }
 
@@ -428,18 +695,12 @@ export const useOrchestrator = defineStore('orchestrator', () => {
     return api.reopenSession(id);
   }
 
-  // A one-shot snapshot of a session's subagent tree for the agent map. The socket keeps it
-  // fresh afterwards (subagents_update); this primes it the moment the modal opens.
-  async function loadSubagents(id: string) {
-    const list = await api.getSubagents(id);
-    subagents.value = { ...subagents.value, [id]: list };
-    return list;
-  }
-
   return {
     projects,
     sessions,
     transcripts,
+    outgoing,
+    snapshotReceived,
     selectedProjectId,
     selectedSessionId,
     selectedWorkspaceId,
@@ -452,6 +713,7 @@ export const useOrchestrator = defineStore('orchestrator', () => {
     fileManagerSide,
     toggleFileManager,
     connect,
+    onServerEvent,
     selectProject,
     selectSession,
     createChat,
@@ -467,32 +729,45 @@ export const useOrchestrator = defineStore('orchestrator', () => {
     branchSession,
     reviewSession,
     mergeBranch,
+    runTester,
+    getTesterSettings,
+    putTesterSettings,
     reopenSession,
     loadTranscript,
     subagents,
-    loadSubagents,
     resumeSession,
+    runSessionNow,
     previews,
     startPreview,
     stopPreview,
-    patchProject,
+    previewInfo,
+    previewLogs,
+    configurePreview,
+    launchPreviewApp,
     setProjectBinding,
     syncProjects,
     listBranches,
     pullProject,
     getEnv,
     saveEnv,
+    getSessionEnv,
+    saveSessionEnv,
     finishInfo,
+    prCheck,
     fileDiff,
     sessionTree,
     sessionFile,
+    sessionRaw,
     projectTree,
     projectFile,
+    projectRaw,
     finishSession,
+    closeMerged,
     createPr,
     commitChanges,
     completeDocs,
     writeDoc,
+    saveDesign,
     archiveSession,
     unarchiveSession,
     renameSession,

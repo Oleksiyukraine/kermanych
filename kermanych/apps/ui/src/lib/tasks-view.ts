@@ -4,7 +4,7 @@
 // for real — their job is to grey a control out before the refusal, never to be the
 // refusal.
 import type { Task, TaskInsert, TaskPatch } from '@kermanych/cloud';
-import type { BranchPrefix, Platform, ThinkingLevel } from '@kermanych/core';
+import type { BranchPrefix, ThinkingLevel } from '@kermanych/core';
 
 // The optional fields spell out `| undefined` because the launcher CLEARS a select by
 // assigning undefined, and exactOptionalPropertyTypes refuses that against a bare `?:`.
@@ -14,14 +14,51 @@ export type LauncherDraft = {
   model?: string | undefined;
   effort?: ThinkingLevel | undefined;
   prefix: BranchPrefix;
-  platform?: Platform | undefined;
   worktree: boolean;
   hidden: boolean;
   // «Глибокий аналіз»: the card runs its agent through the interview and the task document
   // before any code. A card field, not a launch choice, so a later launch keeps it.
   deepAnalysis: boolean;
+  // «Дозволити автовиконання»: «Посіпака» on the author's machine may take the card by itself
+  // (docs/specs/2026-10-23-minion-auto-run.md, decision 3). Never together with deepAnalysis:
+  // that agent interviews the operator, and nobody is there.
+  autoRun: boolean;
   baseBranch?: string | undefined;
+  // The agent's own branch after the prefix, typed in the launcher's «Гілка». Blank or absent:
+  // the launch names it from the task.
+  branchSlug?: string | undefined;
 };
+
+// The two card modes that exclude each other, as one pair so every form flips them the same way.
+export type CardModes = { deepAnalysis: boolean; autoRun: boolean };
+
+// Checking one mode clears the other; unchecking touches only itself.
+export function withDeepAnalysis(modes: CardModes, on: boolean): CardModes {
+  return { deepAnalysis: on, autoRun: on ? false : modes.autoRun };
+}
+
+export function withAutoRun(modes: CardModes, on: boolean): CardModes {
+  return { autoRun: on, deepAnalysis: on ? false : modes.deepAnalysis };
+}
+
+// A card → the launcher's or the board form's pair. `deepAnalysis` seeds a NEW card (the
+// «Нова задача» menu); a stored card keeps its own. A stored card that somehow carries both
+// (an older client wrote one of them) shows deep analysis: the minion skips such a card anyway.
+export function cardModesFromCard(card: Task | undefined, deepAnalysis = false): CardModes {
+  const deep = card ? card.deepAnalysis : deepAnalysis;
+  return { deepAnalysis: deep, autoRun: !deep && !!card?.autoRun };
+}
+
+// tasks_guard(): only the author switches auto-run ON; anyone may switch it off. A new card is
+// the operator's own. The mirror greys the switch out before the refusal.
+export function canAllowAutoRun(card: Task | undefined, userId: string): boolean {
+  return !card || (!!userId && card.createdBy === userId);
+}
+
+// The switch is locked only in the direction the guard refuses: an ON switch stays clickable.
+export function autoRunSwitchLocked(on: boolean, card: Task | undefined, userId: string): boolean {
+  return !on && !canAllowAutoRun(card, userId);
+}
 
 // Two renamings live here and nowhere else: name/task are the card's title/description,
 // and the fork base is `tasks.branch` (the board labels that field «Базова гілка», and
@@ -39,30 +76,36 @@ export function taskInsertFromDraft(
     ...(draft.model ? { model: draft.model } : {}),
     ...(draft.effort ? { effort: draft.effort } : {}),
     prefix: draft.prefix,
-    ...(draft.platform ? { platform: draft.platform } : {}),
     worktree: draft.worktree,
     hidden: draft.hidden,
     deepAnalysis: draft.deepAnalysis,
+    autoRun: draft.autoRun && !draft.deepAnalysis,
+    ...(draft.branchSlug?.trim() ? { branchSlug: draft.branchSlug.trim() } : {}),
     ...(base ? { branch: base } : {}),
     assigneeId,
   };
 }
 
 // Unlike the insert, a patch sends every editable field: an absent key means «leave the
-// column alone», so clearing the platform in the editor has to travel as an empty string,
-// which toTaskRow turns into NULL.
-export function taskPatchFromDraft(draft: LauncherDraft): TaskPatch {
+// column alone», so clearing the model in the editor has to travel as an empty string,
+// which toTaskRow turns into NULL. The one exception is `autoRun`, sent only when this form
+// changed it (`openedAutoRun` is the switch as the form opened): the author may flip it while a
+// colleague's form is open, and a stale copy would either undo the author's change or — sent as
+// `true` by a non-author — make tasks_guard() refuse the whole save.
+export function taskPatchFromDraft(draft: LauncherDraft, openedAutoRun: boolean): TaskPatch {
+  const autoRun = draft.autoRun && !draft.deepAnalysis;
   return {
     title: draft.name.trim(),
     description: draft.task.trim(),
     model: draft.model ?? '',
     effort: draft.effort ?? '',
     prefix: draft.prefix,
-    platform: draft.platform ?? '',
     worktree: draft.worktree,
     hidden: draft.hidden,
     deepAnalysis: draft.deepAnalysis,
+    ...(autoRun !== openedAutoRun ? { autoRun } : {}),
     branch: (draft.worktree ? draft.baseBranch?.trim() : '') ?? '',
+    branchSlug: draft.branchSlug?.trim() ?? '',
   };
 }
 
@@ -71,9 +114,9 @@ export function taskPatchFromDraft(draft: LauncherDraft): TaskPatch {
 // properties of the CARD rather than of the current selection — which is why they live
 // here and not in `filterTasks`:
 //
-// - `!t.jiraKey` / `!t.linearKey`: a shadow task minted by a Jira- or Linear-ticket launch
-//   belongs to that provider's view, where the ticket card wears its status chip; the native
-//   columns must not show the same work twice.
+// - `!t.jiraKey` / `!t.linearKey` / `!t.planeKey`: a shadow task minted by a Jira-, Linear-
+//   or Plane-ticket launch belongs to that provider's view, where the ticket card wears its
+//   status chip; the native columns must not show the same work twice.
 // - `!t.hidden`: its author checked «Приховати з дошки». The row is untouched everywhere
 //   else — its assignee still works it from «Задачі», it still launches and still pushes
 //   status — so THIS is the only place the flag is read.
@@ -81,7 +124,7 @@ export function taskPatchFromDraft(draft: LauncherDraft): TaskPatch {
 // Neither is user-toggleable, and neither is authorization: a hidden card is still a
 // project member's card, and the api launches it through the same getTask/claimTask path.
 export function boardTasks(tasks: Task[]): Task[] {
-  return tasks.filter((t) => !t.jiraKey && !t.linearKey && !t.hidden);
+  return tasks.filter((t) => !t.jiraKey && !t.linearKey && !t.planeKey && !t.hidden);
 }
 
 // «Задачі» in Агенти is my inbox — the cards I have to work, including ones a colleague
@@ -94,13 +137,15 @@ export function boardTasks(tasks: Task[]): Task[] {
 export function myBacklogTasks(tasks: Task[], userId: string, scopedProjectIds: string[]): Task[] {
   if (!userId) return [];
   const inScope = new Set(scopedProjectIds);
-  // `!t.jiraKey` / `!t.linearKey`: a shadow task minted by a Jira- or Linear-ticket launch
-  // lives on that provider's view; surfacing it here would offer the same work twice.
+  // `!t.jiraKey` / `!t.linearKey` / `!t.planeKey`: a shadow task minted by a Jira-, Linear-
+  // or Plane-ticket launch lives on that provider's view; surfacing it here would offer the
+  // same work twice.
   return tasks.filter(
     (t) =>
       t.status === 'backlog' &&
       !t.jiraKey &&
       !t.linearKey &&
+      !t.planeKey &&
       t.assigneeId === userId &&
       inScope.has(t.projectId),
   );

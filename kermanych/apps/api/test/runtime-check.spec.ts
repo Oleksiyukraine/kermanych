@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
 import { RuntimeCheckService } from "../src/runtime/runtime-check.service";
+import { AuthFailure } from "../src/runtime/auth-failure";
 
 // The preflight behind "is this backend actually usable on this machine?". It exists so the
 // operator learns a backend is broken AT THE MOMENT THEY PICK IT, rather than after creating a
@@ -17,6 +18,17 @@ describe("RuntimeCheckService", () => {
     const svc = new RuntimeCheckService();
     svc.claudeProbe = async () => {
       throw new Error("Claude Code process exited with code 1. stderr: Invalid API key · Please run /login");
+    };
+
+    expect(await svc.check("claude-code")).toEqual({ ok: false, code: "claude_not_authenticated" });
+  });
+
+  // The real claude probe rejects with an AuthFailure when accountInfo() names no token; the
+  // code travels as-is, with no prose to re-read.
+  it("passes through the code of a structured sign-out", async () => {
+    const svc = new RuntimeCheckService();
+    svc.claudeProbe = async () => {
+      throw new AuthFailure("claude_not_authenticated", "Claude Code has no signed-in account");
     };
 
     expect(await svc.check("claude-code")).toEqual({ ok: false, code: "claude_not_authenticated" });
@@ -59,12 +71,12 @@ describe("RuntimeCheckService", () => {
   });
 
   // An empty catalog is a real failure mode distinct from a throw: omp answers, but lists no
-  // model, which means it holds no provider credentials. A launch would then run nothing.
-  it("treats an empty omp catalog as an unusable backend", async () => {
+  // model, which means it holds no provider credentials — a signed-out omp.
+  it("treats an empty omp catalog as a signed-out omp", async () => {
     const svc = new RuntimeCheckService();
     svc.ompProbe = async () => [];
 
-    expect(await svc.check("omp")).toMatchObject({ ok: false });
+    expect(await svc.check("omp")).toEqual({ ok: false, code: "omp_not_authenticated" });
   });
 
   it("does not let the probe hang forever", async () => {

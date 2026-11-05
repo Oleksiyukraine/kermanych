@@ -201,7 +201,7 @@ Every release:
 - **Core** `packages/core/src/app-release.ts`: `compareAppVersions`, `isBelowMinimumVersion`,
   `changelogEntries` / `changelogSection` / `changelogBetween` (shared by the app and the
   release script).
-- **Cloud** `supabase/migrations/20261012120000_app_release_policy.sql`;
+- **Cloud** `supabase/migrations/20261105090000_app_release_policy.sql`;
   `packages/cloud/src/app-release.ts` `getMinAppVersion` (null on any failure).
 - **UI** `stores/app-update.ts` (state, policy, last seen version in `localStorage`, bundled
   `CHANGELOG.md?raw`); `components/AppUpdateBanner.vue` in `MainLayout.vue` (restart
@@ -257,6 +257,37 @@ Every release:
   `spctl -a -vv` («Notarized Developer ID»), start a session from a Finder launch; then tag
   `v0.1.1` and check the banner, «Що нового», the restart confirmation, the restart into 0.1.1
   with its «Що нового» once, and that a plain quit also installs.
+
+## After merging `dev` (2026-11-05, 221 commits)
+
+What `dev` brought that touches this plan, and how the merge handled it:
+
+- **Voice conversation (microphone).** `dev` added `NSMicrophoneUsageDescription` and noted «no
+  entitlement: the build has no hardened runtime». Ours has one, and under it the microphone is
+  denied silently without `com.apple.security.device.audio-input`, so `entitlements.mac.plist`
+  gained it; the usage text moved into our `mac` block.
+- **iOS device preview (`serve-sim`).** It ships ad-hoc-signed Mach-O files that run from
+  `app.asar.unpacked`: a Node addon loaded by Kermanych's own executable (`ELECTRON_RUN_AS_NODE`),
+  three helper executables and `libSimCameraInjector.dylib`, which is injected into simulator
+  processes. electron-builder re-signs all of them with the Developer ID and the hardened runtime.
+  Whether the iOS preview still works after that is checked on the first signed build.
+- **Pop-up notifications.** Since Electron 42 macOS shows them only for an app signed by an Apple
+  team (`docs/specs/2026-11-01-dock-attention.md`); the signed release is what turns them on. The
+  README now says so.
+- **Parallel start-up.** `dev` creates the window while `bootstrap()` runs, behind a splash. The
+  login shell's `PATH` is still adopted before `bootstrap()`, but the window no longer waits for
+  it: `adoptLoginShellPath().then(startBackend)` runs beside `createWindow`.
+- **The version label.** `dev` moved the version from the header into Settings → «Загальне» as a
+  hard-coded `'v1.1.2'`. The merge keeps it there, shows the package version instead, and keeps
+  «Що нового» beside it.
+- **Migration order.** `dev` has migrations up to `20261104110000`, and `supabase db push`
+  refuses a local migration older than the last remote one. The policy migration was renamed to
+  `20261105090000_app_release_policy.sql`.
+- Checked after the merge: `pnpm build:app --publish never` (dmg + zip, `serve-sim` and `ws` in
+  `app.asar.unpacked`, the microphone text in `Info.plist`); the packaged app started with
+  launchd's `PATH` found `omp` and `xcrun simctl` and drew the app; tests `core` 330, `cloud` 193,
+  `ui` 932, `api` 1389 passed; `vue-tsc` clean.
+
 
 ## Documentation impact
 

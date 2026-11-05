@@ -8,13 +8,14 @@
     :aria-label="variant === 'icon' ? title : undefined"
     :aria-busy="loading || undefined"
   >
-    <span v-if="loading" class="k-btn__spinner" aria-hidden="true" />
+    <KSpinner v-if="loading" class="k-btn__spinner" />
     <slot />
   </button>
 </template>
 
 <script setup lang="ts">
 import { computed } from 'vue';
+import KSpinner from './KSpinner.vue';
 // Modernist button. Radius 0, label flush-left, weight 800.
 // Accent is reserved for the primary action only (per design-system rules).
 //
@@ -30,8 +31,8 @@ import { computed } from 'vue';
 const props = withDefaults(
   defineProps<{
     variant?: 'primary' | 'secondary' | 'ghost' | 'icon';
-    disabled?: boolean;
-    loading?: boolean;
+    disabled?: boolean | undefined;
+    loading?: boolean | undefined;
     title?: string;
   }>(),
   { variant: 'secondary', disabled: false, loading: false },
@@ -63,14 +64,18 @@ const isBusy = computed(() => props.disabled || props.loading);
   }
 }
 
-// primary — the single accent action.
+// primary — the single accent action; the fill is a step lighter at the top. The lift is a
+// translucent overlay (`--k-grad-accent`) over the accent COLOUR, and hover changes only that
+// colour: a gradient image cannot be transitioned, and swapping it for a plain fill on hover
+// made the colour fade in from transparent — the button blinked.
 .k-btn--primary {
-  background: var(--k-accent);
+  background-color: var(--k-accent);
+  background-image: var(--k-grad-accent);
   color: var(--k-on-accent);
   border-color: var(--k-accent);
 
   &:hover:not(.k-btn--disabled) {
-    background: var(--k-accent-hover);
+    background-color: var(--k-accent-hover);
   }
 }
 
@@ -132,30 +137,11 @@ const isBusy = computed(() => props.disabled || props.loading);
 }
 
 .k-btn__spinner {
-  flex: none;
-  width: 12px;
-  height: 12px;
   margin-right: 8px;
-  border: 2px solid currentColor;
-  border-top-color: transparent;
-  border-radius: 50%;
-  animation: k-btn-spin 0.6s linear infinite;
 }
 
 // icon variant is a glyph-only square: no label to sit beside, so drop the gap.
 .k-btn--icon .k-btn__spinner {
   margin-right: 0;
-}
-
-@keyframes k-btn-spin {
-  to {
-    transform: rotate(360deg);
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .k-btn__spinner {
-    animation: none;
-  }
 }
 </style>

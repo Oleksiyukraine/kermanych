@@ -5,7 +5,7 @@
          the number of secrets. The caller states WHERE these values live (the
          pane's own blurb does it here), so this bar carries no prose. -->
     <div class="k-env__bar">
-      <KBtn variant="secondary" @click="revealed = !revealed">
+      <KBtn variant="secondary" :disabled="loading" @click="revealed = !revealed">
         {{ revealed ? t('kit.envEditor.hide') : t('kit.envEditor.show') }}
       </KBtn>
     </div>
@@ -25,6 +25,10 @@
         <span></span>
       </div>
 
+      <!-- Until the file is read the table holds nothing to edit: a row typed now would be
+           replaced by the late load, so the body is a skeleton and «Додати змінну» is off. -->
+      <KSkeleton v-if="phase === 'skeleton'" variant="rows" :rows="3" />
+      <template v-else-if="phase === 'ready'">
       <div v-for="(row, i) in modelValue" :key="i" class="k-env__row">
         <input
           class="k-env__cell mono"
@@ -70,9 +74,10 @@
       </div>
 
       <div v-if="!modelValue.length" class="k-env__empty">{{ t('kit.envEditor.empty') }}</div>
+      </template>
     </div>
 
-    <KBtn variant="secondary" @click="emit('update:modelValue', [...modelValue, BLANK])">
+    <KBtn variant="secondary" :disabled="loading" @click="emit('update:modelValue', [...modelValue, BLANK])">
       {{ t('kit.envEditor.add') }}
     </KBtn>
   </div>
@@ -84,10 +89,12 @@ export type { EnvRow } from '../../lib/settings';
 
 <script setup lang="ts">
 import { ref } from 'vue';
+import { useLoadPhase } from '../../composables/useLoadPhase';
 import { useI18n } from 'vue-i18n';
 import type { EnvRow } from '../../lib/settings';
 import KBtn from './KBtn.vue';
 import KIconButton from './KIconButton.vue';
+import KSkeleton from './KSkeleton.vue';
 
 // The bound repo's `.env`, as a table. FULLY CONTROLLED: the rows are the
 // caller's state, and every edit emits a fresh array. It used to keep its own
@@ -99,10 +106,13 @@ import KIconButton from './KIconButton.vue';
 // `required` is CLOUD config (`projects.env_keys`, names only); `value` never
 // leaves this machine. The component draws both and knows about neither: the
 // caller decides where each half goes.
-const props = defineProps<{ modelValue: EnvRow[]; ignored: boolean; flagsLocked?: boolean }>();
+//
+// `loading` = the caller has not read the file for the current project yet.
+const props = defineProps<{ modelValue: EnvRow[]; ignored: boolean; flagsLocked?: boolean; loading?: boolean | undefined }>();
 const emit = defineEmits<{ 'update:modelValue': [rows: EnvRow[]] }>();
 
 const { t } = useI18n();
+const phase = useLoadPhase(() => props.loading === true);
 
 const BLANK: EnvRow = { key: '', value: '', required: false };
 

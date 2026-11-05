@@ -61,9 +61,14 @@ export const useRisks = defineStore('risks', () => {
 
   async function load(workspaceId: string): Promise<void> {
     await auth.ready;
+    if (!workspaceId) return;
     // A preview signs in against a cloudless api (lib/preview.ts): there is no Supabase
-    // project behind it, so there is no register to read.
-    if (IS_PREVIEW || !auth.user || !workspaceId) return;
+    // project behind it, so there is no register to read — an empty one, settled, so the
+    // screen shows its empty state instead of a skeleton that never resolves.
+    if (IS_PREVIEW || !auth.user) {
+      if (!byWorkspace.value[workspaceId]) byWorkspace.value = { ...byWorkspace.value, [workspaceId]: [] };
+      return;
+    }
     loading.value = true;
     loadError.value = null;
     try {

@@ -8,7 +8,7 @@
 
     <!-- The «regular board only» state, stated rather than hidden: the section exists in
          the rail for every workspace, and an empty pane under a finished nav reads as a bug. -->
-    <div v-if="jira.integration === null" class="cap__gate">
+    <div v-if="src.integration === null" class="cap__gate">
       <span class="cap__gate-title mono">{{ t('management.capacity.gateTitle') }}</span>
       <p class="cap__gate-text">{{ t('management.capacity.gateText') }}</p>
       <KBtn variant="primary" @click="router.push({ name: 'management-integrations' })">
@@ -16,12 +16,20 @@
       </KBtn>
     </div>
 
-    <p v-else-if="jira.integration === undefined || (jira.loading && !jira.issues.length)" class="cap__note mono">
-      {{ t('management.capacity.loading') }}
-    </p>
+    <!-- Not loaded for THIS workspace yet: the tracker stores reset on a workspace switch and
+         keep `loading` up from probe through loadBoard, so this covers both. -->
+    <template v-else-if="phase !== 'ready'">
+      <div v-if="phase === 'skeleton'" class="cap__skeleton">
+        <KSkeleton variant="line" width="60%" />
+        <KSkeleton variant="block" width="100%" height="64px" />
+        <KSkeleton variant="block" width="100%" height="220px" />
+      </div>
+    </template>
 
     <template v-else>
       <div class="cap__toolbar">
+        <!-- Which tracker the screen reads, offered only when the workspace has both. -->
+        <KTabs v-if="src.available.length > 1" v-model="sourceModel" :tabs="TRACKER_SOURCE_OPTIONS" />
         <KDateField
           :model-value="from"
           :label="t('management.capacity.from')"
@@ -46,7 +54,7 @@
         <KTabs v-model="view" :tabs="viewTabs" />
       </div>
 
-      <p v-if="jira.loadError" class="cap__error">{{ t('management.capacity.loadError', { error: jira.loadError }) }}</p>
+      <p v-if="src.loadError" class="cap__error">{{ t('management.capacity.loadError', { error: src.loadError }) }}</p>
 
       <div class="cap__capbar">
         <span class="cap__capbar-label mono">{{ t('management.capacity.capacityLabel') }}</span>
@@ -96,7 +104,9 @@
         </article>
         <article class="cap__stat">
           <span class="cap__stat-label mono">{{ t('management.capacity.stat.logged') }}</span>
-          <strong class="cap__stat-value">{{ hours(report.summary.loggedSeconds) }}<small>{{ t('management.capacity.h') }}</small></strong>
+          <!-- Worklogs are a second fetch per range: until they land «0 h» would be a claim. -->
+          <KSkeleton v-if="worklogsPending" variant="line" width="64px" height="22px" />
+          <strong v-else class="cap__stat-value">{{ hours(report.summary.loggedSeconds) }}<small>{{ t('management.capacity.h') }}</small></strong>
         </article>
         <article class="cap__stat" :class="`cap__stat--${bandOf(report.summary.utilization)}`">
           <span class="cap__stat-label mono">{{ t('management.capacity.stat.utilization') }}</span>
@@ -148,7 +158,7 @@
       <div v-else class="cap__table-wrap">
         <KTable :columns="issueColumns" :rows="issueRows" :row-key="(r: CapacityIssueRow) => r.key">
           <template #cell-key="{ row }">
-            <a class="cap__key mono" :href="issueUrl(row.key)" target="_blank" rel="noopener">{{ row.key }}</a>
+            <a class="cap__key mono" :href="src.issueUrl(row.key)" target="_blank" rel="noopener">{{ row.key }}</a>
           </template>
           <template #cell-person="{ row }">
             <span :class="{ 'cap__dash': row.person.id === UNASSIGNED }">{{ personName(row.person) }}</span>
@@ -178,10 +188,12 @@
 </template>
 
 <script setup lang="ts">
-// Team Capacity — Jira's estimates and worklogs against an 8 h/day baseline, for a date range
-// the operator picks. The shell (ManagementPage) renders the heading and the workspace gate;
-// this component assumes a workspace and adds one gate of its own: a Jira board, because the
-// native board has no estimates and capacity without estimates is a blank chart.
+// Team Capacity — the tracker's estimates and worklogs against an 8 h/day baseline, for a date
+// range the operator picks. The shell (ManagementPage) renders the heading and the workspace
+// gate; this component assumes a workspace and adds one gate of its own: a Jira board or a
+// Plane project, because the native board has no estimates and capacity without estimates is
+// a blank chart. With both connected, the toolbar's «Jira | Plane» switch picks the source
+// (stores/tracker.ts).
 //
 // View state only. Every number comes from lib/capacity.ts `capacityReport`, which is also
 // what the Менеджмент assistant is handed — so a figure quoted in the chat is a figure on
@@ -189,7 +201,6 @@
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { useRouter } from 'vue-router';
-import type { JiraWorklog } from '@kermanych/cloud';
 import KBtn from 'components/kit/KBtn.vue';
 import KChipSelect from 'components/kit/KChipSelect.vue';
 import KDateField from 'components/kit/KDateField.vue';
@@ -197,12 +208,15 @@ import KSelect, { type KSelectOption } from 'components/kit/KSelect.vue';
 import KTable, { type KTableColumn } from 'components/kit/KTable.vue';
 import KTabs from 'components/kit/KTabs.vue';
 import KTag from 'components/kit/KTag.vue';
+import KSkeleton from 'components/kit/KSkeleton.vue';
+import { useLoadPhase } from '../composables/useLoadPhase';
 import CapacityChart from 'components/capacity/CapacityChart.vue';
-import { useJira } from 'stores/jira';
+import { useTrackerSource, type TrackerToken } from 'stores/tracker';
 import { useNow } from '../composables/useNow';
 import { formatIsoDate } from '../lib/calendar';
 import { hours } from '../lib/format';
 import { UNASSIGNED } from '../lib/jira-view';
+import { TRACKER_SOURCE_OPTIONS } from '../lib/tracker-source';
 import {
   CAPACITY_PRESETS,
   DEFAULT_HOURS_PER_DAY,
@@ -219,6 +233,7 @@ import {
   type CapacityPerson,
   type CapacityPreset,
   type CapacityRange,
+  type CapacityWorklog,
 } from '../lib/capacity';
 import { capacityStorageKey, readCapacityPrefs, type CapacityPrefs } from '../lib/capacity-prefs';
 
@@ -226,10 +241,15 @@ const props = defineProps<{ workspaceId: string; workspaceName: string }>();
 
 const { t } = useI18n();
 const router = useRouter();
-const jira = useJira();
+const src = useTrackerSource();
 // The report is anchored on today; a minute's tick is enough for a screen measured in days.
 const nowMs = useNow(60_000);
 const today = computed(() => todayIso(nowMs.value));
+
+const sourceModel = computed({
+  get: () => src.kind ?? 'jira',
+  set: (v: string) => src.setKind(v),
+});
 
 const TEAM = '@team';
 const ALL = '';
@@ -371,28 +391,44 @@ function toggleFlagged(): void {
 
 // ── data ──────────────────────────────────────────────────────────────────────
 
-const worklogs = ref<JiraWorklog[]>([]);
+const worklogs = ref<CapacityWorklog[]>([]);
+// Which workspace+source+range the worklogs on screen belong to; '' = none yet. The logged figure
+// shows a skeleton until it matches the current range, rather than «0 h».
+const worklogsFor = ref('');
+const worklogsKey = computed(() =>
+  range.value ? `${props.workspaceId}|${src.integration?.id ?? ''}|${range.value.from}|${range.value.to}` : '',
+);
+const worklogsPending = computed(() => !!worklogsKey.value && worklogsFor.value !== worklogsKey.value);
 let worklogGeneration = 0;
 
 async function loadWorklogs(): Promise<void> {
   const r = range.value;
-  if (!r || !jira.integration) return;
+  if (!r || !src.integration) return;
   const mine = ++worklogGeneration;
+  const key = worklogsKey.value;
   try {
-    const rows = await jira.fetchWorklogs(r);
+    const rows = await src.fetchWorklogs(r);
     if (mine === worklogGeneration) worklogs.value = rows;
   } catch {
     // The chart still shows the plan; logged time is best-effort until the next tick.
   }
+  if (mine === worklogGeneration) worklogsFor.value = key;
 }
 
-// Token for the session THIS page opened — see stores/jira.ts. Kept so the unmount below
-// closes only its own session, never one an arriving view (the board, or another workspace's
-// Team Capacity) has since opened.
-let openToken: number | undefined;
+const phase = useLoadPhase(() => src.integration === undefined || (src.loading && !src.issues.length));
+
+// Tokens for the sessions THIS page opened — see stores/jira.ts and stores/plane.ts. Kept so
+// the unmount below closes only its own sessions, never ones an arriving view (the board, or
+// another workspace's Team Capacity) has since opened.
+let openToken: TrackerToken | undefined;
 
 async function enter(id: string): Promise<void> {
   flaggedOnly.value = false;
+  // Another workspace's worklogs must not be summed against this one's issues; a late reply
+  // for the old workspace is dropped by the generation bump.
+  worklogGeneration++;
+  worklogs.value = [];
+  worklogsFor.value = '';
   const saved = readCapacityPrefs(props.workspaceId);
   // A remembered PRESET is re-resolved against today — «next 2 weeks» saved last Monday
   // means this coming fortnight, not last week's. Only custom dates are kept verbatim. The
@@ -409,15 +445,15 @@ async function enter(id: string): Promise<void> {
   teamHoursPerDay.value = typeof saved?.teamHoursPerDay === 'number' ? saved.teamHoursPerDay : DEFAULT_HOURS_PER_DAY;
   memberHours.value = saved?.memberHours && typeof saved.memberHours === 'object' ? { ...saved.memberHours } : {};
   excluded.value = new Set(Array.isArray(saved?.excluded) ? saved.excluded : []);
-  openToken = await jira.open(id);
+  openToken = await src.open(id);
   void loadWorklogs();
 }
 
 // The first open runs post-mount rather than in an `immediate` watcher: Vue flushes a
 // leaving view's onUnmounted AFTER an entering view's setup, so an immediate open() here
 // would have its generation bumped moments later by the board's own close() (both views
-// share the one useJira() session) and probe() would bail. Mounting is already after that
-// flush, so this open sees a settled store.
+// share the one useJira() / usePlane() session) and probe() would bail. Mounting is already
+// after that flush, so this open sees a settled store.
 onMounted(() => {
   if (props.workspaceId) void enter(props.workspaceId);
 });
@@ -429,21 +465,29 @@ watch(
 );
 
 watch(range, () => void loadWorklogs());
+// The «Jira | Plane» switch: the other tracker's worklogs. A source appearing or vanishing
+// (null on either side) is a workspace switch or the first probe, which enter() covers.
+watch(
+  () => src.kind,
+  (now, before) => {
+    if (now && before) void loadWorklogs();
+  },
+);
 // The sync tick refreshes issues through realtime; worklogs have no channel, so they are
 // re-read when a tick finishes.
 watch(
-  () => jira.syncing,
+  () => src.syncing,
   (now, before) => {
     if (before && !now) void loadWorklogs();
   },
 );
 
-onUnmounted(() => jira.close(openToken));
+onUnmounted(() => src.close(openToken));
 
 // The unfiltered report feeds the person picker, so the list does not shrink to the one
 // person picked.
 const teamReport = computed(() =>
-  capacityReport(jira.issues, worklogs.value, {
+  capacityReport(src.issues, worklogs.value, {
     range: range.value ?? { from: today.value, to: today.value },
     today: today.value,
     granularity: granularityModel.value as CapacityGranularity,
@@ -502,11 +546,6 @@ function bandOf(u: number): 'idle' | 'ok' | 'high' | 'over' {
 
 function percentOf(u: number): string {
   return `${Math.round(u * 100)}%`;
-}
-
-function issueUrl(key: string): string {
-  const site = jira.integration?.siteUrl ?? '';
-  return `${site.replace(/\/$/, '')}/browse/${key}`;
 }
 
 type TeamRow = { id: string; name: string; cells: CapacityCell[]; total: CapacityCell; open: number };
@@ -611,6 +650,12 @@ const issueRows = computed<CapacityIssueRow[]>(() =>
   margin: 0;
   font-size: var(--k-fs-sm);
   color: var(--k-muted);
+}
+
+.cap__skeleton {
+  display: flex;
+  flex-direction: column;
+  gap: var(--k-sp-3);
 }
 
 .cap__note {

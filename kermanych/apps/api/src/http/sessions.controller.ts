@@ -1,11 +1,12 @@
 // apps/api/src/http/sessions.controller.ts
-import { BadRequestException, Body, Controller, Delete, Get, NotFoundException, Param, Patch, Post, Query, Req } from "@nestjs/common";
-import { isNativeHarness, isThinkingLevel, parseFindingTarget } from "@kermanych/core";
-import type { BranchPrefix, DocsWriteKind, ImageInput, Platform, RpcExtensionUIResponse, TaskDraft, ThinkingLevel } from "@kermanych/core";
+import { BadRequestException, Body, Controller, Delete, Get, NotFoundException, Param, Patch, Post, Put, Query, Req, StreamableFile } from "@nestjs/common";
+import { isDevicePlatform, isNativeHarness, isQaRunScope, isThinkingLevel, parseFindingTarget } from "@kermanych/core";
+import type { BranchPrefix, DocsWriteKind, ImageInput, RpcExtensionUIResponse, ThinkingLevel } from "@kermanych/core";
 import { SupervisorService } from "../supervisor/supervisor.service";
 import { sessionFailure } from "./session-failure";
 import { RegistryService } from "../registry/registry.service";
-import { PreviewService } from "../preview/preview.service";
+import { PreviewService, type PreviewAppAction } from "../preview/preview.service";
+import { EnvFileService } from "../env/env-file.service";
 
 // A findings failure: an unknown session or finding is a 404, an already-decided one a 400.
 function findingFailure(err: unknown): Error {
@@ -19,6 +20,7 @@ export class SessionsController {
     private sup: SupervisorService,
     private reg: RegistryService,
     private preview: PreviewService,
+    private env: EnvFileService,
   ) {}
 
   @Get()
@@ -65,10 +67,11 @@ export class SessionsController {
     }
   }
 
+  // `voice`: the text is a transcript from a voice conversation (docs/specs/2026-11-02-voice-conversation.md).
   @Post(":id/message")
-  async message(@Param("id") id: string, @Body() b: { text: string; mode: "prompt" | "follow_up" | "steer"; images?: ImageInput[] }) {
+  async message(@Param("id") id: string, @Body() b: { text: string; mode: "prompt" | "follow_up" | "steer"; images?: ImageInput[]; voice?: boolean }) {
     try {
-      return await this.sup.sendMessage(id, b.text, b.mode, b.images);
+      return await this.sup.sendMessage(id, b.text, b.mode, b.images, { voice: b.voice === true });
     } catch (err) {
       throw sessionFailure(err);
     }
@@ -117,6 +120,19 @@ export class SessionsController {
     }
   }
 
+  // «Виконати тестування» (docs/specs/2026-11-04-qa-tester-agent.md, decisions 11-12): the created
+  // tester child, or a 400 saying why it cannot start now.
+  @Post(":id/qa-run")
+  async qaRun(@Param("id") id: string, @Body() b: { scope?: unknown } = {}) {
+    const scope = b?.scope === undefined ? "all" : b.scope;
+    if (!isQaRunScope(scope)) throw new BadRequestException(`invalid scope ${JSON.stringify(scope)}`);
+    try {
+      return await this.sup.runTester(id, scope);
+    } catch (err) {
+      throw sessionFailure(err);
+    }
+  }
+
   @Post(":id/merge")
   async merge(@Param("id") id: string, @Body() b: { summary?: string }) {
     try {
@@ -158,11 +174,6 @@ export class SessionsController {
     return this.sup.getToolDetail(id, callId);
   }
 
-  @Get(":id/subagents")
-  subagents(@Param("id") id: string) {
-    return this.sup.getSubagents(id);
-  }
-
   // Unwrapped like toolDetail: getSubagentTranscript throws GoneException for a dormant
   // session, and the UI's "session inactive" branch relies on that 410 reaching it.
   @Get(":id/subagents/:subagentId/transcript")
@@ -170,19 +181,89 @@ export class SessionsController {
     return this.sup.getSubagentTranscript(id, subagentId);
   }
 
-  @Post(":id/preview")
-  async startPreview(@Param("id") id: string) {
+  // The live preview (docs/specs/2026-11-03-session-browser-preview.md). Every refusal — not an
+  // agent session, a back-end project, no session directory, a missing or invalid
+  // `.kermanych/preview.json` — is a plain 400 message.
+  @Get(":id/preview")
+  previewInfo(@Param("id") id: string) {
     try {
-      return await this.preview.start(id);
+      return this.preview.info(id);
+    } catch (err) {
+      throw sessionFailure(err);
+    }
+  }
+
+  // Answers at once, normally `starting`; progress arrives as `preview_update`. `platform` and
+  // `base` (a base device id) pick a Mobile project's device (docs/specs/2026-11-03-mobile-device-preview.md,
+  // decision 6): a different one restarts with a re-clone.
+  @Post(":id/preview")
+  startPreview(@Param("id") id: string, @Body() b: { restart?: boolean; platform?: unknown; base?: unknown } = {}) {
+    if (b?.platform !== undefined && !isDevicePlatform(b.platform)) throw new BadRequestException(`unknown platform ${JSON.stringify(b.platform)}`);
+    if (b?.base !== undefined && (typeof b.base !== "string" || !b.base)) throw new BadRequestException("base must be a base device id");
+    try {
+      return this.preview.start(id, {
+        restart: b?.restart === true,
+        ...(b?.platform !== undefined ? { platform: b.platform } : {}),
+        ...(typeof b?.base === "string" ? { base: b.base } : {}),
+      });
+    } catch (err) {
+      throw sessionFailure(err);
+    }
+  }
+
+  // «Запустити застосунок» (mobile decision 11): the file's app on the running device.
+  @Post(":id/preview/app")
+  async previewApp(@Param("id") id: string, @Body() b: { action?: unknown } = {}) {
+    const action = b?.action;
+    if (action !== "launch" && action !== "terminate" && action !== "restart") throw new BadRequestException("action must be launch, terminate or restart");
+    try {
+      return await this.preview.app(id, action satisfies PreviewAppAction);
     } catch (err) {
       throw sessionFailure(err);
     }
   }
 
   @Delete(":id/preview")
-  stopPreview(@Param("id") id: string) {
-    this.preview.stop(id);
+  async stopPreview(@Param("id") id: string) {
+    await this.preview.stop(id);
     return { ok: true };
+  }
+
+  @Get(":id/preview/logs")
+  previewLogs(@Param("id") id: string, @Query("step") step?: string, @Query("since") since?: string) {
+    const after = Number(since);
+    return this.preview.logs(id, step ?? "", Number.isFinite(after) ? after : 0);
+  }
+
+  // «Доручити агенту»: a native session's busy refusal surfaces as the coded error.
+  @Post(":id/preview/configure")
+  async configurePreview(@Param("id") id: string) {
+    try {
+      return await this.sup.configurePreview(id);
+    } catch (err) {
+      throw sessionFailure(err);
+    }
+  }
+
+  // «Змінні» of the preview row (docs/specs/2026-11-04-session-env-and-tester-preview-gate.md,
+  // decision 2): the `.env` of the directory the preview runs from — the worktree, or the project
+  // checkout of an in-place session — refused with the preview's messages otherwise.
+  @Get(":id/env")
+  async getEnv(@Param("id") id: string) {
+    try {
+      return await this.env.read(this.preview.dirOf(id));
+    } catch (err) {
+      throw sessionFailure(err);
+    }
+  }
+
+  @Put(":id/env")
+  async putEnv(@Param("id") id: string, @Body() b: { set?: Record<string, string>; remove?: string[] } = {}) {
+    try {
+      return await this.env.write(this.preview.dirOf(id), ".env", { set: b?.set, remove: b?.remove });
+    } catch (err) {
+      throw sessionFailure(err);
+    }
   }
 
   @Get(":id/finish")
@@ -224,12 +305,47 @@ export class SessionsController {
     }
   }
 
+  // Raw bytes for the viewer's preview mode (a PDF has no text body). StreamableFile for the
+  // same reason as /projects/:id/docs/raw: a bare Buffer would be JSON-serialized.
+  @Get(":id/raw")
+  async raw(@Param("id") id: string, @Query("path") path?: string) {
+    let file: { bytes: Buffer; contentType: string } | null;
+    try {
+      file = await this.sup.sessionRaw(id, path ?? "");
+    } catch (err) {
+      throw sessionFailure(err);
+    }
+    if (!file) throw new NotFoundException("file not found");
+    return new StreamableFile(file.bytes, { type: file.contentType, length: file.bytes.length });
+  }
+
   // A failing documentation gate is a plain 400 starting `documentation required:`.
   @Post(":id/finish")
   async finish(@Param("id") id: string) {
     try {
-      this.preview.stop(id);
       return await this.sup.finishSession(id);
+    } catch (err) {
+      throw sessionFailure(err);
+    }
+  }
+
+  // The merged-PR check (docs/specs/2026-10-26-pr-merged-close-prompt.md): GitHub failures come
+  // back as a PrCheck state, so only an unknown session is a 400.
+  @Get(":id/pr")
+  async prCheck(@Param("id") id: string) {
+    try {
+      return await this.sup.prCheck(id);
+    } catch (err) {
+      throw sessionFailure(err);
+    }
+  }
+
+  // «Закрити задачу»: finish without the documentation gate, only once GitHub confirms the
+  // merge; otherwise a 400 `pr is not merged`.
+  @Post(":id/close-merged")
+  async closeMerged(@Param("id") id: string) {
+    try {
+      return await this.sup.closeMerged(id);
     } catch (err) {
       throw sessionFailure(err);
     }
@@ -248,6 +364,17 @@ export class SessionsController {
   async commit(@Param("id") id: string) {
     try {
       return await this.sup.commitChanges(id);
+    } catch (err) {
+      throw sessionFailure(err);
+    }
+  }
+
+  // «Зберегти дизайн» (docs/specs/2026-10-29-design-tab.md): `{ sent: true }`; a 400 for a
+  // session that is not a design.
+  @Post(":id/design/save")
+  async saveDesign(@Param("id") id: string) {
+    try {
+      return await this.sup.saveDesign(id);
     } catch (err) {
       throw sessionFailure(err);
     }
@@ -292,7 +419,7 @@ export class SessionsController {
   @Post(":id/findings/:findingId/filed")
   findingFiled(@Param("id") id: string, @Param("findingId") findingId: string, @Body() b: unknown) {
     const target = parseFindingTarget(b);
-    if (!target) throw new BadRequestException("body must be { kind: \"board\", taskId } or { kind: \"jira\", key, url }");
+    if (!target) throw new BadRequestException("body must be { kind: \"board\", taskId }, { kind: \"jira\", key, url } or { kind: \"plane\", key, url }");
     try {
       return this.sup.resolveFinding(id, findingId, { status: "filed", target });
     } catch (err) {
@@ -376,6 +503,16 @@ export class SessionsController {
     }
   }
 
+  // «Запустити зараз» on a card waiting for an agent slot: starts it past the limit, this once.
+  @Post(":id/run-now")
+  async runNow(@Param("id") id: string) {
+    try {
+      return await this.sup.runNow(id);
+    } catch (err) {
+      throw sessionFailure(err);
+    }
+  }
+
   @Post(":id/reopen")
   async reopen(@Param("id") id: string) {
     try {
@@ -388,7 +525,6 @@ export class SessionsController {
   @Delete(":id")
   async remove(@Param("id") id: string) {
     try {
-      this.preview.stop(id);
       await this.sup.deleteSession(id);
     } catch (err) {
       throw sessionFailure(err);

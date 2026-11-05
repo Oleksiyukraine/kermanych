@@ -35,10 +35,10 @@ const emit = defineEmits<{ 'update:modelValue': [value: boolean] }>();
 .k-modal {
   width: 440px;
   max-width: 92vw;
-  background: var(--k-bg);
+  background: var(--k-grad-raise), var(--k-bg);
   border: 1px solid var(--k-line-strong);
   border-radius: var(--k-r-lg);
-  box-shadow: var(--k-shadow-modal);
+  box-shadow: var(--k-sheen), var(--k-shadow-modal);
   color: var(--k-text);
 }
 

@@ -10,9 +10,13 @@
 // blocking the page, an element is covered, …
 
 // Which session's browser, and the project whose cookie jar (Electron partition) it uses.
+// `ephemeral`: a «Тестувальник» run (docs/specs/2026-11-04-qa-tester-agent.md, decision 7) gets
+// an in-memory partition of its own instead of the project's persistent one, so every run starts
+// signed out and never signs the operator out; it dies with the view (close()).
 export interface BrowserTarget {
   sessionId: string;
   projectId: string;
+  ephemeral?: boolean;
 }
 
 // Where the page is after an action: the agent reads it to see whether a click navigated.
@@ -110,6 +114,14 @@ export interface BrowserHost {
   // Evaluate a JavaScript expression in the page (promises are awaited); the result as JSON
   // text, or the thrown error's message.
   evaluate(target: BrowserTarget, expression: string): Promise<string>;
+  // Open the session's live preview at `url` (docs/specs/2026-11-03-session-browser-preview.md,
+  // decision 6). When the page — or, with no page, its remembered last address — is on the
+  // origin of the preview opened before, its path, query and hash are kept on the new origin.
+  // Remembers `url`'s origin as the session's preview origin (kept with the last address across
+  // restarts). Not an agent action: the agent pause does not apply, and it never takes focus.
+  openPreview(target: BrowserTarget, url: string): Promise<void>;
+  // Whether the operator paused the agent's control of this session's browser («Агент»).
+  isPaused(sessionId: string): boolean;
   // Whether this session's browser exists right now.
   has(sessionId: string): boolean;
   // Destroy the session's browser and its temp files (the session was deleted). No-op when

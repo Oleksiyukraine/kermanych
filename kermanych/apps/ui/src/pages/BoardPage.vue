@@ -1,10 +1,10 @@
 <template>
   <main class="board">
-    <!-- VIEW SWITCHER — exists when the scoped workspace mirrors a Jira and/or a Linear
-         board. «Задачі» is the native five-column board, untouched; «Jira»/«Linear»
-         reproduce each mirrored board's own columns. A workspace may mirror BOTH, so the
-         two tabs appear independently. -->
-    <div v-if="jiraAvailable || linearAvailable" class="board__views" role="tablist">
+    <!-- VIEW SWITCHER — exists when the scoped workspace mirrors a Jira, a Linear and/or a
+         Plane board. «Задачі» is the native five-column board, untouched; «Jira»/«Linear»/
+         «Plane» reproduce each mirrored board's own columns. A workspace may mirror several
+         trackers at once, so the tabs appear independently. -->
+    <div v-if="jiraAvailable || linearAvailable || planeAvailable" class="board__views" role="tablist">
       <button
         class="board__view mono"
         :class="{ 'board__view--on': boardView === 'tasks' }"
@@ -28,6 +28,14 @@
         :aria-selected="boardView === 'linear'"
         @click="setBoardView('linear')"
       >{{ t('board.viewSwitch.linear') }}</button>
+      <button
+        v-if="planeAvailable"
+        class="board__view mono"
+        :class="{ 'board__view--on': boardView === 'plane' }"
+        role="tab"
+        :aria-selected="boardView === 'plane'"
+        @click="setBoardView('plane')"
+      >{{ t('board.viewSwitch.plane') }}</button>
     </div>
 
     <JiraBoardView
@@ -40,15 +48,35 @@
       :workspace-id="local.selectedWorkspaceId"
     />
 
-    <template v-if="boardView === 'tasks'">
+    <PlaneBoardView
+      v-if="boardView === 'plane' && local.selectedWorkspaceId"
+      :workspace-id="local.selectedWorkspaceId"
+    />
+
+    <!-- This workspace remembers «Jira»/«Linear»/«Plane» as its default but that integration
+         has not been probed yet: a skeleton, not the native board flashing up and then
+         swapping. -->
+    <div v-if="viewPhase === 'skeleton'" class="board__columns">
+      <div v-for="col in COLUMNS" :key="col.key" class="board__skeleton-col">
+        <KSkeleton variant="line" width="60%" />
+        <KSkeleton variant="card" />
+      </div>
+    </div>
+
+    <template v-if="boardView === 'tasks' && viewPhase === 'ready'">
     <header class="board__head">
       <div class="board__title">
         <h1 class="board__heading">{{ scopeHeading }}</h1>
-        <span class="board__count mono">{{ t('board.header.count', { n: visibleTasks.length }, visibleTasks.length) }}</span>
+        <span v-if="tasksPhase === 'ready'" class="board__count mono">{{ t('board.header.count', { n: visibleTasks.length }, visibleTasks.length) }}</span>
       </div>
       <div class="board__controls">
         <KSelect v-model="projectFilter" :options="projectOptions" :placeholder="t('board.filter.allProjects')" />
-        <KSelect v-model="assigneeFilter" :options="assigneeOptions" :placeholder="t('board.filter.allAssignees')" />
+        <KSelect
+          v-model="assigneeFilter"
+          :options="assigneeOptions"
+          :placeholder="t('board.filter.allAssignees')"
+          :loading="assigneeRosterPending"
+        />
         <!-- A task row needs a `project_id` the tasks policies can check membership
              against, so with no project IN SCOPE there is nothing to create a task on.
              Say so: a grey button with no explanation is what made this look broken. -->
@@ -113,7 +141,17 @@
       </p>
     </div>
 
-    <div v-if="cloud.projects.length" class="board__columns">
+    <!-- The task read for this board has not answered: skeleton columns, never «—» / 0, which
+         would claim an empty board. -->
+    <div v-if="cloud.projects.length && tasksPhase === 'skeleton'" class="board__columns">
+      <div v-for="col in COLUMNS" :key="col.key" class="board__skeleton-col">
+        <span class="board__skeleton-label">{{ t(col.labelKey) }}</span>
+        <KSkeleton variant="card" />
+        <KSkeleton variant="card" />
+      </div>
+    </div>
+
+    <div v-else-if="cloud.projects.length && tasksPhase === 'ready'" class="board__columns">
       <KKanbanColumn
         v-for="col in COLUMNS"
         :key="col.key"
@@ -129,7 +167,12 @@
           :time="renderTime(t, relativeTime(task.updatedAt, now))"
           :status="task.status"
           :assignee="resolveAssignee(task.assigneeId, membersOf(task.projectId))"
+          :assignee-loading="!!task.assigneeId && rosterPending(task.projectId)"
           :deep-analysis="task.deepAnalysis"
+          :design="task.design"
+          :auto-run="task.autoRun"
+          :needs-decision="cardDecisionReason(t, task)"
+          :not-needed="cardNotNeededReason(t, task)"
           @click="openEdit(task)"
         />
 
@@ -137,14 +180,19 @@
       </KKanbanColumn>
     </div>
 
-    <div v-else class="board__blank">
+    <div v-else-if="!cloud.projects.length" class="board__blank">
       <div class="board__blank-eyebrow mono">{{ t('board.blank.eyebrow') }}</div>
       <p class="board__blank-text">{{ blankText }}</p>
     </div>
     </template>
 
     <!-- CREATE / EDIT TASK — same launch vocabulary as the local launcher -->
-    <KModal v-model="editorOpen" :title="editingId ? t('board.editor.editTitle') : t('board.editor.createTitle')" width="720px">
+    <KModal
+      v-model="editorOpen"
+      :title="editingId ? t('board.editor.editTitle') : t('board.editor.createTitle')"
+      width="720px"
+      :persistent="editorBusy"
+    >
       <template #head-meta>
         <span class="board__esc mono">{{ t('board.editor.esc') }}</span>
       </template>
@@ -158,29 +206,66 @@
           :placeholder="t('board.editor.projectPlaceholder')"
         />
         <KField v-model="draftTitle" :label="t('board.editor.title')" :placeholder="t('board.editor.titlePlaceholder')" />
-        <KField
-          v-model="draftDescription"
-          :label="t('board.editor.description')"
-          :placeholder="t('board.editor.descriptionPlaceholder')"
-          multiline
-          :rows="6"
-          @paste="editingId ? undefined : onDraftPaste($event)"
-          @drop.prevent="editingId ? undefined : onDraftDrop($event)"
-          @dragover.prevent
-        />
-        <div v-if="!editingId" class="board__attach">
-          <button type="button" class="board__attach-btn mono" @click="draftFileInput?.click()">
-            {{ t('board.editor.image') }}
-          </button>
-          <input
-            ref="draftFileInput"
-            type="file"
-            accept="image/png,image/jpeg,image/gif,image/webp"
-            multiple
-            class="board__file"
-            @change="onDraftFilePick"
+        <!-- Хелпери, the same panel as the chat composer's: `/` on an empty description or the
+             «/ Хелпери» button below prepends a helper, and the launch expands it. Файли (`@` at
+             a word start or «@ Файл») name a file of the project's local checkout as `@path`. -->
+        <div class="board__desc">
+          <KHelperPicker :open="helperOpen" placement="below" @select="onDraftHelper" @close="closeDraftHelper" />
+          <KFilePicker
+            :open="draftMention.open.value"
+            :source="draftFiles"
+            placement="below"
+            @select="draftMention.select"
+            @close="draftMention.close"
           />
-          <span class="board__attach-note mono">{{ t('board.editor.dragHint') }}</span>
+          <KField
+            ref="descriptionField"
+            v-model="draftDescription"
+            :label="t('board.editor.description')"
+            :placeholder="t('board.editor.descriptionPlaceholder')"
+            multiline
+            :rows="6"
+            @keydown="onDescriptionKeydown"
+            @paste="editingId ? undefined : onDraftPaste($event)"
+            @drop.prevent="editingId ? undefined : onDraftDrop($event)"
+            @dragover.prevent
+          />
+        </div>
+        <!-- Диктування (docs/specs/2026-11-03-voice-dictation.md): ⌥D in the description does the same. -->
+        <KDictation
+          :state="draftDictation.state.value"
+          :caption="draftDictation.caption.value"
+          :level="draftDictation.level.value"
+          @toggle="draftDictation.toggle"
+        />
+        <div class="board__attach">
+          <button
+            type="button"
+            class="board__attach-btn mono"
+            v-tip="t('board.editor.helpersTip')"
+            @click="helperOpen = !helperOpen"
+          >{{ t('board.editor.helpers') }}</button>
+          <button
+            type="button"
+            class="board__attach-btn mono"
+            v-tip="draftFiles ? t('board.editor.filesTip') : t('board.editor.filesUnbound')"
+            :disabled="!draftFiles"
+            @click="draftMention.toggle"
+          >{{ t('board.editor.files') }}</button>
+          <template v-if="!editingId">
+            <button type="button" class="board__attach-btn mono" @click="draftFileInput?.click()">
+              {{ t('board.editor.image') }}
+            </button>
+            <input
+              ref="draftFileInput"
+              type="file"
+              accept="image/png,image/jpeg,image/gif,image/webp"
+              multiple
+              class="board__file"
+              @change="onDraftFilePick"
+            />
+            <span class="board__attach-note mono">{{ t('board.editor.dragHint') }}</span>
+          </template>
         </div>
         <KAttachStrip v-if="!editingId && draftImages.length" :images="draftImages" @remove="removeDraftImage" />
         <p v-if="!editingId && draftImageError" class="board__error" role="alert">{{ draftImageError }}</p>
@@ -196,14 +281,21 @@
           />
           <KSelect v-model="draftEffort" :label="t('board.editor.effort')" :options="effortPickOptions" :placeholder="t('board.editor.default')" />
           <KSelect v-model="draftPrefix" :label="t('board.editor.prefix')" :options="PREFIX_OPTIONS" placeholder="feature" />
-          <KSelect
-            v-model="draftPlatform"
-            :label="t('board.editor.platform')"
-            :options="PLATFORM_OPTIONS"
-            :placeholder="t('board.editor.platformPlaceholder')"
-          />
         </div>
         <KField v-model="draftBranch" :label="t('board.editor.branch')" :placeholder="t('board.editor.branchPlaceholder')" />
+        <!-- «Дозволити автовиконання». Only the author switches it on (tasks_guard() refuses
+             anyone else), so for a colleague's card the box is locked while it is off — and stays
+             clickable while on, because anyone may switch it off. This form does not show «Глибокий
+             аналіз», so a deep-analysis card keeps the box off rather than losing its mode unseen. -->
+        <div class="board__check">
+          <KCheckbox
+            :model-value="draftAutoRun"
+            :label="t('minion.autoRun.label')"
+            :disabled="!!autoRunLockReason"
+            @update:model-value="draftAutoRun = $event"
+          />
+          <p class="board__check-desc">{{ autoRunLockReason ?? t('minion.autoRun.caption') }}</p>
+        </div>
         <!-- The label is hoisted OUT of KSelect so the avatar can be centred on the
              control itself: inside the component the label and the input are one column,
              and centring the face on that column parks it in the gap between them. -->
@@ -252,6 +344,7 @@
                 :label="item.text"
                 @update:model-value="(v: boolean) => board.setQaItemChecked(editingTask!.id, item.id, v)"
               />
+              <QaVerdict v-if="item.agent" :verdict="item.agent" />
             </li>
           </ul>
         </div>
@@ -262,36 +355,38 @@
       </div>
 
       <template #controls>
-        <KBtn v-if="editingTask" variant="ghost" @click="onDelete(editingTask); editorOpen = false">{{ t('board.editor.delete') }}</KBtn>
+        <KBtn v-if="editingTask" variant="ghost" :disabled="editorBusy" @click="onDelete(editingTask)">{{ t('board.editor.delete') }}</KBtn>
         <KBtn
           v-if="editingTask && canForceStop(editingTask)"
           variant="ghost"
+          :disabled="editorBusy"
           @click="editorOpen = false; openForceStop(editingTask)"
         >{{ t('board.forceStop.mark') }}</KBtn>
-        <KBtn variant="ghost" @click="editorOpen = false">{{ t('board.action.cancel') }}</KBtn>
+        <KBtn variant="ghost" :disabled="editorBusy" @click="editorOpen = false">{{ t('board.action.cancel') }}</KBtn>
         <KBtn
           v-if="editingTask"
           variant="secondary"
-          :disabled="launching !== null || isActiveTask(editingTask) || !canRun(editingTask)"
+          :loading="launching === editingTask.id"
+          :disabled="launching !== null || submitting || isActiveTask(editingTask) || !canRun(editingTask)"
           :title="launchHint(editingTask)"
-          @click="editorOpen = false; launch(editingTask)"
+          @click="launchFromEditor(editingTask)"
         >{{ t('board.editor.launch') }}</KBtn>
-        <KBtn variant="primary" :loading="submitting" :disabled="!canSubmit || submitting" @click="submitEditor">{{ editingId ? t('board.editor.save') : t('board.editor.create') }}</KBtn>
+        <KBtn variant="primary" :loading="submitting" :disabled="!canSubmit || submitting || launching !== null" @click="submitEditor">{{ editingId ? t('board.editor.save') : t('board.editor.create') }}</KBtn>
       </template>
     </KModal>
 
     <!-- LOCAL BINDING: a cloud task only runs where its repo actually lives -->
-    <KModal v-model="bindingOpen" :title="t('board.binding.title')">
+    <KModal v-model="bindingOpen" :title="t('board.binding.title')" :persistent="binding">
       <div class="board__bind">
         <p class="board__bind-note">
           {{ t('board.binding.note', { title: pendingLaunch?.title ?? '', project: bindingProjectId ? projectName(bindingProjectId) : '' }) }}
         </p>
         <KField v-model="bindingPath" :label="t('board.binding.pathLabel')" placeholder="/Users/me/code/project" />
-        <KBtn variant="secondary" @click="pickerOpen = true">{{ t('board.binding.pick') }}</KBtn>
+        <KBtn variant="secondary" :disabled="binding" @click="pickerOpen = true">{{ t('board.binding.pick') }}</KBtn>
         <p v-if="bindingError" class="board__bind-error" role="alert">{{ bindingError }}</p>
       </div>
       <template #controls>
-        <KBtn variant="ghost" @click="bindingOpen = false">{{ t('board.action.cancel') }}</KBtn>
+        <KBtn variant="ghost" :disabled="binding" @click="bindingOpen = false">{{ t('board.action.cancel') }}</KBtn>
         <KBtn variant="primary" :loading="binding" :disabled="!bindingPath.trim() || binding" @click="confirmBinding">
           {{ t('board.binding.confirm') }}
         </KBtn>
@@ -328,8 +423,10 @@
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
 import { useRouter } from 'vue-router';
 import { useI18n } from 'vue-i18n';
-import type { Project, ThinkingLevel } from '@kermanych/core';
+import { confirmAction } from '../lib/confirm';
+import { BRANCH_PREFIXES, prependHelper, type Project, type ThinkingLevel } from '@kermanych/core';
 import type { Task, TaskStatus, WorkspaceMember } from '@kermanych/cloud';
+import { SELF_DRIVING_TASK_STATUSES } from '@kermanych/cloud';
 import { ACTIVE_STATUSES } from '@kermanych/core/status';
 import { useAuth } from 'stores/auth';
 import { useBoard } from 'stores/board';
@@ -340,14 +437,23 @@ import KField from 'components/kit/KField.vue';
 import KModal from 'components/kit/KModal.vue';
 import KSelect, { type KSelectOption } from 'components/kit/KSelect.vue';
 import KCheckbox from 'components/kit/KCheckbox.vue';
+import QaVerdict from 'components/agents/QaVerdict.vue';
 import KKanbanCard from 'components/kit/KKanbanCard.vue';
+import KSkeleton from 'components/kit/KSkeleton.vue';
+import { useLoadPhase } from '../composables/useLoadPhase';
 import KKanbanColumn from 'components/kit/KKanbanColumn.vue';
 import KAvatar from 'components/kit/KAvatar.vue';
 import KAttachStrip from 'components/kit/KAttachStrip.vue';
+import KHelperPicker from 'components/kit/KHelperPicker.vue';
+import KFilePicker from 'components/kit/KFilePicker.vue';
+import KDictation from 'components/kit/KDictation.vue';
 import KDirPicker from 'components/kit/KDirPicker.vue';
 import { useNow } from '../composables/useNow';
 import { useDelayedTrue } from '../composables/useDelayedTrue';
 import { useImageAttach } from '../composables/useImageAttach';
+import { useFileMention } from '../composables/useFileMention';
+import { useDictationField } from '../composables/useDictationField';
+import { useTaskDetails } from '../composables/useTaskDetails';
 import { imageToFile } from '../lib/images';
 import { relativeTime, renderTime } from '../lib/time';
 import { EFFORT_OPTIONS } from '../lib/effort';
@@ -357,11 +463,14 @@ import { api } from '../lib/api';
 import { installReconcile } from '../lib/reconcile';
 import { UNASSIGNED, filterTasks, scopedProjectIds } from '../lib/scope';
 import { ASSIGNMENT_REFUSALS } from '../lib/cloud-errors';
-import { boardTasks, canAssignTask, canRunTask } from '../lib/tasks-view';
+import { autoRunSwitchLocked, boardTasks, canAssignTask, canRunTask, cardModesFromCard } from '../lib/tasks-view';
+import { cardDecisionReason, cardNotNeededReason } from '../lib/minion';
 import JiraBoardView from 'components/jira/JiraBoardView.vue';
 import LinearBoardView from 'components/linear/LinearBoardView.vue';
+import PlaneBoardView from 'components/plane/PlaneBoardView.vue';
 import { useJira } from 'stores/jira';
 import { useLinear } from 'stores/linear';
+import { usePlane } from 'stores/plane';
 
 const auth = useAuth();
 const board = useBoard();
@@ -372,20 +481,22 @@ const router = useRouter();
 const { t } = useI18n();
 const jiraStore = useJira();
 const linearStore = useLinear();
+const planeStore = usePlane();
 
-// ── the Jira / Linear view switcher ───────────────────────────────────────────
+// ── the Jira / Linear / Plane view switcher ───────────────────────────────────
 // Probed per scoped workspace; no integration (or no workspace scope at all — «Дошка
 // команди» across groups has no single board to show) means no switcher and the page is
-// exactly what it was before the integrations existed. Jira and Linear are independent:
-// a workspace may mirror one, the other, or both.
+// exactly what it was before the integrations existed. Jira, Linear and Plane are
+// independent: a workspace may mirror any of them, or several.
 //
-// The chosen tab IS the default: picking «Jira»/«Linear» persists per workspace (the
+// The chosen tab IS the default: picking «Jira»/«Linear»/«Plane» persists per workspace (the
 // kermanych.agents.tab idiom), so the next visit opens on it — falling back to the native
 // board whenever that integration is gone.
-type BoardViewKind = 'tasks' | 'jira' | 'linear';
+type BoardViewKind = 'tasks' | 'jira' | 'linear' | 'plane';
 const boardView = ref<BoardViewKind>('tasks');
 const jiraAvailable = computed(() => !!local.selectedWorkspaceId && !!jiraStore.integration);
 const linearAvailable = computed(() => !!local.selectedWorkspaceId && !!linearStore.integration);
+const planeAvailable = computed(() => !!local.selectedWorkspaceId && !!planeStore.integration);
 
 const viewKey = (ws: string) => `kermanych.board-view.${ws}`;
 
@@ -403,28 +514,41 @@ function setBoardView(v: BoardViewKind): void {
 function readBoardView(ws: string): BoardViewKind {
   try {
     const v = localStorage.getItem(viewKey(ws));
-    return v === 'jira' || v === 'linear' ? v : 'tasks';
+    return v === 'jira' || v === 'linear' || v === 'plane' ? v : 'tasks';
   } catch {
     return 'tasks';
   }
 }
 
+// The remembered default of this workspace is a mirrored board whose probe has not answered
+// (the stores reset `integration` to undefined on a workspace change, before awaiting): the
+// view is not decided yet, so neither the native board nor the mirrored one renders.
+const viewPhase = useLoadPhase(() => {
+  const ws = local.selectedWorkspaceId;
+  if (!ws) return false;
+  const stored = readBoardView(ws);
+  if (stored === 'jira') return jiraStore.integration === undefined && jiraStore.loading;
+  if (stored === 'linear') return linearStore.integration === undefined && linearStore.loading;
+  if (stored === 'plane') return planeStore.integration === undefined && planeStore.loading;
+  return false;
+});
 watch(
   () => local.selectedWorkspaceId,
   (ws) => {
     if (!ws) return;
     void jiraStore.probe(ws);
     void linearStore.probe(ws);
+    void planeStore.probe(ws);
   },
   { immediate: true },
 );
 
 // The one owner of what the switcher shows: a workspace switch or a disconnect folds back
-// to the native board; a workspace whose remembered default is «Jira»/«Linear» opens on it,
+// to the native board; a workspace whose remembered default is a tracker's tab opens on it,
 // but only while that integration is actually connected.
 watch(
-  () => [local.selectedWorkspaceId, jiraAvailable.value, linearAvailable.value] as const,
-  ([ws, jira, lin]) => {
+  () => [local.selectedWorkspaceId, jiraAvailable.value, linearAvailable.value, planeAvailable.value] as const,
+  ([ws, jira, lin, pln]) => {
     if (!ws) {
       boardView.value = 'tasks';
       return;
@@ -432,6 +556,7 @@ watch(
     const stored = readBoardView(ws);
     if (stored === 'jira' && jira) boardView.value = 'jira';
     else if (stored === 'linear' && lin) boardView.value = 'linear';
+    else if (stored === 'plane' && pln) boardView.value = 'plane';
     else boardView.value = 'tasks';
   },
   { immediate: true },
@@ -546,6 +671,7 @@ async function loadMembers(): Promise<void> {
         await cloud.loadMembers(w.id);
       } catch {
         /* membership is decoration here; the cards render with raw ids instead */
+        rosterFailed.value = new Set(rosterFailed.value).add(w.id);
       }
     }),
   );
@@ -710,6 +836,9 @@ watch(() => local.selectedWorkspaceId, () => {
 // is long enough to be worth explaining. An error is not transient, so it shows at once.
 const SLOW_LOAD_MS = 500;
 const slowLoad = useDelayedTrue(() => board.loading, SLOW_LOAD_MS);
+// The columns' skeleton: no task read has answered yet for this user (reset on sign-out). A
+// later reconcile read — even of an empty board — keeps what is on screen.
+const tasksPhase = useLoadPhase(() => !board.loaded);
 
 const loadHint = computed(() => {
   if (slowLoad.value) return t('board.loadHint.reading');
@@ -847,20 +976,20 @@ async function publishProject(project: Project): Promise<void> {
 }
 
 // ── Staleness ─────────────────────────────────────────────────────────────────
-// Stale = the card claims to be working, but nothing has moved for a while. There is no
-// heartbeat in v1 (spec Non-goals), so the age of `updated_at` is the only signal — and
-// because tasks_guard() overwrites it with now() on every push, that age measures time
-// since the executing machine last PUSHED, which is exactly the thing that goes quiet.
+// Stale = the card claims to be working, but nothing has moved for a while. The age of
+// `updated_at` is the signal — tasks_guard() overwrites it with now() on every push, so that
+// age measures time since the executing machine last PUSHED, which is exactly the thing that
+// goes quiet. A live machine re-pushes a self-driving status every TASK_STATUS_KEEPALIVE_MS
+// (45 s, CloudSyncService), so STALE_MS must stay well above that.
 //
 // Only self-driving statuses qualify. `waiting_input` is excluded on purpose: a task
 // blocked on its owner's answer is legitimately idle for hours — that is not staleness,
 // that is the design (model B1). `backlog` and the five end states are not moving by
 // definition, so age says nothing about them either.
 const STALE_MS = 90_000;
-const SELF_DRIVING: readonly TaskStatus[] = ['queued', 'thinking', 'tool'];
 
 function isStale(task: Task): boolean {
-  return SELF_DRIVING.includes(task.status) && now.value - new Date(task.updatedAt).getTime() > STALE_MS;
+  return SELF_DRIVING_TASK_STATUSES.includes(task.status) && now.value - new Date(task.updatedAt).getTime() > STALE_MS;
 }
 
 // ── Assignee ──────────────────────────────────────────────────────────────────
@@ -872,6 +1001,25 @@ function membersOf(projectId: string): WorkspaceMember[] {
   const workspaceId = cloud.byId.get(projectId)?.workspaceId;
   return workspaceId ? cloud.members[workspaceId] ?? [] : [];
 }
+
+// Workspaces whose roster read failed: they render raw ids (see loadMembers), not a skeleton
+// that would never resolve.
+const rosterFailed = ref<Set<string>>(new Set());
+function rosterPendingFor(workspaceId: string): boolean {
+  return cloud.members[workspaceId] === undefined && !rosterFailed.value.has(workspaceId);
+}
+// The card's assignee cannot be named yet — its workspace roster has not been read: the avatar
+// is a skeleton instead of a raw uuid.
+function rosterPending(projectId: string): boolean {
+  const workspaceId = cloud.byId.get(projectId)?.workspaceId;
+  return !!workspaceId && rosterPendingFor(workspaceId);
+}
+// «Виконавці» filter options come from the rosters (scoped one, or all of them unscoped); the
+// select spins until they are read instead of offering only «Не призначено».
+const assigneeRosterPending = computed(() => {
+  const ws = local.selectedWorkspaceId;
+  return ws ? rosterPendingFor(ws) : cloud.workspaces.some((w) => rosterPendingFor(w.id));
+});
 
 function onAssign(task: Task, userId: string): void {
   // Id-keyed like both filters. '' is KSelect's placeholder, i.e. «не призначено».
@@ -994,37 +1142,52 @@ const launchErrors = computed<Record<string, string>>(() => ({
 
 // The board is a shared surface, so this is a pre-check for UX only: the API re-checks the
 // binding and the RLS-backed assignee rule regardless of what the button allowed.
-async function launch(task: Task): Promise<void> {
+//
+// The editor stays open (persistent, «Запустити» spinning) until the session exists — closing
+// it first left a seconds-long gap where nothing on screen said a launch was under way — and
+// a refusal is shown inside it. An unbound project hands over to the binding modal instead.
+async function launchFromEditor(task: Task): Promise<void> {
   if (launching.value) return;
+  editorError.value = null;
   if (!isBound(task)) {
+    editorOpen.value = false;
     openBinding(task);
     return;
   }
-  await runLaunch(task);
+  const outcome = await runLaunch(task, (msg) => (editorError.value = msg));
+  if (outcome === 'unbound') editorOpen.value = false;
 }
 
-async function runLaunch(task: Task): Promise<void> {
+type LaunchOutcome = 'started' | 'unbound' | 'failed';
+
+// Starts the session and, once it exists, closes whichever modal asked and goes to the
+// Агенти board. `report` puts a refusal where the operator is looking (the open modal).
+async function runLaunch(task: Task, report: (message: string) => void): Promise<LaunchOutcome> {
   launching.value = task.id;
   try {
     const session = await api.createSessionFromTask(task.id);
+    editorOpen.value = false;
+    bindingOpen.value = false;
     local.notify(t('board.notify.sessionStarted', { name: session.name }), 'info');
     // The local session lives on the Агенти board, so go where the work is.
     await router.push('/');
+    return 'started';
   } catch (e) {
     // `fetch` itself rejects with a TypeError; every refusal from the api arrives as a
     // plain Error carrying the server's message. That is what separates "the local
     // Kermanych is not answering" from "it answered no".
     if (e instanceof TypeError) {
-      local.notify(t('board.notify.localUnreachable'), 'error');
-      return;
+      report(t('board.notify.localUnreachable'));
+      return 'failed';
     }
     const message = e instanceof Error ? e.message : String(e);
     if (message === 'project not bound') {
       // Raced with someone unbinding, or the row vanished — offer the picker instead of a toast.
       openBinding(task);
-      return;
+      return 'unbound';
     }
-    local.notify(launchErrors.value[message] ?? t('board.launchError.generic', { error: message }), 'error');
+    report(launchErrors.value[message] ?? t('board.launchError.generic', { error: message }));
+    return 'failed';
   } finally {
     launching.value = null;
   }
@@ -1038,6 +1201,8 @@ function openBinding(task: Task): void {
   bindingOpen.value = true;
 }
 
+// The binding modal stays open (persistent, primary spinning) through the bind AND the launch
+// that follows it; it closes when the session exists, and either refusal is shown inside it.
 async function confirmBinding(): Promise<void> {
   const projectId = bindingProjectId.value;
   const task = pendingLaunch.value;
@@ -1047,8 +1212,7 @@ async function confirmBinding(): Promise<void> {
   binding.value = true;
   try {
     await api.setProjectBinding(projectId, bindingPath.value.trim());
-    bindingOpen.value = false;
-    await runLaunch(task);
+    await runLaunch(task, (msg) => (bindingError.value = msg));
   } catch (e) {
     // Same split as `runLaunch`: a dropped connection is a `TypeError` whose message is the
     // browser's own English text, which has no business inside this modal. Everything else
@@ -1073,16 +1237,22 @@ const effortPickOptions = computed(() => {
   const allowed = effortOptions(local.models, draftModel.value || undefined);
   return EFFORT_OPTIONS.filter((o) => allowed.includes(o.value)).map((o) => ({ value: o.value, label: t(o.labelKey) }));
 });
-const PREFIX_OPTIONS = ['feature', 'fix', 'refactoring', 'chore'];
-const PLATFORM_OPTIONS = ['backend', 'web', 'mobile'];
+// Core's prefixes, less `design`: a design card comes only from «+ Новий дизайн», which also marks
+// it `design`. A stored design card still shows its prefix — KSelect lists a held value it lacks.
+const PREFIX_OPTIONS = BRANCH_PREFIXES.filter((p) => p !== 'design');
 
 const editorOpen = ref(false);
 const editingId = ref<string | null>(null);
 const editorError = ref<string | null>(null);
 const submitting = ref(false);
+// A save or a launch from the editor is in flight: the modal is persistent and its other
+// controls are down until it answers.
+const editorBusy = computed(() => submitting.value || launching.value !== null);
 const editingTask = computed(() =>
   editingId.value ? board.tasks.find((t) => t.id === editingId.value) : undefined,
 );
+// The list carries no QA checklist; the open editor holds its card so the store reads it.
+useTaskDetails(() => (editorOpen.value ? (editingId.value ?? undefined) : undefined));
 // How many QA items are ticked, for the «n/total» counter beside the checklist heading.
 const qaDone = computed(() => editingTask.value?.qaChecklist?.items.filter((i) => i.checked).length ?? 0);
 
@@ -1099,11 +1269,21 @@ const draftDescription = ref('');
 const draftModel = ref('');
 const draftEffort = ref<ThinkingLevel | ''>('');
 const draftPrefix = ref('');
-const draftPlatform = ref('');
 const draftBranch = ref('');
 // Creation only: while editing, the select writes through onAssign and the card itself is
 // the value. '' is «не призначено».
 const draftAssignee = ref('');
+// «Дозволити автовиконання», sent on both create and save.
+const draftAutoRun = ref(false);
+// Why the box cannot be switched on, or undefined when it can: a colleague's card (only its
+// author may allow it), or a «Глибокий аналіз» card (that agent interviews, nobody is there).
+const autoRunLockReason = computed(() => {
+  if (autoRunSwitchLocked(draftAutoRun.value, editingTask.value, auth.user?.id ?? '')) return t('minion.autoRun.authorOnly');
+  if (!draftAutoRun.value && editingTask.value?.deepAnalysis) return t('minion.autoRun.notWithDeep');
+  return undefined;
+});
+// The switch as the form opened on a card.
+let openedAutoRun = false;
 
 // Images attached at task creation (paste ⌘V, drag-drop, or the ⛶ file-pick). Create only:
 // `board.createTask` uploads them to the task-images bucket and writes their paths onto the
@@ -1123,6 +1303,53 @@ function onDraftFilePick(e: Event): void {
   if (input.files) void addDraftFiles(input.files);
   input.value = '';
 }
+
+// Хелпери in the description: `/` on an EMPTY description opens the picker instead of typing
+// the slash, exactly as in KComposer — mid-text a slash is a path. A pick lands at the front of
+// the description (prependHelper says why), which is the text the launch expands.
+const descriptionField = ref<InstanceType<typeof KField> | null>(null);
+const helperOpen = ref(false);
+// An editor reopened on a panel left open would hide the description it opens for.
+watch(editorOpen, (open) => {
+  if (!open) {
+    helperOpen.value = false;
+    draftMention.open.value = false;
+    draftDictation.cancel();
+  }
+});
+function closeDraftHelper(): void {
+  helperOpen.value = false;
+  descriptionField.value?.focus();
+}
+function onDraftHelper(name: string): void {
+  draftDescription.value = prependHelper(draftDescription.value, name);
+}
+function onDescriptionKeydown(e: KeyboardEvent): void {
+  draftDictation.onKeydown(e);
+  if (e.defaultPrevented) return;
+  if (e.key === '/' && draftDescription.value === '') {
+    e.preventDefault();
+    helperOpen.value = true;
+    return;
+  }
+  draftMention.onKeydown(e);
+}
+
+// Файли: the card's project as checked out on THIS machine — the tree its session will run
+// in. A project not bound here has nothing to read, so the button stays inert.
+const draftFiles = computed(() =>
+  draftProject.value && local.projects.some((p) => p.id === draftProject.value && p.localRepoPath)
+    ? { kind: 'project' as const, id: draftProject.value }
+    : null,
+);
+const draftMention = useFileMention({
+  el: () => descriptionField.value?.el(),
+  value: () => draftDescription.value,
+  set: (v) => (draftDescription.value = v),
+  enabled: () => !!draftFiles.value,
+});
+// Диктування: the description is said rather than typed; phrases land at the caret.
+const draftDictation = useDictationField({ el: () => descriptionField.value?.el(), value: draftDescription });
 
 // The editor's assignee picker reads the roster of the picker's OWN project, which is not
 // necessarily the scoped one: an unscoped board shows cards from every workspace, and
@@ -1156,9 +1383,9 @@ function openCreate(): void {
   draftModel.value = createDefault?.defaultModel ?? '';
   draftEffort.value = createDefault?.defaultEffort ?? '';
   draftPrefix.value = '';
-  draftPlatform.value = '';
   draftBranch.value = '';
   draftAssignee.value = '';
+  draftAutoRun.value = false;
   clearDraftImages();
   editorOpen.value = true;
 }
@@ -1172,17 +1399,27 @@ function openEdit(task: Task): void {
   draftModel.value = task.model ?? '';
   draftEffort.value = task.effort ?? '';
   draftPrefix.value = task.prefix ?? '';
-  draftPlatform.value = task.platform ?? '';
   draftBranch.value = task.branch ?? '';
   // Reset with the rest of the draft set rather than left over from a previous dialog: only
   // the create branch reads it, and a half-reset draft set is a trap for the next edit here.
   draftAssignee.value = task.assigneeId ?? '';
+  draftAutoRun.value = cardModesFromCard(task).autoRun;
+  openedAutoRun = draftAutoRun.value;
   clearDraftImages();
   editorOpen.value = true;
 }
 
 async function submitEditor(): Promise<void> {
   if (submitting.value) return;
+  // The phrase being spoken belongs to the description: it lands before the form is read.
+  if (draftDictation.state.value !== 'idle') {
+    submitting.value = true;
+    try {
+      await draftDictation.beforeSubmit();
+    } finally {
+      submitting.value = false;
+    }
+  }
   editorError.value = null;
   // Blank strings are meaningful: toTaskRow() turns them into NULL, which is how a user
   // clears a launch param they set earlier. The project is immutable after creation —
@@ -1193,8 +1430,10 @@ async function submitEditor(): Promise<void> {
     model: draftModel.value,
     effort: draftEffort.value,
     prefix: draftPrefix.value,
-    platform: draftPlatform.value,
     branch: draftBranch.value,
+    // Sent only when this form changed it (lib/tasks-view taskPatchFromDraft says why); a new
+    // card always carries it.
+    ...(!editingId.value || draftAutoRun.value !== openedAutoRun ? { autoRun: draftAutoRun.value } : {}),
   };
 
   // The title is the ONE field nothing downstream defends: `tasks.title` is `text not null`
@@ -1242,7 +1481,15 @@ async function submitEditor(): Promise<void> {
   }
 }
 
-function onDelete(task: Task): void {
+// Asks first, like the same delete on the Агенти board; the editor closes only on «yes».
+async function onDelete(task: Task): Promise<void> {
+  const ok = await confirmAction({
+    title: t('confirmations.deleteCard'),
+    message: t('agents.notify.deleteCard', { title: task.title }),
+    confirmLabel: t('confirmations.label.delete'),
+  });
+  if (!ok) return;
+  editorOpen.value = false;
   void board.deleteTask(task.id);
 }
 </script>
@@ -1382,6 +1629,20 @@ function onDelete(task: Task): void {
   padding: var(--k-sp-3);
 }
 
+// Stands in for a KKanbanColumn while the tasks (or the board view) are not read yet.
+.board__skeleton-col {
+  display: flex;
+  flex-direction: column;
+  gap: var(--k-sp-2);
+  min-width: 0;
+  padding: var(--k-sp-2);
+}
+
+.board__skeleton-label {
+  font-size: var(--k-fs-sm);
+  color: var(--k-muted);
+}
+
 .board__assign {
   display: flex;
   flex-direction: column;
@@ -1403,6 +1664,14 @@ function onDelete(task: Task): void {
 .board__stale-note {
   font-size: 11.5px;
   color: var(--k-warning);
+}
+
+/* A card switch with its caption under the label, the launcher's layout (agents-launcher__check). */
+.board__check-desc {
+  margin: 3px 0 0;
+  padding-left: 24px;
+  font-size: 11.5px;
+  color: var(--k-muted);
 }
 
 /* QA checklist: a bordered block inside the form so it reads as the card's own artifact, not
@@ -1479,6 +1748,10 @@ function onDelete(task: Task): void {
   gap: 8px;
 }
 
+// The anchor the Хелпери panel hangs from.
+.board__desc {
+  position: relative;
+}
 .board__attach {
   display: flex;
   flex-wrap: wrap;
@@ -1497,9 +1770,14 @@ function onDelete(task: Task): void {
   font-size: 12px;
   cursor: pointer;
 }
-.board__attach-btn:hover {
+.board__attach-btn:hover:not(:disabled) {
   border-color: var(--k-accent);
   color: var(--k-text);
+}
+// «@ Файл» for a project not bound on this machine: shown, so it is findable, but inert.
+.board__attach-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
 }
 .board__attach-note {
   font-size: 11.5px;

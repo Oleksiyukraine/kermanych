@@ -2,20 +2,24 @@
 import { defineStore } from 'pinia';
 import { computed, ref, watch } from 'vue';
 import type { Task, TaskChange, TaskChannelState, TaskInsert, TaskPatch } from '@kermanych/cloud';
+import type { QaChecklist, QaChecklistItem } from '@kermanych/core';
 import {
   createTask as cloudCreateTask,
   deleteTask as cloudDeleteTask,
   forceStopTask as cloudForceStopTask,
+  getTask as cloudGetTask,
   listTasks as cloudListTasks,
+  listTasksByIds as cloudListTasksByIds,
+  listTaskVersions as cloudListTaskVersions,
   patchTask as cloudPatchTask,
+  patchQaItems as cloudPatchQaItems,
   subscribeTasks as cloudSubscribeTasks,
   uploadTaskImages as cloudUploadTaskImages,
   TASK_IMAGE_BUCKET,
 } from '@kermanych/cloud';
 // Import from core's status module directly (not the barrel): @kermanych/core is a CJS
 // workspace dep whose named exports vite/rollup only sees once its dist is commonjs-
-// transformed (see quasar.config commonjsOptions.include) — same reason as
-// stores/orchestrator.ts:16-19.
+// transformed (see quasar.config commonjsOptions.include); status.js has a direct export.
 import { ACTIVE_STATUSES } from '@kermanych/core/status';
 import { useAuth } from './auth';
 import { useProjects } from './projects';
@@ -38,6 +42,9 @@ export const useBoard = defineStore('board', () => {
   const tasks = ref<Task[]>([]);
   const loading = ref(false);
   const loadError = ref<string | null>(null);
+  // A task read has answered (rows or an error) for the signed-in user. Before that an empty
+  // `tasks` is «not read», not «no tasks» — the columns show a skeleton, never «—» / 0.
+  const loaded = ref(false);
   // The raw channel state, 'CLOSED' until a subscription reports otherwise. Nothing may
   // read it on its own as "the board is stale" — see `offline` for why.
   const channelState = ref<TaskChannelState>('CLOSED');
@@ -74,17 +81,104 @@ export const useBoard = defineStore('board', () => {
   // tear down.
   let generation = 0;
 
-  // Sorted by createdAt so a Realtime insert lands in a stable place instead of appending
-  // to whichever column happened to render last. Replace-or-append keyed by id, so the
-  // optimistic row, the awaited response and the Realtime echo all collapse into one.
-  function upsert(task: Task): void {
-    tasks.value = [...tasks.value.filter((t) => t.id !== task.id), task].sort((a, b) =>
-      a.createdAt.localeCompare(b.createdAt),
-    );
+  // The report blobs the list shape leaves out (cloud TASK_LIST_COLUMNS), per card a screen
+  // holds: how many holders, and the `updated_at` the held blobs were read at. The count is
+  // store-local; `detailsAt` is reactive because a screen shows «not read yet» from it.
+  const holds = new Map<string, number>();
+  const detailsAt = ref<Record<string, number>>({});
+  const detailsInFlight = new Set<string>();
+
+  // When a row was written. `updated_at` is server-owned (tasks_guard sets now()); parsed
+  // rather than compared as text because PostgREST and Realtime are two printers of one
+  // timestamptz.
+  function versionOf(t: Pick<Task, 'updatedAt'>): number {
+    return Date.parse(t.updatedAt);
   }
 
-  function drop(taskId: string): void {
-    tasks.value = tasks.value.filter((t) => t.id !== taskId);
+  // The one rule every write goes through. A held row is never replaced by an older version
+  // of itself: a reconcile read can land after a Realtime event that was newer. A LIGHT row
+  // (`full` false — the list, the reconcile, Realtime, an optimistic edit) keeps the blobs the
+  // store already holds, so an open card does not lose its checklist to a status push; a FULL
+  // row (getTask, a write's answer) is the whole truth and records that its blobs are current.
+  function merge(prev: Task | undefined, next: Task, full: boolean): Task {
+    if (prev && versionOf(next) < versionOf(prev)) return prev;
+    if (full) {
+      detailsAt.value[next.id] = versionOf(next);
+      return next;
+    }
+    if (!prev || (!prev.qaChecklist && !prev.docsReport)) return next;
+    return {
+      ...next,
+      ...(next.qaChecklist === undefined && prev.qaChecklist ? { qaChecklist: prev.qaChecklist } : {}),
+      ...(next.docsReport === undefined && prev.docsReport ? { docsReport: prev.docsReport } : {}),
+    };
+  }
+
+  // One array write per batch, sorted by createdAt so a Realtime insert lands in a stable
+  // place instead of appending to whichever column happened to render last. Keyed by id, so
+  // the optimistic row, the awaited response and the Realtime echo all collapse into one.
+  function apply(rows: readonly Task[], gone: readonly string[] = [], full = false): void {
+    const byId = new Map(tasks.value.map((t) => [t.id, t]));
+    for (const id of gone) byId.delete(id);
+    for (const row of rows) byId.set(row.id, merge(byId.get(row.id), row, full));
+    tasks.value = [...byId.values()].sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+    for (const id of holds.keys()) if (needsDetails(id)) void loadDetails(id);
+  }
+
+  function upsert(task: Task): void {
+    apply([task]);
+  }
+
+  function upsertFull(task: Task): void {
+    apply([task], [], true);
+  }
+
+  function needsDetails(id: string): boolean {
+    if (!holds.has(id)) return false;
+    const t = tasks.value.find((x) => x.id === id);
+    return !!t && detailsAt.value[id] !== versionOf(t);
+  }
+
+  // Reads the held card's full row. Only for a card the board holds: the board's project set
+  // decides what is on it, and a full row must not smuggle in a card the next reconcile drops.
+  // One read per card at a time; a change that lands mid-read gets one more.
+  async function loadDetails(id: string, again = true): Promise<void> {
+    if (detailsInFlight.has(id) || !auth.user) return;
+    detailsInFlight.add(id);
+    let read = false;
+    try {
+      const full = await cloudGetTask(auth.client, id);
+      read = true;
+      if (full && tasks.value.some((t) => t.id === id)) upsertFull(full);
+    } catch {
+      // The card keeps what it shows; the row's next change asks again.
+    } finally {
+      detailsInFlight.delete(id);
+    }
+    if (read && again && needsDetails(id)) await loadDetails(id, false);
+  }
+
+  // A screen that shows a card's QA checklist or «Документація» report holds the card while it
+  // is on screen (composables/useTaskDetails.ts). The store reads the full row now if it holds
+  // no current blobs, and again whenever a lighter row with a newer `updated_at` arrives.
+  // Returns the release; calling it twice is a no-op.
+  function holdDetails(id: string): () => void {
+    holds.set(id, (holds.get(id) ?? 0) + 1);
+    if (needsDetails(id)) void loadDetails(id);
+    let released = false;
+    return () => {
+      if (released) return;
+      released = true;
+      const left = (holds.get(id) ?? 1) - 1;
+      if (left > 0) holds.set(id, left);
+      else holds.delete(id);
+    };
+  }
+
+  // The card's blobs have been read at least once. A later refresh keeps showing the previous
+  // ones until it lands, so this never flips back while the card is open.
+  function detailsLoaded(id: string): boolean {
+    return id in detailsAt.value;
   }
 
   // TaskStatus === SessionStatus, so core's constant applies verbatim. Active = the omp
@@ -100,6 +194,23 @@ export const useBoard = defineStore('board', () => {
     local.notify(assignmentRefusalText(raw) ?? raw, 'error');
   }
 
+  // Everything after the first read: which cards exist and when each changed (`id,
+  // updated_at`, a few dozen kB), then only the rows that moved or are new. The board used to
+  // re-read every row every minute — about 1 MB per workspace, the bulk of the project's
+  // egress — and replaced every card object, which re-ran every watcher and re-rendered
+  // every card. Now a quiet board costs one small read and no array write at all.
+  async function catchUp(ids: string[]): Promise<void> {
+    // The drop set comes from what was held BEFORE the versions read: a card inserted after
+    // that read reaches the board through Realtime and must not be dropped for missing from it.
+    const before = new Map(tasks.value.map((t) => [t.id, versionOf(t)]));
+    const versions = await cloudListTaskVersions(auth.client, ids);
+    const live = new Set(versions.map((v) => v.id));
+    const moved = versions.filter((v) => before.get(v.id) !== Date.parse(v.updatedAt)).map((v) => v.id);
+    const gone = [...before.keys()].filter((id) => !live.has(id));
+    const rows = moved.length ? await cloudListTasksByIds(auth.client, moved) : [];
+    if (rows.length || gone.length) apply(rows, gone);
+  }
+
   // The task query is scoped by project, so the cloud project list is a hard prerequisite.
   // Loading it here keeps every caller a one-liner instead of sequencing two stores.
   async function load(): Promise<void> {
@@ -107,27 +218,39 @@ export const useBoard = defineStore('board', () => {
     // A preview signs itself in against a cloudless api (lib/preview.ts), so `auth.user`
     // is set but there are no tasks to read — and cloud.load() below would prune the
     // previewed registry against an empty project list. Nothing to load, so: nothing.
-    if (IS_PREVIEW || !auth.user) return;
-    loading.value = true;
+    if (IS_PREVIEW || !auth.user) {
+      // Nothing will be read, so the empty board is the answer, not a pending one.
+      if (IS_PREVIEW) loaded.value = true;
+      return;
+    }
+    // Only the first read of this user's board is a full list (`loaded` resets on sign-out);
+    // only it shows as loading, so a reconcile never flashes a hint.
+    const first = !loaded.value;
+    if (first) loading.value = true;
     loadError.value = null;
     try {
       if (!cloud.projects.length) await cloud.load();
-      tasks.value = await cloudListTasks(auth.client, projectIds.value);
+      if (first) {
+        const rows = await cloudListTasks(auth.client, projectIds.value);
+        const held = new Set(rows.map((t) => t.id));
+        apply(rows, tasks.value.filter((t) => !held.has(t.id)).map((t) => t.id));
+      } else await catchUp(projectIds.value);
     } catch (e) {
       // Deliberately NOT a toast: an unreachable Supabase must not greet the user with a
       // popup on a screen they may have opened only to read the columns. BoardPage renders
       // loadError inline instead.
       loadError.value = e instanceof Error ? e.message : String(e);
     } finally {
-      loading.value = false;
+      if (first) loading.value = false;
+      loaded.value = true;
     }
   }
 
-  // A full refetch on every (re)subscribe is the whole staleness story: events that fired
-  // while the channel was down are gone forever, so the snapshot has to be re-read rather
-  // than patched. Idempotent — calling it twice rebuilds one channel, never two.
+  // A reconcile on every (re)subscribe is the whole staleness story: events that fired while
+  // the channel was down are gone forever, so the snapshot has to be re-checked rather than
+  // patched. Idempotent — calling it twice rebuilds one channel, never two.
   //
-  // The same refetch also runs on a schedule, because Realtime cannot deliver every change:
+  // The same reconcile also runs on a schedule, because Realtime cannot deliver every change:
   // a filtered postgres_changes binding never carries DELETE (see lib/reconcile.ts for the
   // replica-identity reason and why `replica identity full` was rejected). Without that
   // reconcile a card someone else deleted would sit on this board forever.
@@ -145,7 +268,7 @@ export const useBoard = defineStore('board', () => {
       auth.client,
       projectIds.value,
       (change: TaskChange) => {
-        if (change.kind === 'delete') drop(change.taskId);
+        if (change.kind === 'delete') apply([], [change.taskId]);
         else upsert(change.task);
       },
       (state) => {
@@ -183,7 +306,6 @@ export const useBoard = defineStore('board', () => {
     }
     if (patch.model !== undefined) next.model = patch.model;
     if (patch.prefix !== undefined) next.prefix = patch.prefix;
-    if (patch.platform !== undefined) next.platform = patch.platform;
     if (patch.kind !== undefined) next.kind = patch.kind;
     if (patch.branch !== undefined) next.branch = patch.branch;
     // The booleans, which have no "clear it" spelling: `false` is a value. They were
@@ -193,6 +315,9 @@ export const useBoard = defineStore('board', () => {
     if (patch.worktree !== undefined) next.worktree = patch.worktree;
     if (patch.hidden !== undefined) next.hidden = patch.hidden;
     if (patch.deepAnalysis !== undefined) next.deepAnalysis = patch.deepAnalysis;
+    // tasks_guard() may still answer otherwise (a colleague's content edit clears it); the
+    // Realtime echo of the stored row corrects the optimistic one then.
+    if (patch.autoRun !== undefined) next.autoRun = patch.autoRun;
     // '' is the «за замовчуванням» clear (toTaskRow nulls it), so drop the key rather than
     // storing a blank that is not a valid ThinkingLevel.
     if (patch.effort !== undefined) {
@@ -227,13 +352,13 @@ export const useBoard = defineStore('board', () => {
     }
     try {
       // No optimistic row here: the id is minted by Postgres. Realtime delivers the same
-      // task moments later and upsert() dedupes it by id.
+      // task moments later and the store dedupes it by id.
       const created = await cloudCreateTask(auth.client, {
         ...input,
         ...(imagePaths.length ? { imagePaths } : {}),
         createdBy: userId,
       });
-      upsert(created);
+      upsertFull(created);
       return created;
     } catch (e) {
       // The row never landed, so the objects it would have named are orphans — remove them
@@ -258,7 +383,7 @@ export const useBoard = defineStore('board', () => {
     }
     upsert(applyPatch(before, patch));
     try {
-      upsert(await cloudPatchTask(auth.client, id, patch));
+      upsertFull(await cloudPatchTask(auth.client, id, patch));
       return true;
     } catch (e) {
       // The cloud refused — an RLS policy or tasks_guard(). Put the row back exactly as it
@@ -306,7 +431,7 @@ export const useBoard = defineStore('board', () => {
       local.notify(globalTr.t('board.notify.cannotDeleteActive'), 'error');
       return false;
     }
-    drop(id);
+    apply([], [id]);
     try {
       await cloudDeleteTask(auth.client, id);
       return true;
@@ -330,7 +455,7 @@ export const useBoard = defineStore('board', () => {
     if (!before) return false;
     upsert({ ...before, status: 'stopped' });
     try {
-      upsert(await cloudForceStopTask(auth.client, id));
+      upsertFull(await cloudForceStopTask(auth.client, id));
       return true;
     } catch (e) {
       upsert(before);
@@ -364,33 +489,72 @@ export const useBoard = defineStore('board', () => {
       if (u) return;
       unsubscribe();
       tasks.value = [];
+      detailsAt.value = {};
       loadError.value = null;
+      loaded.value = false;
     },
   );
 
-  // A human ticking one QA checklist item on the board. Rebuilds the whole checklist with that
-  // one item flipped — the stored shape is replace-whole (toTaskRow sends it verbatim) — and
-  // rides the same optimistic-patch-plus-rollback path every other field edit uses. `checkedBy`
-  // and `checkedAt` are stamped on a tick and dropped on an untick, so the row never names a
-  // tester behind an unchecked box.
-  function setQaItemChecked(id: string, itemId: string, checked: boolean): Promise<boolean> {
-    const before = tasks.value.find((t) => t.id === id);
-    if (!before?.qaChecklist) return Promise.resolve(false);
+  // Puts a checklist the cloud answered with onto the card, keeping the row's version: the
+  // write's Realtime echo (a newer `updated_at`) re-reads the held card as usual. Used for the
+  // answer of an item patch and for `qa_checklist_update` — the api's own writes (a tester's
+  // verdict, a checklist it composed, verdicts cleared at a run's start), which reach this
+  // machine over the socket before Realtime and so show live on an open QA tab and card.
+  function applyQaChecklist(id: string, checklist: QaChecklist): void {
+    if (!tasks.value.some((t) => t.id === id)) return;
+    tasks.value = tasks.value.map((t) => (t.id === id ? { ...t, qaChecklist: checklist } : t));
+  }
+
+  function replaceQaItem(id: string, item: QaChecklistItem): void {
+    const t = tasks.value.find((x) => x.id === id);
+    if (!t?.qaChecklist) return;
+    const items = t.qaChecklist.items.map((it) => (it.id === item.id ? item : it));
+    applyQaChecklist(id, { ...t.qaChecklist, items });
+  }
+
+  local.onServerEvent((e) => {
+    if (e.type === 'qa_checklist_update') applyQaChecklist(e.taskId, e.checklist);
+  });
+
+  // A human ticking one QA checklist item. The tester writes verdicts into the same column
+  // meanwhile (docs/specs/2026-11-04-qa-tester-agent.md, decision 3), so the write patches only
+  // this item in the database — never the whole column from a possibly stale local copy.
+  // Optimistic: the item flips at once and goes back to what it was when the cloud refuses.
+  // `checkedBy` / `checkedAt` are stamped on a tick and dropped on an untick, so the row never
+  // names a person behind an unchecked box; the item's `agent` verdict is never touched.
+  async function setQaItemChecked(id: string, itemId: string, checked: boolean): Promise<boolean> {
+    const before = tasks.value.find((t) => t.id === id)?.qaChecklist?.items.find((it) => it.id === itemId);
+    if (!before) return false;
     const userId = auth.user?.id;
-    const items = before.qaChecklist.items.map((it) =>
-      it.id !== itemId
-        ? it
-        : checked
-          ? { ...it, checked, ...(userId ? { checkedBy: userId } : {}), checkedAt: new Date().toISOString() }
-          : { id: it.id, text: it.text, checked },
-    );
-    return updateTaskFields(id, { qaChecklist: { ...before.qaChecklist, items } });
+    const stamp = checked ? { checkedAt: new Date().toISOString(), ...(userId ? { checkedBy: userId } : {}) } : {};
+    const optimistic: QaChecklistItem = { ...before, checked, ...stamp };
+    if (!checked) {
+      delete optimistic.checkedBy;
+      delete optimistic.checkedAt;
+    }
+    replaceQaItem(id, optimistic);
+    try {
+      const checklist = await cloudPatchQaItems(
+        auth.client,
+        id,
+        [itemId],
+        { checked, ...stamp },
+        checked ? [] : ['checkedBy', 'checkedAt'],
+      );
+      applyQaChecklist(id, checklist);
+      return true;
+    } catch (e) {
+      replaceQaItem(id, before);
+      fail(e);
+      return false;
+    }
   }
 
   return {
     tasks,
     loading,
     loadError,
+    loaded,
     channelState,
     offline,
     load,
@@ -403,5 +567,7 @@ export const useBoard = defineStore('board', () => {
     deleteTask,
     forceStop,
     setQaItemChecked,
+    holdDetails,
+    detailsLoaded,
   };
 });

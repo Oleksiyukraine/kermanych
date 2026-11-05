@@ -1,8 +1,26 @@
 <template>
-  <KModal :model-value="modelValue" :title="title" width="560px" @update:model-value="emit('update:modelValue', $event)">
+  <KModal :model-value="modelValue" :title="title" width="560px" :persistent="busy" @update:model-value="onToggle">
     <div class="lie">
       <KField v-model="titleField" :label="t('linear.issueEditor.summaryLabel')" :placeholder="t('linear.issueEditor.summaryPlaceholder')" />
-      <KField v-model="description" :label="t('linear.issueEditor.descLabel')" multiline :rows="5" :placeholder="t('linear.issueEditor.descPlaceholder')" />
+      <div>
+        <KField
+          ref="descriptionField"
+          v-model="description"
+          :label="t('linear.issueEditor.descLabel')"
+          multiline
+          :rows="5"
+          :placeholder="t('linear.issueEditor.descPlaceholder')"
+          @keydown="dictation.onKeydown"
+        />
+        <!-- Диктування (docs/specs/2026-11-03-voice-dictation.md). -->
+        <KDictation
+          class="lie__dictate"
+          :state="dictation.state.value"
+          :caption="dictation.caption.value"
+          :level="dictation.level.value"
+          @toggle="dictation.toggle"
+        />
+      </div>
       <div class="lie__row">
         <KSelect v-model="priorityPick" :label="t('linear.issueEditor.priorityLabel')" :options="priorityOptions" />
         <KField v-model="estimateInput" :label="t('linear.issueEditor.estimateLabel')" type="number" :placeholder="t('linear.issueEditor.estimatePlaceholder')" />
@@ -13,6 +31,7 @@
         :options="assigneeOptions"
         :placeholder="t('linear.issueEditor.assigneePlaceholder')"
         searchable
+        :loading="loading"
       />
       <div class="lie__row">
         <KField v-model="dueDate" :label="t('linear.issueEditor.dueLabel')" type="date" />
@@ -22,8 +41,8 @@
       <p v-if="error" class="lie__error mono">{{ error }}</p>
     </div>
     <template #controls>
-      <KBtn variant="ghost" @click="emit('update:modelValue', false)">{{ t('linear.issueEditor.cancel') }}</KBtn>
-      <KBtn variant="primary" :disabled="!titleField.trim() || busy" @click="save">
+      <KBtn variant="ghost" :disabled="busy" @click="emit('update:modelValue', false)">{{ t('linear.issueEditor.cancel') }}</KBtn>
+      <KBtn variant="primary" :disabled="loading || !titleField.trim()" :loading="busy" @click="save">
         {{ busy ? t('linear.issueEditor.saving') : editKey ? t('linear.issueEditor.save') : t('linear.issueEditor.create') }}
       </KBtn>
     </template>
@@ -40,9 +59,12 @@ import { computed, ref, watch } from 'vue';
 import type { LinearIssue } from '@kermanych/cloud';
 import KBtn from 'components/kit/KBtn.vue';
 import KField from 'components/kit/KField.vue';
+import KDictation from 'components/kit/KDictation.vue';
 import KModal from 'components/kit/KModal.vue';
 import KSelect, { type KSelectOption } from 'components/kit/KSelect.vue';
 import { api, type LinearAssignableUser, type LinearIssueDraftWire } from '../../lib/api';
+import { errorText, useAsyncAction } from '../../composables/useAsyncAction';
+import { useDictationField } from '../../composables/useDictationField';
 import { useI18n } from 'vue-i18n';
 
 const props = defineProps<{
@@ -58,13 +80,20 @@ const emit = defineEmits<{ 'update:modelValue': [value: boolean]; saved: [issue:
 
 const titleField = ref('');
 const description = ref('');
+const descriptionField = ref<InstanceType<typeof KField> | null>(null);
+// Диктування: the description is said rather than typed; closing the editor drops the phrase.
+const dictation = useDictationField({ el: () => descriptionField.value?.el(), value: description });
 const priorityPick = ref('0');
 const assigneePick = ref('');
 const labelsInput = ref('');
 const estimateInput = ref('');
 const dueDate = ref('');
-const busy = ref(false);
 const error = ref('');
+// The assignee list for THIS open is still being read: the picker spins and Save waits, so
+// a save cannot race the list (Linear's description comes from the mirror, so nothing else
+// is outstanding). A failed read releases Save — the assignee from the mirror stays valid.
+const loading = ref(false);
+let openRun = 0;
 
 const assignable = ref<LinearAssignableUser[]>([]);
 
@@ -96,8 +125,10 @@ const assigneeOptions = computed<KSelectOption[]>(() =>
 watch(
   () => props.modelValue,
   async (open) => {
-    if (!open) return;
+    if (!open) return dictation.cancel();
+    const mine = ++openRun;
     error.value = '';
+    loading.value = true;
     const issue = props.issue;
     titleField.value = issue?.title ?? '';
     // The mirror already holds markdown, so an edit starts from it verbatim — no lossy
@@ -109,24 +140,31 @@ watch(
     estimateInput.value = issue && issue.estimate > 0 ? String(issue.estimate) : '';
     dueDate.value = issue?.dueDate ?? '';
     try {
-      assignable.value = await api.linearAssignableUsers(props.workspaceId, '');
+      const users = await api.linearAssignableUsers(props.workspaceId, '');
+      if (mine === openRun) assignable.value = users;
     } catch (e) {
-      error.value = e instanceof Error ? e.message : String(e);
+      if (mine === openRun) error.value = errorText(e);
+    } finally {
+      if (mine === openRun) loading.value = false;
     }
   },
 );
 
-async function save(): Promise<void> {
-  busy.value = true;
-  error.value = '';
-  const labels = labelsInput.value
-    .split(',')
-    .map((l) => l.trim())
-    .filter(Boolean);
-  // A blank estimate clears the points (null); a number sets them.
-  const estimateRaw = estimateInput.value.trim();
-  const estimate = estimateRaw === '' ? null : Number(estimateRaw);
-  try {
+// Short op: the modal stays open (persistent, Cancel blocked) until Linear answers; a
+// refusal is shown inside it.
+const { run: save, busy } = useAsyncAction(
+  async () => {
+    // The phrase being spoken belongs to the description: it lands before the ticket is read.
+    await dictation.beforeSubmit();
+    if (loading.value || !titleField.value.trim()) return;
+    error.value = '';
+    const labels = labelsInput.value
+      .split(',')
+      .map((l) => l.trim())
+      .filter(Boolean);
+    // A blank estimate clears the points (null); a number sets them.
+    const estimateRaw = estimateInput.value.trim();
+    const estimate = estimateRaw === '' ? null : Number(estimateRaw);
     // On CREATE a due date left blank is simply not sent; on EDIT a cleared input IS the
     // instruction to clear the date in Linear.
     const draft: LinearIssueDraftWire = {
@@ -144,11 +182,13 @@ async function save(): Promise<void> {
       : await api.linearCreateIssue(props.workspaceId, draft);
     emit('update:modelValue', false);
     emit('saved', saved);
-  } catch (e) {
-    error.value = e instanceof Error ? e.message : String(e);
-  } finally {
-    busy.value = false;
-  }
+  },
+  { onError: (e) => (error.value = errorText(e)) },
+);
+
+function onToggle(open: boolean): void {
+  if (!open && busy.value) return;
+  emit('update:modelValue', open);
 }
 </script>
 
@@ -157,6 +197,9 @@ async function save(): Promise<void> {
   display: flex;
   flex-direction: column;
   gap: var(--k-sp-3);
+}
+.lie__dictate {
+  margin-top: 6px;
 }
 
 .lie__row {

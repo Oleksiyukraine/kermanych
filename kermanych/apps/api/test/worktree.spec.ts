@@ -36,6 +36,38 @@ test("checkout switches branches; force checkout discards uncommitted work", asy
   expect(git(repo, "show", "dev:file.txt").trim()).toBe("base"); // discarded
 });
 
+test("workingBranch names a renamed branch, the branch a stopped rebase rewrites, and nothing on a bare detach", async () => {
+  const wtDir = join(repo, "..", `${repo.split("/").pop()}-wt`);
+  git(repo, "worktree", "add", "-q", "-b", "feature/old", wtDir);
+  try {
+    git(wtDir, "branch", "-m", "feature/PLAT-1-renamed");
+    expect(await wt.workingBranch(wtDir)).toBe("feature/PLAT-1-renamed");
+
+    // A rebase that stops on a conflict leaves HEAD detached until it is continued.
+    writeFileSync(join(wtDir, "file.txt"), "mine\n");
+    git(wtDir, "commit", "-aqm", "mine");
+    writeFileSync(join(repo, "file.txt"), "theirs\n");
+    git(repo, "commit", "-aqm", "theirs");
+    expect(() => git(wtDir, "rebase", "-q", "dev")).toThrow();
+    expect(await wt.currentBranch(wtDir)).toBe("");
+    expect(await wt.workingBranch(wtDir)).toBe("feature/PLAT-1-renamed");
+
+    git(wtDir, "rebase", "--abort");
+    git(wtDir, "checkout", "-q", "--detach");
+    expect(await wt.workingBranch(wtDir)).toBe("");
+  } finally {
+    rmSync(wtDir, { recursive: true, force: true });
+  }
+});
+
+// removeWorktree deletes whatever git leaves at the path; the project's own checkout must
+// never qualify, whatever path a caller hands it.
+test("removeWorktree never deletes a main checkout", async () => {
+  await wt.removeWorktree(repo, repo);
+  expect(readFileSync(join(repo, "file.txt"), "utf8")).toBe("base\n");
+  expect(git(repo, "status", "--porcelain")).toBe("");
+});
+
 test("diff captures the branch's committed and uncommitted changes from the fork point", async () => {
   await wt.createBranchHere(repo, "feature/x");
   writeFileSync(join(repo, "file.txt"), "base\ncommitted\n");

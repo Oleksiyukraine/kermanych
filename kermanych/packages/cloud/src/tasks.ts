@@ -4,10 +4,18 @@
 // are the authorization surface; refusals surface as thrown postgrest messages.
 import type { RealtimeChannel, SupabaseClient } from "@supabase/supabase-js";
 import type { Task, TaskInsert, TaskPatch, TaskStatus } from "./types";
-import { readDocsReport, readSessionReport, type QaChecklist } from "@kermanych/core";
+import { isFindingKind, readDocsReport, readSessionReport, type QaChecklist } from "@kermanych/core";
 
-const TASK_COLUMNS =
-  "id, project_id, title, description, status, assignee_id, created_by, model, effort, prefix, platform, kind, branch, worktree, hidden, deep_analysis, image_paths, jira_key, linear_key, qa_checklist, docs_report, session_report, created_at, updated_at";
+// The board's list shape: every column except the two report blobs. `qa_checklist` and
+// `docs_report` are most of a row's bytes (hundreds of kB per workspace) and only an opened
+// card shows them, so the list, the reconcile and the Realtime binding leave them out and a
+// screen that shows them reads the full row (getTask). `session_report` stays: the minion marks
+// on every card read it. Literal strings, so supabase-js can type the selects; Realtime's
+// `select` takes the same list as an array.
+const TASK_LIST_COLUMNS =
+  "id, project_id, title, description, status, assignee_id, created_by, model, effort, prefix, kind, branch, branch_slug, worktree, hidden, deep_analysis, auto_run, design, finding_kind, image_paths, jira_key, linear_key, plane_key, session_report, created_at, updated_at";
+const TASK_COLUMNS = `${TASK_LIST_COLUMNS}, qa_checklist, docs_report` as const;
+const TASK_LIST_COLUMN_NAMES = TASK_LIST_COLUMNS.split(", ");
 
 type TaskRow = {
   id: string;
@@ -21,15 +29,19 @@ type TaskRow = {
   model: string | null;
   effort: string | null;
   prefix: string | null;
-  platform: string | null;
   worktree: boolean;
   hidden: boolean;
   deep_analysis: boolean;
+  auto_run: boolean;
+  design: boolean;
+  finding_kind: string | null;
   kind: string | null;
   branch: string | null;
+  branch_slug: string | null;
   image_paths: string[] | null;
   jira_key: string | null;
   linear_key: string | null;
+  plane_key: string | null;
   qa_checklist: unknown;
   docs_report: unknown;
   session_report: unknown;
@@ -48,6 +60,10 @@ export function toTask(row: TaskRow): Task {
     worktree: row.worktree,
     hidden: row.hidden,
     deepAnalysis: row.deep_analysis,
+    // `not null default false`; `=== true` keeps a row from a pre-migration select an ordinary card.
+    autoRun: row.auto_run === true,
+    // `not null default false`, like auto_run.
+    design: row.design === true,
   };
   // Optional keys are omitted rather than set to undefined, so a mapped task deep-equals a
   // hand-written literal in tests and carries no null noise into Vue's reactivity.
@@ -57,14 +73,20 @@ export function toTask(row: TaskRow): Task {
   if (row.model !== null) t.model = row.model;
   if (row.effort !== null) t.effort = row.effort as Task["effort"];
   if (row.prefix !== null) t.prefix = row.prefix;
-  if (row.platform !== null) t.platform = row.platform;
   if (row.kind !== null) t.kind = row.kind;
   if (row.branch !== null) t.branch = row.branch;
+  // `!= null`, not `!== null`: a hand-built row from before the column (test fixtures) omits it.
+  if (row.branch_slug != null) t.branchSlug = row.branch_slug;
+  // The column's check constraint names the same four kinds; anything else reads as «not from a
+  // finding» rather than a value the UI cannot word.
+  if (isFindingKind(row.finding_kind)) t.findingKind = row.finding_kind;
   // Present only on a shadow task minted by a Jira-ticket launch; the native board
   // filters these rows out and the Jira view joins them for its agent chip.
   if (row.jira_key !== null) t.jiraKey = row.jira_key;
   // The Linear twin of jira_key: a shadow task minted by launching a Linear ticket.
   if (row.linear_key !== null) t.linearKey = row.linear_key;
+  // The Plane twin: a shadow task minted by launching a Plane work item.
+  if (row.plane_key !== null) t.planeKey = row.plane_key;
   // `not null default '{}'`, so this is an array in practice; the Array check keeps an
   // image-less task an ABSENT key (like every other optional field) and tolerates a row
   // that omitted the column entirely.
@@ -95,15 +117,17 @@ export function toTaskRow(patch: TaskPatch): Record<string, unknown> {
   if (patch.model !== undefined) row.model = patch.model.trim() || null;
   if (patch.effort !== undefined) row.effort = patch.effort.trim() || null;
   if (patch.prefix !== undefined) row.prefix = patch.prefix.trim() || null;
-  if (patch.platform !== undefined) row.platform = patch.platform.trim() || null;
   // A boolean, so no trim/blank-to-null step: `false` is a value, not an empty field.
   if (patch.worktree !== undefined) row.worktree = patch.worktree;
   if (patch.hidden !== undefined) row.hidden = patch.hidden;
   if (patch.deepAnalysis !== undefined) row.deep_analysis = patch.deepAnalysis;
+  if (patch.autoRun !== undefined) row.auto_run = patch.autoRun;
   if (patch.kind !== undefined) row.kind = patch.kind.trim() || null;
   if (patch.branch !== undefined) row.branch = patch.branch.trim() || null;
+  if (patch.branchSlug !== undefined) row.branch_slug = patch.branchSlug.trim() || null;
   if (patch.jiraKey !== undefined) row.jira_key = patch.jiraKey.trim() || null;
   if (patch.linearKey !== undefined) row.linear_key = patch.linearKey.trim() || null;
+  if (patch.planeKey !== undefined) row.plane_key = patch.planeKey.trim() || null;
   // Arrays are sent verbatim: an empty array is the "no images" value, not a clear-to-null,
   // because the column is `not null`.
   if (patch.imagePaths !== undefined) row.image_paths = patch.imagePaths;
@@ -117,17 +141,50 @@ export function toTaskRow(patch: TaskPatch): Record<string, unknown> {
   return row;
 }
 
+// The board's list: LIGHT rows (TASK_LIST_COLUMNS), so a task here never carries
+// `qaChecklist` or `docsReport` — read those with getTask.
 export async function listTasks(client: SupabaseClient, projectIds: string[]): Promise<Task[]> {
   // `in.()` with an empty list is not valid postgrest syntax, and there is nothing to ask
   // for anyway: a member of no project sees no tasks.
   if (projectIds.length === 0) return [];
   const { data, error } = await client
     .from("tasks")
-    .select(TASK_COLUMNS)
+    .select(TASK_LIST_COLUMNS)
     .in("project_id", projectIds)
     .order("created_at", { ascending: true });
   if (error) throw new Error(error.message);
   return (data as TaskRow[]).map(toTask);
+}
+
+export type TaskVersion = { id: string; updatedAt: string };
+
+// The reconcile's question: which cards exist and when each last changed. ~60 bytes a row
+// instead of a whole row, and `updated_at` is server-owned (tasks_guard sets now() on every
+// update), so a changed card always shows a changed value whatever its writer's clock says.
+export async function listTaskVersions(client: SupabaseClient, projectIds: string[]): Promise<TaskVersion[]> {
+  if (projectIds.length === 0) return [];
+  const { data, error } = await client.from("tasks").select("id, updated_at").in("project_id", projectIds);
+  if (error) throw new Error(error.message);
+  return (data as { id: string; updated_at: string }[]).map((r) => ({ id: r.id, updatedAt: r.updated_at }));
+}
+
+// Ids ride the query string (`id=in.(…)`), 37 characters each; this keeps a request well
+// under the gateway's URL limit when a long sleep left many cards to catch up on.
+const BY_ID_CHUNK = 100;
+
+// LIGHT rows by id, for the reconcile's changed and new cards. Order is not kept: the store
+// sorts. An id this caller can no longer see is simply absent.
+export async function listTasksByIds(client: SupabaseClient, ids: readonly string[]): Promise<Task[]> {
+  const out: Task[] = [];
+  for (let i = 0; i < ids.length; i += BY_ID_CHUNK) {
+    const { data, error } = await client
+      .from("tasks")
+      .select(TASK_LIST_COLUMNS)
+      .in("id", ids.slice(i, i + BY_ID_CHUNK));
+    if (error) throw new Error(error.message);
+    out.push(...(data as TaskRow[]).map(toTask));
+  }
+  return out;
 }
 
 // `undefined` means "no row this caller may see" — either the id does not exist or the
@@ -159,16 +216,22 @@ export async function createTask(
       model: input.model,
       effort: input.effort,
       prefix: input.prefix,
-      platform: input.platform,
       kind: input.kind,
       branch: input.branch,
+      branchSlug: input.branchSlug,
       worktree: input.worktree,
       hidden: input.hidden,
       deepAnalysis: input.deepAnalysis,
+      autoRun: input.autoRun,
       imagePaths: input.imagePaths,
       jiraKey: input.jiraKey,
       linearKey: input.linearKey,
+      planeKey: input.planeKey,
     }),
+    // Insert-only, so not part of toTaskRow: tasks_guard() keeps it frozen on every update.
+    ...(input.findingKind ? { finding_kind: input.findingKind } : {}),
+    // Insert-only too: a card is a design from the moment «+ Новий дизайн» files it.
+    ...(input.design ? { design: true } : {}),
   };
   const { data, error } = await client.from("tasks").insert(row).select(TASK_COLUMNS).single();
   if (error) throw new Error(error.message);
@@ -184,6 +247,39 @@ export async function patchTask(client: SupabaseClient, id: string, patch: TaskP
     .single();
   if (error) throw new Error(error.message);
   return toTask(data as TaskRow);
+}
+
+// ── QA checklist, item by item (docs/specs/2026-11-04-qa-tester-agent.md, decision 3) ─────────
+// A person's tick and the tester's verdict land on the same column concurrently; these go through
+// SQL functions that change it inside one UPDATE (20261104090000), never a whole-column rewrite
+// from a possibly stale copy. Same JWT, same RLS and tasks_guard() as patchTask.
+
+/**
+ * Merge `patch` into the items named by `itemIds` and drop the `drop` keys from them. Returns the
+ * checklist as written; throws when the card is not visible or holds none of the items.
+ */
+export async function patchQaItems(
+  client: SupabaseClient,
+  taskId: string,
+  itemIds: readonly string[],
+  patch: Record<string, unknown>,
+  drop: readonly string[] = [],
+): Promise<QaChecklist> {
+  const { data, error } = await client.rpc("qa_checklist_patch_items", {
+    p_task: taskId,
+    p_items: [...itemIds],
+    p_patch: patch,
+    p_drop: [...drop],
+  });
+  if (error) throw new Error(error.message);
+  return data as QaChecklist;
+}
+
+/** Write `checklist` only onto a card that has none. True when it wrote. */
+export async function setQaChecklistIfEmpty(client: SupabaseClient, taskId: string, checklist: QaChecklist): Promise<boolean> {
+  const { data, error } = await client.rpc("qa_checklist_set_if_empty", { p_task: taskId, p_checklist: checklist });
+  if (error) throw new Error(error.message);
+  return data === true;
 }
 
 // ── Images ──────────────────────────────────────────────────────────────────
@@ -242,19 +338,94 @@ export async function signedTaskImageUrls(
   return (data ?? []).map((d) => d.signedUrl).filter((u): u is string => u !== null);
 }
 
-// Atomic self-assign: one `UPDATE tasks SET assignee_id = $1 WHERE id = $2 AND assignee_id
-// IS NULL`. Zero matched rows come back as `{ data: null, error: null }` — that is what
-// maybeSingle means — and it is the "someone else claimed it first" signal, NOT an error.
-export async function claimTask(
+// The launch claim (docs/specs/2026-10-23-minion-auto-run.md, decision 7): one UPDATE that takes
+// the card AND moves it to `queued`, guarded by the status the launcher just read. Until the claim
+// carried the status, a second machine could read the same idle card in the seconds before the
+// first one's status push landed, and start it too. Zero matched rows come back as `{ data: null,
+// error: null }` — that is what maybeSingle means — and it is the «someone else started it first»
+// signal, NOT an error. tasks_guard() rule 1 admits the status change because the caller becomes
+// the assignee in the same statement.
+export async function claimTaskForLaunch(
   client: SupabaseClient,
   id: string,
   userId: string,
+  from: TaskStatus,
 ): Promise<Task | undefined> {
   const { data, error } = await client
     .from("tasks")
-    .update({ assignee_id: userId })
+    .update({ status: "queued", assignee_id: userId })
     .eq("id", id)
-    .is("assignee_id", null)
+    .eq("status", from)
+    .or(`assignee_id.is.null,assignee_id.eq.${userId}`)
+    .select(TASK_COLUMNS)
+    .maybeSingle();
+  if (error) throw new Error(error.message);
+  return data ? toTask(data as TaskRow) : undefined;
+}
+
+// Undo a launch claim after the launch failed: the status first, then — only when the card had no
+// assignee before — the assignee. Two statements, because tasks_guard() rule 2 refuses an assignee
+// change while the card is still active (`queued`).
+export async function releaseLaunchClaim(
+  client: SupabaseClient,
+  id: string,
+  previous: { status: TaskStatus; assigneeId?: string },
+): Promise<void> {
+  const back = await client.from("tasks").update({ status: previous.status }).eq("id", id);
+  if (back.error) throw new Error(back.error.message);
+  if (previous.assigneeId) return;
+  const free = await client.from("tasks").update({ assignee_id: null }).eq("id", id);
+  if (free.error) throw new Error(free.error.message);
+}
+
+// The cards «Посіпака» may take on this machine, oldest first across the given projects: the
+// caller's own (`created_by`), allowed to run by themselves, waiting in the backlog, unassigned or
+// already the caller's, and neither a deep analysis (it interviews a person) nor a Jira/Linear/
+// Plane shadow card (those launch through their own flow).
+export async function listMinionCandidates(
+  client: SupabaseClient,
+  projectIds: string[],
+  userId: string,
+  limit = 50,
+): Promise<Task[]> {
+  if (projectIds.length === 0) return [];
+  const { data, error } = await client
+    .from("tasks")
+    .select(TASK_COLUMNS)
+    .in("project_id", projectIds)
+    .eq("status", "backlog")
+    .eq("auto_run", true)
+    .eq("created_by", userId)
+    .eq("deep_analysis", false)
+    // A design is drawn with a person watching; nobody watches a minion run.
+    .eq("design", false)
+    .is("jira_key", null)
+    .is("linear_key", null)
+    .is("plane_key", null)
+    .or(`assignee_id.is.null,assignee_id.eq.${userId}`)
+    .order("created_at", { ascending: true })
+    .limit(limit);
+  if (error) throw new Error(error.message);
+  return (data as TaskRow[]).map(toTask);
+}
+
+// The minion's claim: claimTaskForLaunch's UPDATE, guarded by the whole candidate predicate again,
+// so a card its author switched off, edited into a deep analysis or handed to someone else between
+// the listing and the claim is not taken.
+export async function claimMinionTask(client: SupabaseClient, id: string, userId: string): Promise<Task | undefined> {
+  const { data, error } = await client
+    .from("tasks")
+    .update({ status: "queued", assignee_id: userId })
+    .eq("id", id)
+    .eq("status", "backlog")
+    .eq("auto_run", true)
+    .eq("created_by", userId)
+    .eq("deep_analysis", false)
+    .eq("design", false)
+    .is("jira_key", null)
+    .is("linear_key", null)
+    .is("plane_key", null)
+    .or(`assignee_id.is.null,assignee_id.eq.${userId}`)
     .select(TASK_COLUMNS)
     .maybeSingle();
   if (error) throw new Error(error.message);
@@ -316,8 +487,8 @@ export async function deleteTask(client: SupabaseClient, id: string): Promise<vo
 // replica identity, NOT a bug in this file: do not "fix" it with `replica identity full`,
 // because RLS is not applied to DELETE events and a full old-image would hand the whole
 // deleted row — title and description — to any non-member subscribed without a filter. The
-// board reconciles instead: a full listTasks refetch on (re)subscribe, on visibilitychange,
-// and on a slow timer (see the board store).
+// board reconciles instead: on (re)subscribe, on visibilitychange and on a slow timer it
+// compares listTaskVersions with what it holds (see the board store).
 export type TaskChange = { kind: "upsert"; task: Task } | { kind: "delete"; taskId: string };
 
 // The four states realtime-js hands to a subscribe() callback.
@@ -351,9 +522,12 @@ export function subscribeTasks(
   // subscribed, and a second identical postgres_changes binding on the same channel is
   // silently dropped. Never call realtime.setAuth here — supabase-js refreshes the socket
   // token itself from onAuthStateChange, and pinning it would disable that.
+  //
+  // `select` restricts every payload to the list columns, the same light row listTasks returns:
+  // the report blobs would otherwise ride each status push to every subscriber.
   channel.on(
     "postgres_changes",
-    { event: "*", schema: "public", table: "tasks", ...(filter ? { filter } : {}) },
+    { event: "*", schema: "public", table: "tasks", select: TASK_LIST_COLUMN_NAMES, ...(filter ? { filter } : {}) },
     (payload) => {
       if (payload.eventType === "DELETE") {
         // `old` carries the primary key ONLY (default replica identity), and DELETE events
@@ -366,6 +540,13 @@ export function subscribeTasks(
       onChange({ kind: "upsert", task: toTask(payload.new as TaskRow) });
     },
   );
+  // A binding the server refuses (a `select` column the role cannot read, a table not in the
+  // publication) still answers SUBSCRIBED; the refusal arrives as a system message and the
+  // channel then delivers nothing. Reported as CHANNEL_ERROR so the board says it is offline
+  // instead of going quietly stale.
+  channel.on("system", {}, (p: { extension?: string; status?: string }) => {
+    if (p.extension === "postgres_changes" && p.status === "error") onState?.("CHANNEL_ERROR");
+  });
 
   channel.subscribe((status) => onState?.(status as TaskChannelState));
 

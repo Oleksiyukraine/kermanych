@@ -1,9 +1,14 @@
 import type { DocsPolicy } from "./doc-policy";
 import type { BranchPrefix } from "./worktree-names";
 import type { Platform } from "./platform";
+import type { PreviewState } from "./preview";
 import type { ThinkingLevel } from "./thinking";
 import type { NoticeCode, NoticeParams } from "./i18n-codes";
 import type { NativeHarness } from "./runtime";
+import type { MachineAlert } from "./machine-profile";
+import type { MinionResult, MinionState } from "./minion";
+import type { FindingKind } from "./findings";
+import type { QaChecklist } from "./task-actions";
 
 // `in_review` is the PR hand-off state: the operator asked for a pull request, the agent
 // pushed it, and the work now waits on a HUMAN reviewer. It is settled (nothing moves on
@@ -19,12 +24,14 @@ export type TodoPhase = { id: string; name: string; tasks: TodoTask[] };
 // unbound), and the rest is an offline cache of the cloud config so launching never
 // needs the network (design D1 / Requirement 7).
 // `docsRequired` is the documentation switch, `docsPolicy` its per-kind rules (doc-policy.ts).
-export type Project = { id: string; name: string; localRepoPath: string; workspaceId?: string; color?: string; previewCommand?: string; apiCommand?: string; carryFiles?: string[]; docFolders?: string[]; docsRequired?: boolean; docsPolicy?: DocsPolicy; defaultBranch?: string; defaultModel?: string; defaultEffort?: ThinkingLevel; conventions?: string; createdAt: string };
+// `platform` gates the session browser and the live preview (platform.ts); absent = «Не визначено».
+export type Project = { id: string; name: string; localRepoPath: string; workspaceId?: string; color?: string; platform?: Platform; carryFiles?: string[]; docFolders?: string[]; docsRequired?: boolean; docsPolicy?: DocsPolicy; defaultBranch?: string; defaultModel?: string; defaultEffort?: ThinkingLevel; conventions?: string; createdAt: string };
 
 export type EnvEntry = { key: string; value: string };
 export type EnvFileView = { entries: EnvEntry[]; ignored: boolean };
 
-export type DirEntry = { name: string; isRepo: boolean };
+// `hasSkill` is set only by a skills-mode listing (`?hidden=1`): the folder holds a SKILL.md.
+export type DirEntry = { name: string; isRepo: boolean; hasSkill?: boolean };
 export type DirListing = { path: string; parent: string | null; entries: DirEntry[] };
 
 // A file-manager entry — one level of a session's worktree. `type` is all the tree needs
@@ -53,7 +60,7 @@ export type Session = {
   taskId?: string;
   worktreePath: string; branch: string;
   worktree: boolean; baseBranch?: string;
-  model?: string; prefix?: BranchPrefix; platform?: Platform; runtime?: NativeHarness;
+  model?: string; prefix?: BranchPrefix; runtime?: NativeHarness;
   // A native session (docs/specs/2026-10-05-native-sessions.md): the harness `runtime` names
   // runs as its own interactive TUI in a pty, with nothing of Kermanych's in its context.
   // Kermanych only watches it — status from per-launch hooks, usage and history from the
@@ -63,12 +70,41 @@ export type Session = {
   // opening turn asked for the interview and the task document before any code. Stamped from
   // the card when the session is created and never changed. Absent means an ordinary task.
   deepAnalysis?: boolean;
+  // Run by «Посіпака» (docs/specs/2026-10-23-minion-auto-run.md): the minion took the card and
+  // runs it with nobody watching — no ask tool, a `report_outcome` verdict, a PR at the end.
+  // Stamped when the session is created and never changed. Absent means a session a person
+  // started, even when its card allows auto-run.
+  minion?: boolean;
+  // A «Дизайн» session (docs/specs/2026-10-29-design-tab.md): the repository-relative folder
+  // its design lands in, e.g. `docs/design/2026-10-29-orders-list`. Stamped from a design card
+  // at launch (designDirFor) and never changed; its presence is what makes the session a design.
+  // Absent for every other session.
+  designDir?: string;
+  // A minion run of a card filed from a «Знахідка»: the finding's kind, stamped from the card
+  // when the run is created, so its opening prompt — a relaunch's too — carries the per-kind rules
+  // (docs/specs/2026-10-23-minion-auto-run.md, decision 14). Absent for every other session.
+  findingKind?: FindingKind;
+  // A «Тестувальник» run (docs/specs/2026-11-04-qa-tester-agent.md): a `review` child of the
+  // doer that walks the card's QA checklist in its own temporary browser, drives the parent's
+  // preview and records a verdict per item. Stamped at creation, never changed. Absent for
+  // every other session, including an ordinary «Ревізор» fork.
+  tester?: boolean;
+  // How the minion's run ended so far: `needs_decision` keeps the «потрібне рішення» mark until
+  // a later turn ends differently. Persisted; absent until the first turn of a minion run ends.
+  minionResult?: MinionResult;
   // «Знахідки» (docs/specs/2026-10-13-agent-findings.md): how many of this session's findings
   // still wait for the operator (status `open`). Counted by the registry on every read, never
   // written through updateSession. Absent or 0 means nothing waits.
   openFindings?: number;
   // Live-only: the pty (`TerminalInfo.id`) a native session's harness runs in, while it runs.
   terminalId?: string;
+  // Live-only: this agent waits for a slot of the machine resource profile
+  // (docs/specs/2026-10-21-machine-resource-profile.md). `position` is 1-based in the queue;
+  // `running`/`limit` are the slots in use and the limit. Absent once it starts.
+  slotWait?: { position: number; running: number; limit: number };
+  // A message accepted while the session waits for a slot. Persisted, delivered when the
+  // session gets one, then cleared.
+  pendingPrompt?: string;
   // "task" is no longer produced: a task is a cloud card and `from-task` is the only way an
   // agent is born. Rows with this kind are pre-cutover backlog leftovers whose project is
   // not in the cloud, so lib/publish-backlog.ts could not move them; AgentsPage lists them
@@ -81,6 +117,10 @@ export type Session = {
   parentSessionId?: string;
   ompSessionId?: string; ompSessionFile?: string;
   status: SessionStatus; currentTool?: string; error?: string;
+  // The localizable cause of `error`, when the runtime recognised it — chiefly
+  // `claude_not_authenticated` / `omp_not_authenticated`, which the UI shows as «Login
+  // required». Live-only like `error`: cleared when the child respawns, absent after a restart.
+  errorCode?: NoticeCode;
   // Durable "this session's branch already has an open pull request". Set once a PR URL
   // surfaces in a «Створити ПР» run and never cleared while the session lives. Distinct from
   // `status: in_review`, which is transient — a follow-up turn drives the card through
@@ -88,6 +128,10 @@ export type Session = {
   // two things: the finish sheet's secondary action stays «Закоміти» (never reopens a PR), and
   // any later turn settles the card back on «На ревʼю» instead of `done`.
   prOpened?: boolean;
+  // The pull request's URL: the first PR URL that surfaced together with `prOpened`. Absent on
+  // sessions that opened their PR before it was stored; the merged-PR check then looks the PR up
+  // by branch (docs/specs/2026-10-26-pr-merged-close-prompt.md, decision 4).
+  prUrl?: string;
   todoPhases?: TodoPhase[]; contextPercent?: number; lastEventAt?: number;
   // Lifetime accounting: every assistant turn this session ran, summed. Persisted by the
   // api, so a dormant or finished agent still states what it spent. Absent means "never
@@ -97,29 +141,12 @@ export type Session = {
   lastActivityAt: string;
 };
 
-// DTO for creating a new session. All fields are optional as they patch a backlog row.
-export type CreateSessionDto = {
-  name?: string;
-  task?: string;
-  projectId?: string;
-  worktreePath?: string;
-  branch?: string;
-  worktree?: boolean;
-  baseBranch?: string;
-  model?: string;
-  prefix?: BranchPrefix;
-  platform?: Platform;
-  runtime?: NativeHarness;
-  effort?: ThinkingLevel;
-  kind?: "agent" | "discussion" | "task" | "review" | "chat";
-  parentSessionId?: string;
-};
-
-// The editable launch config the New-task launcher collects; startTask/updateTask patch
-// these onto a backlog row. All fields optional — it is a partial patch.
-export type TaskDraft = {
-  name?: string | undefined; task?: string | undefined; model?: string | undefined; prefix?: BranchPrefix | undefined; platform?: Platform | undefined; worktree?: boolean | undefined; baseBranch?: string | undefined; effort?: ThinkingLevel | undefined;
-};
+// The merged-PR check of a session (docs/specs/2026-10-26-pr-merged-close-prompt.md): the PR's
+// state on GitHub, or why it could not be learned. `unsupported` covers a non-GitHub remote and
+// a session that is not eligible for the check. `leftover` is set only for `merged`: work on the
+// local branch the merged PR does not carry (uncommitted changes, commits after its head).
+export type PrCheckState = "open" | "merged" | "closed" | "not_found" | "unsupported" | "no_access" | "rate_limited" | "offline" | "error";
+export type PrCheck = { state: PrCheckState; url?: string; number?: number; leftover?: { dirty: boolean; unpushed: boolean } };
 
 // One selectable model, as the local omp catalog reports it (`omp models --json`): only
 // providers this machine has credentials for appear, so the list is what can actually run
@@ -184,7 +211,9 @@ export type SubscriptionUsage = { fetchedAt: string; providers: ProviderUsage[] 
 export type ToolStat = string | { key: string; params?: Record<string, string | number | boolean> };
 
 export type TranscriptEntry =
-  | { kind: "user_text"; id: string; at: number; text: string; images?: string[] }
+  // `via: "voice"`: said in a voice conversation (docs/specs/2026-11-02-voice-conversation.md) —
+  // `text` is the operator's own words; the child received them under the voice note (voice-bridge.ts).
+  | { kind: "user_text"; id: string; at: number; text: string; images?: string[]; via?: "voice" }
   | { kind: "assistant_text"; id: string; at: number; text: string }
   | { kind: "assistant_thinking"; id: string; at: number; text: string; ms?: number; tokens?: number }
   | {
@@ -245,7 +274,11 @@ export type RpcEvent =
 
 // Server -> client WebSocket messages
 export type ServerEvent =
-  | { type: "snapshot"; projects: Project[]; sessions: Session[] }
+  // `subagents`: every live session's subagent tree (non-empty only), so a reloaded UI has the
+  // agent map without waiting for the next `subagents_update`.
+  // `previews`: every session's live-preview state the api holds (preview.ts), so a reloaded UI
+  // knows what runs without asking per session.
+  | { type: "snapshot"; projects: Project[]; sessions: Session[]; subagents: Record<string, SubagentNode[]>; previews: Record<string, PreviewState> }
   | { type: "session_update"; session: Session }
   | { type: "transcript_append"; sessionId: string; entry: TranscriptEntry }
   | { type: "transcript_reset"; sessionId: string; entries: TranscriptEntry[] }
@@ -261,7 +294,18 @@ export type ServerEvent =
   | { type: "subagents_update"; sessionId: string; subagents: SubagentNode[] }
   | { type: "project_update"; project: Project }
   | { type: "session_removed"; sessionId: string }
-  | { type: "project_removed"; projectId: string };
+  | { type: "project_removed"; projectId: string }
+  // The memory-pressure watchdog found something (docs/specs/2026-10-21-machine-resource-profile.md).
+  | { type: "machine_alert"; alert: MachineAlert }
+  // «Посіпака» on this machine changed: its cap, pause, running and waiting counts, projects.
+  | { type: "minion_update"; state: MinionState }
+  // A session's live preview changed state; `state: null` = it has none any more (session gone).
+  | { type: "preview_update"; sessionId: string; state: PreviewState | null }
+  // The api wrote a card's QA checklist (docs/specs/2026-11-04-qa-tester-agent.md): a tester
+  // verdict, a checklist the tester or «Створити ПР» composed, or verdicts cleared at a run's
+  // start. Carries the checklist as written, so an open QA tab updates without re-reading the
+  // card (the board's Realtime binding leaves this column out).
+  | { type: "qa_checklist_update"; taskId: string; checklist: QaChecklist };
 
 // How much of omp's subagent activity a session subscribes to. "progress" streams lifecycle
 // + coalesced progress (enough for the agent map); "events" adds every subagent tool/message
@@ -340,3 +384,9 @@ export type TerminalOpenReply = { terminal: TerminalInfo } | TerminalError;
 // `replay` repaints the terminal as it stands — its scrollback, the alternate screen and
 // modes included — written before live data flows.
 export type TerminalAttachReply = { terminal: TerminalInfo; replay: string } | TerminalError;
+
+// How native sessions' TUIs are launched on this machine (machine-local, never synced).
+// `claudeFullScreen`: claude draws on the terminal's alternate screen — its full-screen layout,
+// input pinned at the bottom — which keeps no scrollback, so the Лог's find reaches only the
+// rows on screen. Off (the default), claude prints inline and its history stays searchable.
+export type NativeSettings = { claudeFullScreen: boolean };

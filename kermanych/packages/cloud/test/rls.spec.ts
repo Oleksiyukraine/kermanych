@@ -18,6 +18,7 @@ import { beforeAll, describe, expect, it } from "vitest";
 import { listAiAgentSkills, setAiAgentSkills } from "../src/agent-skills";
 import { deleteAiAgent, listAiAgents, upsertAiAgent } from "../src/ai-agents";
 import { createProject, listProjects, patchProject } from "../src/projects";
+import { createWorkspaceRisk, listRiskEvents, listWorkspaceRisks } from "../src/risks";
 import { deleteAiSkill, listAiSkills, upsertAiSkill } from "../src/skills";
 import { deleteAiTrigger, listAiTriggers, setAiTriggerSkills, upsertAiTrigger } from "../src/triggers";
 import { listMembers } from "../src/workspaces";
@@ -33,7 +34,15 @@ import {
   upsertJiraIntegration,
   upsertJiraIssues,
 } from "../src/jira";
-import { createTask, getTask, patchTask } from "../src/tasks";
+import {
+  claimMinionTask,
+  claimTaskForLaunch,
+  createTask,
+  getTask,
+  listMinionCandidates,
+  patchTask,
+  releaseLaunchClaim,
+} from "../src/tasks";
 
 const URL = process.env.SUPABASE_TEST_URL;
 const ANON = process.env.SUPABASE_TEST_ANON_KEY;
@@ -555,6 +564,62 @@ describe.skipIf(!URL || !ANON || !SERVICE)("supabase RLS and triggers", () => {
     // Hiding is not authorization: a plain member of the workspace still reads the row.
     await patchTask(owner.client, secret.id, { hidden: true });
     expect((await getTask(member.client, secret.id))?.hidden).toBe(true);
+  });
+
+  // ── «Посіпака» (20261023090000_task_auto_run.sql) ─────────────────────────────
+  // The minion runs only its signed-in author's cards, so authorship and the author's
+  // endorsement are database facts. `owner` is the author throughout; `member` is the colleague.
+  it("keeps created_by and finding_kind as inserted, whoever writes them", async () => {
+    const card = await createTask(owner.client, { projectId, title: "from a finding", createdBy: owner.id, findingKind: "security" });
+    const rewrite = await member.client
+      .from("tasks")
+      .update({ created_by: member.id, finding_kind: "docs", title: "from a finding (edited)" })
+      .eq("id", card.id);
+    expect(rewrite.error).toBeNull();
+    const after = await getTask(owner.client, card.id);
+    expect(after).toMatchObject({ createdBy: owner.id, findingKind: "security", title: "from a finding (edited)" });
+  });
+
+  it("lets only the author allow auto-run, and anyone switch it off", async () => {
+    const card = await createTask(owner.client, { projectId, title: "auto-run case", createdBy: owner.id });
+    const colleague = await member.client.from("tasks").update({ auto_run: true }).eq("id", card.id);
+    expect(colleague.error?.message).toMatch(/only the author can allow auto-run/);
+
+    expect((await patchTask(owner.client, card.id, { autoRun: true })).autoRun).toBe(true);
+    await member.client.from("tasks").update({ auto_run: false }).eq("id", card.id);
+    expect((await getTask(owner.client, card.id))?.autoRun).toBe(false);
+  });
+
+  it("clears auto-run when a colleague changes the content, but not for the author or non-content writes", async () => {
+    const card = await createTask(owner.client, { projectId, title: "endorsed", createdBy: owner.id, autoRun: true });
+    expect(card.autoRun).toBe(true);
+
+    await patchTask(owner.client, card.id, { description: "the author refines it" });
+    await member.client.from("tasks").update({ hidden: true, qa_checklist: { items: [] } }).eq("id", card.id);
+    expect((await getTask(owner.client, card.id))?.autoRun).toBe(true);
+
+    await member.client.from("tasks").update({ description: "rm -rf, but politely" }).eq("id", card.id);
+    expect((await getTask(owner.client, card.id))?.autoRun).toBe(false);
+  });
+
+  it("lets the minion claim only its author's card, once, and release it in two steps", async () => {
+    const card = await createTask(owner.client, { projectId, title: "minion case", createdBy: owner.id, autoRun: true });
+    expect((await listMinionCandidates(member.client, [projectId], member.id)).map((t) => t.id)).not.toContain(card.id);
+    expect(await claimMinionTask(member.client, card.id, member.id)).toBeUndefined();
+    expect((await listMinionCandidates(owner.client, [projectId], owner.id)).map((t) => t.id)).toContain(card.id);
+
+    const claimed = await claimMinionTask(owner.client, card.id, owner.id);
+    expect(claimed).toMatchObject({ status: "queued", assigneeId: owner.id });
+    // A second machine of the same account loses: the card is no longer in the backlog.
+    expect(await claimMinionTask(owner.client, card.id, owner.id)).toBeUndefined();
+    expect(await claimTaskForLaunch(owner.client, card.id, owner.id, "backlog")).toBeUndefined();
+
+    // One statement cannot undo it: the assignee may not change while the card is active.
+    const oneShot = await owner.client.from("tasks").update({ status: "backlog", assignee_id: null }).eq("id", card.id);
+    expect(oneShot.error?.message).toMatch(/task is active/);
+    await releaseLaunchClaim(owner.client, card.id, { status: "backlog" });
+    expect(await getTask(owner.client, card.id)).toMatchObject({ status: "backlog", autoRun: true });
+    expect((await getTask(owner.client, card.id))?.assigneeId).toBeUndefined();
   });
 
   // ── ai_skills (project scope) ─────────────────────────────────────────────────
@@ -1292,6 +1357,76 @@ describe.skipIf(!URL || !ANON || !SERVICE)("supabase RLS and triggers", () => {
       await deleteJiraIntegration(owner.client, integrationId);
       expect(await getJiraIntegrationById(owner.client, integrationId)).toBeUndefined();
       expect(await listJiraIssues(owner.client, integrationId)).toEqual([]);
+    });
+  });
+
+  // ── the risk register ───────────────────────────────────────────────────────
+  // Its own workspace with all three roles seated: the register is the owner's and the
+  // managers' (20261103090000_workspace_risks_managers.sql), and a developer must read no row,
+  // no history, and write nothing — through PostgREST directly, not just through the ui.
+  describe("risk register", () => {
+    let riskWs: string;
+    let manager: TestUser;
+    let developer: TestUser;
+    let riskId: string;
+
+    const risk = {
+      kind: "threat",
+      category: "vendor",
+      cause: "shared sandbox",
+      event: "testing is blocked",
+      consequence: "UAT slips",
+      probability: 4,
+      impact: 4,
+      response: "reduce",
+      responseActions: "a dedicated tenant",
+    } as const;
+
+    beforeAll(async () => {
+      manager = await makeUser("risk-manager");
+      developer = await makeUser("risk-developer");
+      const ws = await owner.client
+        .from("workspaces")
+        .insert({ name: "rls-risk-ws", owner_id: owner.id })
+        .select()
+        .single();
+      if (ws.error) throw ws.error;
+      riskWs = ws.data.id as string;
+      for (const u of [manager, developer]) {
+        const seated = await owner.client.rpc("invite_workspace_member", { p_workspace_id: riskWs, p_email: u.email });
+        if (seated.error) throw seated.error;
+      }
+      const promoted = await owner.client.rpc("set_workspace_member_role", {
+        p_workspace_id: riskWs,
+        p_user_id: manager.id,
+        p_role: "manager",
+      });
+      if (promoted.error) throw promoted.error;
+    }, 30_000);
+
+    it("the owner and a manager file and read risks", async () => {
+      const filed = await createWorkspaceRisk(owner.client, { workspaceId: riskWs, ...risk });
+      riskId = filed.id;
+      await createWorkspaceRisk(manager.client, { workspaceId: riskWs, ...risk, event: "the vendor folds" });
+
+      expect((await listWorkspaceRisks(manager.client, riskWs)).map((r) => r.code).sort()).toEqual(["R-001", "R-002"]);
+      expect(await listRiskEvents(manager.client, riskId)).toHaveLength(1);
+    });
+
+    it("a developer reads no risk and no history", async () => {
+      expect(await listWorkspaceRisks(developer.client, riskWs)).toEqual([]);
+      expect(await listRiskEvents(developer.client, riskId)).toEqual([]);
+    });
+
+    it("a developer can neither file nor edit a risk", async () => {
+      await expect(createWorkspaceRisk(developer.client, { workspaceId: riskWs, ...risk })).rejects.toThrow(
+        /row-level security|violates/,
+      );
+      // An update the policy hides matches no row; the proof is the row as the owner reads it.
+      await developer.client.from("workspace_risks").update({ event: "rewritten" }).eq("id", riskId);
+      const rows = await listWorkspaceRisks(owner.client, riskWs);
+      expect(rows).toHaveLength(2);
+      expect(rows.find((r) => r.id === riskId)?.event).toBe(risk.event);
     });
   });
 });

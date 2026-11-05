@@ -8,6 +8,7 @@
 // current value when the queue drains. The UI only reads.
 
 import { docsRead, isDocPath } from "./docs";
+import { readMinionResult, type MinionResult } from "./minion";
 import { isNativeHarness, type NativeHarness } from "./runtime";
 import { skillsUsed } from "./skills";
 import { isThinkingLevel, type ThinkingLevel } from "./thinking";
@@ -43,6 +44,8 @@ export type SessionReport = {
   usage?: Usage;
   /** omp's session id or claude's session UUID. Never a path on the author's disk. */
   providerSessionId?: string;
+  /** How a «Посіпака» run of this card ended (docs/specs/2026-10-23-minion-auto-run.md). */
+  minion?: MinionResult;
 };
 
 export type TaskReports = { docs?: DocsReport; session?: SessionReport };
@@ -66,7 +69,7 @@ export type TaskReportsWrite = {
 
 export type ReportSource = Pick<
   Session,
-  "id" | "runtime" | "native" | "model" | "effort" | "branch" | "baseBranch" | "worktree" | "usage" | "ompSessionId"
+  "id" | "runtime" | "native" | "model" | "effort" | "branch" | "baseBranch" | "worktree" | "usage" | "ompSessionId" | "minion" | "minionResult"
 >;
 
 /**
@@ -92,6 +95,7 @@ export function taskReportsWrite(input: {
     ...(s.baseBranch ? { baseBranch: s.baseBranch } : {}),
     ...(s.usage ? { usage: s.usage } : {}),
     ...(s.ompSessionId ? { providerSessionId: s.ompSessionId } : {}),
+    ...(s.minion && s.minionResult ? { minion: s.minionResult } : {}),
   };
   return {
     sessionId: s.id,
@@ -201,6 +205,7 @@ export function readSessionReport(raw: unknown): SessionReport | undefined {
   const head = stamp(raw);
   if (!head || !isNativeHarness(raw.runtime) || typeof raw.branch !== "string") return undefined;
   const usage = readUsage(raw.usage);
+  const minion = readMinionResult(raw.minion);
   return {
     ...head,
     runtime: raw.runtime,
@@ -213,5 +218,6 @@ export function readSessionReport(raw: unknown): SessionReport | undefined {
     ...(typeof raw.baseBranch === "string" && raw.baseBranch ? { baseBranch: raw.baseBranch } : {}),
     ...(usage ? { usage } : {}),
     ...(typeof raw.providerSessionId === "string" && raw.providerSessionId ? { providerSessionId: raw.providerSessionId } : {}),
+    ...(minion ? { minion } : {}),
   };
 }

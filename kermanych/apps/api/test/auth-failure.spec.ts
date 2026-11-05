@@ -39,6 +39,16 @@ describe("authFailureCode", () => {
     ).toBe("omp_not_authenticated");
   });
 
+  // Verbatim from `omp --mode rpc` 18.2.11 on a profile with no credentials: it exits 1 before
+  // `ready`, and RpcSession wraps the stderr in its exit message.
+  it("reads omp's no-credentials exit as omp_not_authenticated", () => {
+    expect(
+      authFailureCode(
+        "omp child exited (code 1) before completing request: No models available. Use /login or set an API key environment variable. Then use /model to select a model.",
+      ),
+    ).toBe("omp_not_authenticated");
+  });
+
   it("reads a missing omp binary as omp_binary_missing", () => {
     expect(authFailureCode("spawn omp ENOENT")).toBe("omp_binary_missing");
   });

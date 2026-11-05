@@ -1,7 +1,7 @@
 // apps/api/test/reopen.spec.ts
 import { afterEach, beforeEach, expect, test } from "vitest";
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { RegistryService } from "../src/registry/registry.service";
@@ -9,6 +9,7 @@ import { offlineAuth } from "./offline-auth";
 import { stubSkills } from "./skills-stub";
 import { WorktreeService } from "../src/worktree/worktree.service";
 import { SupervisorService } from "../src/supervisor/supervisor.service";
+import { worktreeDir } from "@kermanych/core";
 
 const git = (cwd: string, ...args: string[]): string =>
   execFileSync("git", args, { cwd, encoding: "utf8" });
@@ -99,6 +100,24 @@ test("reopenSession forks the branch afresh off the base when the session's bran
   expect(git(repo, "branch", "--list", re.branch).trim()).not.toBe("");
   expect(git(repo, "rev-parse", re.branch).trim()).toBe(git(repo, "rev-parse", "dev").trim());
   expect(existsSync(join(re.worktreePath, "feature.txt"))).toBe(false); // forked from bare dev
+});
+
+// A process the agent started (a dev server, a watcher) outlives the finish and writes its
+// cache back by absolute path, recreating the retired worktree's directory. git then refused
+// the reopen with "'<path>' already exists".
+test("reopenSession clears what was written back into the retired worktree's path", async () => {
+  const id = await seedMerged();
+  const leftover = join(worktreeDir(id), "apps", "ui", "node_modules", ".q-cache");
+  trash.push(worktreeDir(id));
+  mkdirSync(leftover, { recursive: true });
+  writeFileSync(join(leftover, "dev-spa"), "cache\n");
+
+  const re = await sup.reopenSession(id);
+
+  expect(re.worktreePath).toBe(worktreeDir(id));
+  expect(re.branch).toBe("feature/task-one");
+  expect(existsSync(join(re.worktreePath, "feature.txt"))).toBe(true);
+  expect(existsSync(leftover)).toBe(false);
 });
 
 test("reopenSession refuses a session that still owns a worktree", async () => {

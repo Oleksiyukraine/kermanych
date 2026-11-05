@@ -19,8 +19,9 @@ const ENTITLEMENTS = join(appDir, 'src-electron', 'entitlements.mac.plist');
 
 export default defineConfig((ctx) => {
   return {
-    // app boot files (/src/boot) — order matters
-    boot: ['tokens', 'i18n', 'tip', 'supabase'],
+    // app boot files (/src/boot) — order matters. `backend` comes first: on the desktop build
+    // it holds every later boot until main's local api listens.
+    boot: ['backend', 'tokens', 'i18n', 'tip', 'supabase'],
 
     // global CSS (/src/css)
     css: ['app.scss'],
@@ -108,9 +109,16 @@ export default defineConfig((ctx) => {
           ],
           category: 'public.app-category.developer-tools',
           hardenedRuntime: true,
+          // The hardened runtime's exceptions, microphone included (entitlements.mac.plist).
           entitlements: ENTITLEMENTS,
           entitlementsInherit: ENTITLEMENTS,
           notarize: true,
+          // The text of macOS's microphone prompt for the voice conversation
+          // (docs/specs/2026-11-02-voice-conversation.md). Without it macOS refuses the
+          // microphone outright; a hardened-runtime build also needs the audio-input entitlement.
+          extendInfo: {
+            NSMicrophoneUsageDescription: 'Kermanych uses the microphone for voice conversations with your agents.',
+          },
         },
         // AppImage is the Linux format electron-updater can replace in place.
         linux: {
@@ -126,7 +134,11 @@ export default defineConfig((ctx) => {
         // from disk (it rewrites the path to app.asar.unpacked itself). Both ship N-API
         // prebuilds (ABI-stable across Node/Electron), so unpacking them suffices;
         // electron-builder's own native rebuild is unnecessary here.
-        asarUnpack: ['**/node_modules/better-sqlite3/**', '**/node_modules/node-pty/**'],
+        // serve-sim (the iOS device preview, docs/specs/2026-11-03-mobile-device-preview.md) is a
+        // CLI the api runs as Node from disk: its N-API addon and the helper binaries it execs
+        // (simax/, simcam/, simduo/) cannot live in an archive, and the CLI's one external import,
+        // `ws`, must sit beside it on disk for Node's resolver (ios.driver.ts serveSimPath).
+        asarUnpack: ['**/node_modules/better-sqlite3/**', '**/node_modules/node-pty/**', '**/node_modules/serve-sim/**', '**/node_modules/ws/**'],
         npmRebuild: false,
       },
 

@@ -25,7 +25,7 @@ vi.mock('../src/stores/auth', () => ({
   }),
 }));
 vi.mock('../src/stores/projects', () => ({ useProjects: () => ({ projects: [], load: vi.fn() }) }));
-vi.mock('../src/stores/orchestrator', () => ({ useOrchestrator: () => ({ notify }) }));
+vi.mock('../src/stores/orchestrator', () => ({ useOrchestrator: () => ({ notify, onServerEvent: () => () => {} }) }));
 vi.mock('../src/boot/i18n', () => ({ globalTr: { t: (k: string) => k, te: () => false } }));
 
 const card: Task = {
@@ -36,6 +36,8 @@ const card: Task = {
   worktree: true,
   hidden: false,
   deepAnalysis: false,
+  design: false,
+  autoRun: false,
   imagePaths: ['p1/from-board.png'],
   createdAt: '2026-10-12T09:00:00.000Z',
   updatedAt: '2026-10-12T09:00:00.000Z',

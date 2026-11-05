@@ -7,7 +7,10 @@
     <div class="k-dirpicker">
       <div class="k-dirpicker__cwd mono">{{ listing?.path ?? '…' }}</div>
       <p v-if="error" class="k-dirpicker__error mono" role="alert">{{ error }}</p>
-      <div class="k-dirpicker__list">
+      <!-- While a folder loads, its old listing would still be clickable (and «Обрати цю теку»
+           would pick the folder being LEFT): the rows give way to a placeholder instead. -->
+      <KSkeleton v-if="phase === 'skeleton'" class="k-dirpicker__list" variant="rows" :rows="6" />
+      <div v-else-if="phase === 'ready'" class="k-dirpicker__list">
         <button
           v-if="listing?.parent"
           type="button"
@@ -25,6 +28,7 @@
         >
           <span class="k-dirpicker__name">{{ e.name }}</span>
           <span v-if="e.isRepo" class="k-dirpicker__repo" v-tip="t('kit.dirPicker.repo')">⑂</span>
+          <span v-if="e.hasSkill" class="k-dirpicker__repo mono" v-tip="t('kit.dirPicker.skill')">SKILL.md</span>
         </button>
         <div v-if="listing && !listing.entries.length" class="k-dirpicker__empty mono">
           {{ t('kit.dirPicker.empty') }}
@@ -33,7 +37,7 @@
     </div>
     <template #controls>
       <KBtn variant="ghost" @click="close">{{ t('kit.dirPicker.cancel') }}</KBtn>
-      <KBtn variant="primary" :disabled="!listing" @click="choose">{{ t('kit.dirPicker.choose') }}</KBtn>
+      <KBtn variant="primary" :disabled="!listing || loading" @click="choose">{{ t('kit.dirPicker.choose') }}</KBtn>
     </template>
   </KModal>
 </template>
@@ -43,26 +47,44 @@ import { ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import type { DirListing } from '@kermanych/core';
 import { api } from '../../lib/api';
+import { useLoadPhase } from '../../composables/useLoadPhase';
 import KModal from './KModal.vue';
 import KBtn from './KBtn.vue';
+import KSkeleton from './KSkeleton.vue';
 
 // Directory browser. Two callers, one contract: it stacks over whatever modal opened it
 // (QDialog handles the layering) and emits the chosen absolute path. In MainLayout it picks
-// THIS machine's binding for a cloud project; `⑂` marks the git repos.
-const props = withDefaults(defineProps<{ modelValue: boolean; start?: string }>(), { start: '' });
+// THIS machine's binding for a cloud project; `⑂` marks the git repos. With `skills` it is the
+// «Навички» import picker's «Інша тека…»: dot-folders are listed (skills live under `~/.claude`,
+// `~/.agents`) and a folder holding a SKILL.md is marked.
+const props = withDefaults(defineProps<{ modelValue: boolean; start?: string; skills?: boolean }>(), {
+  start: '',
+  skills: false,
+});
 const emit = defineEmits<{ 'update:modelValue': [value: boolean]; select: [path: string] }>();
 
 const { t } = useI18n();
 
 const listing = ref<DirListing | null>(null);
 const error = ref<string | null>(null);
+const loading = ref(false);
+// A failed first load has nothing to show but the error, so it counts as «loaded».
+const phase = useLoadPhase(() => loading.value);
 
+// Each load bumps the counter; a reply that is no longer the newest (a fast double click
+// down the tree, a reopen) is dropped, so the listing never jumps back to an older folder.
+let runId = 0;
 async function load(path: string): Promise<void> {
+  const run = ++runId;
   error.value = null;
+  loading.value = true;
   try {
-    listing.value = await api.listDirs(path);
+    const next = await api.listDirs(path, { hidden: props.skills });
+    if (run === runId) listing.value = next;
   } catch (e) {
-    error.value = e instanceof Error ? e.message : String(e);
+    if (run === runId) error.value = e instanceof Error ? e.message : String(e);
+  } finally {
+    if (run === runId) loading.value = false;
   }
 }
 function up(): void {

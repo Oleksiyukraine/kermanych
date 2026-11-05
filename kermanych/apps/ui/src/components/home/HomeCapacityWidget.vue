@@ -1,16 +1,22 @@
 <template>
   <div class="capw">
-    <!-- No Jira board, no capacity: Team Capacity reads Jira's estimates and worklogs, so this
-         snapshot states the same gate its full screen does rather than showing an empty bar. -->
-    <p v-if="jira.integration === null" class="capw__note mono">
-      {{ t('management.home.capacity.gateJira') }}
+    <!-- No tracker, no capacity: Team Capacity reads Jira's or Plane's estimates and worklogs, so
+         this snapshot states the same gate its full screen does rather than showing an empty bar. -->
+    <p v-if="src.integration === null" class="capw__note mono">
+      {{ t('management.home.capacity.gate') }}
       <RouterLink class="capw__link" :to="{ name: 'management-integrations' }">
         {{ t('management.home.capacity.gateOpen') }}
       </RouterLink>
     </p>
-    <p v-else-if="jira.integration === undefined" class="capw__note mono">
-      {{ t('management.home.capacity.loading') }}
-    </p>
+    <!-- Not loaded for this workspace: the tracker stores reset on a workspace switch and keep
+         `loading` up from probe through loadBoard. -->
+    <template v-else-if="phase !== 'ready'">
+      <div v-if="phase === 'skeleton'" class="capw__skeleton">
+        <KSkeleton variant="line" width="50%" />
+        <KSkeleton variant="block" width="100%" height="48px" />
+        <KSkeleton variant="line" width="100%" />
+      </div>
+    </template>
     <template v-else>
       <!-- The period this snapshot covers, picked on the tile itself: the whole point of the
            tile is answering «how loaded are we THIS/NEXT week» at a glance, so the selector is
@@ -21,6 +27,14 @@
           :options="presetOptions"
           :title="t('management.home.capacity.period')"
           placement="down"
+        />
+        <KChipSelect
+          v-if="src.available.length > 1"
+          :model-value="src.kind ?? 'jira'"
+          :options="TRACKER_SOURCE_OPTIONS"
+          :title="t('management.capacity.source')"
+          placement="down"
+          @update:model-value="(v: string) => src.setKind(v)"
         />
         <span class="capw__range mono">{{ range.from }} — {{ range.to }}</span>
       </div>
@@ -36,7 +50,8 @@
         </article>
         <article class="capw__stat">
           <span class="capw__stat-label mono">{{ t('management.capacity.stat.logged') }}</span>
-          <strong class="capw__stat-value">{{ hours(report.summary.loggedSeconds) }}<small>{{ t('management.capacity.h') }}</small></strong>
+          <KSkeleton v-if="worklogsPending" variant="line" width="48px" height="18px" />
+          <strong v-else class="capw__stat-value">{{ hours(report.summary.loggedSeconds) }}<small>{{ t('management.capacity.h') }}</small></strong>
         </article>
       </div>
 
@@ -64,19 +79,21 @@
 </template>
 
 <script setup lang="ts">
-// Team Capacity, in one tile: the workspace's Jira estimates and logged work against an
-// 8 h/day baseline for a period the operator picks from this tile's own selector. Every number
-// is `capacityReport` — the same arithmetic the full screen and the assistant read — so a
-// figure here is a figure there. Worklogs are fetched for the selected range; issues come from
-// the Jira session the home page opened.
+// Team Capacity, in one tile: the workspace's Jira or Plane estimates and logged work against
+// an 8 h/day baseline for a period the operator picks from this tile's own selector. Every
+// number is `capacityReport` — the same arithmetic the full screen and the assistant read — so
+// a figure here is a figure there. Worklogs are fetched for the selected range; issues come
+// from the tracker sessions the home page opened (stores/tracker.ts picks which one).
 import { computed, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { RouterLink } from 'vue-router';
-import type { JiraWorklog } from '@kermanych/cloud';
 import KChipSelect from 'components/kit/KChipSelect.vue';
-import { useJira } from 'stores/jira';
+import KSkeleton from 'components/kit/KSkeleton.vue';
+import { useLoadPhase } from '../../composables/useLoadPhase';
+import { useTrackerSource } from 'stores/tracker';
 import { useNow } from '../../composables/useNow';
 import { hours } from '../../lib/format';
+import { TRACKER_SOURCE_OPTIONS } from '../../lib/tracker-source';
 import {
   CAPACITY_PRESETS,
   DEFAULT_HOURS_PER_DAY,
@@ -84,12 +101,13 @@ import {
   presetRange,
   todayIso,
   type CapacityPreset,
+  type CapacityWorklog,
 } from '../../lib/capacity';
 
 defineProps<{ workspaceId: string }>();
 
 const { t } = useI18n();
-const jira = useJira();
+const src = useTrackerSource();
 const nowMs = useNow(60_000);
 const today = computed(() => todayIso(nowMs.value));
 
@@ -102,38 +120,51 @@ const presetOptions = computed(() =>
 
 const range = computed(() => presetRange(preset.value, today.value));
 
-const worklogs = ref<JiraWorklog[]>([]);
+const worklogs = ref<CapacityWorklog[]>([]);
+// The integration+range the worklogs belong to; the logged figure is a skeleton until it
+// matches, never another workspace's (or range's) hours.
+const worklogsFor = ref('');
+const worklogsKey = computed(() => `${src.integration?.id ?? ''}|${range.value.from}|${range.value.to}`);
+const worklogsPending = computed(() => worklogsFor.value !== worklogsKey.value);
 let generation = 0;
 
 async function loadWorklogs(): Promise<void> {
-  if (!jira.integration) return;
+  if (!src.integration) return;
   const mine = ++generation;
+  const key = worklogsKey.value;
   try {
-    const rows = await jira.fetchWorklogs(range.value);
+    const rows = await src.fetchWorklogs(range.value);
     if (mine === generation) worklogs.value = rows;
   } catch {
     // The plan still renders from the estimates; logged time is best-effort.
   }
+  if (mine === generation) worklogsFor.value = key;
 }
+
+const phase = useLoadPhase(() => src.integration === undefined || (src.loading && !src.issues.length));
 
 watch(range, () => void loadWorklogs());
 watch(
-  () => jira.integration?.id,
+  () => src.integration?.id,
   (id) => {
+    // A workspace or source switch: drop the old one's worklogs and any reply still in flight.
+    generation++;
+    worklogs.value = [];
+    worklogsFor.value = '';
     if (id) void loadWorklogs();
   },
   { immediate: true },
 );
 // The 30 s sync tick has no worklog channel, so worklogs are re-read when a tick finishes.
 watch(
-  () => jira.syncing,
+  () => src.syncing,
   (now, before) => {
     if (before && !now) void loadWorklogs();
   },
 );
 
 const report = computed(() =>
-  capacityReport(jira.issues, worklogs.value, {
+  capacityReport(src.issues, worklogs.value, {
     range: range.value,
     today: today.value,
     hoursPerDay: DEFAULT_HOURS_PER_DAY,
@@ -161,6 +192,12 @@ const barWidth = computed(() => `${Math.min(100, Math.round(report.value.summary
   flex-direction: column;
   gap: var(--k-sp-3);
   height: 100%;
+}
+
+.capw__skeleton {
+  display: flex;
+  flex-direction: column;
+  gap: var(--k-sp-2);
 }
 
 .capw__note {

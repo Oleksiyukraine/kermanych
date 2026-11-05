@@ -1,17 +1,23 @@
 import { describe, expect, it } from "vitest";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import {
-  claimTask,
+  claimMinionTask,
+  claimTaskForLaunch,
   createTask,
   deleteTask,
   forceStopTask,
   getTask,
+  listMinionCandidates,
   listTasks,
+  listTasksByIds,
+  listTaskVersions,
   patchTask,
   pushTaskStatus,
   REALTIME_IN_FILTER_MAX,
+  releaseLaunchClaim,
   subscribeTasks,
   tasksFilter,
+  toTask,
 } from "../src/tasks";
 
 type Op = [string, ...unknown[]];
@@ -31,7 +37,7 @@ function fakeClient(...results: Result[]) {
       const builder: Record<string, unknown> = {
         then: (resolve: (v: Result) => unknown) => Promise.resolve(result).then(resolve),
       };
-      for (const op of ["select", "insert", "update", "delete", "eq", "in", "is", "order", "single", "maybeSingle"]) {
+      for (const op of ["select", "insert", "update", "delete", "eq", "in", "is", "or", "order", "limit", "single", "maybeSingle"]) {
         builder[op] = (...args: unknown[]) => {
           q.ops.push([op, ...args]);
           return builder;
@@ -53,12 +59,14 @@ const taskRow = {
   created_by: "u1",
   model: "opus-5",
   prefix: "feature",
-  platform: null,
   kind: null,
   branch: "main",
   worktree: true,
   hidden: false,
   deep_analysis: false,
+  auto_run: false,
+  design: false,
+  finding_kind: null,
   created_at: "2026-08-21T00:00:00.000Z",
   updated_at: "2026-08-21T00:10:00.000Z",
 };
@@ -81,6 +89,8 @@ describe("listTasks", () => {
       worktree: true,
       hidden: false,
       deepAnalysis: false,
+      autoRun: false,
+      design: false,
       createdAt: "2026-08-21T00:00:00.000Z",
       updatedAt: "2026-08-21T00:10:00.000Z",
     });
@@ -109,6 +119,47 @@ describe("listTasks", () => {
   it("throws the postgrest message so the UI can toast an RLS refusal", async () => {
     const { client } = fakeClient({ data: null, error: { message: "permission denied for table tasks" } });
     await expect(listTasks(client, ["p1"])).rejects.toThrow(/permission denied/);
+  });
+});
+
+describe("listTaskVersions", () => {
+  it("reads only id and updated_at of the project set", async () => {
+    const { client, queries } = fakeClient({ data: [{ id: "t1", updated_at: "2026-08-21T00:10:00.000Z" }], error: null });
+    await expect(listTaskVersions(client, ["p1", "p2"])).resolves.toEqual([{ id: "t1", updatedAt: "2026-08-21T00:10:00.000Z" }]);
+    expect(queries[0]!.ops).toEqual([
+      ["select", "id, updated_at"],
+      ["in", "project_id", ["p1", "p2"]],
+    ]);
+  });
+
+  it("asks nothing for an empty project set", async () => {
+    const { client, queries } = fakeClient();
+    await expect(listTaskVersions(client, [])).resolves.toEqual([]);
+    expect(queries).toHaveLength(0);
+  });
+});
+
+describe("listTasksByIds", () => {
+  it("splits the ids into requests of at most 100 and returns every row", async () => {
+    const ids = Array.from({ length: 201 }, (_, i) => `t${i}`);
+    const { client, queries } = fakeClient(
+      { data: [taskRow], error: null },
+      { data: [{ ...taskRow, id: "t100" }], error: null },
+      { data: [{ ...taskRow, id: "t200" }], error: null },
+    );
+    const rows = await listTasksByIds(client, ids);
+    expect(rows.map((t) => t.id)).toEqual(["t1", "t100", "t200"]);
+    const asked = queries.map((q) => (q.ops.find((o) => o[0] === "in") as [string, string, string[]])[2]);
+    expect(asked.map((a) => a.length)).toEqual([100, 100, 1]);
+    expect(asked.flat()).toEqual(ids);
+  });
+
+  it("asks nothing for no ids, and throws the postgrest message", async () => {
+    const none = fakeClient();
+    await expect(listTasksByIds(none.client, [])).resolves.toEqual([]);
+    expect(none.queries).toHaveLength(0);
+    const refused = fakeClient({ data: null, error: { message: "permission denied for table tasks" } });
+    await expect(listTasksByIds(refused.client, ["t1"])).rejects.toThrow(/permission denied/);
   });
 });
 
@@ -273,6 +324,46 @@ describe("deepAnalysis on a task", () => {
   });
 });
 
+// «Дизайн»: a NOT NULL boolean set on insert only. A design card read back as an ordinary one
+// would relaunch as an ordinary agent, without its design folder.
+describe("design on a task", () => {
+  it("maps the column when true", async () => {
+    const { client } = fakeClient({ data: { ...taskRow, design: true }, error: null });
+    expect((await getTask(client, "t1"))!.design).toBe(true);
+  });
+
+  it("sends design:true on create and nothing for an ordinary card", async () => {
+    const { client, queries } = fakeClient({ data: { ...taskRow, design: true }, error: null });
+    await createTask(client, { projectId: "p1", title: "T", prefix: "design", design: true, createdBy: "u1" });
+    expect(queries[0]!.ops[0]).toEqual(["insert", { project_id: "p1", created_by: "u1", title: "T", prefix: "design", design: true }]);
+    const plain = fakeClient({ data: taskRow, error: null });
+    await createTask(plain.client, { projectId: "p1", title: "T", design: false, createdBy: "u1" });
+    expect(plain.queries[0]!.ops[0]).toEqual(["insert", { project_id: "p1", created_by: "u1", title: "T" }]);
+  });
+});
+
+// The card's own branch name: what a backlog card, a teammate's ▶ and «Посіпака» launch under.
+// Lost on the way to the row, the card silently falls back to a model-named branch; a blank
+// edit must clear it, or the operator could never hand the naming back to the model.
+describe("branchSlug on a task", () => {
+  it("is selected and mapped, and absent while the column is null", async () => {
+    const { client, queries } = fakeClient({ data: [{ ...taskRow, branch_slug: "my-login" }, { ...taskRow, id: "t2", branch_slug: null }], error: null });
+    const [named, generated] = await listTasks(client, ["p1"]);
+    const [, columns] = queries[0]!.ops[0] as [string, string];
+    expect(columns.split(", ")).toContain("branch_slug");
+    expect(named!.branchSlug).toBe("my-login");
+    expect(generated).not.toHaveProperty("branchSlug");
+  });
+
+  it("sends a trimmed name on create and patches a blank one as null", async () => {
+    const { client, queries } = fakeClient({ data: taskRow, error: null }, { data: taskRow, error: null });
+    await createTask(client, { projectId: "p1", title: "T", branchSlug: "  my-login ", createdBy: "u1" });
+    expect(queries[0]!.ops[0]).toEqual(["insert", { project_id: "p1", created_by: "u1", title: "T", branch_slug: "my-login" }]);
+    await patchTask(client, "t1", { branchSlug: "  " });
+    expect(queries[1]!.ops[0]).toEqual(["update", { branch_slug: null }]);
+  });
+});
+
 // The reports the api leaves on the card for the «Документація» and «Сесія» tabs. jsonb with a
 // `{}` default: a card no session has reported on yet must read as «no report», not as an empty
 // one, and a write must touch nothing but the two columns.
@@ -280,18 +371,25 @@ describe("session reports on a task", () => {
   const docs = { sessionId: "s1", generatedAt: "2026-10-12T10:00:00.000Z", read: ["README.md"], changed: [{ path: "docs/a.md", added: 3, removed: 1 }] };
   const session = { sessionId: "s1", generatedAt: "2026-10-12T10:00:00.000Z", runtime: "omp", native: false, branch: "feature/x", worktree: true, skills: ["task-spec"] };
 
-  it("is selected", async () => {
-    const { client, queries } = fakeClient({ data: [taskRow], error: null });
-    await listTasks(client, ["p1"]);
-    const [, columns] = queries[0]!.ops[0] as [string, string];
-    expect(columns.split(", ")).toEqual(expect.arrayContaining(["docs_report", "session_report"]));
+  it("the list leaves the two report blobs to getTask and keeps session_report", async () => {
+    const list = fakeClient({ data: [taskRow], error: null });
+    await listTasks(list.client, ["p1"]);
+    const [, listed] = list.queries[0]!.ops[0] as [string, string];
+    expect(listed.split(", ")).toContain("session_report");
+    expect(listed.split(", ")).not.toContain("qa_checklist");
+    expect(listed.split(", ")).not.toContain("docs_report");
+
+    const one = fakeClient({ data: taskRow, error: null });
+    await getTask(one.client, "t1");
+    const [, full] = one.queries[0]!.ops[0] as [string, string];
+    expect(full.split(", ")).toEqual(expect.arrayContaining(["qa_checklist", "docs_report", "session_report"]));
   });
 
-  it("maps stored reports and leaves the empty default absent", async () => {
-    const { client } = fakeClient({ data: [{ ...taskRow, docs_report: docs, session_report: session }, { ...taskRow, id: "t2", docs_report: {}, session_report: {} }], error: null });
-    const [t, t2] = await listTasks(client, ["p1"]);
-    expect(t!.docsReport).toEqual(docs);
-    expect(t!.sessionReport).toEqual(session);
+  it("maps stored reports and leaves the empty default absent", () => {
+    const t = toTask({ ...taskRow, docs_report: docs, session_report: session } as Parameters<typeof toTask>[0]);
+    const t2 = toTask({ ...taskRow, id: "t2", docs_report: {}, session_report: {} } as Parameters<typeof toTask>[0]);
+    expect(t.docsReport).toEqual(docs);
+    expect(t.sessionReport).toEqual(session);
     expect(t2).not.toHaveProperty("docsReport");
     expect(t2).not.toHaveProperty("sessionReport");
   });
@@ -328,9 +426,9 @@ describe("patchTask", () => {
   it("sends only the provided columns, snake-cased", async () => {
     const { client, queries } = fakeClient({ data: taskRow, error: null });
 
-    await patchTask(client, "t1", { title: " New ", description: "  ", platform: "web" });
+    await patchTask(client, "t1", { title: " New ", description: "  ", prefix: "fix" });
 
-    expect(queries[0]!.ops[0]).toEqual(["update", { title: "New", description: null, platform: "web" }]);
+    expect(queries[0]!.ops[0]).toEqual(["update", { title: "New", description: null, prefix: "fix" }]);
     expect(queries[0]!.ops[1]).toEqual(["eq", "id", "t1"]);
   });
 
@@ -346,30 +444,115 @@ describe("patchTask", () => {
   });
 });
 
-describe("claimTask", () => {
-  it("builds the atomic `assignee_id is null` predicate and maps the winner", async () => {
-    const { client, queries } = fakeClient({ data: { ...taskRow, assignee_id: "u2" }, error: null });
+// The launch claim carries the status, so two machines that read the same idle card cannot both
+// start it (docs/specs/2026-10-23-minion-auto-run.md, decision 7).
+describe("claimTaskForLaunch", () => {
+  it("moves the card to queued only while it still has the status the launcher read", async () => {
+    const { client, queries } = fakeClient({ data: { ...taskRow, status: "queued", assignee_id: "u2" }, error: null });
 
-    const t = await claimTask(client, "t1", "u2");
+    const t = await claimTaskForLaunch(client, "t1", "u2", "error");
 
-    expect(queries[0]!.ops[0]).toEqual(["update", { assignee_id: "u2" }]);
-    expect(queries[0]!.ops[1]).toEqual(["eq", "id", "t1"]);
-    expect(queries[0]!.ops[2]).toEqual(["is", "assignee_id", null]);
-    expect(queries[0]!.ops.at(-1)).toEqual(["maybeSingle"]);
-    expect(t!.assigneeId).toBe("u2");
+    expect(queries[0]!.ops).toContainEqual(["update", { status: "queued", assignee_id: "u2" }]);
+    expect(queries[0]!.ops).toContainEqual(["eq", "status", "error"]);
+    // Unassigned or already the caller's: a colleague's card is never taken over.
+    expect(queries[0]!.ops).toContainEqual(["or", "assignee_id.is.null,assignee_id.eq.u2"]);
+    expect(t!.status).toBe("queued");
   });
 
   it("treats zero matched rows as a lost race, not an error", async () => {
-    // This is the exact PostgREST answer for `UPDATE … WHERE id = $1 AND assignee_id IS
-    // NULL` matching nothing: no data, NO error. Anything else here would make the losing
-    // machine report a failure instead of "someone else got it".
+    // The exact PostgREST answer for a guarded UPDATE matching nothing: no data, NO error.
+    // Anything else would make the losing machine report a failure instead of «already started».
     const { client } = fakeClient({ data: null, error: null });
-    await expect(claimTask(client, "t1", "u2")).resolves.toBeUndefined();
+    await expect(claimTaskForLaunch(client, "t1", "u2", "backlog")).resolves.toBeUndefined();
   });
 
   it("still throws a genuine postgrest error", async () => {
     const { client } = fakeClient({ data: null, error: { message: "permission denied for table tasks" } });
-    await expect(claimTask(client, "t1", "u2")).rejects.toThrow(/permission denied/);
+    await expect(claimTaskForLaunch(client, "t1", "u2", "backlog")).rejects.toThrow(/permission denied/);
+  });
+});
+
+describe("releaseLaunchClaim", () => {
+  it("restores the status before freeing the assignee, which the guard refuses while active", async () => {
+    const { client, queries } = fakeClient({ data: null, error: null }, { data: null, error: null });
+    await releaseLaunchClaim(client, "t1", { status: "backlog" });
+    expect(queries.map((q) => q.ops[0])).toEqual([
+      ["update", { status: "backlog" }],
+      ["update", { assignee_id: null }],
+    ]);
+  });
+
+  it("keeps an assignee the card already had", async () => {
+    const { client, queries } = fakeClient({ data: null, error: null });
+    await releaseLaunchClaim(client, "t1", { status: "error", assigneeId: "u2" });
+    expect(queries.map((q) => q.ops[0])).toEqual([["update", { status: "error" }]]);
+  });
+
+  it("stops at a refused status write instead of freeing a card that is still queued", async () => {
+    const { client, queries } = fakeClient({ data: null, error: { message: "only the assignee can change status" } });
+    await expect(releaseLaunchClaim(client, "t1", { status: "backlog" })).rejects.toThrow(/assignee/);
+    expect(queries).toHaveLength(1);
+  });
+});
+
+describe("minion candidates and claim", () => {
+  // Every condition is part of the trust rule: only the caller's own backlog cards that allow
+  // auto-run, never a deep analysis, a design, a Jira/Linear/Plane shadow card, or a colleague's assignment.
+  const predicate = (ops: Op[]) => [
+    ["eq", "status", "backlog"],
+    ["eq", "auto_run", true],
+    ["eq", "created_by", "u1"],
+    ["eq", "deep_analysis", false],
+    ["eq", "design", false],
+    ["is", "jira_key", null],
+    ["is", "linear_key", null],
+    ["is", "plane_key", null],
+    ["or", "assignee_id.is.null,assignee_id.eq.u1"],
+  ].every((op) => ops.some((o) => JSON.stringify(o) === JSON.stringify(op)));
+
+  it("lists the caller's eligible cards oldest first", async () => {
+    const { client, queries } = fakeClient({ data: [{ ...taskRow, auto_run: true }], error: null });
+    const [t] = await listMinionCandidates(client, ["p1", "p2"], "u1");
+    expect(predicate(queries[0]!.ops)).toBe(true);
+    expect(queries[0]!.ops).toContainEqual(["in", "project_id", ["p1", "p2"]]);
+    expect(queries[0]!.ops).toContainEqual(["order", "created_at", { ascending: true }]);
+    expect(t!.autoRun).toBe(true);
+  });
+
+  it("asks nothing for no active project", async () => {
+    const { client, queries } = fakeClient();
+    await expect(listMinionCandidates(client, [], "u1")).resolves.toEqual([]);
+    expect(queries).toHaveLength(0);
+  });
+
+  it("claims under the same predicate and reads a lost race as undefined", async () => {
+    const won = fakeClient({ data: { ...taskRow, status: "queued", assignee_id: "u1", auto_run: true }, error: null });
+    expect((await claimMinionTask(won.client, "t1", "u1"))!.status).toBe("queued");
+    expect(predicate(won.queries[0]!.ops)).toBe(true);
+    expect(won.queries[0]!.ops).toContainEqual(["update", { status: "queued", assignee_id: "u1" }]);
+
+    const lost = fakeClient({ data: null, error: null });
+    await expect(claimMinionTask(lost.client, "t1", "u1")).resolves.toBeUndefined();
+  });
+});
+
+describe("auto-run and finding origin on a task", () => {
+  it("maps both columns, and an unknown finding kind as no finding", async () => {
+    const { client } = fakeClient(
+      { data: { ...taskRow, auto_run: true, finding_kind: "security" }, error: null },
+      { data: { ...taskRow, finding_kind: "rumour" }, error: null },
+    );
+    const t = await getTask(client, "t1");
+    expect(t).toMatchObject({ autoRun: true, findingKind: "security" });
+    expect(await getTask(client, "t1")).not.toHaveProperty("findingKind");
+  });
+
+  it("inserts the finding kind and patches auto_run alone", async () => {
+    const { client, queries } = fakeClient({ data: taskRow, error: null }, { data: taskRow, error: null });
+    await createTask(client, { projectId: "p1", title: "T", autoRun: true, findingKind: "bug", createdBy: "u1" });
+    expect(queries[0]!.ops[0]).toEqual(["insert", { project_id: "p1", created_by: "u1", title: "T", auto_run: true, finding_kind: "bug" }]);
+    await patchTask(client, "t1", { autoRun: false });
+    expect(queries[1]!.ops[0]).toEqual(["update", { auto_run: false }]);
   });
 });
 
@@ -433,7 +616,7 @@ type Binding = { event: string; config: Record<string, unknown> };
 // .on() throws after subscribe(), and removeChannel is the only teardown.
 function fakeRealtime() {
   const bindings: Binding[] = [];
-  const handlers: ((payload: unknown) => void)[] = [];
+  const handlers: { event: string; cb: (payload: unknown) => void }[] = [];
   const states: string[] = [];
   const removed: unknown[] = [];
   const channels: string[] = [];
@@ -444,7 +627,7 @@ function fakeRealtime() {
     on(event: string, config: Record<string, unknown>, cb: (payload: unknown) => void) {
       if (subscribed) throw new Error("cannot .on() after subscribe()");
       bindings.push({ event, config });
-      handlers.push(cb);
+      handlers.push({ event, cb });
       return channel;
     },
     subscribe(cb?: (s: string) => void) {
@@ -471,7 +654,8 @@ function fakeRealtime() {
     channels,
     removed,
     states,
-    emit: (payload: unknown) => handlers.forEach((h) => h(payload)),
+    emit: (payload: unknown) => handlers.filter((h) => h.event === "postgres_changes").forEach((h) => h.cb(payload)),
+    emitSystem: (payload: unknown) => handlers.filter((h) => h.event === "system").forEach((h) => h.cb(payload)),
     setState: (s: string) => stateCb?.(s),
   };
 }
@@ -490,20 +674,25 @@ describe("tasksFilter", () => {
 });
 
 describe("subscribeTasks", () => {
-  it("registers exactly one filtered postgres_changes binding before subscribing", () => {
+  it("registers exactly one filtered postgres_changes binding, light columns only, before subscribing", () => {
     const rt = fakeRealtime();
 
     subscribeTasks(rt.client, ["p1", "p2"], () => {});
 
     expect(rt.channels).toHaveLength(1);
-    expect(rt.bindings).toHaveLength(1);
-    expect(rt.bindings[0]!.event).toBe("postgres_changes");
-    expect(rt.bindings[0]!.config).toEqual({
+    const changes = rt.bindings.filter((b) => b.event === "postgres_changes");
+    expect(changes).toHaveLength(1);
+    const { select, ...config } = changes[0]!.config as { select: string[] };
+    expect(config).toEqual({
       event: "*",
       schema: "public",
       table: "tasks",
       filter: "project_id=in.(p1,p2)",
     });
+    // The payload is the list's row: the same columns listTasks reads, never the two blobs.
+    expect(select).toEqual(expect.arrayContaining(["id", "status", "updated_at", "session_report"]));
+    expect(select).not.toContain("qa_checklist");
+    expect(select).not.toContain("docs_report");
   });
 
   it("omits the filter key entirely past the 100-project cap", () => {
@@ -512,7 +701,22 @@ describe("subscribeTasks", () => {
 
     subscribeTasks(rt.client, many, () => {});
 
-    expect(rt.bindings[0]!.config).toEqual({ event: "*", schema: "public", table: "tasks" });
+    expect(rt.bindings.find((b) => b.event === "postgres_changes")!.config).not.toHaveProperty("filter");
+  });
+
+  it("reports a binding the server refused after SUBSCRIBED as CHANNEL_ERROR", () => {
+    // The server answers the join first and refuses the postgres_changes binding in a system
+    // message; the channel then delivers nothing. A board that believed SUBSCRIBED would go
+    // quietly stale.
+    const rt = fakeRealtime();
+    const states: string[] = [];
+    subscribeTasks(rt.client, ["p1"], () => {}, (s) => states.push(s));
+
+    rt.setState("SUBSCRIBED");
+    rt.emitSystem({ extension: "postgres_changes", status: "ok", message: "Subscribed to PostgreSQL" });
+    rt.emitSystem({ extension: "postgres_changes", status: "error", message: "invalid column for select id" });
+
+    expect(states).toEqual(["SUBSCRIBED", "CHANNEL_ERROR"]);
   });
 
   it("opens no channel for an empty project set and returns a usable no-op", () => {

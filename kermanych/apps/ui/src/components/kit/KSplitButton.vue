@@ -1,7 +1,7 @@
 <template>
   <div ref="rootEl" class="k-split-btn" :class="{ 'k-split-btn--open': open }">
     <!-- The default action: exactly what a plain primary button here would do. -->
-    <KBtn variant="primary" class="k-split-btn__main" :disabled="!!disabled" @click="emit('click')">
+    <KBtn variant="primary" class="k-split-btn__main" :disabled="!!disabled" :loading="!!loading" @click="emit('click')">
       {{ label }}
     </KBtn>
     <!-- The other ways to do it. A separate control rather than a long-press or a hover, so
@@ -9,7 +9,7 @@
     <KBtn
       variant="primary"
       class="k-split-btn__toggle"
-      :disabled="!!disabled"
+      :disabled="!!disabled || !!loading"
       :title="menuLabel"
       :aria-label="menuLabel"
       aria-haspopup="menu"
@@ -72,6 +72,8 @@ const props = defineProps<{
   // a caret, so without this it is an unlabelled control.
   menuLabel: string;
   disabled?: boolean | undefined;
+  // The default action is running: its half spins, the ▾ half is blocked.
+  loading?: boolean | undefined;
 }>();
 
 const emit = defineEmits<{ click: []; select: [value: T] }>();
@@ -210,7 +212,7 @@ watch(
 
 // Open: the ▾ half holds its hover fill, so it is plain which part the menu belongs to.
 .k-split-btn--open .k-split-btn__toggle {
-  background: var(--k-accent-hover);
+  background-color: var(--k-accent-hover);
 }
 
 // Drawn like KChipSelect's caret: a clipped box has no baseline to drift off the label's line.
@@ -243,10 +245,10 @@ watch(
   flex-direction: column;
   gap: 2px;
   padding: var(--k-sp-1);
-  background: var(--k-surface);
+  background: var(--k-grad-raise), var(--k-surface);
   border: 1px solid var(--k-line-strong);
   border-radius: var(--k-r);
-  box-shadow: var(--k-shadow-pop);
+  box-shadow: var(--k-sheen), var(--k-shadow-pop);
   opacity: 0;
   transition: opacity 0.12s ease, transform 0.12s cubic-bezier(0.4, 0, 0.2, 1);
   // Rests 3px toward its trigger, so the menu reads as emerging from the button.

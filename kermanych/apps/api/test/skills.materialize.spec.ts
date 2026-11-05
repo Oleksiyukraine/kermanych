@@ -267,14 +267,21 @@ test("view writes nothing", async () => {
 // from one the repository provides.
 test("view reports the repository's own skill names, including one the library never had", async () => {
   mkdirSync(join(repo, ".omp/skills/repo-only"), { recursive: true });
-  writeFileSync(join(repo, ".omp/skills/repo-only/SKILL.md"), "---\nname: repo-only\ndescription: d\n---\nBody.\n");
+  // A block-scalar description, the shape real skills use: the view carries it collapsed.
+  writeFileSync(
+    join(repo, ".omp/skills/repo-only/SKILL.md"),
+    "---\nname: repo-only\ndescription: |\n  Two lines\n  of description.\n---\nBody.\n",
+  );
   mkdirSync(join(repo, ".omp/skills/extra"), { recursive: true });
   writeFileSync(join(repo, ".omp/skills/extra/SKILL.md"), "---\nname: extra\ndescription: d\n---\nBody.\n");
   const svc = service();
   svc.readSkills = async () => [row({ name: "extra" })];
   const { view, repo: names } = await svc.view("p1", repo);
   expect(Object.keys(names).sort()).toEqual(["extra", "repo-only"]);
-  expect(names["repo-only"]).toBe(join(repo, ".omp/skills/repo-only/SKILL.md"));
+  expect(names["repo-only"]).toEqual({
+    path: join(repo, ".omp/skills/repo-only/SKILL.md"),
+    description: "Two lines of description.",
+  });
   // `extra` is in both, so the library entry carries the shadow; `repo-only` is in neither
   // the defaults nor the rows, so the library does not list it at all.
   expect(view.find((v) => v.name === "extra")?.shadowedByRepo).toBe(join(repo, ".omp/skills/extra/SKILL.md"));

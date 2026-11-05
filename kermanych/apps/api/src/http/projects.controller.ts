@@ -39,7 +39,7 @@ export class ProjectsController {
   @Patch(":id")
   async update(
     @Param("id") id: string,
-    @Body() b: { name?: string; color?: string; previewCommand?: string; apiCommand?: string; carryFiles?: string[]; docFolders?: string[]; docsRequired?: boolean; docsPolicy?: DocsPolicy; defaultBranch?: string; defaultModel?: string; defaultEffort?: ThinkingLevel | ""; conventions?: string },
+    @Body() b: { name?: string; color?: string; carryFiles?: string[]; docFolders?: string[]; docsRequired?: boolean; docsPolicy?: DocsPolicy; defaultBranch?: string; defaultModel?: string; defaultEffort?: ThinkingLevel | ""; conventions?: string },
   ) {
     try {
       return await this.sup.updateProject(id, b);
@@ -160,6 +160,18 @@ export class ProjectsController {
     } catch (err) {
       throw new BadRequestException((err as Error).message);
     }
+  }
+
+  @Get(":id/raw")
+  async raw(@Param("id") id: string, @Query("path") path?: string) {
+    let file: { bytes: Buffer; contentType: string } | null;
+    try {
+      file = await this.sup.projectRaw(id, path ?? "");
+    } catch (err) {
+      throw new BadRequestException((err as Error).message);
+    }
+    if (!file) throw new NotFoundException("file not found");
+    return new StreamableFile(file.bytes, { type: file.contentType, length: file.bytes.length });
   }
 
   @Get(":id/env")

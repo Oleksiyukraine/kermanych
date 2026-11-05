@@ -10,6 +10,7 @@ describe('readTheme', () => {
     expect(readTheme({ getItem: () => 'light' })).toBe('light');
     expect(readTheme({ getItem: () => 'dark' })).toBe('dark');
     expect(readTheme({ getItem: () => 'matrix' })).toBe('matrix');
+    expect(readTheme({ getItem: () => 'hermes' })).toBe('hermes');
   });
 
   it('reads the namespaced key', () => {
@@ -68,12 +69,14 @@ describe('toggleTheme', () => {
     theme.value = initial;
   });
 
-  it('cycles dark → light → matrix → dark', () => {
+  it('cycles dark → light → matrix → hermes → dark', () => {
     theme.value = 'dark';
     toggleTheme();
     expect(theme.value).toBe('light');
     toggleTheme();
     expect(theme.value).toBe('matrix');
+    toggleTheme();
+    expect(theme.value).toBe('hermes');
     toggleTheme();
     expect(theme.value).toBe('dark');
   });

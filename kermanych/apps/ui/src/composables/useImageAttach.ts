@@ -8,18 +8,24 @@ import { fileToImage, type AttachedImage } from '../lib/images';
 export function useImageAttach() {
   const images = ref<AttachedImage[]>([]);
   const error = ref<string | null>(null);
+  // Files still being read (FileReader is async): a send in that window would go out without
+  // them, so hosts keep their send disabled while this is above zero.
+  const reading = ref(0);
 
   async function addFiles(files: Iterable<File | Blob>): Promise<void> {
     // Copy before the first await: a picker passes its live `input.files`, and the
     // caller's synchronous `input.value = ''` empties that FileList mid-loop, so
     // only the first of several picked images would land.
-    for (const file of [...files]) {
-      if (!file.type?.startsWith('image/')) continue;
+    const list = [...files].filter((f) => f.type?.startsWith('image/'));
+    reading.value += list.length;
+    for (const file of list) {
       try {
         images.value = [...images.value, await fileToImage(file)];
         error.value = null;
       } catch (e) {
         error.value = e instanceof Error ? e.message : String(e);
+      } finally {
+        reading.value -= 1;
       }
     }
   }
@@ -48,5 +54,5 @@ export function useImageAttach() {
     error.value = null;
   }
 
-  return { images, error, addFiles, onPaste, onDrop, remove, clear };
+  return { images, error, reading, addFiles, onPaste, onDrop, remove, clear };
 }

@@ -15,7 +15,9 @@
 // a session about a login form, or a failing login test, must not read as an auth failure.
 const CLAUDE_AUTH = /invalid api key|please run \/login|run \/login|oauth|unauthorized|not logged in|not authenticated/i;
 const CLAUDE_BINARY = /native binary not found|executable not found/i;
-const OMP_AUTH = /omp login|not authenticated|unauthorized|invalid api key/i;
+// "No models available. Use /login or set an API key…" is what a signed-out omp prints before
+// it exits (omp 18.2.11): with no provider credentials it has no model to run.
+const OMP_AUTH = /omp login|not authenticated|unauthorized|invalid api key|no models available/i;
 const OMP_BINARY = /spawn omp enoent|enoent.*\bomp\b|\bomp\b.*enoent/i;
 
 export type AuthFailureCode =
@@ -23,6 +25,18 @@ export type AuthFailureCode =
   | "claude_binary_missing"
   | "omp_not_authenticated"
   | "omp_binary_missing";
+
+// A failure whose cause is already known from a structured signal (the SDK's
+// `authentication_failed`, an account with no token), so nothing re-reads its prose.
+export class AuthFailure extends Error {
+  constructor(
+    readonly code: AuthFailureCode,
+    message: string,
+  ) {
+    super(message);
+    this.name = "AuthFailure";
+  }
+}
 
 // The message is classified by backend first, then by cause, so an omp failure never yields a
 // "run claude /login" instruction. `claude` is identified by the SDK's own prefix ("Claude

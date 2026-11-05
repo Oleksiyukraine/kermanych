@@ -7,7 +7,9 @@ import { SessionsController } from "./http/sessions.controller";
 import { FsController } from "./http/fs.controller";
 import { UsageController } from "./http/usage.controller";
 import { SkillsController } from "./http/skills.controller";
+import { SkillImportController } from "./http/skill-import.controller";
 import { ManagementController } from "./http/management.controller";
+import { CukController } from "./http/cuk.controller";
 import { ModelsController } from "./http/models.controller";
 import { RegistryService } from "./registry/registry.service";
 import { WorktreeService } from "./worktree/worktree.service";
@@ -23,12 +25,15 @@ import { CloudSyncService } from "./cloud/cloud-sync.service";
 import { SkillsService } from "./skills/skills.service";
 import { ManagementChatService } from "./management/management-chat.service";
 import { ReleaseNotesService } from "./management/release-notes.service";
+import { CukChatService } from "./cuk/cuk-chat.service";
 import { ModelsService } from "./models/models.service";
 import { RuntimeCheckService } from "./runtime/runtime-check.service";
 import { JiraController } from "./http/jira.controller";
 import { JiraService } from "./jira/jira.service";
 import { LinearController } from "./http/linear.controller";
 import { LinearService } from "./linear/linear.service";
+import { PlaneController } from "./http/plane.controller";
+import { PlaneService } from "./plane/plane.service";
 import { SlackController } from "./http/slack.controller";
 import { SlackService } from "./slack/slack.service";
 import { SlackReleaseNotesService } from "./slack/slack-release-notes.service";
@@ -37,15 +42,29 @@ import { DocsController } from "./http/docs.controller";
 import { ManagementMcpController } from "./http/management-mcp.controller";
 import { ManagementMcpService } from "./management/management-mcp.service";
 import { JiraToolsService } from "./jira/jira-tools.service";
+import { PlaneToolsService } from "./plane/plane-tools.service";
 import { TerminalService } from "./terminal/terminal.service";
 import { TerminalGateway } from "./ws/terminal.gateway";
 import { NativeSessionService } from "./native/native-session.service";
 import { NativeController } from "./http/native.controller";
 import { BrowserMcpController } from "./http/browser-mcp.controller";
 import { BrowserMcpService } from "./browser/browser-mcp.service";
+import { MachineController } from "./http/machine.controller";
+import { MachineResourcesService } from "./machine/machine-resources.service";
+import { WatchdogService } from "./machine/watchdog.service";
+import { MinionController } from "./http/minion.controller";
+import { TesterController } from "./http/tester.controller";
+import { MinionService } from "./minion/minion.service";
+import { BranchNameService } from "./supervisor/branch-name.service";
+import { VoiceController } from "./http/voice.controller";
+import { VoiceService } from "./voice/voice.service";
+import { DeviceService } from "./device/device.service";
+import { DEVICE_API } from "./device/device.contract";
+import { DeviceController } from "./http/device.controller";
+import { DeviceGateway } from "./ws/device.gateway";
 
 @Module({
-  controllers: [AuthController, ProjectsController, SessionsController, FsController, UsageController, CloudController, SkillsController, ManagementController, ManagementMcpController, ModelsController, JiraController, LinearController, SlackController, AccountController, DocsController, NativeController, BrowserMcpController],
+  controllers: [AuthController, ProjectsController, SessionsController, FsController, UsageController, CloudController, SkillsController, SkillImportController, ManagementController, ManagementMcpController, CukController, ModelsController, JiraController, LinearController, PlaneController, SlackController, AccountController, DocsController, NativeController, BrowserMcpController, MachineController, MinionController, TesterController, VoiceController, DeviceController],
   providers: [
     RegistryService, WorktreeService, SupervisorService, PreviewService, EnvFileService, EventsGateway,
     UsageService,
@@ -60,18 +79,32 @@ import { BrowserMcpService } from "./browser/browser-mcp.service";
     // this check exists to undo.
     RuntimeCheckService,
     // The Менеджмент assistant. Resolves the scoped workspace's local repo paths
-    // (RegistryService), drives its own agent children, and hands each child the Jira tools
-    // through ManagementMcpService. It deliberately knows nothing about SupervisorService —
+    // (RegistryService), drives its own agent children, and hands each child the tracker
+    // tools through ManagementMcpService. It deliberately knows nothing about SupervisorService —
     // this chat has no session, branch or worktree.
     ManagementChatService,
-    // The assistant's live Jira tools (JiraToolsService, over JiraService under the acting
-    // user's own token) served as MCP to the chat's children, one bearer secret per child.
+    // The assistant's live tracker tools — Jira's (JiraToolsService over JiraService) and
+    // Plane's (PlaneToolsService over PlaneService), each under the acting user's own token —
+    // served together as MCP to the chat's children, one bearer secret per child.
     JiraToolsService,
+    PlaneToolsService,
     ManagementMcpService,
+    // ЦУК, the console behind the avatar (docs/specs/2026-11-04-cuk-control-console.md): one
+    // tool-less child per user on the same chat pool as the Менеджмент assistant. Knows only
+    // the runtime preference (RegistryService) and the renice (MachineResourcesService).
+    CukChatService,
     // The Release Notes generator: one one-shot omp child per request, reading the bound
     // repo's git history through { RegistryService, WorktreeService }. Like the chat it
     // knows nothing about SupervisorService — a generation has no session and no worktree.
     ReleaseNotesService,
+    // Names a new agent's branch from its task (docs/specs/2026-10-26-branch-name-from-task.md):
+    // one tool-less one-shot child on the runtime's fast model. The supervisor depends on it;
+    // it knows nothing back, only the runtime preference (RegistryService).
+    BranchNameService,
+    // The voice conversation (docs/specs/2026-11-02-voice-conversation.md): the operator's OpenAI
+    // key (RegistryService) and the SDP exchange with GPT-Live. The bridge to the agent runs in
+    // the window, through the same /sessions endpoints typed text uses.
+    VoiceService,
     // Dependency direction, stated once: CloudSyncService → { SupervisorService,
     // RegistryService, AuthService }. The supervisor never knows the mirror exists — it is
     // a pure `events$` subscriber, like EventsGateway.
@@ -84,6 +117,11 @@ import { BrowserMcpService } from "./browser/browser-mcp.service";
     // (RegistryService), Linear HTTP under the acting user, mirror writes under their JWT,
     // and the same SupervisorService.createSessionFromTask launch path.
     LinearService,
+    // The Plane integration engine: the Jira precedent over Plane's REST v1 — per-user API
+    // keys (RegistryService), Plane HTTP under the acting user within Plane's 60-requests-a-
+    // minute budget, mirror writes under their JWT, and the same
+    // SupervisorService.createSessionFromTask launch path.
+    PlaneService,
     // The Slack documentation bot: per-user Slack tokens (RegistryService), Socket Mode
     // connections dialled OUT from this machine (the api binds 127.0.0.1, so Slack cannot
     // call in), retrieval and the integration row under the operator's JWT
@@ -110,6 +148,25 @@ import { BrowserMcpService } from "./browser/browser-mcp.service";
     // bearer per session; the supervisor and NativeSessionService hand its binding to each
     // launch. The browser itself is the desktop app's (`bootstrap({ browser })`).
     BrowserMcpService,
+    // The machine resource profile (docs/specs/2026-10-21-machine-resource-profile.md): this
+    // machine's limits and consent (RegistryService), and the memory watchdog over the agent
+    // trees the supervisor tracks. The supervisor depends on both; neither knows it, so its
+    // alerts reach the UI through the supervisor's `events$` like every other event.
+    MachineResourcesService,
+    WatchdogService,
+    // «Посіпака» (docs/specs/2026-10-23-minion-auto-run.md): the poll that takes this user's own
+    // auto-run cards, and the machine's cap, pause and activated projects. It drives the
+    // supervisor (launchMinion) and counts its runs' results (minionResult$); the supervisor
+    // never knows it, and its `minion_update` rides the supervisor's `events$` to the socket.
+    MinionService,
+    // The session's virtual device (docs/specs/2026-11-03-mobile-device-preview.md): clones of the
+    // machine's iOS simulators / AVDs, booted for the preview's `device` step. PreviewService,
+    // BrowserMcpService and the supervisor depend on the DeviceApi interface under DEVICE_API, so
+    // their specs pass a fake; DeviceService knows none of them. Its `/device` socket.io
+    // namespace streams the screen and takes the operator's input in both builds.
+    DeviceService,
+    { provide: DEVICE_API, useExisting: DeviceService },
+    DeviceGateway,
     // Global by design: the api binds 127.0.0.1 but was previously drivable by
     // anything on the machine, including GET /fs/list (arbitrary local directory
     // enumeration). Opt out per route with @Public(), never per module.

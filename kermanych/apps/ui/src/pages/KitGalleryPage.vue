@@ -77,6 +77,7 @@
         <KIconButton :title="t('kit.gallery.iconTip.archive')">⤓</KIconButton>
         <KIconButton :title="t('kit.gallery.iconTip.delete')">✕</KIconButton>
         <KIconButton active :title="t('kit.gallery.iconTip.previewActive')">◼</KIconButton>
+        <KFullscreenButton :on="galleryFullscreen" @click="galleryFullscreen = !galleryFullscreen" />
       </div>
       <div class="kit__caption mono">
         {{ t('kit.gallery.cap.actionButtons') }}
@@ -329,10 +330,8 @@
            hides it whenever the labels are on screen. Passing one would document a
            combination the app never renders. -->
       <div class="kit__sidebar">
-        <KNavItem :label="t('kit.gallery.nav.active')" :count="3" :active="navActive === 'active'" @click="navActive = 'active'" />
-        <KNavItem :label="t('kit.gallery.nav.waiting')" :count="2" :active="navActive === 'waiting'" @click="navActive = 'waiting'" />
+        <KNavItem :label="t('kit.gallery.nav.agents')" :count="3" :active="navActive === 'agents'" @click="navActive = 'agents'" />
         <KNavItem :label="t('kit.gallery.nav.completed')" :count="12" :active="navActive === 'completed'" @click="navActive = 'completed'" />
-        <KNavItem :label="t('kit.gallery.nav.errors')" :count="1" :active="navActive === 'errors'" @click="navActive = 'errors'" />
         <KNavItem :label="t('kit.gallery.nav.tasks')" :count="5" :active="navActive === 'tasks'" @click="navActive = 'tasks'" />
       </div>
       <div class="kit__caption mono">
@@ -347,7 +346,7 @@
         />
         <KNavItem
           label="Integrations"
-          hint="Linear, Jira, Slack"
+          hint="Linear, Jira, Plane, Slack"
           :active="navStacked === 'integrations'"
           @click="navStacked = 'integrations'"
         />
@@ -422,22 +421,63 @@
         />
       </div>
       <div class="kit__caption mono">{{ t('kit.gallery.cap.sessionDeep') }}</div>
+
+      <!-- DESIGN — a «Дизайн» session (KDesignMark), beside the analysis mark for the same reason. -->
+      <div class="kit__cards">
+        <KSessionCard
+          branch="design/orders-list" :title="t('kit.gallery.sessionCard.designTitle')" :time="t('kit.gallery.sessionCard.designTime')"
+          status="tool" :status-line="t('kit.gallery.sessionCard.designStatus')" model="opus-5" harness="managed" design
+        />
+      </div>
+      <div class="kit__caption mono">{{ t('kit.gallery.cap.sessionDesign') }}</div>
+
+      <!-- «ПОСІПАКА» — a session the minion runs (KMinionMark), one whose run stopped on a
+           choice for the operator (KDecisionMark, the reason in its tooltip), and one that found
+           nothing to change (KNotNeededMark, muted, the evidence in its tooltip). -->
+      <div class="kit__cards">
+        <KSessionCard
+          branch="fix/stale-token-log" :title="t('kit.gallery.sessionCard.minionTitle')" :time="t('kit.gallery.sessionCard.minionTime')"
+          status="tool" :status-line="t('kit.gallery.sessionCard.minionStatus')" model="opus-5" harness="managed" minion
+          :usage="{ input: 4300, output: 1600, cacheRead: 72000, cacheWrite: 6100, cost: 0.27 }"
+        />
+        <KSessionCard
+          branch="feature/date-format" :title="t('kit.gallery.sessionCard.decisionTitle')" :time="t('kit.gallery.sessionCard.decisionTime')"
+          status="in_review" :status-line="t('kit.gallery.sessionCard.decisionStatus')" model="opus-5" harness="managed" minion
+          :needs-decision="t('kit.gallery.sessionCard.decisionReason')"
+        />
+        <KSessionCard
+          branch="fix/legacy-cache-flag" :title="t('kit.gallery.sessionCard.notNeededTitle')" :time="t('kit.gallery.sessionCard.notNeededTime')"
+          status="done" :status-line="t('kit.gallery.sessionCard.notNeededStatus')" model="opus-5" harness="managed" minion
+          :not-needed="t('kit.gallery.sessionCard.notNeededReason')"
+        />
+      </div>
+      <div class="kit__caption mono">{{ t('kit.gallery.cap.sessionMinion') }}</div>
     </section>
 
     <!-- kanban -->
     <section class="kit__section">
       <div class="kit__label">{{ t('kit.gallery.sec.kanban') }}</div>
       <div class="kit__kanban">
-        <KKanbanColumn :label="t('kit.gallery.kanbanCol.backlog')" :count="2">
+        <KKanbanColumn :label="t('kit.gallery.kanbanCol.backlog')" :count="3">
           <KKanbanCard :title="t('kit.gallery.kanbanCard.keychainTitle')" branch="feature/keychain-rotate" project="Backend-core" :time="t('kit.gallery.kanbanCard.keychainTime')" status="backlog" :assignee="{ name: 'oleksii-motornyi' }" />
           <KKanbanCard :title="t('kit.gallery.kanbanCard.pathTitle')" branch="chore/path-ellipsis" project="FE-kit" :time="t('kit.gallery.kanbanCard.pathTime')" status="backlog" />
+          <KKanbanCard :title="t('kit.gallery.kanbanCard.autoTitle')" branch="chore/billing-dead-code" project="Backend-core" :time="t('kit.gallery.kanbanCard.autoTime')" status="backlog" auto-run />
         </KKanbanColumn>
         <KKanbanColumn :label="t('kit.gallery.kanbanCol.inProgress')" :count="1">
           <KKanbanCard :title="t('kit.gallery.kanbanCard.rateTitle')" branch="feature/rate-limit" project="Backend-core" :time="t('kit.gallery.kanbanCard.rateTime')" status="thinking" :assignee="{ name: t('kit.gallery.kanbanCard.assignee'), avatarUrl: sampleAvatar }" deep-analysis />
         </KKanbanColumn>
+        <KKanbanColumn :label="t('kit.gallery.kanbanCol.review')" :count="1">
+          <KKanbanCard :title="t('kit.gallery.sessionCard.decisionTitle')" branch="feature/date-format" project="FE-kit" :time="t('kit.gallery.sessionCard.decisionTime')" status="in_review" :assignee="{ name: 'oleksii-motornyi' }" auto-run :needs-decision="t('kit.gallery.sessionCard.decisionReason')" />
+        </KKanbanColumn>
+        <KKanbanColumn :label="t('kit.gallery.kanbanCol.done')" :count="1">
+          <KKanbanCard :title="t('kit.gallery.sessionCard.notNeededTitle')" branch="fix/legacy-cache-flag" project="Backend-core" :time="t('kit.gallery.sessionCard.notNeededTime')" status="done" :assignee="{ name: 'oleksii-motornyi' }" :not-needed="t('kit.gallery.sessionCard.notNeededReason')" />
+        </KKanbanColumn>
       </div>
       <div class="kit__caption mono">
         {{ t('kit.gallery.cap.kanban') }}
+      </div>
+      <div class="kit__caption mono">
+        {{ t('kit.gallery.cap.kanbanMinion') }}
       </div>
     </section>
 
@@ -456,6 +496,19 @@
       <div class="kit__label">{{ t('kit.gallery.sec.composer') }}</div>
       <!-- The Хелпери picker lives inside the composer: press `/` on the empty field, or the
            `/` button in the controls row. -->
+      <!-- The voice conversation's bar sits right above the composer of the session it is bound to;
+           🎤 in the controls row starts and ends it. -->
+      <KVoiceBar
+        v-if="voiceSample"
+        phase="live"
+        activity="hearing"
+        :caption="{ who: 'operator', text: 'Давай другий варіант, і додай тест на порожній список' }"
+        :mic-level="0.55"
+        :muted="false"
+        :elapsed-ms="252_000"
+        @mute="() => {}"
+        @end="voiceSample = false"
+      />
       <KComposer
         v-model="composerDraft"
         :model="composerModel"
@@ -467,6 +520,17 @@
         @send="() => {}"
         @effort="(level) => (composerEffort = level)"
         @set-model="(p) => (composerModel = p.model)"
+        :voice="true"
+        :voice-active="voiceSample"
+        @voice="voiceSample = !voiceSample"
+      />
+      <!-- Voice dictation sits under a task popup's description: the toggle, then the state, the
+           mic level and the draft of the phrase being spoken. -->
+      <KDictation
+        :state="dictateSample ? 'live' : 'idle'"
+        caption="Додай у BoardPage кнопку експорту в CSV, використай papaparse"
+        :level="0.4"
+        @toggle="dictateSample = !dictateSample"
       />
     </section>
 
@@ -483,6 +547,76 @@
       <div class="kit__caption mono">
         {{ t('kit.gallery.cap.diff') }}
       </div>
+    </section>
+
+    <!-- view mode switch — KDiffView / KFileView header controls for Markdown, HTML and PDF.
+         Local state here, so trying it out never changes the viewers' remembered choice. -->
+    <section class="kit__section">
+      <div class="kit__label">{{ t('kit.gallery.sec.viewMode') }}</div>
+      <div class="kit__row">
+        <KIconButton
+          :title="galleryDiffOn ? t('kit.diff.hideDiff') : t('kit.diff.showDiff')"
+          :active="galleryDiffOn"
+          :aria-pressed="galleryDiffOn"
+          @click="galleryDiffOn = !galleryDiffOn"
+        ><KIcon class="kit__view-icon" name="viewDiff" /></KIconButton>
+        <span class="kit__view-sep" aria-hidden="true"></span>
+        <KViewModeToggle v-model="galleryViewMode" />
+      </div>
+      <!-- No storage-key: dragging the sample's divider leaves the viewers' split alone. -->
+      <KSplitPanes
+        class="kit__view-frame"
+        :show="galleryViewMode === 'source' ? 'start' : galleryViewMode === 'preview' ? 'end' : 'both'"
+      >
+        <template #start>
+          <pre class="kit__view-source mono">{{ viewModeSample }}</pre>
+        </template>
+        <template #end>
+          <KDocPreview path="docs/specs/view-mode.md" :load="loadViewModeSample" :text="viewModeSample" />
+        </template>
+      </KSplitPanes>
+      <div class="kit__caption mono">
+        {{ t('kit.gallery.cap.viewMode') }}
+      </div>
+    </section>
+
+    <!-- async states — README «Design → Async states» -->
+    <section class="kit__section">
+      <div class="kit__label">{{ t('kit.gallery.sec.async') }}</div>
+      <div class="kit__row">
+        <KBtn variant="primary" loading>{{ t('kit.gallery.btn.launch') }}</KBtn>
+        <KIconButton loading :title="t('kit.gallery.iconTip.run')">▶</KIconButton>
+        <KChipSelect model-value="high" :options="asyncChipOptions" icon="⚡" :title="t('kit.composer.effort')" loading placement="down" />
+        <KCheckbox :model-value="true" :label="t('kit.gallery.async.checkbox')" loading />
+        <KToggle :options="['omp', 'claude']" model-value="claude" loading />
+      </div>
+      <div class="kit__row kit__row--fields" style="margin-top: var(--k-sp-3)">
+        <KSelect :label="t('kit.gallery.async.select')" model-value="" :options="[]" :placeholder="t('kit.gallery.async.selectPlaceholder')" loading />
+      </div>
+      <div class="kit__caption mono">{{ t('kit.gallery.cap.asyncControls') }}</div>
+
+      <div class="kit__async-grid" style="margin-top: var(--k-sp-3)">
+        <KSkeleton variant="rows" :rows="3" />
+        <KSkeleton variant="card" :rows="2" />
+        <KSkeleton variant="lines" :rows="3" />
+        <div class="kit__row">
+          <KSkeleton variant="avatar" />
+          <KSkeleton variant="line" width="120px" />
+          <KSkeleton variant="block" width="96px" height="48px" />
+        </div>
+      </div>
+      <div class="kit__caption mono">{{ t('kit.gallery.cap.asyncSkeleton') }}</div>
+
+      <div class="kit__async-grid" style="margin-top: var(--k-sp-3)">
+        <KSessionCard branch="feature/add-loading-states" time="2 хв" status="thinking" pending />
+        <KKanbanCard title="Прелоадери" branch="feature/add-loading-states" project="kermanych" time="2 хв" status="thinking" :assignee="null" pending />
+      </div>
+      <div class="kit__caption mono">{{ t('kit.gallery.cap.asyncPending') }}</div>
+
+      <div class="kit__async-bar">
+        <KProgressBar :active="true" />
+      </div>
+      <div class="kit__caption mono">{{ t('kit.gallery.cap.asyncBar') }}</div>
     </section>
   </main>
 </template>
@@ -523,7 +657,19 @@ import KThoughtToggle from 'components/kit/KThoughtToggle.vue';
 import KTabs from 'components/kit/KTabs.vue';
 import KSubNav from 'components/kit/KSubNav.vue';
 import KComposer from 'components/kit/KComposer.vue';
+import KVoiceBar from 'components/kit/KVoiceBar.vue';
+import KDictation from 'components/kit/KDictation.vue';
+import KChipSelect from 'components/kit/KChipSelect.vue';
+import KCheckbox from 'components/kit/KCheckbox.vue';
+import KSkeleton from 'components/kit/KSkeleton.vue';
+import KProgressBar from 'components/kit/KProgressBar.vue';
 import KDiffView from 'components/kit/KDiffView.vue';
+import KDocPreview from 'components/kit/KDocPreview.vue';
+import KIcon from 'components/kit/KIcon.vue';
+import KFullscreenButton from 'components/kit/KFullscreenButton.vue';
+import KViewModeToggle from 'components/kit/KViewModeToggle.vue';
+import KSplitPanes from 'components/kit/KSplitPanes.vue';
+import type { ViewMode } from '../lib/doc-preview';
 import type { FileDiff } from '../lib/api';
 import type { LaunchMode } from '../lib/native-session';
 
@@ -542,7 +688,7 @@ const subNavItems = [
   { value: 'risks', label: 'Risk Registry' },
   { value: 'releases', label: 'Release Notes' },
 ];
-const navActive = ref('active');
+const navActive = ref('agents');
 const navStacked = ref('skills');
 const detailTab = ref('log');
 const detailTabs = [
@@ -551,6 +697,10 @@ const detailTabs = [
   { value: 'session', label: t('kit.gallery.detailTab.session') },
 ];
 const composerDraft = ref('');
+// The voice bar sample: 🎤 in the composer below shows and hides it, «Завершити» hides it.
+const voiceSample = ref(true);
+// The dictation sample: its own toggle flips it between idle and listening.
+const dictateSample = ref(true);
 // The gallery has no session behind the chip, so the pick is held locally — the point here is
 // that the menu opens upward inside the row and reports the level it landed on.
 const composerEffort = ref<ThinkingLevel>('high');
@@ -582,6 +732,15 @@ const diffSample: FileDiff = {
   binary: false,
   truncated: false,
 };
+const galleryDiffOn = ref(true);
+// The action row's full-screen sample: a toggle, so both of its drawn states show.
+const galleryFullscreen = ref(false);
+const galleryViewMode = ref<ViewMode>('split');
+const viewModeSample = t('kit.gallery.viewModeSample');
+// KDocPreview reads images and the body through `load`; the sample has neither to fetch.
+function loadViewModeSample(): Promise<Blob> {
+  return Promise.resolve(new Blob([viewModeSample], { type: 'text/markdown' }));
+}
 const thoughtOpen = ref(false);
 // One row per harness mark, then the last row, which deliberately carries neither harness,
 // model nor usage: an agent whose turns were never counted drops the accounting line rather
@@ -834,6 +993,11 @@ const splitItems = [
   { value: 'task', label: t('agents.board.newTaskModes.task'), caption: t('agents.board.newTaskModes.taskCaption'), icon: 'plus' as const },
   { value: 'deepAnalysis', label: t('agents.board.newTaskModes.deepAnalysis'), caption: t('agents.board.newTaskModes.deepAnalysisCaption'), icon: 'analysis' as const },
 ];
+// The «Async states» chip sample: the composer's effort ladder, frozen mid-save.
+const asyncChipOptions = [
+  { value: 'medium', label: t('kit.gallery.async.chipMedium') },
+  { value: 'high', label: t('kit.gallery.async.chipHigh') },
+];
 // The gallery panels carry the real detail toolbar, so it drives a real command here too
 // — a showcase with a dead button showcases the wrong thing.
 const galleryExpandAll = ref<ExpandAllCommand>(EXPAND_ALL_NONE);
@@ -930,10 +1094,49 @@ function onPanelEffort(level: ThinkingLevel) { lastAction.value = `effort: ${lev
   }
 }
 
+// Same sizing as KDiffView's header: the drawn icon at the icon-button's step, a hairline
+// between the ± and the three-way toggle.
+.kit__view-icon { --k-icon-size: var(--k-icon-md); }
+.kit__view-sep {
+  width: 1px;
+  height: 18px;
+  background: var(--k-line-strong);
+}
+.kit__view-frame {
+  height: 220px;
+  margin-top: var(--k-sp-3);
+  border: 1px solid var(--k-line-strong);
+  border-radius: var(--k-r);
+  overflow: hidden;
+}
+.kit__view-source {
+  margin: 0;
+  padding: var(--k-sp-3);
+  overflow: auto;
+  font-size: var(--k-fs-xs);
+  line-height: 18px;
+  color: var(--k-text);
+  background: var(--k-bg);
+}
 .kit__caption {
   margin-top: 14px;
   font-size: 11px;
   color: var(--k-muted);
+}
+
+.kit__async-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: var(--k-sp-4);
+  align-items: start;
+}
+
+// The real bar sits along the header's bottom edge; here a framed strip stands in for it.
+.kit__async-bar {
+  position: relative;
+  height: 34px;
+  margin-top: var(--k-sp-3);
+  border: 1px solid var(--k-line);
 }
 
 .kit__status {

@@ -18,11 +18,13 @@
 // rows here; it is its own top-nav screen now (lib/ai-team.ts, pages/AiTeamPage.vue), so
 // nothing about agents, triggers or the skill library is registered below any more — the
 // pure merge those panels still share lives on in this file. Nothing here is a
-// placeholder: harness paths, provider API keys, spend caps, a parallel agent limit, a
-// context-warning threshold and remappable keys have no storage, no endpoint and no
-// column anywhere in the repo, so they get no panel.
+// placeholder: harness paths, provider API keys for the agents, spend caps, a context-warning
+// threshold and remappable keys have no storage, no endpoint and no column anywhere in the repo,
+// so they get no panel. The parallel agent limit does: it is part of «Ресурси машини», stored
+// per machine by the api (`/machine/resources`); so does the voice conversation's OpenAI key
+// («Голос», stored per machine by the api, `/voice/key`).
 
-import type { AgentDef, EnvEntry, SkillView } from '@kermanych/core';
+import { DESIGN_SAVE_AGENT_ID, DESIGNER_AGENT_ID, MINION_AGENT_ID, PLATFORMS, TESTER_AGENT_ID, type AgentDef, type EnvEntry, type MachineResources, type Platform, type RepoSkill, type ResourceLimits, type ResourcesUpdate, type SkillView } from '@kermanych/core';
 import type { AiAgentSkill, TriggerSource } from '@kermanych/cloud';
 
 export type SettingsScope = 'project' | 'workspace' | 'app';
@@ -44,7 +46,7 @@ export const SETTINGS_SCOPES: readonly SettingsScope[] = ['project', 'workspace'
 export const SETTINGS_CATEGORIES: readonly SettingsCategory[] = [
   { key: 'project-basics', scope: 'project' },
   { key: 'project-git', scope: 'project' },
-  { key: 'project-commands', scope: 'project' },
+  { key: 'project-files', scope: 'project' },
   { key: 'project-defaults', scope: 'project' },
   { key: 'project-env', scope: 'project' },
   { key: 'project-danger', scope: 'project', danger: true },
@@ -52,8 +54,11 @@ export const SETTINGS_CATEGORIES: readonly SettingsCategory[] = [
   { key: 'workspace-members', scope: 'workspace' },
   { key: 'workspace-danger', scope: 'workspace', danger: true },
   { key: 'app-general', scope: 'app' },
+  { key: 'app-notifications', scope: 'app' },
   { key: 'app-keymap', scope: 'app' },
   { key: 'app-runtime', scope: 'app' },
+  { key: 'app-voice', scope: 'app' },
+  { key: 'app-resources', scope: 'app' },
   { key: 'app-account', scope: 'app' },
 ];
 
@@ -75,6 +80,16 @@ export function settingsSection(key: unknown): SettingsCategory {
 export function settingsScopeEntry(scope: SettingsScope): SettingsCategory {
   return SETTINGS_CATEGORIES.find((c) => c.scope === scope) ?? settingsSection(undefined);
 }
+
+/**
+ * The project platform picker's choices, shared by the «Новий проєкт» modal and Settings →
+ * Проєкт → «Основне» (docs/specs/2026-11-03-session-browser-preview.md, decision 9). `''` is
+ * «Не визначено» (NULL in the cloud), listed last and the default for a new project.
+ */
+export const PLATFORM_CHOICES: readonly { value: Platform | ''; labelKey: string }[] = [
+  ...PLATFORMS.map((p) => ({ value: p, labelKey: `settings.project.platformChoice.${p}` })),
+  { value: '', labelKey: 'settings.project.platformChoice.none' },
+];
 
 /**
  * One row of the assignment board: an agent, what this project gave it, and what that
@@ -127,7 +142,7 @@ export function assignmentRows(
   assignments: readonly AiAgentSkill[],
   view: readonly SkillView[],
   bodyBytes: Readonly<Record<string, number>>,
-  repo: Readonly<Record<string, string>>,
+  repo: Readonly<Record<string, RepoSkill>>,
 ): AssignmentRow[] {
   const byName = new Map(view.map((v) => [v.name, v]));
   return agents
@@ -152,7 +167,7 @@ export function assignmentRows(
         // `valueOf` carry capitals and so cannot be skill names at all; `constructor` is the
         // one member of the prototype that can.) The api-side mirror of this rule is safe for
         // free because it reads a Map (assignedForNames).
-        const repoPath = Object.hasOwn(repo, r.skillName) ? repo[r.skillName] : undefined;
+        const repoPath = Object.hasOwn(repo, r.skillName) ? repo[r.skillName]!.path : undefined;
         // A broken name contributes no bytes and counts as measured: there is no body to
         // pay for, so the total stays an honest figure rather than an open question.
         if (!hit && !repoPath) return { name: r.skillName, broken: true };
@@ -176,21 +191,43 @@ export function assignmentRows(
 }
 
 /**
+ * WHAT A SKILL SEQUENCE CAN STILL ADD: the resolved library's names in its order, then the names
+ * only the checkout defines, alphabetically (spec 2026-10-22-skill-import, decision 2). Both are
+ * deliverable — `assignedForNames` reads the repository's file for the latter — and anything
+ * else would reach the launcher as `missing`. A name already in the sequence is not offered.
+ */
+export function sequenceCandidates(
+  view: readonly SkillView[],
+  repo: Readonly<Record<string, RepoSkill>>,
+  taken: readonly string[],
+): { name: string; repoOnly: boolean }[] {
+  const library = new Set(view.map((v) => v.name));
+  const used = new Set(taken);
+  const repoOnly = Object.keys(repo)
+    .filter((name) => !library.has(name))
+    .sort((a, b) => a.localeCompare(b));
+  return [
+    ...view.map((v) => ({ name: v.name, repoOnly: false })),
+    ...repoOnly.map((name) => ({ name, repoOnly: true })),
+  ].filter((c) => !used.has(c.name));
+}
+
+/**
  * WHERE AN ASSIGNED SKILL'S TEXT COMES FROM, as one badge.
  *
  * `shadowedByRepo` is checked BEFORE `source`, and that order is the whole point.
- * `SkillView.source` is `'default' | 'project'` with no repository value, so the endpoint
- * reports a skill the repository provides as `source: 'project'` (SkillsService.view /
+ * `SkillView.source` has no repository value (it is "default" or the owning scope), so the
+ * endpoint reports a skill the repository provides as `source: 'project'` (SkillsService.view /
  * assignedForNames, `hit?.source ?? "project"`). Reading `source` first would tell the
  * operator the project owns a text the repository actually supplies — and the repository
  * always wins the name.
  */
-export type AssignmentBadge = { kind: 'default' | 'project' | 'repo' | 'broken' };
+export type AssignmentBadge = { kind: SkillView['source'] | 'repo' | 'broken' };
 
 export function assignmentBadge(skill: AssignedSkill): AssignmentBadge {
   if (skill.broken) return { kind: 'broken' };
   if (skill.shadowedByRepo) return { kind: 'repo' };
-  return { kind: skill.source === 'default' ? 'default' : 'project' };
+  return { kind: skill.source ?? 'project' };
 }
 
 /**
@@ -198,10 +235,10 @@ export function assignmentBadge(skill: AssignedSkill): AssignmentBadge {
  * the instruction and is therefore paid for on every one of that agent's turns, unlike a
  * library skill the agent may never take.
  *
- * 8 KiB is roughly two thousand tokens — enough to hold both of Kermanych's own defaults
- * and a project skill or two without a word of complaint, and past it the block is a
- * material share of a short task's budget. It is a warning and nothing else: no write is
- * blocked, because the operator may well mean it.
+ * 8 KiB is roughly two thousand tokens — enough to hold both harness skills
+ * (`kermanych-session`, `kermanych-pull-request`) and a project skill or two without a word
+ * of complaint, and past it the block is a material share of a short task's budget. It is a
+ * warning and nothing else: no write is blocked, because the operator may well mean it.
  */
 export const ASSIGNED_BYTES_WARN = 8 * 1024;
 
@@ -276,14 +313,22 @@ export function triggerActionOptions(source: TriggerSource): { value: 'prompt' |
 /**
  * THE AGENTS A TRIGGER CAN RUN, derived from the registry rather than listed.
  *
- * The filter is the presence of an `instruction`, which is exactly what separates the four
- * agents SupervisorService.runTriggerAgent can start from `finish` and `summary`: those are
+ * The filter is the presence of an `instruction`, which is exactly what separates the agents
+ * SupervisorService.runTriggerAgent can start from `finish` and `summary`: those are
  * automations with no model and no session of their own, and naming one produces the error
  * notice «агента … не існує» and nothing else. Same filter as `assignmentRows`, and for the
- * same reason — a seventh agent must not be able to drift out of this list.
+ * same reason — a new agent must not be able to drift out of this list.
+ *
+ * «Посіпака» is an exception by id: it carries an instruction, but it runs a CARD, not a
+ * message, and runTriggerAgent refuses it (docs/specs/2026-10-23-minion-auto-run.md, decision 11).
+ * «Дизайнер» and «Зберегти дизайн» likewise: the first opens a design from a design card, the
+ * second runs only in a design session (docs/specs/2026-10-29-design-tab.md), and
+ * runTriggerAgent knows neither. «Тестувальник» needs a doer session and a scope, which a
+ * trigger does not give (docs/specs/2026-11-04-qa-tester-agent.md, decision 15).
  */
+const NOT_TRIGGERABLE: readonly string[] = [MINION_AGENT_ID, DESIGNER_AGENT_ID, DESIGN_SAVE_AGENT_ID, TESTER_AGENT_ID];
 export function triggerAgentOptions(agents: readonly AgentDef[]): { value: string; labelKey: string }[] {
-  return agents.filter((a) => a.instruction).map((a) => ({ value: a.id, labelKey: a.labelKey }));
+  return agents.filter((a) => a.instruction && !NOT_TRIGGERABLE.includes(a.id)).map((a) => ({ value: a.id, labelKey: a.labelKey }));
 }
 
 /**
@@ -333,6 +378,42 @@ export function changedFields<T extends object>(draft: T, base: T): (keyof T)[] 
     if (!same) out.push(key);
   }
   return out;
+}
+
+/**
+ * The «Ресурси машини» draft: the limits plus the «Застосовувати обмеження» switch, which is
+ * the stored decision. Flat, so `changedFields` counts it like any other pane.
+ */
+export type ResourcesDraft = ResourceLimits & { applied: boolean };
+
+/**
+ * What the pane shows as saved. `fromProfile` is the consent popup's «Налаштувати»: the
+ * detected profile with the switch on, offered as an unsaved draft over this saved state.
+ */
+export function resourcesDraft(r: MachineResources, fromProfile = false): ResourcesDraft {
+  return fromProfile ? { ...r.profile, applied: true } : { ...r.effective, applied: r.decision === 'applied' };
+}
+
+/**
+ * The save body. Only values that differ from the profile become overrides, so a later
+ * hardware change (a new profile) still moves every value the operator never touched.
+ */
+export function resourcesUpdate(draft: ResourcesDraft, profile: ResourceLimits): ResourcesUpdate {
+  const overrides: Partial<ResourceLimits> = {};
+  for (const key of Object.keys(profile) as (keyof ResourceLimits)[]) {
+    if (draft[key] !== profile[key]) (overrides as Record<string, unknown>)[key] = draft[key];
+  }
+  return {
+    decision: draft.applied ? 'applied' : 'declined',
+    overrides: Object.keys(overrides).length > 0 ? overrides : null,
+  };
+}
+
+/** A count field's text as a limit the api accepts (1..64), or null while it is not a number yet. */
+export function parseLimitCount(text: string): number | null {
+  const n = Number.parseInt(text, 10);
+  if (!Number.isFinite(n)) return null;
+  return Math.min(64, Math.max(1, n));
 }
 
 /**

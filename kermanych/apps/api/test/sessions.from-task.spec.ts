@@ -4,7 +4,8 @@ import type { WorktreeService } from "../src/worktree/worktree.service";
 import type { AuthService } from "../src/auth/auth.service";
 import type { ModelsService } from "../src/models/models.service";
 import type { CloudProject, Task } from "@kermanych/cloud";
-import { DEFAULT_DOCS_POLICY, docsPolicyAppend, deepAnalysisPrompt } from "@kermanych/core";
+import { DEFAULT_DOCS_POLICY, DEFAULT_HELPERS, docsPolicyAppend, deepAnalysisPrompt, designDirFor } from "@kermanych/core";
+import { todayIso } from "../src/management/management-prompt";
 
 // The runtime-aware model guard (ModelsService.validModel) is not under test here; an identity
 // stub returns the wanted model unchanged so createSessionFromTask keeps task.model as before.
@@ -43,26 +44,31 @@ vi.mock("../src/rpc/rpc-session", () => {
 
 // Fake cloud: an in-memory `tasks` map + the project list. Mocked wholesale (no
 // importOriginal) so this unit test never needs packages/cloud built and can flip the
-// claim race by hand. `claimTask` reproduces the DB's `assignee_id is null` predicate:
-// losing the race is zero rows, i.e. `undefined`, not an exception.
+// claim race by hand. `claimTaskForLaunch` reproduces the DB's predicate (the status read
+// before, assignee null or the caller) and sets `queued` + the assignee in one go: losing the
+// race is zero rows, i.e. `undefined`, not an exception. `rival` is what the winner of a lost
+// race did to the card. `releaseLaunchClaim` puts the status back, then frees the assignee only
+// when the card had none.
 const cloudTasks = new Map<string, Task>();
 const cloudProjects: CloudProject[] = [];
 let claimWins = true;
+let rival: Partial<Task> | undefined;
+const releases: { taskId: string; previous: { status: Task["status"]; assigneeId?: string } }[] = [];
 vi.mock("@kermanych/cloud", () => ({
   getTask: async (_client: unknown, taskId: string) => cloudTasks.get(taskId),
-  claimTask: async (_client: unknown, taskId: string, userId: string) => {
+  claimTaskForLaunch: async (_client: unknown, taskId: string, userId: string, from: Task["status"]) => {
     const t = cloudTasks.get(taskId);
-    if (!t || t.assigneeId || !claimWins) return undefined;
-    const next: Task = { ...t, assigneeId: userId };
+    if (t && rival) cloudTasks.set(taskId, { ...t, ...rival });
+    if (!t || rival || !claimWins || t.status !== from || (t.assigneeId && t.assigneeId !== userId)) return undefined;
+    const next: Task = { ...t, status: "queued", assigneeId: userId };
     cloudTasks.set(taskId, next);
     return next;
   },
-  patchTask: async (_client: unknown, taskId: string, patch: { assigneeId?: string | null }) => {
+  releaseLaunchClaim: async (_client: unknown, taskId: string, previous: { status: Task["status"]; assigneeId?: string }) => {
+    releases.push({ taskId, previous });
     const t = cloudTasks.get(taskId);
     if (!t) throw new Error("task not found");
-    const next: Task = { ...t, assigneeId: patch.assigneeId ?? undefined };
-    cloudTasks.set(taskId, next);
-    return next;
+    cloudTasks.set(taskId, { ...t, status: previous.status, ...(previous.assigneeId ? {} : { assigneeId: undefined }) });
   },
   listProjects: async () => cloudProjects,
 }));
@@ -70,13 +76,14 @@ vi.mock("@kermanych/cloud", () => ({
 import { SupervisorService } from "../src/supervisor/supervisor.service";
 import { RegistryService } from "../src/registry/registry.service";
 import { stubSkills } from "./skills-stub";
+import type { BranchNameService } from "../src/supervisor/branch-name.service";
 
 const USER = "11111111-1111-1111-1111-111111111111";
 const OTHER = "22222222-2222-2222-2222-222222222222";
 const PROJECT = "33333333-3333-3333-3333-333333333333";
 const NOW = "2026-08-21T10:00:00.000Z";
 
-function make() {
+function make(branchNames?: BranchNameService) {
   const registry = new RegistryService(":memory:");
   const worktree = {
     isGitRepo: vi.fn().mockResolvedValue(true),
@@ -98,7 +105,19 @@ function make() {
   // The deep-analysis launch resolves its skill by name; none resolves here, so the wrapper
   // goes out with an empty block (stubSkills leaves the name resolver out on purpose).
   const skills = Object.assign(stubSkills(), { assignedForNames: async () => ({ block: "", view: [], missing: [] }) });
-  const sup = new SupervisorService(registry, worktree as unknown as WorktreeService, auth, skills, stubModels());
+  const sup = new SupervisorService(
+    registry,
+    worktree as unknown as WorktreeService,
+    auth,
+    skills,
+    stubModels(),
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    branchNames,
+  );
   return { sup, registry, worktree };
 }
 
@@ -113,6 +132,8 @@ function task(over: Partial<Task> = {}): Task {
     createdAt: NOW,
     updatedAt: NOW,
     worktree: true,
+    autoRun: false,
+    design: false,
     ...over,
   };
   cloudTasks.set(t.id, t);
@@ -125,12 +146,14 @@ function bind(registry: RegistryService, localRepoPath = "/tmp/proj"): void {
     name: "stale local name",
     localRepoPath,
     carryFiles: [".env"],
+    platform: "backend",
     createdAt: NOW,
   });
   cloudProjects.push({
     id: PROJECT,
     name: "kermanych",
     carryFiles: [".env", ".env.local"],
+    platform: "web",
     envKeys: ["GITHUB_TOKEN"],
     docFolders: [],
     docsRequired: false,
@@ -147,6 +170,8 @@ beforeEach(() => {
   cloudTasks.clear();
   cloudProjects.length = 0;
   claimWins = true;
+  rival = undefined;
+  releases.length = 0;
 });
 
 describe("createSessionFromTask", () => {
@@ -167,18 +192,30 @@ describe("createSessionFromTask", () => {
     expect(started).toHaveLength(0);
   });
 
-  it("self-assigns an unassigned task and launches it", async () => {
+  it("claims an unassigned task — queued and self-assigned in one update — and launches it", async () => {
     const { sup, registry } = make();
     bind(registry);
     task();
 
     const session = await sup.createSessionFromTask("task-1", USER);
 
-    expect(cloudTasks.get("task-1")!.assigneeId).toBe(USER);
+    expect(cloudTasks.get("task-1")).toMatchObject({ assigneeId: USER, status: "queued" });
     expect(session.taskId).toBe("task-1");
     expect(session.projectId).toBe(PROJECT);
     expect(started).toHaveLength(1);
     expect(registry.listSessions()).toHaveLength(1);
+  });
+
+  // docs/specs/2026-10-23-minion-auto-run.md, decision 7: a card already assigned to the runner
+  // takes the same claim, so a ▶ here and «Посіпака» on another machine cannot both start it.
+  it("claims the runner's own card too: its status goes to queued", async () => {
+    const { sup, registry } = make();
+    bind(registry);
+    task({ assigneeId: USER, status: "stopped" });
+
+    await sup.createSessionFromTask("task-1", USER);
+
+    expect(cloudTasks.get("task-1")).toMatchObject({ assigneeId: USER, status: "queued" });
   });
 
   it("refuses when the atomic claim loses the race", async () => {
@@ -188,6 +225,19 @@ describe("createSessionFromTask", () => {
     claimWins = false;
 
     await expect(sup.createSessionFromTask("task-1", USER)).rejects.toThrow("task already claimed");
+    expect(started).toHaveLength(0);
+    expect(registry.listSessions()).toHaveLength(0);
+    expect(releases).toHaveLength(0);
+  });
+
+  it("says the card is running when the race was lost to a start elsewhere", async () => {
+    const { sup, registry } = make();
+    bind(registry);
+    task({ assigneeId: USER });
+    // The minion on another machine of the same user claimed it between the read and the claim.
+    rival = { status: "queued" };
+
+    await expect(sup.createSessionFromTask("task-1", USER)).rejects.toThrow("task is already running");
     expect(started).toHaveLength(0);
     expect(registry.listSessions()).toHaveLength(0);
   });
@@ -255,7 +305,6 @@ describe("createSessionFromTask", () => {
       assigneeId: USER,
       model: "opus-5",
       prefix: "fix",
-      platform: "web",
       branch: "release/2026-08",
     });
 
@@ -265,7 +314,6 @@ describe("createSessionFromTask", () => {
     expect(session.task).toBe("wire GitHub OAuth");
     expect(session.model).toBe("opus-5");
     expect(session.prefix).toBe("fix");
-    expect(session.platform).toBe("web");
     expect(session.kind).toBe("agent");
     expect(session.branch).toBe("fix/add-login");
     expect(session.baseBranch).toBe("release/2026-08");
@@ -278,18 +326,55 @@ describe("createSessionFromTask", () => {
     expect(local.name).toBe("kermanych");
     expect(local.carryFiles).toEqual([".env", ".env.local"]);
     expect(local.localRepoPath).toBe("/tmp/proj");
+    // The platform is the project's (docs/specs/2026-11-03-session-browser-preview.md, decision 9).
+    expect(local.platform).toBe("web");
+    expect(session).not.toHaveProperty("platform");
+  });
+
+  it("names the branch from the task through the namer, under the card's prefix", async () => {
+    const suggest = vi.fn(async () => "add-github-oauth");
+    const { sup, registry } = make({ suggest } as unknown as BranchNameService);
+    bind(registry);
+    task({ assigneeId: USER, title: "Додати вхід через GitHub", prefix: "fix" });
+
+    const session = await sup.createSessionFromTask("task-1", USER);
+
+    expect(suggest).toHaveBeenCalledWith({ title: "Додати вхід через GitHub", description: "wire GitHub OAuth" });
+    expect(session.branch).toBe("fix/add-github-oauth");
+  });
+
+  it("falls back to the transliterated title when the namer has no answer", async () => {
+    const { sup, registry } = make({ suggest: async () => undefined } as unknown as BranchNameService);
+    bind(registry);
+    task({ assigneeId: USER, title: "Додати вхід" });
+
+    const session = await sup.createSessionFromTask("task-1", USER);
+
+    expect(session.branch).toBe("feature/dodaty-vkhid");
+  });
+
+  it("launches under the card's own branch name without asking the namer, slugified and de-duplicated", async () => {
+    const suggest = vi.fn(async () => "add-github-oauth");
+    const { sup, registry } = make({ suggest } as unknown as BranchNameService);
+    bind(registry);
+    registry.createSession({ projectId: PROJECT, name: "taken", task: "t", worktreePath: "", branch: "fix/kan-42-login", worktree: true });
+    task({ assigneeId: USER, prefix: "fix", branchSlug: " KAN-42 Login " });
+
+    const session = await sup.createSessionFromTask("task-1", USER);
+
+    expect(suggest).not.toHaveBeenCalled();
+    expect(session.branch).toBe("fix/kan-42-login-2");
   });
 
   it("falls back to the task title and safe launch defaults", async () => {
     const { sup, registry } = make();
     bind(registry);
-    task({ assigneeId: USER, description: undefined, prefix: "nonsense", platform: "watch" });
+    task({ assigneeId: USER, description: undefined, prefix: "nonsense" });
 
     const session = await sup.createSessionFromTask("task-1", USER);
 
     expect(session.task).toBe("Add login");
     expect(session.prefix).toBe("feature");
-    expect(session.platform).toBeUndefined();
     // Cloud task carried no branch → the refreshed project default is used.
     expect(session.baseBranch).toBe("main");
   });
@@ -305,7 +390,7 @@ describe("createSessionFromTask", () => {
     expect(started).toHaveLength(0);
   });
 
-  it("releases a claim it made itself when the launch fails", async () => {
+  it("releases a claim it made itself when the launch fails: backlog again, unassigned", async () => {
     const { sup, registry, worktree } = make();
     bind(registry);
     task();
@@ -313,19 +398,29 @@ describe("createSessionFromTask", () => {
 
     await expect(sup.createSessionFromTask("task-1", USER)).rejects.toThrow("fatal: invalid reference");
     // Nobody could pick the card up again if the failed claim stuck to us.
-    expect(cloudTasks.get("task-1")!.assigneeId).toBeUndefined();
+    expect(cloudTasks.get("task-1")).toMatchObject({ status: "backlog", assigneeId: undefined });
+    expect(releases).toEqual([{ taskId: "task-1", previous: { status: "backlog", assigneeId: undefined } }]);
     expect(registry.listSessions()).toHaveLength(0);
     expect(started).toHaveLength(0);
   });
 
-  it("leaves a pre-existing assignment alone when the launch fails", async () => {
+  it("restores the previous status and leaves a pre-existing assignment alone when the launch fails", async () => {
     const { sup, registry, worktree } = make();
     bind(registry);
-    task({ assigneeId: USER });
+    task({ assigneeId: USER, status: "stopped" });
     worktree.addWorktree.mockRejectedValueOnce(new Error("fatal: invalid reference"));
 
     await expect(sup.createSessionFromTask("task-1", USER)).rejects.toThrow("fatal: invalid reference");
-    expect(cloudTasks.get("task-1")!.assigneeId).toBe(USER);
+    expect(cloudTasks.get("task-1")).toMatchObject({ status: "stopped", assigneeId: USER });
+  });
+
+  it("releases the claim when the project turns out not to be bound here", async () => {
+    const { sup, registry } = make();
+    bind(registry, "");
+    task();
+
+    await expect(sup.createSessionFromTask("task-1", USER)).rejects.toThrow("project not bound");
+    expect(cloudTasks.get("task-1")).toMatchObject({ status: "backlog", assigneeId: undefined });
   });
 
   it("runs in place when the card's own author asks for it", async () => {
@@ -386,6 +481,46 @@ describe("createSessionFromTask", () => {
     expect(first).toMatchObject({ kind: "user_text", text: "wire GitHub OAuth" });
   });
 
+  // «Дизайн» (docs/specs/2026-10-29-design-tab.md): a design card is always a `design/` branch,
+  // whatever prefix it carries; the row is stamped with its folder (launch day + branch slug),
+  // and the model's opening turn is the Дизайнер's instruction naming that folder and the card.
+  it("opens a design card on a design branch with its folder and the Дизайнер instruction", async () => {
+    const { sup, registry } = make();
+    bind(registry);
+    task({ assigneeId: USER, createdBy: USER, design: true, prefix: "feature" });
+
+    const session = await sup.createSessionFromTask("task-1", USER);
+
+    const row = registry.listSessions().find((s) => s.id === session.id)!;
+    expect(row.branch).toBe("design/add-login");
+    expect(row.prefix).toBe("design");
+    expect(row.designDir).toBe(designDirFor(todayIso(), "add-login"));
+    const [text] = prompts.at(-1) as [string];
+    expect(text).toMatch(/^You are «Дизайнер»/);
+    expect(text).toContain(`${row.designDir}/README.md`);
+    expect(text).toContain("## Design\nAdd login\n\nwire GitHub OAuth");
+    expect(text).toMatch(/Co-Authored-By: Kermanych </);
+    const first = sup.getTranscript(session.id).find((e) => e.kind === "user_text");
+    expect(first).toMatchObject({ kind: "user_text", text: "wire GitHub OAuth" });
+  });
+
+  // A Хелпер picked in the launcher or the board editor sits at the head of the card's text;
+  // the launch expands it like a chat message, so the token is never sent to the model as-is.
+  it("expands a leading helper in the card's text and says so in the transcript", async () => {
+    const { sup, registry } = make();
+    bind(registry);
+    task({ assigneeId: USER, createdBy: USER, description: "/el10 wire GitHub OAuth" });
+
+    const session = await sup.createSessionFromTask("task-1", USER);
+
+    const el10 = DEFAULT_HELPERS.find((h) => h.name === "el10")!;
+    const [text] = prompts.at(-1) as [string];
+    expect(text.startsWith(`${el10.body.trim()}\n\nwire GitHub OAuth\n\n`)).toBe(true);
+    const entries = sup.getTranscript(session.id);
+    expect(entries.find((e) => e.kind === "user_text")).toMatchObject({ text: "/el10 wire GitHub OAuth" });
+    expect(entries.find((e) => e.kind === "notice")).toMatchObject({ code: "helper_added_instruction" });
+  });
+
   // docs/specs/2026-10-14-create-pr-base-sync.md, decision 4: origin could not be asked before
   // the fork, so the session starts from the last-known origin base and the transcript says so.
   it("says in the transcript when the base could not be refreshed from origin", async () => {
@@ -419,7 +554,9 @@ describe("createSessionFromTask", () => {
 
     const session = await sup.createSessionFromTask("task-1", USER);
 
-    expect("deepAnalysis" in registry.listSessions().find((s) => s.id === session.id)!).toBe(false);
+    const plain = registry.listSessions().find((s) => s.id === session.id)!;
+    expect("deepAnalysis" in plain).toBe(false);
+    expect("designDir" in plain).toBe(false);
     expect((prompts.at(-1) as [string])[0]).toMatch(/^wire GitHub OAuth\n\n/);
   });
 

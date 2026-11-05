@@ -219,6 +219,11 @@ export type JiraWorklogWrite = {
   adjust: JiraWorklogAdjust;
 };
 
+// Node's fetch sends `Accept-Language: *` unless told otherwise, and Jira — for an account
+// whose profile language is «auto-detect» — answers `*` in an arbitrary locale (Chinese was
+// seen). Its error sentences reach the operator verbatim, so the language is pinned.
+const ACCEPT_LANGUAGE = "en";
+
 export class JiraClient {
   private readonly base: string;
   private readonly authHeader: string;
@@ -234,6 +239,7 @@ export class JiraClient {
       headers: {
         Authorization: this.authHeader,
         Accept: "application/json",
+        "Accept-Language": ACCEPT_LANGUAGE,
         ...(body === undefined ? {} : { "Content-Type": "application/json" }),
       },
       ...(body === undefined ? {} : { body: JSON.stringify(body) }),
@@ -530,7 +536,7 @@ export class JiraClient {
     const res = await fetch(`${this.base}/rest/api/3/issue/${encodeURIComponent(key)}/attachments`, {
       method: "POST",
       // no-check: Jira refuses multipart without the XSRF opt-out header.
-      headers: { Authorization: this.authHeader, "X-Atlassian-Token": "no-check" },
+      headers: { Authorization: this.authHeader, "Accept-Language": ACCEPT_LANGUAGE, "X-Atlassian-Token": "no-check" },
       body: form,
     });
     if (!res.ok) {
@@ -543,7 +549,7 @@ export class JiraClient {
   // never lands on disk and the browser never needs Jira credentials.
   async downloadAttachment(attachmentId: string): Promise<{ body: ReadableStream<Uint8Array>; contentType: string }> {
     const res = await fetch(`${this.base}/rest/api/3/attachment/content/${encodeURIComponent(attachmentId)}`, {
-      headers: { Authorization: this.authHeader },
+      headers: { Authorization: this.authHeader, "Accept-Language": ACCEPT_LANGUAGE },
       redirect: "follow",
     });
     if (!res.ok || !res.body) {

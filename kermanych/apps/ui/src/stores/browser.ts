@@ -3,7 +3,9 @@
 // state main reported for each session's view, which sessions' agents are driving theirs right
 // now, where the shown view sits on screen, the «Поруч із логом» preference, and the operator's
 // picks tray per session. The views themselves live in Electron main; in the web build (no
-// `window.kermanych.browser`) this store stays empty and inert.
+// `window.kermanych.browser`) the browser part stays empty and inert, and only the tray is used
+// — by the «Пристрій» tab's device picks (docs/specs/2026-11-03-mobile-device-preview.md).
+import { platformHasBrowser } from '@kermanych/core';
 import { defineStore } from 'pinia';
 import { ref, watch } from 'vue';
 import { loadPicksTray, savePicksTray, type TrayPick } from '../lib/browser-picks';
@@ -104,6 +106,20 @@ export const useSessionBrowser = defineStore('sessionBrowser', () => {
     },
   );
 
+  // A project switched to back-end or mobile has no browser (docs/specs/2026-11-03-session-
+  // browser-preview.md, decision 9): its sessions' pages close. Every session of the project,
+  // not only those with a known state — a view may predate this window's subscription. Diffed
+  // against the previous rows, so the first load closes nothing.
+  watch(
+    () => new Map(orchestrator.projects.map((p) => [p.id, platformHasBrowser(p.platform)])),
+    (now, before) => {
+      for (const [projectId, has] of now) {
+        if (has || !before?.get(projectId)) continue;
+        for (const s of orchestrator.sessions) if (s.projectId === projectId) close(s.id);
+      }
+    },
+  );
+
   // A pane mounting asks once for the state it may have missed (the view could predate this
   // window, or have changed before the store subscribed). Null means no view yet.
   async function refresh(sessionId: string): Promise<void> {
@@ -111,17 +127,30 @@ export const useSessionBrowser = defineStore('sessionBrowser', () => {
     if (s) put(s);
   }
 
-  // Every renderer-initiated load (address bar, «Відкрити превʼю», ▶, «Відкрити знову»). A load
+  // Every renderer-initiated load (address bar, «Відкрити превʼю», «Відкрити знову»). A load
   // failure (connection refused, DNS, …) also arrives as `state.error`, and the pane shows it
   // as a panel in place of the page, so it is not toasted twice. Chromium's net errors carry
   // their `ERR_…` name (Electron rejects loadURL with «ERR_CONNECTION_REFUSED (-102) loading
   // …»); anything else — a refused scheme, a session without a project — is not on the page
-  // and still gets a toast.
-  function navigate(sessionId: string, projectId: string, url: string): void {
-    bridge?.navigate(sessionId, projectId, url).catch((e: unknown) => {
-      const message = e instanceof Error ? e.message : String(e);
-      if (!/\bERR_[A-Z_]+\b/.test(message)) orchestrator.notify(message, 'error');
-    });
+  // and still gets a toast. Resolves (never rejects) once main has answered the load — true
+  // when the page loaded — so a pane's «Відкрити знову» / «Спробувати ще» can spin until then.
+  function settled(load: Promise<void>): Promise<boolean> {
+    return load.then(
+      () => true,
+      (e: unknown) => {
+        const message = e instanceof Error ? e.message : String(e);
+        if (!/\bERR_[A-Z_]+\b/.test(message)) orchestrator.notify(message, 'error');
+        return false;
+      },
+    );
+  }
+  // `ephemeral`: a «Тестувальник» run's view lives in its own in-memory partition.
+  function navigate(sessionId: string, projectId: string, url: string, ephemeral = false): Promise<boolean> {
+    return bridge ? settled(bridge.navigate(sessionId, projectId, url, ephemeral)) : Promise.resolve(false);
+  }
+  // The running live preview: main keeps the path of a page on the previous preview's origin.
+  function openPreview(sessionId: string, projectId: string, url: string, ephemeral = false): Promise<boolean> {
+    return bridge ? settled(bridge.openPreview(sessionId, projectId, url, ephemeral)) : Promise.resolve(false);
   }
 
   function setSplit(on: boolean): void {
@@ -129,7 +158,15 @@ export const useSessionBrowser = defineStore('sessionBrowser', () => {
     localStorage.setItem(SPLIT_KEY, on ? '1' : '0');
   }
 
-  function addPick(sessionId: string, pick: KermanychBrowserPick): void {
+  // The operator's ✕ on the Браузер tab. Main reports it back through onClosed, which forgets
+  // the state; the picks tray stays, as after an idle close.
+  function close(sessionId: string): void {
+    bridge?.close(sessionId);
+  }
+
+  // A device pick (KDevicePane) joins the same tray: the tray and «Надіслати агенту» live here
+  // whichever screen the element was pointed at, in both builds.
+  function addPick(sessionId: string, pick: TrayPick['pick']): void {
     const entry: TrayPick = { id: crypto.randomUUID(), pick, comment: '' };
     picks.value = { ...picks.value, [sessionId]: [...(picks.value[sessionId] ?? []), entry] };
     persistPicks();
@@ -179,7 +216,9 @@ export const useSessionBrowser = defineStore('sessionBrowser', () => {
     notes,
     refresh,
     navigate,
+    openPreview,
     setSplit,
+    close,
     addPick,
     setComment,
     setNote,

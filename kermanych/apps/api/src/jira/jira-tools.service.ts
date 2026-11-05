@@ -22,8 +22,28 @@ import { Injectable } from "@nestjs/common";
 import { Buffer } from "node:buffer";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { renderTicketDescription, validateNewTicket, type Notice, type NoticeCode } from "@kermanych/core";
+import { renderTicketDescription, validateNewTicket, type NoticeCode } from "@kermanych/core";
 import type { JiraIntegration } from "@kermanych/cloud";
+import {
+  DOWNLOAD_MAX_BYTES,
+  TICKET_SCHEMA,
+  ToolError,
+  bool,
+  compact,
+  int,
+  optBool,
+  optInt,
+  optList,
+  optObject,
+  optText,
+  reqText,
+  schema,
+  str,
+  strs,
+  type ManagementToolDescriptor,
+  type ManagementToolScope,
+  type ToolArgs as Args,
+} from "../management/tracker-tools";
 import { JiraService } from "./jira.service";
 import {
   JiraHttpError,
@@ -36,34 +56,7 @@ import {
 import { adfDoc, adfMarkdown } from "./jira-adf";
 import { toJiraDate, toJiraStarted } from "./jira-map";
 
-// What one call is allowed to touch and where its side effects go. Built per conversation by
-// ManagementChatService; the tool layer never learns who is asking any other way.
-export type JiraToolScope = {
-  userId: string;
-  workspaceId: string;
-  // A file the operator attached to this conversation, by the exact name the turn listed it
-  // under — the only bytes jira_create_issue / jira_add_attachment may upload.
-  file(name: string): { path: string; mimeType: string } | undefined;
-  // Where jira_download_attachment writes, so the read tool can open what it fetched.
-  downloadDir: string;
-  // One line per write, in order — the reply's `jiraChanges`.
-  changed(notice: Notice): void;
-};
-
-// A tool as MCP's tools/list describes it.
-export type JiraToolDescriptor = {
-  name: string;
-  description: string;
-  inputSchema: Record<string, unknown>;
-  annotations: { readOnlyHint: boolean; destructiveHint?: boolean };
-};
-
-// A refusal phrased for the model: shown to it verbatim as the tool's error result.
-export class JiraToolError extends Error {}
-
-type Args = Record<string, unknown>;
-
-type Tool = JiraToolDescriptor & { run: (c: Call, a: Args) => Promise<unknown> };
+type Tool = ManagementToolDescriptor & { run: (c: Call, a: Args) => Promise<unknown> };
 
 // The page cap a search may ask for. Jira's own ceiling is 100 for /search/jql with a named
 // field list, and a page larger than that is a context window spent on one answer.
@@ -72,10 +65,6 @@ const SEARCH_MAX = 100;
 // What a search row carries when the model names no fields: enough to recognise, triage and
 // pick the next key to read — the whole issue is jira_get_issue's job.
 const SEARCH_FIELDS = ["summary", "issuetype", "status", "priority", "assignee", "parent", "labels", "updated", "duedate"];
-
-// jira_download_attachment writes the bytes where the read tool can open them; past this a file
-// is not something a chat turn reads, and the model is told so instead of the disk filling up.
-const DOWNLOAD_MAX_BYTES = 20 * 1024 * 1024;
 
 // Atlassian account ids: the 24-hex legacy form and the `<number>:<uuid>` form.
 const ACCOUNT_ID_RE = /^(?:[0-9a-f]{24}|\d+:[0-9a-f-]{36})$/i;
@@ -89,68 +78,20 @@ const KEY_RE = /^[A-Z][A-Z0-9_]*-[1-9]\d*$/;
 let linkSourceIsInward: boolean | undefined;
 
 // ── argument readers ─────────────────────────────────────────────────────────
-// MCP arguments are JSON the model wrote. Each reader refuses a wrong TYPE in words the model
-// can act on; absent stays absent, because «not mentioned» must never clear a field.
-
-function optText(a: Args, name: string): string | undefined {
-  const v = a[name];
-  if (v === undefined || v === null) return undefined;
-  if (typeof v !== "string") throw new JiraToolError(`${name} must be a string`);
-  return v.trim();
-}
-
-function reqText(a: Args, name: string): string {
-  const v = optText(a, name);
-  if (!v) throw new JiraToolError(`${name} is required`);
-  return v;
-}
-
-// A list of names. A comma-separated string is accepted too: models write «a, b» where an
-// array was asked for, and the intent is unambiguous.
-function optList(a: Args, name: string): string[] | undefined {
-  const v = a[name];
-  if (v === undefined || v === null) return undefined;
-  const items = typeof v === "string" ? v.split(",") : v;
-  if (!Array.isArray(items) || items.some((x) => typeof x !== "string"))
-    throw new JiraToolError(`${name} must be a list of strings`);
-  return (items as string[]).map((x) => x.trim()).filter((x) => x !== "");
-}
-
-function optInt(a: Args, name: string, min: number, max: number): number | undefined {
-  const v = a[name];
-  if (v === undefined || v === null) return undefined;
-  const n = typeof v === "string" ? Number(v) : v;
-  if (typeof n !== "number" || !Number.isInteger(n) || n < min || n > max)
-    throw new JiraToolError(`${name} must be a whole number from ${min} to ${max}`);
-  return n;
-}
-
-function optBool(a: Args, name: string): boolean | undefined {
-  const v = a[name];
-  if (v === undefined || v === null) return undefined;
-  if (typeof v !== "boolean") throw new JiraToolError(`${name} must be true or false`);
-  return v;
-}
-
-function optObject(a: Args, name: string): Record<string, unknown> | undefined {
-  const v = a[name];
-  if (v === undefined || v === null) return undefined;
-  if (typeof v !== "object" || Array.isArray(v)) throw new JiraToolError(`${name} must be a JSON object`);
-  return v as Record<string, unknown>;
-}
+// The shared ones (optText, optList, …) are in management/tracker-tools.ts; these know Jira.
 
 function issueKey(a: Args, name = "issueKey"): string {
   const key = reqText(a, name).toUpperCase();
-  if (!KEY_RE.test(key)) throw new JiraToolError(`${name}=${JSON.stringify(a[name])} is not a Jira issue key (e.g. KRM-101)`);
+  if (!KEY_RE.test(key)) throw new ToolError(`${name}=${JSON.stringify(a[name])} is not a Jira issue key (e.g. KRM-101)`);
   return key;
 }
 
 function keyList(a: Args, name: string): string[] {
   const keys = (optList(a, name) ?? []).map((k) => k.toUpperCase());
-  if (!keys.length) throw new JiraToolError(`${name} is required`);
+  if (!keys.length) throw new ToolError(`${name} is required`);
   const bad = keys.find((k) => !KEY_RE.test(k));
-  if (bad) throw new JiraToolError(`${JSON.stringify(bad)} is not a Jira issue key`);
-  if (keys.length > 50) throw new JiraToolError(`at most 50 issues per call`);
+  if (bad) throw new ToolError(`${JSON.stringify(bad)} is not a Jira issue key`);
+  if (keys.length > 50) throw new ToolError(`at most 50 issues per call`);
   return keys;
 }
 
@@ -163,7 +104,7 @@ function instant(a: Args, name: string): string | undefined {
   const v = optText(a, name);
   if (!v) return undefined;
   const at = new Date(v);
-  if (Number.isNaN(at.getTime())) throw new JiraToolError(`${name}=${JSON.stringify(v)} is not a date/time`);
+  if (Number.isNaN(at.getTime())) throw new ToolError(`${name}=${JSON.stringify(v)} is not a date/time`);
   return at.toISOString();
 }
 
@@ -174,7 +115,7 @@ function day(a: Args, name: string): string | undefined {
   try {
     return toJiraDate(v) ?? undefined;
   } catch {
-    throw new JiraToolError(`${name}=${JSON.stringify(v)} is not a YYYY-MM-DD date`);
+    throw new ToolError(`${name}=${JSON.stringify(v)} is not a YYYY-MM-DD date`);
   }
 }
 
@@ -202,14 +143,6 @@ function person(v: unknown): { name: string; accountId?: string } | undefined {
   if (!v || typeof v !== "object") return undefined;
   const p = v as { displayName?: string; accountId?: string };
   return { name: p.displayName ?? "", ...(p.accountId ? { accountId: p.accountId } : {}) };
-}
-
-// Drops the keys whose value says nothing, so a row is only what the issue actually carries.
-function compact(o: Record<string, unknown>): Record<string, unknown> {
-  const out: Record<string, unknown> = {};
-  for (const [k, v] of Object.entries(o))
-    if (v !== undefined && v !== null && v !== "" && !(Array.isArray(v) && v.length === 0)) out[k] = v;
-  return out;
 }
 
 function nameOf(v: unknown): string | undefined {
@@ -278,7 +211,7 @@ class Call {
 
   constructor(
     readonly jira: JiraService,
-    readonly scope: JiraToolScope,
+    readonly scope: ManagementToolScope,
   ) {}
 
   async boards(): Promise<JiraIntegration[]> {
@@ -293,20 +226,20 @@ class Call {
   async where(opts: { key?: string; project?: string; board?: string; defaultProject?: boolean }): Promise<Where> {
     const boards = await this.boards();
     if (!boards.length)
-      throw new JiraToolError("This workspace has no connected Jira board — the owner connects one under Менеджмент → Integrations.");
+      throw new ToolError("This workspace has no connected Jira board — the owner connects one under Менеджмент → Integrations.");
     let board: JiraIntegration | undefined;
     if (opts.board) {
       const want = opts.board.toLowerCase();
       board = boards.find((b) => b.boardName.toLowerCase() === want || b.projectKey.toLowerCase() === want);
       if (!board)
-        throw new JiraToolError(
+        throw new ToolError(
           `No connected board named ${JSON.stringify(opts.board)}. Connected: ${boards.map((b) => `«${b.boardName}» (${b.projectKey})`).join(", ")}`,
         );
     }
     let projectKey = opts.project?.toUpperCase() ?? (opts.key ? projectOf(opts.key) : undefined) ?? board?.projectKey;
     if (!projectKey && opts.defaultProject) {
       if (boards.length > 1)
-        throw new JiraToolError(
+        throw new ToolError(
           `Several boards are connected — name the project or board. Connected: ${boards.map((b) => `«${b.boardName}» (${b.projectKey})`).join(", ")}`,
         );
       projectKey = boards[0]!.projectKey;
@@ -315,14 +248,14 @@ class Call {
     const sites = [...new Set(boards.map((b) => normalizeSiteUrl(b.siteUrl)))];
     const siteUrl = board ? normalizeSiteUrl(board.siteUrl) : sites.length === 1 ? sites[0]! : undefined;
     if (!siteUrl)
-      throw new JiraToolError(
+      throw new ToolError(
         `The workspace's boards span several Jira sites (${sites.join(", ")}) and ${projectKey ?? "this call"} is on none of their projects — name \`board\`.`,
       );
     let client: JiraClient;
     try {
       client = this.jira.clientFor(siteUrl, this.scope.userId);
     } catch {
-      throw new JiraToolError(
+      throw new ToolError(
         `No personal Jira token for ${siteUrl} on this machine — every Jira call runs under the operator's own token, added under Менеджмент → Integrations. Tell the operator; do not retry.`,
       );
     }
@@ -358,7 +291,7 @@ function pickIssueType(types: JiraCreateMetaIssueType[], want: string, project: 
   const lower = want.toLowerCase();
   const hit = types.find((t) => t.id === want || t.name.toLowerCase() === lower);
   if (hit) return hit;
-  throw new JiraToolError(
+  throw new ToolError(
     `Project ${project} has no issue type ${JSON.stringify(want)}. Available: ${types.map(typeLabel).join(", ")}`,
   );
 }
@@ -378,7 +311,7 @@ async function assignee(client: JiraClient, project: string, who: string): Promi
   const exact = users.filter((u) => u.displayName.toLowerCase() === lower);
   const one = exact.length === 1 ? exact[0] : users.length === 1 ? users[0] : undefined;
   if (one) return { accountId: one.accountId };
-  throw new JiraToolError(
+  throw new ToolError(
     users.length
       ? `Several assignable users in ${project} match ${JSON.stringify(who)}: ${users.slice(0, 10).map((u) => `${u.displayName} (${u.accountId})`).join(", ")} — pass the accountId.`
       : `Nobody assignable in ${project} matches ${JSON.stringify(who)}. Use jira_search_users to look the person up.`,
@@ -392,7 +325,7 @@ async function anyUser(client: JiraClient, who: string): Promise<{ accountId: st
   const exact = users.filter((u) => u.displayName.toLowerCase() === lower || u.emailAddress?.toLowerCase() === lower);
   const one = exact.length === 1 ? exact[0] : users.length === 1 ? users[0] : undefined;
   if (one) return { accountId: one.accountId, name: one.displayName };
-  throw new JiraToolError(
+  throw new ToolError(
     users.length
       ? `Several users match ${JSON.stringify(who)}: ${users.slice(0, 10).map((u) => `${u.displayName} (${u.accountId})`).join(", ")} — pass the accountId.`
       : `No Jira user matches ${JSON.stringify(who)}.`,
@@ -428,14 +361,14 @@ async function commonFields(
   const labels = optList(a, "labels");
   if (labels) {
     const spaced = labels.find((l) => /\s/.test(l));
-    if (spaced) throw new JiraToolError(`label ${JSON.stringify(spaced)} contains whitespace — Jira refuses such labels`);
+    if (spaced) throw new ToolError(`label ${JSON.stringify(spaced)} contains whitespace — Jira refuses such labels`);
     fields.labels = labels;
     changed.push("labels");
   }
   const add = optList(a, "addLabels") ?? [];
   const remove = optList(a, "removeLabels") ?? [];
   if (add.length || remove.length) {
-    if (labels) throw new JiraToolError("labels replaces the whole list — do not combine it with addLabels/removeLabels");
+    if (labels) throw new ToolError("labels replaces the whole list — do not combine it with addLabels/removeLabels");
     update.labels = [...add.map((l) => ({ add: l })), ...remove.map((l) => ({ remove: l }))];
     changed.push("labels");
   }
@@ -449,7 +382,7 @@ async function commonFields(
   const parent = optText(a, "parentKey");
   if (parent) {
     const key = parent.toUpperCase();
-    if (!KEY_RE.test(key)) throw new JiraToolError(`parentKey=${JSON.stringify(parent)} is not a Jira issue key`);
+    if (!KEY_RE.test(key)) throw new ToolError(`parentKey=${JSON.stringify(parent)} is not a Jira issue key`);
     fields.parent = { key };
     changed.push("parent");
   }
@@ -458,18 +391,18 @@ async function commonFields(
     try {
       fields.duedate = toJiraDate(due);
     } catch {
-      throw new JiraToolError(`dueDate=${JSON.stringify(due)} is not a YYYY-MM-DD date ("" clears it)`);
+      throw new ToolError(`dueDate=${JSON.stringify(due)} is not a YYYY-MM-DD date ("" clears it)`);
     }
     changed.push("dueDate");
   }
   const start = optText(a, "startDate");
   if (start !== undefined) {
     const id = await c.jira.startDateFieldId(w.siteUrl, w.client);
-    if (!id) throw new JiraToolError("this Jira site has no start date field");
+    if (!id) throw new ToolError("this Jira site has no start date field");
     try {
       fields[id] = toJiraDate(start);
     } catch {
-      throw new JiraToolError(`startDate=${JSON.stringify(start)} is not a YYYY-MM-DD date ("" clears it)`);
+      throw new ToolError(`startDate=${JSON.stringify(start)} is not a YYYY-MM-DD date ("" clears it)`);
     }
     changed.push("startDate");
   }
@@ -510,16 +443,6 @@ async function upload(c: Call, w: Where, key: string, names: string[]): Promise<
 
 // ── the catalogue ────────────────────────────────────────────────────────────
 
-const str = (description: string) => ({ type: "string", description });
-const strs = (description: string) => ({ type: "array", items: { type: "string" }, description });
-const int = (description: string) => ({ type: "integer", description });
-const bool = (description: string) => ({ type: "boolean", description });
-const schema = (properties: Record<string, unknown>, required: string[] = []) => ({
-  type: "object",
-  properties,
-  ...(required.length ? { required } : {}),
-});
-
 const BOARD = str("Connected board name or its project key — only needed when the workspace's boards span several Jira sites.");
 const ISSUE_KEY = str("Issue key, e.g. KRM-101.");
 const PROJECT = str("Jira project key, e.g. KRM.");
@@ -541,20 +464,6 @@ const COMMON_WRITE_PROPS = {
       "Any other field by id, raw Jira JSON — e.g. {\"customfield_10016\": 5}. Use jira_get_create_fields / jira_get_edit_fields for ids and allowed values.",
   },
   attachments: strs("Names of files the operator attached to this conversation, exactly as the turn lists them, to upload onto the issue."),
-};
-
-const TICKET_SCHEMA = {
-  type: "object",
-  description:
-    "The ticket in the product's five slots; the description is rendered from them (## Context, ## User flow, ## Acceptance criteria as checkboxes, ## Out of scope). No open questions, TBDs or code.",
-  properties: {
-    title: str("One line, ≤120 characters — the issue summary."),
-    context: str("Why this work exists and for whom, in business terms."),
-    userFlow: strs("Optional user-visible steps."),
-    acceptanceCriteria: strs("At least one checkable statement."),
-    outOfScope: strs("Optional: what this ticket deliberately does not cover."),
-  },
-  required: ["title", "context", "acceptanceCriteria"],
 };
 
 const TOOLS: Tool[] = [
@@ -870,11 +779,11 @@ const TOOLS: Tool[] = [
     annotations: { readOnlyHint: true },
     run: async (c, a) => {
       const id = reqText(a, "attachmentId");
-      if (!/^\d+$/.test(id)) throw new JiraToolError("attachmentId must be the numeric id jira_get_issue lists");
+      if (!/^\d+$/.test(id)) throw new ToolError("attachmentId must be the numeric id jira_get_issue lists");
       const w = await c.where({ board: optText(a, "board") });
       const meta = await w.client.attachmentMeta(id);
       if ((meta.size ?? 0) > DOWNLOAD_MAX_BYTES)
-        throw new JiraToolError(`attachment is ${meta.size} bytes — larger than the ${DOWNLOAD_MAX_BYTES}-byte limit a chat turn reads`);
+        throw new ToolError(`attachment is ${meta.size} bytes — larger than the ${DOWNLOAD_MAX_BYTES}-byte limit a chat turn reads`);
       const { body, contentType } = await w.client.downloadAttachment(id);
       const bytes = Buffer.from(await new Response(body).arrayBuffer());
       const name = `${id}-${(meta.filename ?? "file").replace(/[/\\]/g, "-").replace(/^\.+/, "")}`;
@@ -903,12 +812,12 @@ const TOOLS: Tool[] = [
     annotations: { readOnlyHint: false },
     run: async (c, a) => {
       const ticket = validateNewTicket(a.ticket);
-      if ("error" in ticket) throw new JiraToolError(ticket.error.text);
+      if ("error" in ticket) throw new ToolError(ticket.error.text);
       const w = await c.where({ project: optText(a, "project"), board: optText(a, "board"), defaultProject: true });
       const project = w.projectKey!;
       const type = pickIssueType(await w.client.createMetaIssueTypes(project), reqText(a, "issueType"), project);
       if (type.subtask && !optText(a, "parentKey"))
-        throw new JiraToolError(`${type.name} is a sub-task type — it needs parentKey (a standard-level issue).`);
+        throw new ToolError(`${type.name} is a sub-task type — it needs parentKey (a standard-level issue).`);
       const { fields } = await commonFields(c, w, a, true);
       const created = await w.client.createIssue({
         ...fields,
@@ -969,7 +878,7 @@ const TOOLS: Tool[] = [
         changed.push("issueType");
       }
       const files = optList(a, "attachments") ?? [];
-      if (!changed.length && !files.length) throw new JiraToolError("nothing to change — pass at least one field");
+      if (!changed.length && !files.length) throw new ToolError("nothing to change — pass at least one field");
       if (changed.length) {
         await w.client.editIssue(key, fields, Object.keys(update).length ? update : undefined);
         c.note("jira_issue_updated", { key, fields: changed.join(", ") }, `Jira: оновлено ${key} (${changed.join(", ")})`);
@@ -1004,7 +913,7 @@ const TOOLS: Tool[] = [
         transitions.find((x) => x.to.name.toLowerCase() === lower) ??
         transitions.find((x) => x.name.toLowerCase() === lower);
       if (!t)
-        throw new JiraToolError(
+        throw new ToolError(
           `${key} has no transition to ${JSON.stringify(to)} from its current status. Available now: ${transitions.map((x) => `${x.name} → ${x.to.name}`).join(", ") || "none"}`,
         );
       const comment = optText(a, "comment");
@@ -1108,7 +1017,7 @@ const TOOLS: Tool[] = [
         if (type) [from, to] = [to, from];
       }
       if (!type)
-        throw new JiraToolError(`No link type ${JSON.stringify(a.type)}. Available: ${types.map((t) => `${t.name} (${t.outward} / ${t.inward})`).join(", ")}`);
+        throw new ToolError(`No link type ${JSON.stringify(a.type)}. Available: ${types.map((t) => `${t.name} (${t.outward} / ${t.inward})`).join(", ")}`);
       const comment = optText(a, "comment");
       const send = (inwardKey: string, outwardKey: string) =>
         w.client.createIssueLink({ typeName: type.name, inwardKey, outwardKey, ...(comment ? { comment: adfDoc(comment) } : {}) });
@@ -1153,7 +1062,7 @@ const TOOLS: Tool[] = [
     run: async (c, a) => {
       const key = issueKey(a);
       const url = reqText(a, "url");
-      if (!/^https?:\/\//i.test(url)) throw new JiraToolError("url must start with http:// or https://");
+      if (!/^https?:\/\//i.test(url)) throw new ToolError("url must start with http:// or https://");
       const w = await c.where({ key });
       const { id } = await w.client.addRemoteLink(key, { url, title: reqText(a, "title") });
       c.note("jira_remote_link_added", { key, url }, `Jira: до ${key} додано посилання ${url}`);
@@ -1196,10 +1105,10 @@ const TOOLS: Tool[] = [
     run: async (c, a) => {
       const key = issueKey(a);
       const names = optList(a, "files") ?? [];
-      if (!names.length) throw new JiraToolError("files is required");
+      if (!names.length) throw new ToolError("files is required");
       const w = await c.where({ key });
       const files = await upload(c, w, key, names);
-      if (!files.attached.length) throw new JiraToolError(`nothing was attached: ${files.failed.join("; ")}`);
+      if (!files.attached.length) throw new ToolError(`nothing was attached: ${files.failed.join("; ")}`);
       return compact({ key, attached: files.attached, errors: files.failed, warning: await c.mirror(w, key) });
     },
   },
@@ -1268,9 +1177,9 @@ const TOOLS: Tool[] = [
       const w = await c.where({ board: optText(a, "board") });
       const id = optInt(a, "sprintId", 1, Number.MAX_SAFE_INTEGER)!;
       const state = optText(a, "state");
-      if (state && !["future", "active", "closed"].includes(state)) throw new JiraToolError("state must be future, active or closed");
+      if (state && !["future", "active", "closed"].includes(state)) throw new ToolError("state must be future, active or closed");
       const patch = compact({ name: optText(a, "name"), state, startDate: instant(a, "startDate"), endDate: instant(a, "endDate"), goal: optText(a, "goal") });
-      if (!Object.keys(patch).length) throw new JiraToolError("nothing to change");
+      if (!Object.keys(patch).length) throw new ToolError("nothing to change");
       const s = await w.client.updateSprint(id, patch);
       c.note("jira_sprint_updated", { name: s.name }, `Jira: оновлено спринт «${s.name}»`);
       return compact({ id: s.id, name: s.name, state: s.state, start: s.startDate, end: s.endDate });
@@ -1356,7 +1265,7 @@ const TOOLS: Tool[] = [
         released: optBool(a, "released"),
         archived: optBool(a, "archived"),
       });
-      if (!Object.keys(patch).length) throw new JiraToolError("nothing to change");
+      if (!Object.keys(patch).length) throw new ToolError("nothing to change");
       const v = await w.client.updateVersion(reqText(a, "versionId"), patch);
       c.note("jira_version_updated", { name: v.name }, `Jira: оновлено версію «${v.name}»`);
       return compact({ ...v });
@@ -1380,13 +1289,13 @@ export class JiraToolsService {
 
   constructor(private jira: JiraService) {}
 
-  list(): JiraToolDescriptor[] {
+  list(): ManagementToolDescriptor[] {
     return TOOLS.map(({ name, description, inputSchema, annotations }) => ({ name, description, inputSchema, annotations }));
   }
 
   // One call → the text the model reads. Every failure comes back as `{ error }` text rather
   // than a throw: to MCP it is a tool error the model can act on, never a transport failure.
-  async call(scope: JiraToolScope, name: string, args: unknown): Promise<{ text: string; isError: boolean }> {
+  async call(scope: ManagementToolScope, name: string, args: unknown): Promise<{ text: string; isError: boolean }> {
     const tool = this.byName.get(name);
     if (!tool) return { text: `unknown tool ${name}`, isError: true };
     const a = args && typeof args === "object" && !Array.isArray(args) ? (args as Args) : {};

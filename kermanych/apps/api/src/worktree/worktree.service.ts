@@ -1,8 +1,8 @@
 // apps/api/src/worktree/worktree.service.ts
 import { Injectable } from "@nestjs/common";
 import { spawn } from "node:child_process";
-import { readdir, readFile, stat } from "node:fs/promises";
-import { join } from "node:path";
+import { readdir, readFile, rm, stat } from "node:fs/promises";
+import { join, resolve } from "node:path";
 import { addedFileDiff, splitDiff, type SplitDiff } from "./split-diff";
 import { isGitBranchName, type TreeEntry, type FileContent, type ReleaseCommit } from "@kermanych/core";
 
@@ -142,8 +142,20 @@ export class WorktreeService {
     return r.out.split("\n").map((s) => s.trim()).filter(Boolean);
   }
 
+  // A removed worktree must leave nothing behind: `git worktree remove` drops git's registration
+  // even when it cannot delete every file (something still writing into the tree), and a process
+  // that outlived its session — a dev server, a watcher — recreates directories by absolute path
+  // after the fact. Either leftover makes the next `git worktree add` on this path (reopen) fail
+  // with "already exists". So whatever is still there is deleted outright, and git forgets any
+  // registration whose tree is gone. Never a main checkout: its `.git` is a directory, where a
+  // linked worktree's is a file and a leftover has none. Best effort, like the git call: it never
+  // throws, and a tree that cannot be deleted surfaces as git's own error at the next add.
   async removeWorktree(repoDir: string, wtDir: string): Promise<void> {
+    if (!wtDir) return;
     await git(repoDir, ["worktree", "remove", "--force", wtDir]);
+    const dotGit = await stat(join(wtDir, ".git")).catch(() => undefined);
+    if (!dotGit?.isDirectory()) await rm(wtDir, { recursive: true, force: true, maxRetries: 3 }).catch(() => {});
+    await git(repoDir, ["worktree", "prune"]);
   }
 
   async removeBranch(repoDir: string, branch: string): Promise<void> {
@@ -154,6 +166,21 @@ export class WorktreeService {
   async currentBranch(repoDir: string): Promise<string> {
     const r = await git(repoDir, ["symbolic-ref", "--short", "HEAD"]);
     return r.ok ? r.out.trim() : "";
+  }
+
+  // The branch a worktree is working on: HEAD's, or — while a rebase holds HEAD detached —
+  // the one the rebase is rewriting, which git keeps in `rebase-merge/head-name` (or
+  // `rebase-apply/` for `git am`-style rebases). Empty for a plain detached checkout.
+  async workingBranch(dir: string): Promise<string> {
+    const head = await this.currentBranch(dir);
+    if (head) return head;
+    for (const state of ["rebase-merge", "rebase-apply"]) {
+      const p = await gitStdout(dir, ["rev-parse", "--git-path", `${state}/head-name`]);
+      if (!p.ok) continue;
+      const ref = (await readFile(resolve(dir, p.out.trim()), "utf8").catch(() => "")).trim();
+      if (ref.startsWith("refs/heads/")) return ref.slice("refs/heads/".length);
+    }
+    return "";
   }
 
   // The commits a release note is generated from: one branch, an inclusive date range,
@@ -498,6 +525,20 @@ export class WorktreeService {
   // True when `ref` resolves — tells a reopen whether the session's own branch is still there.
   async refExists(repoDir: string, ref: string): Promise<boolean> {
     return (await git(repoDir, ["rev-parse", "--verify", "--quiet", ref])).ok;
+  }
+
+  // The commit `ref` names, or "" when it does not resolve. The merged-PR check compares the
+  // session branch's local head with the merged PR's head commit.
+  async revParse(repoDir: string, ref: string): Promise<string> {
+    const r = await gitStdout(repoDir, ["rev-parse", "--verify", "--quiet", `${ref}^{commit}`]);
+    return r.ok ? r.out.trim() : "";
+  }
+
+  // The `origin` remote's URL, or "" without one. Stdout only: a stderr warning must not be
+  // parsed as part of the URL the merged-PR check reads the GitHub owner and repo from.
+  async originUrl(repoDir: string): Promise<string> {
+    const r = await gitStdout(repoDir, ["remote", "get-url", "origin"]);
+    return r.ok ? r.out.trim() : "";
   }
 
   // Refresh `origin/<branch>` alone, with the machine's own credentials like the footer's fetch:

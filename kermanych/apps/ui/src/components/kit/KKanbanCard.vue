@@ -1,12 +1,21 @@
 <template>
-  <div class="k-kanban-card" role="button" tabindex="0" @click="emit('click')">
+  <div
+    class="k-kanban-card"
+    :class="{ 'k-kanban-card--pending': pending }"
+    role="button"
+    tabindex="0"
+    :aria-busy="pending || undefined"
+    @click="emit('click')"
+  >
     <div class="k-kanban-card__title">
       <KStatusDot :status="status" />
       <span class="k-kanban-card__name">{{ title }}</span>
       <!-- Who owns this card, in the one spot the eye scans a Kanban column for it. Always
            rendered: a face that appears only when assigned makes «нікому» look like «не
            дочиталося», and the row would reflow as tasks get claimed. -->
+      <KSkeleton v-if="assigneeLoading" variant="avatar" />
       <KAvatar
+        v-else
         :name="assignee?.name ?? t('kit.kanbanCard.unassigned')"
         :avatar-url="assignee?.avatarUrl"
         :hint="assigneeHint"
@@ -18,6 +27,15 @@
     <div class="k-kanban-card__meta">
       <!-- A teammate's ▶ on this card launches the deep analysis too, so the board says so. -->
       <KAnalysisMark v-if="deepAnalysis" />
+      <!-- A «+ Новий дизайн» card: its run drafts screens, not code. -->
+      <KDesignMark v-if="design" />
+      <!-- «Посіпака» on the author's machine may take it; when its run stopped on a choice, the
+           card says so «На ревʼю», where cards wait on a person; when it found nothing to change,
+           «Завершені» says so, muted. The predicates exclude each other: one mark at most. -->
+      <KMinionMark v-if="autoRun" kind="allowed" />
+      <KDecisionMark v-if="needsDecision" :reason="needsDecision" />
+      <KNotNeededMark v-else-if="notNeeded" :reason="notNeeded" />
+      <KSpinner v-if="pending" :size="10" class="k-kanban-card__pending" />
       <span class="k-kanban-card__where">{{ project }} · {{ time }}</span>
     </div>
   </div>
@@ -32,6 +50,12 @@ import type { SessionStatus } from '@kermanych/core';
 import KStatusDot from './KStatusDot.vue';
 import KAvatar from './KAvatar.vue';
 import KAnalysisMark from './KAnalysisMark.vue';
+import KDesignMark from './KDesignMark.vue';
+import KMinionMark from './KMinionMark.vue';
+import KDecisionMark from './KDecisionMark.vue';
+import KNotNeededMark from './KNotNeededMark.vue';
+import KSpinner from './KSpinner.vue';
+import KSkeleton from './KSkeleton.vue';
 
 // `assignee` is the resolved person, not an id: the card cannot look one up, and the board
 // already owns that resolution for its filter and its editor. `null` is «не призначено».
@@ -44,6 +68,18 @@ const props = defineProps<{
   assignee?: { name: string; avatarUrl?: string | undefined } | null;
   // A «Глибокий аналіз» card (KAnalysisMark): whoever launches it gets the interview first.
   deepAnalysis?: boolean | undefined;
+  // A «Дизайн» card (KDesignMark), created by «+ Новий дизайн».
+  design?: boolean | undefined;
+  // «Дозволити автовиконання» (KMinionMark).
+  autoRun?: boolean | undefined;
+  // «Потрібне рішення», worded (lib/minion.ts minionReasonText); absent when nothing waits.
+  needsDecision?: string | undefined;
+  // «Не потрібно», the agent's evidence (lib/minion.ts cardNotNeededReason); absent otherwise.
+  notNeeded?: string | undefined;
+  // A move or launch of this card is waiting for its result (stores/pending): dimmed, spinning.
+  pending?: boolean | undefined;
+  // The roster that resolves `assignee` is not read yet: a placeholder face, never a raw id.
+  assigneeLoading?: boolean | undefined;
 }>();
 
 const { t } = useI18n();
@@ -58,19 +94,30 @@ const emit = defineEmits<{ click: [] }>();
 </script>
 
 <style scoped lang="scss">
+.k-kanban-card--pending {
+  opacity: 0.6;
+  cursor: progress;
+}
+
+.k-kanban-card__pending {
+  color: var(--k-muted);
+}
+
 .k-kanban-card {
   display: flex;
   flex-direction: column;
   gap: var(--k-sp-1);
   padding: var(--k-sp-3);
-  background: var(--k-surface2);
+  background: var(--k-grad-raise), var(--k-surface2);
   border: 1px solid var(--k-line);
   border-radius: var(--k-r-lg);
+  box-shadow: var(--k-sheen), var(--k-shadow-card);
   cursor: pointer;
-  transition: border-color 0.12s ease;
+  transition: border-color 0.12s ease, box-shadow 0.12s ease;
 
   &:hover {
     border-color: var(--k-line-strong);
+    box-shadow: var(--k-sheen), var(--k-shadow-card-hover);
   }
 
   &:focus-visible {
@@ -104,10 +151,13 @@ const emit = defineEmits<{ click: [] }>();
   color: var(--k-faint);
 }
 
+// Wraps: two marks («посіпака» with «потрібне рішення» or «не потрібно») and the project/time
+// line are wider than a board column, and an unwrapped row pushes the card out of its column.
 .k-kanban-card__meta {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: var(--k-sp-2);
+  gap: var(--k-sp-1) var(--k-sp-2);
   min-width: 0;
   font-size: var(--k-fs-xs);
   color: var(--k-faint);

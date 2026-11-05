@@ -1,0 +1,47 @@
+{
+  "configVersion": 1,
+  "index": {
+    "engine": "sqlite",
+    "searchStrategy": "bm25",
+    "embeddingModel": "Xenova/all-MiniLM-L6-v2"
+  },
+  "mcp": {
+    "transport": "stdio",
+    "serverName": "project-docs"
+  },
+  "targets": [
+    "claude-code"
+  ],
+  "docs": {
+    "include": [
+      { "path": "docs/**/*.md", "tags": ["docs"] },
+      { "path": "docs/*.md", "tags": ["guide"] },
+      { "path": "docs/specs/**/*.md", "tags": ["spec"] },
+      { "path": "docs/superpowers/specs/**/*.md", "tags": ["spec"] },
+      { "path": "docs/superpowers/plans/**/*.md", "tags": ["plan"] },
+      { "path": "docs/superpowers/plans/**/*-findings.md", "tags": ["findings"] },
+      { "path": "design/**/*.html", "tags": ["design"] },
+      { "path": "specs/**/*.md", "tags": ["spec"] },
+      "*.md"
+    ],
+    "exclude": [
+      "vendor/**",
+      "**/node_modules/**",
+      ".docs-harness/**",
+      "docs/agents/**",
+      ".claude/**",
+      ".cursor/**",
+      ".codex/**",
+      ".gemini/**",
+      ".opencode/**",
+      "AGENTS.md",
+      "CLAUDE.md",
+      "GEMINI.md",
+      "dist/**",
+      "build/**",
+      "coverage/**",
+      "tmp/**",
+      "logs/**"
+    ]
+  }
+}

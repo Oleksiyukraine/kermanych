@@ -50,3 +50,29 @@ export function navigationAllowed(url: string): boolean {
 export function isExternalScheme(url: string): boolean {
   return /^(mailto|tel|sms|facetime|callto):/i.test(url);
 }
+
+// The origin of an http(s) URL, or undefined for anything else (about:blank, data:, junk).
+export function httpOrigin(url: string | undefined): string | undefined {
+  if (!url) return undefined;
+  try {
+    const u = new URL(url);
+    return u.protocol === 'http:' || u.protocol === 'https:' ? u.origin : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+// Where opening the live preview at `url` lands (docs/specs/2026-11-03-session-browser-preview.md,
+// decision 6): when the page (`current`) is on the previous preview's origin, its path, query and
+// hash move to the new origin — a restart on another port keeps `/settings`. Anything else (no
+// page, an unrelated site, no previous preview) opens `url` itself.
+export function previewDestination(current: string | undefined, previousOrigin: string | undefined, url: string): string {
+  const origin = httpOrigin(current);
+  if (!origin || !previousOrigin || origin !== previousOrigin) return url;
+  const from = new URL(current!);
+  const to = new URL(url);
+  to.pathname = from.pathname;
+  to.search = from.search;
+  to.hash = from.hash;
+  return to.href;
+}

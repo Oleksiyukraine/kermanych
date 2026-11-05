@@ -2,6 +2,7 @@
 import type { RpcEvent, RpcExtensionUIResponse, ImageInput, ThinkingLevel, TodoPhase, AgentRuntimeKind, SubagentSubscriptionLevel, SubagentInfo, SubagentMessagesPage } from "@kermanych/core";
 import { RpcSession } from "../rpc/rpc-session";
 import { ClaudeCodeRuntime } from "./claude-code-runtime";
+import type { AuthFailureCode } from "./auth-failure";
 
 // The state contract a runtime reports through getState(). Moved here from rpc-session.ts
 // because it is backend-neutral: omp fills it from its `get_state` frame, claude from
@@ -16,7 +17,7 @@ export interface RpcStateData {
   todoPhases?: TodoPhase[];
 }
 
-// Normalized launch inputs. omp-only fields (configPath/extensionPath = skill overlay +
+// Normalized launch inputs. omp-only fields (configPaths/extensionPath = config overlays +
 // trigger package) are ignored by non-omp backends. `tools`/`noTools` restrict the toolset;
 // `fork` seeds a NEW session from a prior one (branch/discussion); `resume` continues an
 // existing session in place (claude reopen); `thinking` is the opening effort.
@@ -28,6 +29,10 @@ export interface RuntimeLaunchOpts {
   resume?: string;
   noTools?: boolean;
   tools?: string[];
+  // Built-in tools the child may not call at all, in the backend's own spelling. claude-only:
+  // a «Посіпака» run gets `AskUserQuestion` here (nobody is there to answer); omp turns its ask
+  // tool off through a `--config` overlay instead (configPaths).
+  disallowedTools?: string[];
   // Extra text appended to the system prompt (backend-neutral). omp maps it to
   // `--append-system-prompt`, claude to `systemPrompt.append`. Used to inject the user's
   // agent communication language directive.
@@ -37,7 +42,9 @@ export interface RuntimeLaunchOpts {
   // a success. claude-only (omp's start() awaits its own `ready` frame and needs no window);
   // overridden in tests so they never sleep the real default.
   startGraceMs?: number;
-  configPath?: string;   // omp-only
+  // omp `--config` overlays, applied in order (later wins): the project's skill library and the
+  // machine resource limits (task.maxConcurrency, bash.autoBackground.enabled). omp-only.
+  configPaths?: string[];
   extensionPath?: string; // omp-only
   // How much of omp's subagent activity to forward (omp defaults to "off"). Ignored by
   // non-omp backends. Undefined lets the omp runtime pick its own default ("progress").
@@ -48,6 +55,13 @@ export interface RuntimeLaunchOpts {
   // and bearer in its environment. Tool names: `name` is the server's name, so claude shows
   // them as `mcp__<name>__<tool>` and omp as the bare `<tool>`.
   mcp?: { name: string; url: string; token: string };
+  // Extra environment merged over process.env for the child. The machine resource profile
+  // sends claude its CLAUDE_CODE_* limits this way (the operator's settings `env` still wins).
+  env?: Record<string, string>;
+  // Called synchronously once the agent process exists, with its pid, before it reports
+  // ready: the supervisor renices it then, so the MCP servers and workers it starts inherit
+  // the lower priority, and keeps the pid for the memory watchdog.
+  onSpawn?: (pid: number) => void;
 }
 
 // The backend-neutral session surface the supervisor drives. Method names match the current
@@ -76,7 +90,9 @@ export interface AgentRuntime {
   getSubagentMessages(sel: { subagentId?: string; sessionFile?: string; fromByte?: number }): Promise<SubagentMessagesPage>;
   stop(): Promise<void>;
   onEvent(cb: (e: RpcEvent) => void): void;
-  onExit(cb: (code: number | null, reason: string) => void): void;
+  // `cause` is the auth-failure code (auth-failure.ts) when the runtime recognised why the
+  // child died — a signed-out CLI, a missing binary — so callers need not re-read `reason`.
+  onExit(cb: (code: number | null, reason: string, cause?: AuthFailureCode) => void): void;
 }
 
 export function createRuntime(kind: AgentRuntimeKind, opts: RuntimeLaunchOpts): AgentRuntime {

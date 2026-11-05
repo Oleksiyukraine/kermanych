@@ -3,6 +3,9 @@
     <p v-if="store.loadError" class="relw__note relw__note--error mono">
       {{ t('management.home.releases.error', { error: store.loadError }) }}
     </p>
+    <template v-else-if="phase !== 'ready'">
+      <KSkeleton v-if="phase === 'skeleton'" variant="rows" :rows="3" />
+    </template>
     <p v-else-if="!recent.length" class="relw__note mono">
       {{ t('management.home.releases.empty') }}
     </p>
@@ -22,7 +25,7 @@
       </li>
     </ol>
 
-    <RouterLink v-if="recent.length" class="relw__all mono" :to="{ name: 'management-releases' }">
+    <RouterLink v-if="phase === 'ready' && recent.length" class="relw__all mono" :to="{ name: 'management-releases' }">
       {{ t('management.home.releases.open') }} →
     </RouterLink>
   </div>
@@ -38,6 +41,8 @@ import { useI18n } from 'vue-i18n';
 import { RouterLink } from 'vue-router';
 import type { WorkspaceReleaseNote } from '@kermanych/cloud';
 import KTag from 'components/kit/KTag.vue';
+import KSkeleton from 'components/kit/KSkeleton.vue';
+import { useLoadPhase } from '../../composables/useLoadPhase';
 import { useReleaseNotes } from 'stores/release-notes';
 import { useNow } from '../../composables/useNow';
 import { relativeTime, renderTime } from '../../lib/time';
@@ -59,6 +64,9 @@ watch(
 const recent = computed<WorkspaceReleaseNote[]>(() =>
   (store.byWorkspace[props.workspaceId] ?? []).slice(0, 5),
 );
+
+// «Ще немає нотаток» only once this workspace's history has arrived.
+const phase = useLoadPhase(() => store.byWorkspace[props.workspaceId] === undefined && !store.loadError);
 </script>
 
 <style scoped lang="scss">

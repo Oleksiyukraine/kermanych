@@ -3,7 +3,7 @@
     <!-- Numbered, and the number is not decoration: the launcher pastes the assigned bodies in
          exactly this order (SkillsService.assignedFor sorts by position), so the list IS the
          delivery order and the note under it says so. -->
-    <ol v-if="items.length" class="ss__list">
+    <ol v-if="items.length" class="ss__list" :aria-busy="loading || undefined">
       <li
         v-for="(item, i) in items"
         :key="item.name"
@@ -26,7 +26,7 @@
           <button
             type="button"
             class="ss__btn ss__btn--move"
-            :disabled="disabled || i === 0"
+            :disabled="locked || i === 0"
             :aria-label="t('settings.skillSeq.up')"
             :title="t('settings.skillSeq.up')"
             @click="move(i, -1)"
@@ -34,12 +34,12 @@
           <button
             type="button"
             class="ss__btn ss__btn--move"
-            :disabled="disabled || i === items.length - 1"
+            :disabled="locked || i === items.length - 1"
             :aria-label="t('settings.skillSeq.down')"
             :title="t('settings.skillSeq.down')"
             @click="move(i, 1)"
           >↓</button>
-          <button type="button" class="ss__btn" :disabled="disabled" @click="remove(i)">
+          <button type="button" class="ss__btn" :disabled="locked" @click="remove(i)">
             {{ t('settings.skillSeq.remove') }}
           </button>
         </span>
@@ -68,15 +68,18 @@
         :model-value="picked"
         :options="left"
         :placeholder="pickPlaceholder"
-        :disabled="disabled || !left.length"
+        :disabled="locked || !left.length"
         @update:model-value="picked = $event"
       />
       <button
         type="button"
         class="ss__btn ss__btn--primary"
-        :disabled="disabled || !picked"
+        :disabled="locked || !picked"
         @click="add"
       >{{ t('settings.skillSeq.add') }}</button>
+      <!-- The host is writing the order the list already shows (it is optimistic): one spinner
+           for the whole sequence, since every gesture here replaces the whole list. -->
+      <KSpinner v-if="loading" :size="10" class="ss__spinner" />
     </div>
   </div>
 </template>
@@ -126,9 +129,10 @@ export function measureSkillBytes(
 // list, so the host never has to reconstruct positions.
 import { computed, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
-import type { SkillView } from '@kermanych/core';
-import KSelect from 'components/kit/KSelect.vue';
-import { assignmentBadge, ASSIGNED_BYTES_WARN, type AssignedSkill } from '../../lib/settings';
+import type { RepoSkill, SkillView } from '@kermanych/core';
+import KSelect, { type KSelectOption } from 'components/kit/KSelect.vue';
+import KSpinner from 'components/kit/KSpinner.vue';
+import { assignmentBadge, ASSIGNED_BYTES_WARN, sequenceCandidates, type AssignedSkill } from '../../lib/settings';
 
 const props = defineProps<{
   names: string[];
@@ -137,10 +141,14 @@ const props = defineProps<{
   // the same skill on two agents is paid for twice, once per launch.
   bodyBytes: Record<string, number>;
   // The names the bound checkout's own skill directories define, keyed to the file that owns
-  // each. Not part of the library and never offered below — but a name in here IS delivered, so
-  // the merge needs it to tell a dangling name from a repository one.
-  repo: Record<string, string>;
+  // each. A name in here IS delivered (the resolver reads the repository's file), so the merge
+  // needs it to tell a dangling name from a repository one, and the picker offers the names it
+  // alone defines (spec 2026-10-22-skill-import, decision 2).
+  repo: Record<string, RepoSkill>;
   disabled?: boolean;
+  // The host is saving the list on screen. Locks every control, so a second gesture cannot
+  // race the write of the first, and shows the spinner.
+  loading?: boolean;
 }>();
 
 const emit = defineEmits<{ 'update:names': [names: string[]] }>();
@@ -148,6 +156,7 @@ const emit = defineEmits<{ 'update:names': [names: string[]] }>();
 const { t } = useI18n();
 
 const picked = ref('');
+const locked = computed(() => !!props.disabled || !!props.loading);
 
 // Each name as the list shows it: where its text comes from, or that it comes from nowhere.
 //
@@ -165,7 +174,7 @@ const items = computed(() => {
   const byName = new Map(props.view.map((v) => [v.name, v]));
   return props.names.map((name) => {
     const hit = byName.get(name);
-    const repoPath = Object.hasOwn(props.repo, name) ? props.repo[name] : undefined;
+    const repoPath = Object.hasOwn(props.repo, name) ? props.repo[name]!.path : undefined;
     const skill: AssignedSkill = !hit
       ? repoPath === undefined
         ? { name, broken: true }
@@ -197,19 +206,21 @@ const cost = computed(() => {
   return { bytes, unmeasured };
 });
 
-// Only names the RESOLVED view carries: a name the library does not hold would reach the
-// launcher as `missing`, so offering it would be offering to create a broken row.
-const left = computed(() => {
-  const taken = new Set(props.names);
-  return props.view.map((v) => v.name).filter((name) => !taken.has(name));
-});
+// What the picker offers: the library, then the names only the checkout defines. A
+// repository-only name says where it comes from, because nothing else on the picker would.
+const left = computed<KSelectOption[]>(() =>
+  sequenceCandidates(props.view, props.repo, props.names).map((c) => ({
+    value: c.name,
+    label: c.repoOnly ? `${c.name} · ${t('settings.skillStatus.repo')}` : c.name,
+  })),
+);
 
 // The host can replace `names` under us — a project switch, a reload after a save — and a
 // selection that survived it would add a name that is already in the sequence or no longer in
 // the library. Dropped rather than silently ignored on click, so the picker never shows a
 // choice the button refuses to act on.
 watch(left, (candidates) => {
-  if (picked.value && !candidates.includes(picked.value)) picked.value = '';
+  if (picked.value && !candidates.some((c) => c.value === picked.value)) picked.value = '';
 });
 
 // Two different reasons the picker can offer nothing, and they are not interchangeable: an empty
@@ -218,7 +229,7 @@ watch(left, (candidates) => {
 // remove when there is no library to add from.
 const pickPlaceholder = computed(() => {
   if (left.value.length) return t('settings.skillSeq.pickPlaceholder');
-  return props.view.length
+  return props.view.length || Object.keys(props.repo).length
     ? t('settings.skillSeq.allAssigned')
     : t('settings.skillSeq.libraryEmpty');
 });
@@ -288,6 +299,7 @@ function move(i: number, delta: number): void {
 .ss__btn { font: inherit; font-size: 12px; padding: 3px 10px; background: transparent; color: var(--k-text); border: 1px solid var(--k-line-strong); border-radius: var(--k-r); cursor: pointer; }
 .ss__btn:disabled { opacity: 0.45; cursor: default; }
 .ss__btn--primary { border-color: var(--k-accent); color: var(--k-accent); }
+.ss__spinner { align-self: center; color: var(--k-muted); }
 /* Square, so the two arrows read as one control pair rather than two short words. */
 .ss__btn--move { padding: 3px 7px; line-height: 1.2; }
 </style>

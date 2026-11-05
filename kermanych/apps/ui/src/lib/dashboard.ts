@@ -47,6 +47,16 @@ function isWidgetId(value: string): value is WidgetId {
   return (WIDGET_IDS as readonly string[]).includes(value);
 }
 
+// Tiles that snapshot a manager-only Менеджмент section (core MANAGEMENT_SECTIONS
+// `managersOnly`): whoever may not open the section does not get its tile either. Filtered at
+// render, never out of the saved layout — the layout is the operator's arrangement, and a
+// role regained must bring the tile back where they left it.
+const MANAGER_TILES: Partial<Record<WidgetId, true>> = { risks: true };
+
+export function visibleTiles(layout: readonly TileLayout[], canManage: boolean): readonly TileLayout[] {
+  return canManage ? layout : layout.filter((t) => !MANAGER_TILES[t.id]);
+}
+
 export function clampWidth(w: number): number {
   return Math.min(DASHBOARD_COLUMNS, Math.max(TILE_MIN_W, Math.round(w)));
 }

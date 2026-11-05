@@ -6,8 +6,8 @@ import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { mkdirSync } from "node:fs";
 import { Subject } from "rxjs";
-import { isThinkingLevel, isAgentRuntime, isNativeHarness, isAgentLanguage, isFindingKind, parseFindingTarget, docsPolicy, combineReportWrites } from "@kermanych/core";
-import type { AgentFinding, DocsPolicy, FindingReport, FindingTarget, Project, Session, SessionStatus, ThinkingLevel, Usage, AgentRuntimeKind, AgentLanguage, TaskReportsWrite } from "@kermanych/core";
+import { isThinkingLevel, isAgentRuntime, isNativeHarness, isAgentLanguage, isFindingKind, isPlatform, parseFindingTarget, docsPolicy, combineReportWrites, readMinionResult, isMinionPauseCode, clampMinionCap, MINION_CAP_DEFAULT, isDevicePlatform } from "@kermanych/core";
+import type { AgentFinding, DeviceChoice, DocsPolicy, FindingReport, FindingTarget, MinionPause, MinionResult, NativeSettings, Platform, Project, ResourceDecision, Session, SessionDevice, SessionStatus, ThinkingLevel, Usage, AgentRuntimeKind, AgentLanguage, TaskReportsWrite, TesterSettings } from "@kermanych/core";
 
 // The cached Supabase session. Lives in SQLite so a restarted api still knows who
 // its user is without a cloud round trip.
@@ -19,6 +19,14 @@ export type AuthSessionRow = {
   agentRuntime?: AgentRuntimeKind;
   agentLanguage?: AgentLanguage;
 };
+
+// This machine's resource-profile row. `overrides` stays JSON text here; the profile service
+// owns its shape (and tolerates a row written by another version).
+export type MachineResourcesRow = { fingerprint: string; decision: ResourceDecision | null; overrides: string };
+
+// «Посіпака» on this machine, as stored: the cap, the pause (absent while it works) and the
+// consecutive failures (docs/specs/2026-10-23-minion-auto-run.md, decisions 8-9).
+export type MinionSettingsRow = { cap: number; pause?: MinionPause; failures: number };
 
 // A queued cloud status push. One row per task — the outbox is a latest-wins mailbox, not a
 // log: if a session goes thinking → tool → thinking while offline, only the newest status is
@@ -80,6 +88,57 @@ function readUsage(raw: string | null): Usage | undefined {
     return { input: u.input ?? 0, output: u.output ?? 0, cacheRead: u.cacheRead ?? 0, cacheWrite: u.cacheWrite ?? 0, cost: u.cost };
   } catch {
     return undefined;
+  }
+}
+
+// The `minion_result` column, back into a shape — tolerant like readUsage.
+function readMinionColumn(raw: string | null): MinionResult | undefined {
+  if (!raw) return undefined;
+  try {
+    return readMinionResult(JSON.parse(raw));
+  } catch {
+    return undefined;
+  }
+}
+
+// The `minion_settings.pause` column: a MinionPause, or nothing for a row another version wrote.
+function readMinionPause(raw: string | null): MinionPause | undefined {
+  if (!raw) return undefined;
+  try {
+    const p = JSON.parse(raw) as Partial<MinionPause> | null;
+    if (!p || !isMinionPauseCode(p.code) || typeof p.at !== "string") return undefined;
+    return { code: p.code, at: p.at, ...(typeof p.detail === "string" && p.detail ? { detail: p.detail } : {}) };
+  } catch {
+    return undefined;
+  }
+}
+
+// The `projects.device_choice` column: only the keys of a DeviceChoice with the right types, so a
+// row another version wrote reads as the defaults rather than as a bad choice.
+function readDeviceChoice(raw: string | null): DeviceChoice {
+  if (!raw) return {};
+  try {
+    const c = JSON.parse(raw) as Record<string, unknown> | null;
+    if (!c || typeof c !== "object") return {};
+    return {
+      ...(isDevicePlatform(c.platform) ? { platform: c.platform } : {}),
+      ...(typeof c.ios === "string" && c.ios ? { ios: c.ios } : {}),
+      ...(typeof c.android === "string" && c.android ? { android: c.android } : {}),
+    };
+  } catch {
+    return {};
+  }
+}
+
+// The `sessions.device` column: a SessionDevice, or null for none or a malformed blob.
+function readSessionDevice(raw: string | null): SessionDevice | null {
+  if (!raw) return null;
+  try {
+    const d = JSON.parse(raw) as Record<string, unknown> | null;
+    if (!d || !isDevicePlatform(d.platform) || typeof d.base !== "string" || typeof d.id !== "string" || !d.id) return null;
+    return { platform: d.platform, base: d.base, baseName: typeof d.baseName === "string" ? d.baseName : d.base, id: d.id };
+  } catch {
+    return null;
   }
 }
 
@@ -188,9 +247,12 @@ export class RegistryService {
     this.db.exec(
       `CREATE TABLE IF NOT EXISTS auth_session (id INTEGER PRIMARY KEY CHECK (id = 1), user_id TEXT NOT NULL, access_token TEXT NOT NULL, expires_at TEXT, github_username TEXT)`,
     );
-    // Additive migration: preview commands, then the cloud workspace id (for the «ШІ-команда»
-    // workspace scope), all arrived after the initial schema.
-    for (const col of ["preview_command", "api_command", "workspace_id"]) {
+    // Additive migration: the cloud workspace id (for the «ШІ-команда» workspace scope), then the
+    // project platform (docs/specs/2026-11-03-session-browser-preview.md, decision 9; NULL = «Не
+    // визначено»), arrived after the initial schema. An older DB also carries `preview_command` /
+    // `api_command`: unused since the preview config moved into the repository (decision 10), and
+    // left in place — the registry has no DROP precedent.
+    for (const col of ["workspace_id", "platform"]) {
       try {
         this.db.exec(`ALTER TABLE projects ADD COLUMN ${col} TEXT`);
       } catch {
@@ -295,8 +357,9 @@ export class RegistryService {
     // 20261005100000. Policy values are the only strings that can read `"ask"`.
     this.db.exec(`UPDATE projects SET docs_policy = replace(docs_policy, '"ask"', '"optional"') WHERE docs_policy LIKE '%"ask"%'`);
     // Additive migration: backlog tasks persist their launch config (branch prefix + model)
-    // so "Start" can spawn them later with the same settings the operator chose.
-    for (const col of ["model", "prefix", "platform"]) {
+    // so "Start" can spawn them later with the same settings the operator chose. An older DB
+    // also has `sessions.platform`, unused since the platform moved to the project.
+    for (const col of ["model", "prefix"]) {
       try {
         this.db.exec(`ALTER TABLE sessions ADD COLUMN ${col} TEXT`);
       } catch {
@@ -356,6 +419,13 @@ export class RegistryService {
     } catch {
       /* column already exists */
     }
+    // Additive migration: the pull request's URL, stored with `pr_opened`, so the merged-PR check
+    // (docs/specs/2026-10-26-pr-merged-close-prompt.md) asks GitHub about exactly that PR.
+    try {
+      this.db.exec(`ALTER TABLE sessions ADD COLUMN pr_url TEXT`);
+    } catch {
+      /* column already exists */
+    }
     // Additive migration: a native session (docs/specs/2026-10-05-native-sessions.md) runs its
     // harness as its own TUI in a pty and Kermanych only observes it. Fixed at creation.
     try {
@@ -367,6 +437,56 @@ export class RegistryService {
     // opened with the deep-analysis prompt. Fixed at creation, like `native`.
     try {
       this.db.exec(`ALTER TABLE sessions ADD COLUMN deep_analysis INTEGER NOT NULL DEFAULT 0`);
+    } catch {
+      /* column already exists */
+    }
+    // Additive migration: a «Дизайн» session (docs/specs/2026-10-29-design-tab.md) carries the
+    // folder it writes its design into. Stamped once at creation, like `deep_analysis`.
+    try {
+      this.db.exec(`ALTER TABLE sessions ADD COLUMN design_dir TEXT`);
+    } catch {
+      /* column already exists */
+    }
+    // Additive migration: an agent waiting for a slot (docs/specs/2026-10-21-machine-resource-profile.md,
+    // decision 5). `pending_prompt` is the message it will be sent (text only); `slot_queued_at`
+    // the enqueue time in ms, so a restart re-enqueues in the original FIFO order.
+    for (const col of ["pending_prompt TEXT", "slot_queued_at INTEGER"]) {
+      try {
+        this.db.exec(`ALTER TABLE sessions ADD COLUMN ${col}`);
+      } catch {
+        /* column already exists */
+      }
+    }
+    // Additive migration: a «Посіпака» run (docs/specs/2026-10-23-minion-auto-run.md). `minion`
+    // is fixed at creation, like `native`; `minion_result` is the JSON MinionResult of the run so
+    // far, rewritten whenever a turn of it ends differently; `finding_kind` is the card's finding
+    // kind for a run of a finding card (decision 14), fixed at creation too.
+    for (const col of ["minion INTEGER NOT NULL DEFAULT 0", "minion_result TEXT", "finding_kind TEXT"]) {
+      try {
+        this.db.exec(`ALTER TABLE sessions ADD COLUMN ${col}`);
+      } catch {
+        /* column already exists */
+      }
+    }
+    // Additive migration: the mobile device preview (docs/specs/2026-11-03-mobile-device-preview.md,
+    // decisions 4 and 6). `projects.device_choice` is this machine's JSON DeviceChoice (base device
+    // and platform), `sessions.device` the JSON SessionDevice of the session's clone. Both are local
+    // only: device ids mean nothing on another machine, so no cloud path reads or writes them, and
+    // upsertProject's ON CONFLICT list leaves `device_choice` alone.
+    try {
+      this.db.exec(`ALTER TABLE projects ADD COLUMN device_choice TEXT`);
+    } catch {
+      /* column already exists */
+    }
+    try {
+      this.db.exec(`ALTER TABLE sessions ADD COLUMN device TEXT`);
+    } catch {
+      /* column already exists */
+    }
+    // Additive migration: a «Тестувальник» run (docs/specs/2026-11-04-qa-tester-agent.md,
+    // decision 1), a `review` child fixed as such at creation, like `minion`.
+    try {
+      this.db.exec(`ALTER TABLE sessions ADD COLUMN tester INTEGER NOT NULL DEFAULT 0`);
     } catch {
       /* column already exists */
     }
@@ -404,6 +524,16 @@ export class RegistryService {
     this.db.exec(
       `CREATE TABLE IF NOT EXISTS linear_tokens (org_url_key TEXT NOT NULL, user_id TEXT NOT NULL, api_key TEXT NOT NULL, account_id TEXT, PRIMARY KEY (org_url_key, user_id))`,
     );
+    // Per-user Plane API keys, THIS machine only — the Jira/Linear custody rule. Keyed by
+    // (site, Plane workspace, user): some Plane editions scope a key to one workspace, so a
+    // machine whose member works in two Plane workspaces on one site keeps both apart. The
+    // key's own Plane identity (/users/me/) rides along, learned on validation.
+    this.db.exec(
+      `CREATE TABLE IF NOT EXISTS plane_tokens (site_url TEXT NOT NULL, workspace_slug TEXT NOT NULL, user_id TEXT NOT NULL, api_token TEXT NOT NULL, plane_user_id TEXT NOT NULL, display_name TEXT NOT NULL DEFAULT '', PRIMARY KEY (site_url, workspace_slug, user_id))`,
+    );
+    // Per-user OpenAI API keys for the voice conversation (docs/specs/2026-11-02-voice-conversation.md),
+    // THIS machine only — the Jira/Linear custody rule.
+    this.db.exec(`CREATE TABLE IF NOT EXISTS voice_keys (user_id TEXT PRIMARY KEY, api_key TEXT NOT NULL)`);
     // Per-user Slack bot + app-level tokens, THIS machine only — the Jira/Linear custody
     // rule. Keyed by the KERMANYCH workspace (not the Slack team) because one Slack app is
     // bound to exactly one workspace; the team/bot identity rides along, learned from
@@ -433,6 +563,33 @@ export class RegistryService {
       `CREATE TABLE IF NOT EXISTS session_findings (id TEXT PRIMARY KEY, session_id TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'open', kind TEXT NOT NULL, title TEXT NOT NULL, context TEXT NOT NULL, evidence TEXT NOT NULL, acceptance_criteria TEXT NOT NULL, suggested_fix TEXT, target TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL)`,
     );
     this.db.exec(`CREATE INDEX IF NOT EXISTS session_findings_session_idx ON session_findings (session_id)`);
+    // The machine resource profile's consent and operator overrides
+    // (docs/specs/2026-10-21-machine-resource-profile.md, decision 3). Single-row like
+    // auth_session, and never synced: the same user's second machine has its own hardware.
+    // `overrides` is a JSON Partial<ResourceLimits> holding only the keys the operator changed.
+    this.db.exec(
+      `CREATE TABLE IF NOT EXISTS machine_resources (id INTEGER PRIMARY KEY CHECK (id = 1), fingerprint TEXT NOT NULL, decision TEXT, overrides TEXT NOT NULL DEFAULT '{}')`,
+    );
+    // «Посіпака» on this machine (docs/specs/2026-10-23-minion-auto-run.md, decisions 6 and 8):
+    // never synced, like machine_resources — whether a machine may work alone depends on that
+    // machine. `minion_settings` is single-row: the cap, the pause (JSON MinionPause, NULL while
+    // it works) and the consecutive failures. `minion_projects` lists the projects activated here.
+    this.db.exec(
+      `CREATE TABLE IF NOT EXISTS minion_settings (id INTEGER PRIMARY KEY CHECK (id = 1), cap INTEGER NOT NULL, pause TEXT, failures INTEGER NOT NULL DEFAULT 0)`,
+    );
+    this.db.exec(`CREATE TABLE IF NOT EXISTS minion_projects (project_id TEXT PRIMARY KEY, activated_at TEXT NOT NULL)`);
+    // Native sessions' launch preferences (core NativeSettings), single-row and machine-local
+    // like the two above: how a TUI is drawn is this machine's operator's choice.
+    this.db.exec(
+      `CREATE TABLE IF NOT EXISTS native_settings (id INTEGER PRIMARY KEY CHECK (id = 1), claude_full_screen INTEGER NOT NULL DEFAULT 0)`,
+    );
+    // «Тестувальник» settings (docs/specs/2026-11-04-qa-tester-agent.md, decision 4): per project,
+    // THIS machine only and never synced — the Jira/Linear custody rule, passwords in plaintext.
+    this.db.exec(`CREATE TABLE IF NOT EXISTS tester_settings (project_id TEXT PRIMARY KEY, login_path TEXT NOT NULL DEFAULT '', notes TEXT NOT NULL DEFAULT '')`);
+    this.db.exec(
+      `CREATE TABLE IF NOT EXISTS tester_accounts (id TEXT PRIMARY KEY, project_id TEXT NOT NULL, name TEXT NOT NULL, login TEXT NOT NULL, password TEXT NOT NULL, note TEXT NOT NULL DEFAULT '', position INTEGER NOT NULL)`,
+    );
+    this.db.exec(`CREATE INDEX IF NOT EXISTS tester_accounts_project_idx ON tester_accounts (project_id)`);
   }
 
   // v1 (2026-08-21, team cloud): `groups` becomes `projects`, its id becomes the CLOUD
@@ -462,12 +619,13 @@ export class RegistryService {
   listProjects(): Project[] {
     const rows = this.db
       .prepare(
-        `SELECT id, name, local_repo_path as localRepoPath, workspace_id as workspaceId, color, preview_command as previewCommand, api_command as apiCommand, carry_files as carryFiles, doc_folders as docFolders, docs_required as docsRequired, docs_policy as docsPolicy, default_branch as defaultBranch, default_model as defaultModel, default_effort as defaultEffort, conventions, created_at as createdAt FROM projects ORDER BY created_at`,
+        `SELECT id, name, local_repo_path as localRepoPath, workspace_id as workspaceId, color, platform, carry_files as carryFiles, doc_folders as docFolders, docs_required as docsRequired, docs_policy as docsPolicy, default_branch as defaultBranch, default_model as defaultModel, default_effort as defaultEffort, conventions, created_at as createdAt FROM projects ORDER BY created_at`,
       )
-      .all() as (Omit<Project, "carryFiles" | "docFolders" | "docsRequired" | "docsPolicy"> & { carryFiles: string; docFolders: string; docsRequired: number; docsPolicy: string })[];
+      .all() as (Omit<Project, "carryFiles" | "docFolders" | "docsRequired" | "docsPolicy" | "platform"> & { carryFiles: string; docFolders: string; docsRequired: number; docsPolicy: string; platform: string | null })[];
     // An unbound project stores NULL/"" for its path; hand callers a plain "" so a
-    // `!project.localRepoPath` check is all the launch path ever needs.
-    return rows.map((r) => ({ ...r, localRepoPath: r.localRepoPath ?? "", workspaceId: r.workspaceId ?? undefined, carryFiles: JSON.parse(r.carryFiles) as string[], docFolders: JSON.parse(r.docFolders) as string[], docsRequired: r.docsRequired === 1, docsPolicy: docsPolicy(JSON.parse(r.docsPolicy)), color: r.color ?? undefined, defaultBranch: r.defaultBranch ?? undefined, defaultModel: r.defaultModel ?? undefined, defaultEffort: r.defaultEffort ?? undefined, conventions: r.conventions ?? undefined }));
+    // `!project.localRepoPath` check is all the launch path ever needs. An unknown platform (a
+    // newer build's value) reads as «Не визначено», like NULL.
+    return rows.map(({ platform, ...r }) => ({ ...r, ...(isPlatform(platform) ? { platform } : {}), localRepoPath: r.localRepoPath ?? "", workspaceId: r.workspaceId ?? undefined, carryFiles: JSON.parse(r.carryFiles) as string[], docFolders: JSON.parse(r.docFolders) as string[], docsRequired: r.docsRequired === 1, docsPolicy: docsPolicy(JSON.parse(r.docsPolicy)), color: r.color ?? undefined, defaultBranch: r.defaultBranch ?? undefined, defaultModel: r.defaultModel ?? undefined, defaultEffort: r.defaultEffort ?? undefined, conventions: r.conventions ?? undefined }));
   }
 
   // Local project rows MIRROR cloud projects, so the id always comes from the caller —
@@ -485,15 +643,14 @@ export class RegistryService {
     };
     this.db
       .prepare(
-        `INSERT INTO projects (id, name, local_repo_path, workspace_id, color, preview_command, api_command, carry_files, doc_folders, docs_required, docs_policy, default_branch, default_model, default_effort, conventions, created_at)
-         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+        `INSERT INTO projects (id, name, local_repo_path, workspace_id, color, platform, carry_files, doc_folders, docs_required, docs_policy, default_branch, default_model, default_effort, conventions, created_at)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
          ON CONFLICT(id) DO UPDATE SET
            name = excluded.name,
            local_repo_path = CASE WHEN excluded.local_repo_path = '' THEN projects.local_repo_path ELSE excluded.local_repo_path END,
            workspace_id = CASE WHEN excluded.workspace_id IS NULL THEN projects.workspace_id ELSE excluded.workspace_id END,
            color = excluded.color,
-           preview_command = excluded.preview_command,
-           api_command = excluded.api_command,
+           platform = excluded.platform,
            carry_files = excluded.carry_files,
            doc_folders = excluded.doc_folders,
            docs_required = excluded.docs_required,
@@ -503,19 +660,20 @@ export class RegistryService {
            default_effort = excluded.default_effort,
            conventions = excluded.conventions`,
       )
-      .run(row.id, row.name, row.localRepoPath, row.workspaceId || null, row.color || null, row.previewCommand ?? null, row.apiCommand ?? null, JSON.stringify(row.carryFiles), JSON.stringify(row.docFolders), row.docsRequired ? 1 : 0, JSON.stringify(row.docsPolicy), row.defaultBranch || null, row.defaultModel || null, row.defaultEffort || null, row.conventions || null, row.createdAt);
+      .run(row.id, row.name, row.localRepoPath, row.workspaceId || null, row.color || null, row.platform ?? null, JSON.stringify(row.carryFiles), JSON.stringify(row.docFolders), row.docsRequired ? 1 : 0, JSON.stringify(row.docsPolicy), row.defaultBranch || null, row.defaultModel || null, row.defaultEffort || null, row.conventions || null, row.createdAt);
     // Re-read: the CASE may have kept a binding (and the original created_at) the caller
     // never sent, so the in-memory `row` is not the truth.
     return this.listProjects().find((x) => x.id === row.id)!;
   }
 
-  patchProject(id: string, patch: { name?: string; localRepoPath?: string; color?: string; previewCommand?: string; apiCommand?: string; carryFiles?: string[]; docFolders?: string[]; docsRequired?: boolean; docsPolicy?: DocsPolicy; defaultBranch?: string; defaultModel?: string; defaultEffort?: ThinkingLevel | ""; conventions?: string }): Project {
+  // `platform: null` clears it (the cloud row has none); absent keeps it.
+  patchProject(id: string, patch: { name?: string; localRepoPath?: string; color?: string; platform?: Platform | null; carryFiles?: string[]; docFolders?: string[]; docsRequired?: boolean; docsPolicy?: DocsPolicy; defaultBranch?: string; defaultModel?: string; defaultEffort?: ThinkingLevel | ""; conventions?: string }): Project {
     const cur = this.listProjects().find((p) => p.id === id);
     if (!cur) throw new Error("project not found");
-    const next = { ...cur, ...patch, color: (patch.color ?? cur.color) || undefined, docsRequired: patch.docsRequired ?? cur.docsRequired, docsPolicy: docsPolicy(patch.docsPolicy ?? cur.docsPolicy), defaultBranch: (patch.defaultBranch ?? cur.defaultBranch) || undefined, defaultModel: (patch.defaultModel ?? cur.defaultModel) || undefined, defaultEffort: (patch.defaultEffort ?? cur.defaultEffort) || undefined, conventions: (patch.conventions ?? cur.conventions) || undefined };
+    const next: Project = { ...cur, ...patch, platform: patch.platform === undefined ? cur.platform : (patch.platform ?? undefined), color: (patch.color ?? cur.color) || undefined, docsRequired: patch.docsRequired ?? cur.docsRequired, docsPolicy: docsPolicy(patch.docsPolicy ?? cur.docsPolicy), defaultBranch: (patch.defaultBranch ?? cur.defaultBranch) || undefined, defaultModel: (patch.defaultModel ?? cur.defaultModel) || undefined, defaultEffort: (patch.defaultEffort ?? cur.defaultEffort) || undefined, conventions: (patch.conventions ?? cur.conventions) || undefined };
     this.db
-      .prepare(`UPDATE projects SET name=?, local_repo_path=?, color=?, preview_command=?, api_command=?, carry_files=?, doc_folders=?, docs_required=?, docs_policy=?, default_branch=?, default_model=?, default_effort=?, conventions=? WHERE id=?`)
-      .run(next.name, next.localRepoPath, next.color || null, next.previewCommand ?? null, next.apiCommand ?? null, JSON.stringify(next.carryFiles ?? [".env"]), JSON.stringify(next.docFolders ?? []), next.docsRequired ? 1 : 0, JSON.stringify(next.docsPolicy), next.defaultBranch || null, next.defaultModel || null, next.defaultEffort || null, next.conventions || null, id);
+      .prepare(`UPDATE projects SET name=?, local_repo_path=?, color=?, platform=?, carry_files=?, doc_folders=?, docs_required=?, docs_policy=?, default_branch=?, default_model=?, default_effort=?, conventions=? WHERE id=?`)
+      .run(next.name, next.localRepoPath, next.color || null, next.platform ?? null, JSON.stringify(next.carryFiles ?? [".env"]), JSON.stringify(next.docFolders ?? []), next.docsRequired ? 1 : 0, JSON.stringify(next.docsPolicy), next.defaultBranch || null, next.defaultModel || null, next.defaultEffort || null, next.conventions || null, id);
     return next;
   }
 
@@ -595,6 +753,61 @@ export class RegistryService {
     this.db.prepare(`DELETE FROM linear_tokens WHERE org_url_key = ? AND user_id = ?`).run(orgUrlKey, userId);
   }
 
+  // ── Plane tokens ──────────────────────────────────────────────────────────────
+
+  // The identity is recorded at validation (PlaneService checks /users/me/ before storing),
+  // so unlike Jira/Linear there is no pre-identity row to backfill.
+  getPlaneToken(
+    siteUrl: string,
+    workspaceSlug: string,
+    userId: string,
+  ): { apiToken: string; planeUserId: string; displayName: string } | undefined {
+    return this.db
+      .prepare(
+        `SELECT api_token as apiToken, plane_user_id as planeUserId, display_name as displayName FROM plane_tokens WHERE site_url = ? AND workspace_slug = ? AND user_id = ?`,
+      )
+      .get(siteUrl, workspaceSlug, userId) as { apiToken: string; planeUserId: string; displayName: string } | undefined;
+  }
+
+  setPlaneToken(
+    siteUrl: string,
+    workspaceSlug: string,
+    userId: string,
+    apiToken: string,
+    planeUserId: string,
+    displayName: string,
+  ): void {
+    this.db
+      .prepare(
+        `INSERT INTO plane_tokens (site_url, workspace_slug, user_id, api_token, plane_user_id, display_name) VALUES (?,?,?,?,?,?)
+         ON CONFLICT(site_url, workspace_slug, user_id) DO UPDATE SET api_token = excluded.api_token, plane_user_id = excluded.plane_user_id, display_name = excluded.display_name`,
+      )
+      .run(siteUrl, workspaceSlug, userId, apiToken, planeUserId, displayName);
+  }
+
+  deletePlaneToken(siteUrl: string, workspaceSlug: string, userId: string): void {
+    this.db
+      .prepare(`DELETE FROM plane_tokens WHERE site_url = ? AND workspace_slug = ? AND user_id = ?`)
+      .run(siteUrl, workspaceSlug, userId);
+  }
+
+  // ── Voice (OpenAI) keys ──────────────────────────────────────────────────────
+
+  getVoiceKey(userId: string): string | undefined {
+    const row = this.db.prepare(`SELECT api_key as apiKey FROM voice_keys WHERE user_id = ?`).get(userId) as { apiKey: string } | undefined;
+    return row?.apiKey;
+  }
+
+  setVoiceKey(userId: string, apiKey: string): void {
+    this.db
+      .prepare(`INSERT INTO voice_keys (user_id, api_key) VALUES (?,?) ON CONFLICT(user_id) DO UPDATE SET api_key = excluded.api_key`)
+      .run(userId, apiKey);
+  }
+
+  deleteVoiceKey(userId: string): void {
+    this.db.prepare(`DELETE FROM voice_keys WHERE user_id = ?`).run(userId);
+  }
+
   // ── Slack tokens ──────────────────────────────────────────────────────────────
 
   getSlackToken(workspaceId: string, userId: string): SlackTokenRow | undefined {
@@ -661,16 +874,19 @@ export class RegistryService {
   removeProject(id: string): void {
     this.db.prepare(`DELETE FROM session_findings WHERE session_id IN (SELECT id FROM sessions WHERE project_id = ?)`).run(id);
     this.db.prepare(`DELETE FROM sessions WHERE project_id = ?`).run(id);
+    this.db.prepare(`DELETE FROM minion_projects WHERE project_id = ?`).run(id);
+    this.db.prepare(`DELETE FROM tester_settings WHERE project_id = ?`).run(id);
+    this.db.prepare(`DELETE FROM tester_accounts WHERE project_id = ?`).run(id);
     this.db.prepare(`DELETE FROM projects WHERE id = ?`).run(id);
   }
 
   listSessions(projectId?: string): Session[] {
-    const sql = `SELECT id, project_id as projectId, task_id as taskId, name, task, worktree_path as worktreePath, branch, worktree, base_branch as baseBranch, omp_session_id as ompSessionId, omp_session_file as ompSessionFile, parent_session_id as parentSessionId, kind, model, prefix, platform, runtime, native, deep_analysis, effort, status, pr_opened as prOpened, archived, usage, created_at as createdAt, last_activity_at as lastActivityAt, (SELECT COUNT(*) FROM session_findings f WHERE f.session_id = sessions.id AND f.status = 'open') as open_findings FROM sessions`;
+    const sql = `SELECT id, project_id as projectId, task_id as taskId, name, task, worktree_path as worktreePath, branch, worktree, base_branch as baseBranch, omp_session_id as ompSessionId, omp_session_file as ompSessionFile, parent_session_id as parentSessionId, kind, model, prefix, runtime, native, deep_analysis, design_dir, minion, minion_result, finding_kind, tester, effort, status, pr_opened as prOpened, pr_url, archived, usage, pending_prompt, created_at as createdAt, last_activity_at as lastActivityAt, (SELECT COUNT(*) FROM session_findings f WHERE f.session_id = sessions.id AND f.status = 'open') as open_findings FROM sessions`;
     const rows = (
       projectId
         ? this.db.prepare(sql + ` WHERE project_id = ? ORDER BY created_at`).all(projectId)
         : this.db.prepare(sql + ` ORDER BY created_at`).all()
-    ) as (Omit<Session, "archived" | "worktree" | "usage" | "effort" | "runtime" | "prOpened" | "native" | "deepAnalysis" | "openFindings"> & { archived: number; worktree: number; usage: string | null; effort: string | null; runtime: string | null; prOpened: number; native: number; deep_analysis: number; open_findings: number })[];
+    ) as (Omit<Session, "archived" | "worktree" | "usage" | "effort" | "runtime" | "prOpened" | "prUrl" | "native" | "deepAnalysis" | "designDir" | "minion" | "minionResult" | "findingKind" | "tester" | "openFindings" | "pendingPrompt"> & { archived: number; worktree: number; usage: string | null; effort: string | null; runtime: string | null; prOpened: number; pr_url: string | null; native: number; deep_analysis: number; design_dir: string | null; minion: number; minion_result: string | null; finding_kind: string | null; tester: number; open_findings: number; pending_prompt: string | null })[];
     // SQLite stores the flag as 0/1; hand callers a real boolean. `effort` is validated rather
     // than cast: a row written by an older build (or by hand) must degrade to "not known" —
     // typing an unknown word as a ThinkingLevel would send it straight back into omp's argv.
@@ -678,7 +894,15 @@ export class RegistryService {
     // valid) so invalid values degrade to undefined.
     // `native` and `deep_analysis` are 0/1 flags too, surfaced only when set so an ordinary row
     // stays as it was; `open_findings` likewise appears only when something waits.
-    return rows.map(({ native, deep_analysis, open_findings, ...r }) => ({ ...r, ...(native ? { native: true } : {}), ...(deep_analysis ? { deepAnalysis: true } : {}), ...(open_findings ? { openFindings: open_findings } : {}), archived: r.archived !== 0, worktree: r.worktree !== 0, prOpened: r.prOpened !== 0, taskId: r.taskId ?? undefined, model: r.model ?? undefined, prefix: r.prefix ?? undefined, platform: r.platform ?? undefined, runtime: isNativeHarness(r.runtime) ? r.runtime : undefined, effort: isThinkingLevel(r.effort) ? r.effort : undefined, usage: readUsage(r.usage) }));
+    // `pending_prompt` likewise appears only while a message waits for a slot; `pr_url` only once
+    // a PR URL was stored.
+    // `minion` likewise; `minion_result` and `finding_kind` are validated like `effort`, so a
+    // hand-edited row degrades.
+    // `design_dir` likewise appears only on a design session, `tester` only on a tester run.
+    return rows.map(({ native, deep_analysis, design_dir, minion, minion_result, finding_kind, tester, open_findings, pending_prompt, pr_url, ...r }) => {
+      const minionResult = readMinionColumn(minion_result);
+      return { ...r, ...(native ? { native: true } : {}), ...(deep_analysis ? { deepAnalysis: true } : {}), ...(design_dir ? { designDir: design_dir } : {}), ...(minion ? { minion: true } : {}), ...(minionResult ? { minionResult } : {}), ...(isFindingKind(finding_kind) ? { findingKind: finding_kind } : {}), ...(tester ? { tester: true } : {}), ...(open_findings ? { openFindings: open_findings } : {}), ...(pending_prompt !== null ? { pendingPrompt: pending_prompt } : {}), ...(pr_url ? { prUrl: pr_url } : {}), archived: r.archived !== 0, worktree: r.worktree !== 0, prOpened: r.prOpened !== 0, taskId: r.taskId ?? undefined, model: r.model ?? undefined, prefix: r.prefix ?? undefined, runtime: isNativeHarness(r.runtime) ? r.runtime : undefined, effort: isThinkingLevel(r.effort) ? r.effort : undefined, usage: readUsage(r.usage) };
+    });
   }
 
   createSession(
@@ -701,7 +925,7 @@ export class RegistryService {
     };
     this.db
       .prepare(
-        `INSERT INTO sessions (id, project_id, task_id, name, task, worktree_path, branch, worktree, base_branch, omp_session_id, omp_session_file, parent_session_id, kind, model, prefix, platform, runtime, native, deep_analysis, effort, status, created_at, last_activity_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+        `INSERT INTO sessions (id, project_id, task_id, name, task, worktree_path, branch, worktree, base_branch, omp_session_id, omp_session_file, parent_session_id, kind, model, prefix, runtime, native, deep_analysis, design_dir, minion, finding_kind, tester, effort, status, created_at, last_activity_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
       )
       .run(
         row.id,
@@ -719,10 +943,13 @@ export class RegistryService {
         row.kind,
         row.model ?? null,
         row.prefix ?? null,
-        row.platform ?? null,
         row.runtime ?? null,
         row.native ? 1 : 0,
         row.deepAnalysis ? 1 : 0,
+        row.designDir ?? null,
+        row.minion ? 1 : 0,
+        row.findingKind ?? null,
+        row.tester ? 1 : 0,
         row.effort ?? null,
         row.status,
         row.createdAt,
@@ -739,7 +966,7 @@ export class RegistryService {
     const next = { ...cur, ...patch };
     this.db
       .prepare(
-        `UPDATE sessions SET project_id=?, task_id=?, name=?, task=?, worktree_path=?, branch=?, worktree=?, base_branch=?, omp_session_id=?, omp_session_file=?, kind=?, model=?, prefix=?, platform=?, runtime=?, effort=?, status=?, pr_opened=?, archived=? WHERE id=?`,
+        `UPDATE sessions SET project_id=?, task_id=?, name=?, task=?, worktree_path=?, branch=?, worktree=?, base_branch=?, omp_session_id=?, omp_session_file=?, kind=?, model=?, prefix=?, runtime=?, effort=?, status=?, pr_opened=?, pr_url=?, archived=?, minion_result=? WHERE id=?`,
       )
       .run(
         next.projectId,
@@ -755,12 +982,13 @@ export class RegistryService {
         next.kind,
         next.model ?? null,
         next.prefix ?? null,
-        next.platform ?? null,
         next.runtime ?? null,
         next.effort ?? null,
         next.status,
         next.prOpened ? 1 : 0,
+        next.prUrl || null,
         next.archived ? 1 : 0,
+        next.minionResult ? JSON.stringify(next.minionResult) : null,
         id,
       );
     return next;
@@ -770,6 +998,23 @@ export class RegistryService {
   // because it runs on the high-frequency agent-event path.
   touchSession(id: string): void {
     this.db.prepare(`UPDATE sessions SET last_activity_at = ? WHERE id = ?`).run(new Date().toISOString(), id);
+  }
+
+  // The slot queue's durable half (docs/specs/2026-10-21-machine-resource-profile.md, decision 5).
+  // Targeted writes, like touchSession: updateSession never touches these columns, so a whole-row
+  // update from a stale read cannot drop a waiting message. `undefined` clears both.
+  setPendingPrompt(id: string, text: string | undefined, queuedAt?: number): void {
+    this.db
+      .prepare(`UPDATE sessions SET pending_prompt = ?, slot_queued_at = ? WHERE id = ?`)
+      .run(text ?? null, text === undefined ? null : (queuedAt ?? Date.now()), id);
+  }
+
+  // When each session holding a pending prompt was queued (ms), for re-enqueueing in order.
+  slotQueuedAt(): Map<string, number> {
+    const rows = this.db
+      .prepare(`SELECT id, slot_queued_at FROM sessions WHERE slot_queued_at IS NOT NULL`)
+      .all() as { id: string; slot_queued_at: number }[];
+    return new Map(rows.map((r) => [r.id, r.slot_queued_at]));
   }
 
   // Fold one turn's accounting into the session's lifetime total and hand back the new total.
@@ -993,5 +1238,109 @@ export class RegistryService {
 
   clearAuthSession(): void {
     this.db.prepare(`DELETE FROM auth_session WHERE id = 1`).run();
+  }
+
+  getMachineResources(): MachineResourcesRow | undefined {
+    const row = this.db.prepare(`SELECT fingerprint, decision, overrides FROM machine_resources WHERE id = 1`).get() as
+      | { fingerprint: string; decision: string | null; overrides: string }
+      | undefined;
+    if (!row) return undefined;
+    return {
+      fingerprint: row.fingerprint,
+      decision: row.decision === "applied" || row.decision === "declined" ? row.decision : null,
+      overrides: row.overrides,
+    };
+  }
+
+  setMachineResources(row: MachineResourcesRow): void {
+    this.db
+      .prepare(`INSERT OR REPLACE INTO machine_resources (id, fingerprint, decision, overrides) VALUES (1,?,?,?)`)
+      .run(row.fingerprint, row.decision, row.overrides);
+  }
+
+  // No row yet reads as the defaults: cap 1, working, no failures.
+  getMinionSettings(): MinionSettingsRow {
+    const row = this.db.prepare(`SELECT cap, pause, failures FROM minion_settings WHERE id = 1`).get() as
+      | { cap: number; pause: string | null; failures: number }
+      | undefined;
+    const pause = readMinionPause(row?.pause ?? null);
+    return { cap: clampMinionCap(row?.cap) ?? MINION_CAP_DEFAULT, ...(pause ? { pause } : {}), failures: row?.failures ?? 0 };
+  }
+
+  setMinionSettings(row: MinionSettingsRow): void {
+    this.db
+      .prepare(`INSERT OR REPLACE INTO minion_settings (id, cap, pause, failures) VALUES (1,?,?,?)`)
+      .run(row.cap, row.pause ? JSON.stringify(row.pause) : null, row.failures);
+  }
+
+  // No row yet reads as the defaults: claude inline, its history searchable.
+  getNativeSettings(): NativeSettings {
+    const row = this.db.prepare(`SELECT claude_full_screen FROM native_settings WHERE id = 1`).get() as
+      | { claude_full_screen: number }
+      | undefined;
+    return { claudeFullScreen: row?.claude_full_screen === 1 };
+  }
+
+  setNativeSettings(s: NativeSettings): void {
+    this.db.prepare(`INSERT OR REPLACE INTO native_settings (id, claude_full_screen) VALUES (1,?)`).run(s.claudeFullScreen ? 1 : 0);
+  }
+
+  // The projects «Посіпака» is activated for on this machine, in activation order.
+  listMinionProjects(): string[] {
+    const rows = this.db.prepare(`SELECT project_id FROM minion_projects ORDER BY activated_at, project_id`).all() as { project_id: string }[];
+    return rows.map((r) => r.project_id);
+  }
+
+  setMinionProject(projectId: string, active: boolean): void {
+    if (active) this.db.prepare(`INSERT OR IGNORE INTO minion_projects (project_id, activated_at) VALUES (?,?)`).run(projectId, new Date().toISOString());
+    else this.db.prepare(`DELETE FROM minion_projects WHERE project_id = ?`).run(projectId);
+  }
+
+  // ── The mobile device preview (local only, decisions 4 and 6) ────────────────
+
+  // An unknown project or a row without a choice reads as {} (the defaults).
+  getDeviceChoice(projectId: string): DeviceChoice {
+    const row = this.db.prepare(`SELECT device_choice FROM projects WHERE id = ?`).get(projectId) as { device_choice: string | null } | undefined;
+    return readDeviceChoice(row?.device_choice ?? null);
+  }
+
+  setDeviceChoice(projectId: string, choice: DeviceChoice): void {
+    this.db.prepare(`UPDATE projects SET device_choice = ? WHERE id = ?`).run(JSON.stringify(choice), projectId);
+  }
+
+  getSessionDevice(sessionId: string): SessionDevice | null {
+    const row = this.db.prepare(`SELECT device FROM sessions WHERE id = ?`).get(sessionId) as { device: string | null } | undefined;
+    return readSessionDevice(row?.device ?? null);
+  }
+
+  // `null` forgets the clone (it was deleted).
+  setSessionDevice(sessionId: string, device: SessionDevice | null): void {
+    this.db.prepare(`UPDATE sessions SET device = ? WHERE id = ?`).run(device ? JSON.stringify(device) : null, sessionId);
+  }
+
+  // ── «Тестувальник» settings (docs/specs/2026-11-04-qa-tester-agent.md, decision 4) ──────────
+
+  // No row yet reads as empty settings.
+  getTesterSettings(projectId: string): TesterSettings {
+    const s = this.db.prepare(`SELECT login_path, notes FROM tester_settings WHERE project_id = ?`).get(projectId) as
+      | { login_path: string; notes: string }
+      | undefined;
+    const accounts = this.db
+      .prepare(`SELECT id, name, login, password, note FROM tester_accounts WHERE project_id = ? ORDER BY position, rowid`)
+      .all(projectId) as TesterSettings["accounts"];
+    return { loginPath: s?.login_path ?? "", notes: s?.notes ?? "", accounts };
+  }
+
+  // Replaces the settings and the whole account list in one transaction; accounts keep the
+  // given order. Ids must be assigned by the caller.
+  setTesterSettings(projectId: string, settings: TesterSettings): void {
+    this.db.transaction(() => {
+      this.db
+        .prepare(`INSERT OR REPLACE INTO tester_settings (project_id, login_path, notes) VALUES (?,?,?)`)
+        .run(projectId, settings.loginPath, settings.notes);
+      this.db.prepare(`DELETE FROM tester_accounts WHERE project_id = ?`).run(projectId);
+      const insert = this.db.prepare(`INSERT INTO tester_accounts (id, project_id, name, login, password, note, position) VALUES (?,?,?,?,?,?,?)`);
+      settings.accounts.forEach((a, i) => insert.run(a.id, projectId, a.name, a.login, a.password, a.note, i));
+    })();
   }
 }

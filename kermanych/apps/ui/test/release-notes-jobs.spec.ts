@@ -106,13 +106,19 @@ describe('release notes generation', () => {
     const both = [...ask.sources, { projectId: 'p2', projectName: 'Api', branch: 'dev' }];
     void store.generate({ ...ask, sources: both });
     void store.generate({ ...ask, sources: both });
+    // The same report about other people is another document; the same people in another
+    // order is the same one, and the pick reaches the api.
+    void store.generate({ ...ask, groupBy: 'person', authors: ['Оля', 'Петро'] });
+    void store.generate({ ...ask, groupBy: 'person', authors: ['Петро', 'Оля'] });
 
-    expect(generateReleaseNotes).toHaveBeenCalledTimes(4);
+    expect(generateReleaseNotes).toHaveBeenCalledTimes(5);
+    expect(generateReleaseNotes).toHaveBeenLastCalledWith(expect.objectContaining({ authors: ['Оля', 'Петро'] }));
     expect(store.jobs.map((j) => [j.sources.map((s) => `${s.projectId}@${s.branch}`).join('+'), j.groupBy])).toEqual([
       ['p1@main', 'topic'],
       ['p1@release/2', 'topic'],
       ['p1@main', 'person'],
       ['p1@main+p2@dev', 'topic'],
+      ['p1@main', 'person'],
     ]);
   });
 

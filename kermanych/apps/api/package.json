@@ -16,6 +16,8 @@
   },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.3.259",
+    "@grpc/grpc-js": "^1.14.7",
+    "@grpc/proto-loader": "^0.8.1",
     "@kermanych/cloud": "workspace:*",
     "@kermanych/core": "workspace:*",
     "@nestjs/common": "^10",
@@ -27,15 +29,18 @@
     "@xterm/addon-serialize": "^0.14.0",
     "@xterm/headless": "^6.0.0",
     "better-sqlite3": "^13",
+    "js-yaml": "^4.3.1",
     "markdown-it": "^14.3.0",
     "node-pty": "1.1.0",
     "reflect-metadata": "^0.2",
     "rxjs": "^7",
+    "serve-sim": "0.1.49",
     "socket.io": "^4"
   },
   "devDependencies": {
     "@nestjs/cli": "^10",
     "@types/better-sqlite3": "^7",
+    "@types/js-yaml": "^4.0.9",
     "@types/markdown-it": "^14.1.2",
     "@types/node": "^22",
     "socket.io-client": "^4.8.3",

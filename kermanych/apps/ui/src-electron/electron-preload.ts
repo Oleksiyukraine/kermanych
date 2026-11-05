@@ -1,10 +1,12 @@
 import { contextBridge, ipcRenderer } from 'electron';
 
-// main passes --api-base=<url> via webPreferences.additionalArguments.
+// main passes --api-base=<url> and --ui-key=<secret> via webPreferences.additionalArguments.
 const arg = process.argv.find((a) => a.startsWith('--api-base='));
 const apiBase = arg ? arg.slice('--api-base='.length) : 'http://localhost:4317/api';
 // main adds --app-packaged for a packaged build (app.isPackaged is main-only).
 const packaged = process.argv.includes('--app-packaged');
+const keyArg = process.argv.find((a) => a.startsWith('--ui-key='));
+const uiKey = keyArg ? keyArg.slice('--ui-key='.length) : undefined;
 
 // Subscribe to one of main's `kermanych:browser:*` events; returns the unsubscribe.
 function subscribe<A extends unknown[]>(channel: string, cb: (...args: A) => void): () => void {
@@ -13,21 +15,56 @@ function subscribe<A extends unknown[]>(channel: string, cb: (...args: A) => voi
   return () => ipcRenderer.removeListener(channel, listener);
 }
 
+// The splash status from main. Listened to from the preload's first tick, before any page
+// script, and the latest one is replayed to a late subscriber: the index.html splash script and
+// main's sends do not otherwise agree on an order.
+let bootStatus: KermanychBootStatus | undefined;
+const bootListeners = new Set<(status: KermanychBootStatus) => void>();
+ipcRenderer.on('kermanych:boot-status', (_event, status: KermanychBootStatus) => {
+  bootStatus = status;
+  for (const cb of bootListeners) cb(status);
+});
+
 contextBridge.exposeInMainWorld('kermanych', {
   apiBase,
+  uiKey,
   focus: () => ipcRenderer.send('kermanych:focus'),
+  // Main starts the local api in parallel with the window; resolves once it listens, rejects
+  // when it failed to start (main then shows the error and quits).
+  backendReady: (): Promise<void> => ipcRenderer.invoke('kermanych:backend-ready'),
+  onBootStatus: (cb: (status: KermanychBootStatus) => void): (() => void) => {
+    bootListeners.add(cb);
+    if (bootStatus) cb(bootStatus);
+    return () => bootListeners.delete(cb);
+  },
+  // The applied theme's canvas colour, for the next launch's window background.
+  reportTheme: (background: string) => ipcRenderer.send('kermanych:theme', background),
   // Resolves { code } once the loopback listener in main catches the redirect.
   // Its presence is how stores/auth.ts detects the desktop build.
   startOAuth: (authorizeUrl: string): Promise<{ code: string }> =>
     ipcRenderer.invoke('kermanych:oauth', authorizeUrl),
   // Resolves with the PDF bytes of a standalone HTML document (a register export).
   printToPdf: (html: string): Promise<Uint8Array> => ipcRenderer.invoke('kermanych:print-pdf', html),
+  // The Dock icon (docs/specs/2026-11-01-dock-attention.md): the number of agents whose turn it
+  // is, and one bounce when another one's turn comes. The renderer decides both; main draws.
+  dock: {
+    setBadge: (count: number) => ipcRenderer.send('kermanych:dock:badge', count),
+    bounce: () => ipcRenderer.send('kermanych:dock:bounce'),
+  },
+  // True while macOS refuses this app's pop-up notifications (no Apple team signature).
+  notificationsBlocked: (): Promise<boolean> => ipcRenderer.invoke('kermanych:notifications-blocked'),
+  // The voice conversation (docs/specs/2026-11-02-voice-conversation.md): macOS's own microphone
+  // permission, asked once; false when the operator refused it in System Settings.
+  voice: {
+    requestMic: (): Promise<boolean> => ipcRenderer.invoke('kermanych:mic-access'),
+  },
   // The session browser: main owns one WebContentsView per session and lays it over the
   // placeholder whose bounds the Браузер tab reports.
   browser: {
-    show: (sessionId, projectId, bounds) => ipcRenderer.send('kermanych:browser:show', sessionId, projectId, bounds),
+    show: (sessionId, projectId, bounds, ephemeral) => ipcRenderer.send('kermanych:browser:show', sessionId, projectId, bounds, ephemeral === true),
     hide: (opts) => ipcRenderer.invoke('kermanych:browser:hide', opts ?? {}),
-    navigate: (sessionId, projectId, url) => ipcRenderer.invoke('kermanych:browser:navigate', sessionId, projectId, url),
+    navigate: (sessionId, projectId, url, ephemeral) => ipcRenderer.invoke('kermanych:browser:navigate', sessionId, projectId, url, ephemeral === true),
+    openPreview: (sessionId, projectId, url, ephemeral) => ipcRenderer.invoke('kermanych:browser:open-preview', sessionId, projectId, url, ephemeral === true),
     back: (sessionId) => ipcRenderer.send('kermanych:browser:back', sessionId),
     forward: (sessionId) => ipcRenderer.send('kermanych:browser:forward', sessionId),
     reload: (sessionId) => ipcRenderer.send('kermanych:browser:reload', sessionId),
@@ -38,9 +75,10 @@ contextBridge.exposeInMainWorld('kermanych', {
     answerDialog: (sessionId, accept) => ipcRenderer.invoke('kermanych:browser:answer-dialog', sessionId, accept),
     answerAuth: (sessionId, id, credentials) => ipcRenderer.send('kermanych:browser:answer-auth', sessionId, id, credentials),
     setAgentPaused: (sessionId, paused) => ipcRenderer.send('kermanych:browser:set-agent-paused', sessionId, paused),
-    setViewport: (sessionId, projectId, viewport) => ipcRenderer.send('kermanych:browser:set-viewport', sessionId, projectId, viewport),
+    setViewport: (sessionId, projectId, viewport, ephemeral) => ipcRenderer.send('kermanych:browser:set-viewport', sessionId, projectId, viewport, ephemeral === true),
     find: (sessionId, query, forward) => ipcRenderer.send('kermanych:browser:find', sessionId, query, forward),
     stopFind: (sessionId) => ipcRenderer.send('kermanych:browser:stop-find', sessionId),
+    close: (sessionId) => ipcRenderer.send('kermanych:browser:close', sessionId),
     state: (sessionId) => ipcRenderer.invoke('kermanych:browser:state', sessionId),
     lastUrl: (sessionId) => ipcRenderer.invoke('kermanych:browser:last-url', sessionId),
     onState: (cb) => subscribe<[KermanychBrowserState]>('kermanych:browser:state-changed', cb),

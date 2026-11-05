@@ -19,6 +19,7 @@ import { messagesToTranscript } from "../src/supervisor/messages-to-transcript";
 import { NativeController } from "../src/http/native.controller";
 import { CodedError } from "../src/management/coded-error";
 import type { BrowserMcpService } from "../src/browser/browser-mcp.service";
+import type { MachineResourcesService } from "../src/machine/machine-resources.service";
 
 type OpenOpts = Parameters<TerminalService["openSession"]>[0];
 
@@ -50,13 +51,13 @@ afterEach(() => {
   rmSync(dir, { recursive: true, force: true });
 });
 
-function make(browser?: { name: string; url: string; token: string }) {
+function make(browser?: { name: string; url: string; token: string }, resources?: MachineResourcesService) {
   const registry = new RegistryService(":memory:");
   registry.upsertProject({ id: "p1", name: "p", localRepoPath: dir });
   const { terminal, opened } = fakeTerminal();
   // Only bindingFor is read at launch; undefined = no session browser (a standalone api).
   const mcp = browser ? ({ bindingFor: () => browser } as unknown as BrowserMcpService) : undefined;
-  const native = new NativeSessionService(registry, terminal as unknown as TerminalService, http, mcp);
+  const native = new NativeSessionService(registry, terminal as unknown as TerminalService, http, mcp, resources);
   native.readClaudeHistory = async () => [];
   const events: NativeEvent[] = [];
   native.events$.subscribe((e) => events.push(e));
@@ -174,6 +175,25 @@ describe("harness argv", () => {
     // From a real codex 0.147 config.toml after «Trust all» for `-c hooks.Stop=[{hooks=[{type="command",
     // command="/tmp/cxsmoke/hook.sh Stop",timeout=5,async=false}]}]`.
     expect(codexHookHash("stop", "/tmp/cxsmoke/hook.sh Stop", 5)).toBe("sha256:3540b6ed7771f9d056b4f997eb7b69a5d51c84aaf9f018339fd76747d721f8f9");
+  });
+});
+
+describe("claude's screen", () => {
+  it("claude starts off the alternate screen by default, so its history stays in scrollback", async () => {
+    const { native, create, opened } = make();
+    await native.start(create("claude-code"), { resume: false });
+    expect(opened[0].env).toMatchObject({ CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN: "1" });
+  });
+
+  it("full screen chosen: claude keeps its alternate screen; omp and codex never get the switch", async () => {
+    const { native, create, opened, registry } = make();
+    registry.setNativeSettings({ claudeFullScreen: true });
+    expect(registry.getNativeSettings()).toEqual({ claudeFullScreen: true });
+    await native.start(create("claude-code"), { resume: false });
+    registry.setNativeSettings({ claudeFullScreen: false });
+    await native.start(create("omp"), { resume: false });
+    await native.start(create("codex"), { resume: false });
+    for (const o of opened) expect(o.env).not.toHaveProperty("CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN");
   });
 });
 
@@ -361,6 +381,53 @@ describe("send", () => {
     expect(opened[0].args).toEqual(["--resume", "11111111-2222-3333-4444-555555555555", "--settings", expect.any(String), "--", "continue please"]);
     expect(row(s.id).status).toBe("queued");
   });
+
+  // The memory watchdog's message has to reach an agent mid-turn — the very moment its command
+  // was killed — where send() refuses.
+  it("typeRaw pastes and submits even while the harness works", async () => {
+    vi.useFakeTimers();
+    const { native, create, terminal } = make();
+    const s = create("claude-code");
+    expect(native.typeRaw(s.id, "stopped")).toBe(false);
+    await native.start(s, { resume: false });
+    native.claudeHook(s.id, { hook_event_name: "UserPromptSubmit" });
+    expect(native.typeRaw(s.id, "your command was stopped")).toBe(true);
+    expect(terminal.write).toHaveBeenCalledWith("t1", "\x1b[200~your command was stopped\x1b[201~");
+    vi.advanceTimersByTime(150);
+    expect(terminal.write).toHaveBeenLastCalledWith("t1", "\r");
+  });
+});
+
+// docs/specs/2026-10-21-machine-resource-profile.md, decision 6: native claude gets the managed
+// claude's limits in its pty environment, and every harness the lower priority right after spawn.
+describe("machine resource profile", () => {
+  function resources() {
+    const reniced: number[] = [];
+    const svc = {
+      claudeEnv: () => ({ CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS: "2", CLAUDE_CODE_DISABLE_BACKGROUND_TASKS: "1" }),
+      renice: (pid: number) => reniced.push(pid),
+    } as unknown as MachineResourcesService;
+    return { svc, reniced };
+  }
+
+  it("claude gets the CLAUDE_CODE_* limits in its pty env, and the harness pid is reniced and kept", async () => {
+    const r = resources();
+    const { native, create, opened } = make(undefined, r.svc);
+    const s = create("claude-code");
+    await native.start(s, { resume: false });
+    expect(opened[0].env).toMatchObject({ CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS: "2", CLAUDE_CODE_DISABLE_BACKGROUND_TASKS: "1" });
+    expect(r.reniced).toEqual([1]);
+    expect(native.pid(s.id)).toBe(1);
+  });
+
+  it("omp and codex do not get claude's variables", async () => {
+    const r = resources();
+    const { native, create, opened } = make(undefined, r.svc);
+    await native.start(create("omp"), { resume: false });
+    await native.start(create("codex"), { resume: false });
+    for (const o of opened) expect(o.env).not.toHaveProperty("CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS");
+    expect(r.reniced).toEqual([1, 1]);
+  });
 });
 
 describe("session-file readers", () => {
@@ -459,10 +526,12 @@ describe("session-file readers", () => {
     const s = create("omp", { ompSessionFile: file });
     await native.start(s, { resume: true });
     await native.arm(s.id, "pr");
-    writeFileSync(file, [msg({ role: "user", content: [{ type: "text", text: "x" }] }), assistant("ok", 0.5), msg({ role: "user", content: [{ type: "text", text: "open a PR" }] }), assistant("Opened https://github.com/o/r/pull/42", 0.25)].join("\n"));
+    writeFileSync(file, [msg({ role: "user", content: [{ type: "text", text: "x" }] }), assistant("ok", 0.5), msg({ role: "user", content: [{ type: "text", text: "open a PR" }] }), assistant("Opened https://github.com/o/r/pull/42, then https://github.com/o/r/pull/43", 0.25)].join("\n"));
     native.ompEvent(s.id, { event: "working" });
     native.ompEvent(s.id, { event: "idle" });
     await vi.waitFor(() => expect(row(s.id).prOpened).toBe(true));
+    // The FIRST URL since arming is stored for the merged-PR check.
+    expect(row(s.id).prUrl).toBe("https://github.com/o/r/pull/42");
     expect(row(s.id).usage).toEqual({ input: 2, output: 2, cacheRead: 0, cacheWrite: 0, cost: 0.75 });
     expect(row(s.id).model).toBe("m-1");
     expect(native.live(s.id)?.status).toBe("in_review");
@@ -516,5 +585,14 @@ describe("api start", () => {
     expect(status(waiting.id)).toBe("stopped");
     expect(status(done.id)).toBe("done");
     expect(status(managed.id)).toBe("thinking");
+  });
+
+  // A session waiting for an agent slot is the supervisor's to re-enqueue: it keeps `queued`.
+  it("a native row holding a pending prompt is left for the slot queue", () => {
+    const { native, registry, create } = make();
+    const parked = create("claude-code", { status: "queued" });
+    registry.setPendingPrompt(parked.id, "build it", 1);
+    native.onModuleInit();
+    expect(registry.listSessions().find((s) => s.id === parked.id)?.status).toBe("queued");
   });
 });
