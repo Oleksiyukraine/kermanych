@@ -1,4 +1,3 @@
-import { homedir } from "os";
 import { join } from "path";
 import { stripHelpers } from "./helpers";
 
@@ -57,6 +56,7 @@ export function isGitBranchName(name: string): boolean {
   if (name.startsWith("/") || name.endsWith("/") || name.includes("//") || name.endsWith(".")) return false;
   return name.split("/").every((part) => !part.startsWith(".") && !part.endsWith(".lock"));
 }
-export function worktreeDir(sessionId: string): string {
-  return join(homedir(), ".kermanych", "worktrees", sessionId);
+// A session's worktree lives inside its project's repository, under `.gitworktree/`.
+export function worktreeDir(repoRoot: string, sessionId: string): string {
+  return join(repoRoot, ".gitworktree", sessionId);
 }
