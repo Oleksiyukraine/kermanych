@@ -200,7 +200,7 @@ import { deleteAiSkill, listAiSkills, upsertAiSkill, type AiOwner, type AiSkill 
 import { api } from '../../lib/api';
 import { useAuth } from 'stores/auth';
 import { useProjects } from 'stores/projects';
-import { importNameProblem, ownerLibraryView } from '../../lib/ai-team';
+import { blanksDefaultSkill, importNameProblem, ownerLibraryView, skillEditorDraft } from '../../lib/ai-team';
 import KModal from 'components/kit/KModal.vue';
 import KField from 'components/kit/KField.vue';
 import KSkeleton from 'components/kit/KSkeleton.vue';
@@ -471,17 +471,18 @@ async function edit(row: Row): Promise<void> {
   draftDescription.value = row.description;
   bodyPending.value = true;
   editorOpen.value = true;
-  // A default has no row yet: its body comes from the library constant, so the editor opens
-  // on the cloud row when one exists and on an empty body when it does not. A default that
-  // is being edited into a project row is enabled by definition — it is in the view.
+  // The editor opens on the owner's cloud row when one exists, and on the Kermanych default's
+  // own text when it does not (skillEditorDraft) — never on an empty body, which a
+  // description-only edit would then save over the default. A default that is being edited
+  // into an owner row is enabled by definition — it is in the view.
   try {
-    const stored = (await listAiSkills(auth.client, props.owner)).find((s) => s.name === row.name);
+    const draft = skillEditorDraft(row.name, await listAiSkills(auth.client, props.owner));
     // The operator cancelled, opened another skill, or switched project while this was in
     // flight: the refs now belong to a different draft, and both the body and the error
     // below would be someone else's.
     if (token !== draftToken) return;
-    draftBody.value = stored?.body ?? '';
-    draftEnabled.value = stored?.enabled ?? true;
+    draftBody.value = draft.body;
+    draftEnabled.value = draft.enabled;
     bodyPending.value = false;
   } catch (e) {
     if (token !== draftToken) return;
@@ -493,7 +494,19 @@ async function edit(row: Row): Promise<void> {
 // while it runs, so «Скасувати», Esc and the backdrop cannot drop a draft mid-write. The reload
 // runs after the modal shut, so a skill opened meanwhile does not see a spinning «Зберегти».
 const { run: runSave, busy: saving } = useAsyncAction(saveSkill);
+// An empty body under a default's name replaces that default with an empty SKILL.md for every
+// session at this scope, so it asks first; only a «yes» starts the spinner.
 async function save(): Promise<void> {
+  if (blanksDefaultSkill(draftName.value, draftBody.value)) {
+    const token = draftToken;
+    const ok = await confirmAction({
+      title: t('confirmations.blankSkill.title'),
+      message: t('confirmations.blankSkill.message', { name: draftName.value }),
+      confirmLabel: t('confirmations.label.saveEmpty'),
+    });
+    // A «no», or a draft that was replaced while the question was open.
+    if (!ok || token !== draftToken) return;
+  }
   if (await runSave()) await load();
 }
 
