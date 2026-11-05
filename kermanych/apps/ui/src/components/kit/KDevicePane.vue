@@ -64,6 +64,13 @@
       >◫</KIconButton>
     </div>
 
+    <!-- The doer's own tab while its «Тестувальник» drives the device
+         (docs/specs/2026-11-04-tester-mobile-device.md, decision 3); not in the tester's tab. -->
+    <p v-if="tester" class="k-device__busy" role="status">
+      <span>{{ t('tester.device.busy') }}</span>
+      <button type="button" class="k-device__busy-link" @click="store.selectSession(tester.id)">{{ t('tester.device.open') }}</button>
+    </p>
+
     <KPreviewRow :preview="preview" />
 
     <KPicksTray :session-id="session.id" :sending="sending" @send="emit('send')" />
@@ -119,10 +126,12 @@
 
 <script setup lang="ts">
 // The «Пристрій» tab of a Mobile project's `agent` session (docs/specs/2026-11-03-mobile-
-// device-preview.md, decisions 6, 8, 9, 12): the base-device picker and the device toolbar, the
-// preview row, the picks tray, the live screen, and the preview logs. Plain DOM — the screen is
-// a <canvas> fed over the api's `/device` socket (useDeviceStream) — so it is the same in the
-// desktop app and the web build, and «Поруч із логом» needs nothing like the browser's parking.
+// device-preview.md, decisions 6, 8, 9, 12) — also shown in its «Тестувальник» child's tab, bound
+// to the doer's session (docs/specs/2026-11-04-tester-mobile-device.md, decision 3): the base-device
+// picker and the device toolbar, the preview row, the picks tray, the live screen, and the preview
+// logs. Plain DOM — the screen is a <canvas> fed over the api's `/device` socket (useDeviceStream) —
+// so it is the same in the desktop app and the web build, and «Поруч із логом» needs nothing like
+// the browser's parking.
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import {
@@ -153,9 +162,15 @@ import { useDeviceStream } from '../../composables/useDeviceStream';
 import { useLoadPhase } from '../../composables/useLoadPhase';
 import { useOptimisticValue } from '../../composables/useOptimisticValue';
 import { useSessionPreview } from '../../composables/useSessionPreview';
+import { runningTesterOf } from '../../lib/tester';
 
+// `session`: the session whose device this is — the doer, also in its tester's tab.
 // `splittable`: the host page can move the pane beside the Лог («Поруч із логом»).
-const props = withDefaults(defineProps<{ session: Session; sending: boolean; splittable?: boolean }>(), { splittable: true });
+// `busyBanner`: the host is the doer's own tab, which says so while a tester drives the device.
+const props = withDefaults(defineProps<{ session: Session; sending: boolean; splittable?: boolean; busyBanner?: boolean }>(), {
+  splittable: true,
+  busyBanner: false,
+});
 const emit = defineEmits<{ send: [] }>();
 
 const PLATFORM_NAMES: Record<DevicePlatform, string> = { ios: 'iOS', android: 'Android' };
@@ -170,6 +185,8 @@ const browser = useSessionBrowser();
 function fail(e: unknown): void {
   store.notify(errorText(e), 'error');
 }
+
+const tester = computed(() => (props.busyBanner ? runningTesterOf(store.sessions, props.session.id) : undefined));
 
 // ── Device info ────────────────────────────────────────────────────────────
 // The tooling, the base devices of this machine, the project's choice and the session's clone.
@@ -441,6 +458,35 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKey));
   height: 6px;
   border-radius: 50%;
   background: var(--k-faint);
+}
+
+.k-device__busy {
+  flex: none;
+  margin: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 10px;
+  padding: 6px 12px;
+  font-family: var(--k-font-ui);
+  font-size: var(--k-fs-sm);
+  color: var(--k-text);
+  background: var(--k-surface2);
+  border-bottom: 1px solid var(--k-line);
+  box-shadow: inset 3px 0 0 var(--k-warning);
+}
+.k-device__busy-link {
+  padding: 0;
+  font: inherit;
+  color: var(--k-accent);
+  background: none;
+  border: 0;
+  text-decoration: underline;
+  cursor: pointer;
+
+  &:hover {
+    color: var(--k-accent-hover);
+  }
 }
 
 .k-device__screen {

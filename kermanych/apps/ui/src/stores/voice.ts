@@ -22,7 +22,8 @@ import {
 } from '@kermanych/core';
 import { api } from '../lib/api';
 import { connectVoice, micErrorWords, type LiveEvent, type VoiceConnection } from '../lib/voice-connection';
-import { voicePick, type VoiceBarState } from '../lib/voice';
+import { voiceGatePick, voicePick, type VoiceBarState } from '../lib/voice';
+import { VOICE_GATE_LEVELS } from '../lib/voice-gate';
 import { locale } from '../lib/locale';
 import { nextMode } from '../lib/message-mode';
 import { globalTr } from '../boot/i18n';
@@ -62,6 +63,9 @@ export const useVoice = defineStore('voice', () => {
   const muted = ref(false);
   const caption = ref<VoiceCaption | null>(null);
   const micLevel = ref(0);
+  // Whether the noise gate lets the microphone through to GPT-Live right now.
+  const gateOpen = ref(false);
+  const gate = computed(() => VOICE_GATE_LEVELS[voiceGatePick.value]);
   const now = ref(Date.now());
   // The last fragment's arrival per speaker, for the talking state and the phrase gap.
   const lastHeardAt = ref(0);
@@ -78,7 +82,7 @@ export const useVoice = defineStore('voice', () => {
 
   // ── bridge state ──
   let heard: HeardFragment[] = [];
-  // Anything that keeps the conversation alive: either side talking, the agent finishing a turn.
+  // Anything that keeps the conversation alive: GPT-Live talking, a hand-off, the agent finishing a turn.
   let lastActivityAt = 0;
   // The delegation whose message started the agent's current turn: its results go back under it.
   let turnDelegation: string | null = null;
@@ -106,7 +110,16 @@ export const useVoice = defineStore('voice', () => {
   const bar = computed<VoiceBarState | null>(() =>
     phase.value === 'idle'
       ? null
-      : { phase: phase.value, activity: activity.value, caption: caption.value, micLevel: micLevel.value, muted: muted.value, elapsedMs: elapsedMs.value },
+      : {
+          phase: phase.value,
+          activity: activity.value,
+          caption: caption.value,
+          micLevel: micLevel.value,
+          gate: gate.value,
+          gateOpen: gateOpen.value,
+          muted: muted.value,
+          elapsedMs: elapsedMs.value,
+        },
   );
 
   const live = () => phase.value === 'live' && !!conn;
@@ -127,8 +140,11 @@ export const useVoice = defineStore('voice', () => {
       case 'session.input_transcript.delta': {
         const text = String(e.delta ?? '');
         appendCaption('operator', text);
-        lastHeardAt.value = lastActivityAt = Date.now();
-        heard.push({ text, startMs: Number(e.start_ms ?? 0) });
+        // Not activity for the hang-up: the input transcript hears a TV as readily as the operator
+        // (docs/specs/2026-11-04-voice-background-noise.md, decision 5).
+        lastHeardAt.value = Date.now();
+        const startMs = Number(e.start_ms ?? 0);
+        heard.push({ text, startMs, endMs: Number(e.end_ms ?? startMs) });
         break;
       }
       case 'session.output_transcript.delta':
@@ -138,6 +154,7 @@ export const useVoice = defineStore('voice', () => {
       case 'session.delegation.created': {
         const id = (e.delegation as { id?: string } | undefined)?.id ?? null;
         const offset = typeof e.offset_ms === 'number' ? e.offset_ms : Number.POSITIVE_INFINITY;
+        lastActivityAt = Date.now();
         const mine = generation;
         setTimeout(() => mine === generation && void onDelegation(id, offset), DELEGATION_GRACE_MS);
         break;
@@ -258,6 +275,9 @@ export const useVoice = defineStore('voice', () => {
     { flush: 'sync' },
   );
 
+  // The threshold picked in Settings → «Голос» reaches a running conversation at once.
+  watch(gate, (threshold) => conn?.setGate(threshold));
+
   async function start(id: string): Promise<void> {
     if (phase.value !== 'idle') await end();
     phase.value = 'connecting';
@@ -277,14 +297,22 @@ export const useVoice = defineStore('voice', () => {
     const mine = ++generation;
     let opened: VoiceConnection;
     try {
-      opened = await connectVoice((sdp) => api.voiceSession({ sdp, voice: voicePick.value, language }), {
-        onEvent: (e) => mine === generation && onEvent(e),
-        onDrop: () => {
-          if (mine !== generation) return;
-          orchestrator.notify(globalTr.t('voice.dropped'), 'error');
-          finish();
+      // Always with the gate, «off» included: switching it on mid-conversation then just works.
+      opened = await connectVoice(
+        (sdp) => api.voiceSession({ sdp, voice: voicePick.value, language }),
+        {
+          onEvent: (e) => mine === generation && onEvent(e),
+          onDrop: () => {
+            if (mine !== generation) return;
+            orchestrator.notify(globalTr.t('voice.dropped'), 'error');
+            finish();
+          },
+          onGate: (open) => {
+            if (mine === generation) gateOpen.value = open;
+          },
         },
-      });
+        { gate: gate.value },
+      );
     } catch (e) {
       if (mine === generation) finish();
       throw micErrorWords(e, { denied: globalTr.t('voice.micDenied'), missing: globalTr.t('voice.micMissing') });
@@ -355,6 +383,7 @@ export const useVoice = defineStore('voice', () => {
     startedAt.value = null;
     caption.value = null;
     micLevel.value = 0;
+    gateOpen.value = false;
     muted.value = false;
     held = false;
     heard = [];

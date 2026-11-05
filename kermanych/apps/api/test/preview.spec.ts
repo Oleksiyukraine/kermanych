@@ -453,6 +453,32 @@ test("↻ keeps the device running, ◼ shuts it down, and finish and delete rem
   expect(web.fake.calls).toEqual(["remove"]);
 }, 30_000);
 
+// docs/specs/2026-11-04-tester-mobile-device.md, decision 1: a «Тестувальник» run's clean start.
+test("a clean start clears the app's data after the boot and before setup; a failed clear fails the start at `device`", async () => {
+  const { svc: s, fake } = make({ platform: "mobile", config: { setup: 'touch "$PREVIEW_DIR/setup-ran"', device: { ios: { app: APP } } } });
+  let setupBeforeClear: boolean | undefined;
+  fake.device.clearApp.mockImplementationOnce(async (_id: string, app: string) => {
+    setupBeforeClear = existsSync(join(s.opts.root, "s1", "setup-ran"));
+    fake.calls.push(`clear ${app}`);
+  });
+  s.start("s1", { clean: true });
+  await running(s);
+  expect(setupBeforeClear).toBe(false);
+  expect(fake.calls).toEqual(["ensure IOS-BASE-UDID", `terminate ${APP}`, `clear ${APP}`, `launch ${APP}`]);
+  expect(s.tail("s1", "device", 10).some((l) => l.startsWith(`cleared the data of ${APP} in `))).toBe(true);
+
+  // ↻ without `clean` keeps the data.
+  s.start("s1", { restart: true });
+  await until(() => s.state("s1"), (v) => v?.phase === "starting");
+  await running(s);
+  expect(fake.calls.filter((c) => c.startsWith("clear"))).toHaveLength(1);
+
+  fake.device.clearApp.mockRejectedValueOnce(new Error("simctl uninstall failed (exit 1)"));
+  s.start("s1", { restart: true, clean: true });
+  await until(() => s.state("s1"), (v) => v?.phase === "starting");
+  expect(await s.settled("s1", 15_000)).toMatchObject({ phase: "failed", step: "device", error: expect.stringMatching(/^could not clear the data of .*: simctl uninstall failed/) });
+}, 30_000);
+
 test("an explicit platform or base picks the device, becomes the project's choice and switches a running preview", async () => {
   const { svc: s, fake } = make({ platform: "mobile", config: { device: both } });
   s.start("s1", { platform: "android" });

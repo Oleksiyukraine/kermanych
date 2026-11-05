@@ -33,7 +33,7 @@ const close = vi.fn();
 vi.mock('../src/lib/voice-connection', () => ({
   connectVoice: async (_exchange: unknown, h: VoiceConnectionHandlers) => {
     handlers = h;
-    return { send: (e: Record<string, unknown>) => sent.push(e), setMicEnabled: () => {}, micLevel: () => 0, close };
+    return { send: (e: Record<string, unknown>) => sent.push(e), setMicEnabled: () => {}, micLevel: () => 0, setGate: () => {}, close };
   },
   micErrorWords: (e: unknown) => e,
 }));
@@ -138,5 +138,15 @@ describe('the voice store bridges GPT-Live and the agent', () => {
     reduce!({ type: 'session_update', session: session({ status: 'done' }) });
     await vi.advanceTimersByTimeAsync(VOICE_SILENCE_HANGUP_MS + 1000);
     expect(sentOf('session.close')).toHaveLength(1);
+  });
+
+  it('hangs up while only the background is heard (docs/specs/2026-11-04-voice-background-noise.md)', async () => {
+    await talking();
+    for (let at = 0; at <= VOICE_SILENCE_HANGUP_MS; at += 30_000) {
+      live({ type: 'session.input_transcript.delta', delta: 'прогноз погоди ', start_ms: at, end_ms: at + 2000 });
+      await vi.advanceTimersByTimeAsync(30_000);
+    }
+    expect(sentOf('session.close')).toHaveLength(1);
+    expect(sendMessage).not.toHaveBeenCalled();
   });
 });

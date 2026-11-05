@@ -2,7 +2,6 @@
 // which state «Виконати тестування» is in for a session. Pure, so the FinishSheet and the QA tab
 // render the same control from the same answer, and the states are testable without a DOM.
 import {
-  platformHasBrowser,
   qaHasVerdicts,
   qaItemsInScope,
   testerRefusal,
@@ -63,7 +62,7 @@ export function qaRunState(input: {
     ...(s.taskId ? { taskId: s.taskId } : {}),
     runningTester: false,
     browserHost: input.browserHost,
-    platformHasBrowser: platformHasBrowser(input.platform),
+    platform: input.platform,
     previewConfig: input.previewConfig,
   });
   if (refusal) return { kind: 'refused', hintKey: TESTER_REFUSAL_KEYS[refusal] };

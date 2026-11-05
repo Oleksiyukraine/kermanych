@@ -382,7 +382,8 @@ class IosDevice implements BootedDevice {
     await sleep(KEY_GAP_MS);
   }
 
-  async typeText(text: string): Promise<void> {
+  async typeText(text: string, opts: { secret?: boolean } = {}): Promise<void> {
+    let pasted = false;
     for (const part of splitTyping(text, (ch) => hidForChar(ch) !== null)) {
       if (part.kind === "keys") {
         for (const ch of part.text) {
@@ -395,8 +396,11 @@ class IosDevice implements BootedDevice {
         await this.keyStroke(hidForChar("v")!.usage, HID_GUI);
         // The paste lands asynchronously; the next keys must not overtake it.
         await sleep(150);
+        pasted = true;
       }
     }
+    // A credential must not stay on the pasteboard, which the Simulator may sync to the Mac's.
+    if (opts.secret && pasted) await simctl(["pbcopy", this.device.id], { input: "", timeoutMs: 15_000 });
   }
 
   async key(key: string): Promise<void> {
@@ -438,6 +442,14 @@ class IosDevice implements BootedDevice {
       // Not running is what terminate wants.
       if (!(err instanceof ToolError && /found nothing to terminate/.test(err.stderr))) throw err;
     }
+  }
+
+  // A simulator has no clear-data command: the app goes, with its data and app-group containers,
+  // and the keychain is reset so no saved sign-in survives. The preview installs it again
+  // (docs/specs/2026-11-04-tester-mobile-device.md, decision 1).
+  async clearApp(app: string): Promise<void> {
+    await simctl(["uninstall", this.device.id, app], { timeoutMs: 60_000 });
+    await simctl(["keychain", this.device.id, "reset"], { timeoutMs: 30_000 });
   }
 
   // launchd lists a running app as `<pid>\t<status>\tUIKitApplication:<bundle id>[…]`; an exited

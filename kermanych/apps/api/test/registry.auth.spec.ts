@@ -53,3 +53,13 @@ test("auth_session round-trips agentRuntime and agentLanguage", () => {
   r.setAuthSession({ userId: "u-1", accessToken: "jwt-1" });
   expect(r.getAuthSession()?.agentLanguage).toBeUndefined();
 });
+
+test("auth_session round-trips the skill self-improvement switch; never set stays unknown", () => {
+  const r = new RegistryService(":memory:");
+  r.setAuthSession({ userId: "u-1", accessToken: "jwt-1" });
+  expect(r.getAuthSession()?.skillImprovement).toBeUndefined();
+  r.setAuthSession({ userId: "u-1", accessToken: "jwt-1", skillImprovement: false });
+  expect(r.getAuthSession()?.skillImprovement).toBe(false);
+  r.setAuthSession({ userId: "u-1", accessToken: "jwt-1", skillImprovement: true });
+  expect(r.getAuthSession()?.skillImprovement).toBe(true);
+});
