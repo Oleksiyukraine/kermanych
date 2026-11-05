@@ -4306,6 +4306,7 @@ export const en: MessageSchema = {
       clear: 'Clear',
       kill: 'Stop it',
       close: 'Close',
+      saveEmpty: 'Save empty',
     },
     deleteCard: 'Delete task?',
     deleteStranded: 'Delete local task?',
@@ -4329,6 +4330,10 @@ export const en: MessageSchema = {
     deleteSkill: {
       title: 'Delete skill?',
       message: 'Skill “{name}” is deleted from the library. Agents that use it no longer get it.',
+    },
+    blankSkill: {
+      title: 'Save the skill with no text?',
+      message: 'Skill “{name}” is one of Kermanych’s defaults. Saved with an empty body, it replaces the default here, and every session gets an empty skill under that name.',
     },
     resetAgent: {
       title: 'Reset instruction?',
