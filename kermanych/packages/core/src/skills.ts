@@ -141,7 +141,7 @@ export const DEFAULT_SKILLS: readonly SkillDef[] = [
       "",
       "## Where you are",
       "",
-      "- You run in a dedicated git worktree under `~/.kermanych/worktrees/<sessionId>`, on a",
+      "- You run in a dedicated git worktree under the project's `.gitworktree/<sessionId>`, on a",
       "  branch created for this task. The developer's own checkout is a different directory",
       "  and must never be touched.",
       "- **Never switch, rebase onto, or delete the session branch.** The operator's finish and",
