@@ -128,4 +128,18 @@ describe("AccountController", () => {
     expect(result).toEqual({ language: "en" });
     expect(captured).toEqual({ userId: "u1", accessToken: "tok", agentRuntime: "omp", agentLanguage: "en" });
   });
+
+  it("GET /account/skill-improvement is on until the cache knows otherwise", () => {
+    expect(make(undefined).getSkillImprovement()).toEqual({ on: true });
+    expect(make({ userId: "u1", accessToken: "tok", skillImprovement: false }).getSkillImprovement()).toEqual({ on: false });
+  });
+
+  it("POST /account/skill-improvement caches a boolean; rejects anything else or signed out", () => {
+    let captured: AuthSessionRow | undefined;
+    const controller = make({ userId: "u1", accessToken: "tok", agentLanguage: "uk" }, (row) => (captured = row));
+    expect(controller.setSkillImprovement({ on: false })).toEqual({ on: false });
+    expect(captured).toEqual({ userId: "u1", accessToken: "tok", agentLanguage: "uk", skillImprovement: false });
+    expect(() => controller.setSkillImprovement({ on: "no" })).toThrow(BadRequestException);
+    expect(() => make(undefined).setSkillImprovement({ on: true })).toThrow(BadRequestException);
+  });
 });

@@ -52,6 +52,20 @@ export async function listAiSkills(client: SupabaseClient, owner: AiOwner): Prom
   return (data as SkillRow[]).map(toAiSkill);
 }
 
+// One owner's skill of one name, or undefined. The skill self-improvement paths read the
+// operator's personal copy with it (docs/specs/2026-11-04-skill-self-improvement.md): the api right
+// before writing an improvement, the browser before a rollback or a share.
+export async function getAiSkill(client: SupabaseClient, owner: AiOwner, name: string): Promise<AiSkill | undefined> {
+  const { data, error } = await client
+    .from("ai_skills")
+    .select(SKILL_COLUMNS)
+    .eq(ownerColumn(owner.scope), owner.id)
+    .eq("name", name)
+    .maybeSingle();
+  if (error) throw new Error(error.message);
+  return data ? toAiSkill(data as SkillRow) : undefined;
+}
+
 // Upsert on the owner-triad key: the editor saves a new skill and an edited one the same way.
 export async function upsertAiSkill(client: SupabaseClient, input: AiSkillInsert): Promise<AiSkill> {
   const { data, error } = await client
