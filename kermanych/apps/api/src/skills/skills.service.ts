@@ -325,6 +325,14 @@ export function renderRuleFile(t: AiTrigger, body: string): string {
 // reason to refuse a launch. `configPath` is set only once the overlay write succeeded.
 export type Materialized = { configPath?: string; view: SkillView[]; stale?: boolean };
 
+// How long one library read serves the launch-time callers. Every row carries its full text,
+// and one launch used to read it once in materialize, once per trigger in materializeTriggers
+// and once more for the first prompt — egress a Free cloud project pays for
+// (docs/specs/2026-11-03-board-egress-and-lag.md). Long enough to cover one launch and the
+// trigger and PR turns right after it; short enough that an edit made in another window
+// reaches the next launch well within a minute.
+const LIBRARY_TTL_MS = 30_000;
+
 @Injectable()
 export class SkillsService {
   constructor(private auth: AuthService) {}
@@ -332,11 +340,33 @@ export class SkillsService {
   // Seams for tests: the cloud reads and the `omp` child are the parts a unit test cannot
   // perform. Each reads EVERY owner the session sees (user, project, workspace) and returns
   // the rows tagged with their owner; the resolver methods below apply precedence.
-  readSkills = (scope: AiScopeSet): Promise<AiSkill[]> => this.readAll(scope, listAiSkills);
+  // The launch-time callers share one read per scope for LIBRARY_TTL_MS, the in-flight promise
+  // included, so a launch's concurrent callers wait on one request. A failed read is dropped at
+  // once, so offline → online is not held back. `fresh` is the editor's read: it always goes to
+  // the cloud, and because the operator may just have saved, it also drops every cached entry
+  // of that project so the next launch reads what they saved.
+  readSkills = (scope: AiScopeSet, fresh = false): Promise<AiSkill[]> => {
+    const now = Date.now();
+    const key = scopeOwners(scope).map((o) => `${o.scope}:${o.id}`).join("|");
+    if (fresh) {
+      for (const k of this.library.keys()) if (k.split("|").includes(`project:${scope.projectId}`)) this.library.delete(k);
+    } else {
+      const hit = this.library.get(key);
+      if (hit && hit.expires > now) return hit.rows;
+    }
+    for (const [k, e] of this.library) if (e.expires <= now) this.library.delete(k);
+    const rows = this.readAll(scope, listAiSkills);
+    this.library.set(key, { expires: now + LIBRARY_TTL_MS, rows });
+    rows.catch(() => {
+      if (this.library.get(key)?.rows === rows) this.library.delete(key);
+    });
+    return rows;
+  };
   readAssignments = (scope: AiScopeSet): Promise<AiAgentSkill[]> => this.readAll(scope, listAiAgentSkills);
   readTriggers = (scope: AiScopeSet): Promise<AiTrigger[]> => this.readAll(scope, listAiTriggers);
   readAgents = (scope: AiScopeSet): Promise<AiAgent[]> => this.readAll(scope, listAiAgents);
   readCustomDirs = (cwd: string): Promise<string[] | undefined> => readOmpCustomDirectories(cwd);
+  private library = new Map<string, { expires: number; rows: Promise<AiSkill[]> }>();
 
   // One cloud call per owner, under the signed-in user's JWT. A member of a project is a
   // member of its workspace and owns their own user rows, so all present owners read; an
@@ -490,7 +520,7 @@ export class SkillsService {
     // the workspace and the user. Inheritance is a runtime concept (materialize / assignedFor);
     // the editor shows and edits exactly what this scope owns, so a workspace or user skill
     // never leaks into the project's list. The repo shadow is the project's checkout.
-    const rows = await this.readSkills({ projectId });
+    const rows = await this.readSkills({ projectId }, true);
     const repo = await repoSkillNames(cwd);
     const view = resolveSkills(rows).map(({ def, source }) => ({
       name: def.name,
