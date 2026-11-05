@@ -69,7 +69,7 @@ function make() {
     changedFiles: vi.fn().mockResolvedValue([]),
   };
   const auth = { current: () => ({ userId: USER, accessToken: "t" }), cloudClient: () => ({}) } as unknown as AuthService;
-  const models = { validModel: async (_r: string, m: string | undefined) => m } as unknown as ModelsService;
+  const models = { validModel: async (m: string | undefined) => m } as unknown as ModelsService;
   const events$ = new Subject<TerminalEvent>();
   const terminal = {
     events$,
@@ -115,6 +115,19 @@ beforeEach(() => {
 });
 
 describe("a native launch", () => {
+  it("refuses a design card before claiming it", async () => {
+    const { sup, registry, terminal, worktree } = make();
+    card({ design: true });
+
+    await expect(sup.createSessionFromTask("task-1", USER, undefined, "claude-code")).rejects.toMatchObject({ code: "native_unsupported" });
+
+    expect(cloudTasks.get("task-1")?.status).toBe("backlog");
+    expect(cloudTasks.get("task-1")?.assigneeId).toBeUndefined();
+    expect(registry.listSessions()).toEqual([]);
+    expect(worktree.addWorktree).not.toHaveBeenCalled();
+    expect(terminal.openSession).not.toHaveBeenCalled();
+  });
+
   it("starts the harness in the new worktree with the card's text and nothing else", async () => {
     const { sup, terminal, worktree, out } = make();
     card();
@@ -154,19 +167,6 @@ describe("a native launch", () => {
     const opts = terminal.openSession.mock.calls[0][0] as { args: string[] };
     expect(opts.args.at(-2)).toBe("--");
     expect(opts.args.at(-1)).toBe(deepAnalysisPrompt("wire GitHub OAuth"));
-  });
-
-  // A design card opened natively: the harness starts on the design branch with the Дизайнер's
-  // instruction naming the stamped folder (docs/specs/2026-10-29-design-tab.md).
-  it("a design card opens the harness with the Дизайнер instruction", async () => {
-    const { sup, terminal } = make();
-    card({ design: true });
-    const s = await sup.createSessionFromTask("task-1", USER, undefined, "omp");
-    expect(s.branch).toBe("design/add-login");
-    expect(s.designDir).toMatch(/^docs\/design\/\d{4}-\d{2}-\d{2}-add-login$/);
-    const opts = terminal.openSession.mock.calls[0][0] as { args: string[] };
-    expect(opts.args.at(-1)).toMatch(/^You are «Дизайнер»/);
-    expect(opts.args.at(-1)).toContain(`${s.designDir}/README.md`);
   });
 
   // docs/specs/2026-10-14-create-pr-base-sync.md, decision 6: the harness stopped with the tree

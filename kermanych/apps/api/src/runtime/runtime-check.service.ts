@@ -1,24 +1,17 @@
 // apps/api/src/runtime/runtime-check.service.ts
-// "Is this agent backend actually usable on this machine?"
+// "Is omp actually usable on this machine?"
 //
-// The operator picks a backend in onboarding or profile settings, and until now nothing
-// verified the choice. A machine whose claude is signed out (or whose platform binary never
-// installed) accepted the preference happily and then produced sessions that could not answer.
-// This asks the backend a question it can only answer if it is installed AND authenticated,
-// and reports the cause in the same vocabulary a failed launch uses, so the UI has one set of
+// Kermanych's headless AI functions and «Керманич» sessions all run on omp. This asks omp a
+// question it can only answer if it is installed AND authenticated — its model catalog, which
+// lists only providers it holds credentials for, so an empty one IS a signed-out omp — and
+// reports the cause in the same vocabulary a failed launch uses, so the UI has one set of
 // messages for "you cannot start" and "you just stopped". The UI also polls it to keep the
 // top bar's «AI login required» pill current.
-//
-// claude: the account itself (accountInfo), because a signed-out claude still lists every
-// model. omp: its model catalog, which lists only providers it holds credentials for, so an
-// empty one IS a signed-out omp.
 //
 // Deliberately NOT ModelsService.list(): that never rejects (it degrades to `[]` so a picker
 // always renders), which is exactly the swallowing this check exists to undo.
 import { Injectable, Logger } from "@nestjs/common";
-import type { AgentRuntimeKind, ModelOption } from "@kermanych/core";
-import type { ModelInfo } from "@anthropic-ai/claude-agent-sdk";
-import { ClaudeCodeRuntime } from "./claude-code-runtime";
+import type { ModelOption } from "@kermanych/core";
 import { mapOmpModels } from "../models/omp-models";
 import { AuthFailure, authFailureCode } from "./auth-failure";
 
@@ -32,32 +25,20 @@ export type RuntimeCheck = { ok: true } | { ok: false; code?: string; reason?: s
 export class RuntimeCheckService {
   private readonly log = new Logger(RuntimeCheckService.name);
 
-  // Seams, so the tests never spawn a real child. Each must REJECT on failure — the rejection
+  // A seam, so the tests never spawn a real child. It must REJECT on failure — the rejection
   // carries the cause this service classifies: an AuthFailure's code, or its message.
-  claudeProbe: () => Promise<ModelInfo[]> = async () => {
-    const { signedIn, models } = await ClaudeCodeRuntime.probe();
-    if (!signedIn) throw new AuthFailure("claude_not_authenticated", "Claude Code has no signed-in account");
-    return models;
-  };
   ompProbe: () => Promise<ModelOption[]> = async () => mapOmpModels(await readOmpCatalog());
   probeTimeoutMs = PROBE_TIMEOUT_MS;
 
-  async check(runtime: AgentRuntimeKind): Promise<RuntimeCheck> {
+  async check(): Promise<RuntimeCheck> {
     try {
-      // Only the COUNT matters here — the two backends' catalogs have different shapes and this
-      // check never reads a field of either, so they are normalised at the seam.
-      const probe: Promise<readonly unknown[]> =
-        runtime === "claude-code" ? this.claudeProbe() : this.ompProbe();
-      const models = await this.withTimeout(probe);
-      // An empty list is its own failure. For omp it means no provider credentials at all —
-      // signed out. For claude (which lists models signed out too) the cause is unknown.
-      if (models.length === 0) {
-        return runtime === "omp" ? { ok: false, code: "omp_not_authenticated" } : { ok: false, reason: `${runtime} listed no models` };
-      }
+      const models = await this.withTimeout(this.ompProbe());
+      // An empty catalog means no provider credentials at all — signed out.
+      if (models.length === 0) return { ok: false, code: "omp_not_authenticated" };
       return { ok: true };
     } catch (err) {
-      const reason = (err as Error).message ?? `${runtime} did not answer`;
-      this.log.warn(`runtime check failed for ${runtime}: ${reason}`);
+      const reason = (err as Error).message ?? "omp did not answer";
+      this.log.warn(`runtime check failed for omp: ${reason}`);
       const code = err instanceof AuthFailure ? err.code : authFailureCode(reason);
       // A classified cause travels as a code the UI localizes; anything else keeps its raw
       // prose, because a wrong instruction is worse than an unfamiliar sentence.

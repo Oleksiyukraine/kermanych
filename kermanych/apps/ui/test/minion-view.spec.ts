@@ -149,8 +149,8 @@ describe('minionReasonText', () => {
 
 describe('minionPauseText', () => {
   it('adds the api’s detail after the reason', () => {
-    expect(minionPauseText(t, { code: 'signed_out', at: 'x', detail: 'claude_not_authenticated' })).toBe(
-      'потрібен вхід в AI — claude_not_authenticated',
+    expect(minionPauseText(t, { code: 'signed_out', at: 'x', detail: 'omp_not_authenticated' })).toBe(
+      'потрібен вхід в AI — omp_not_authenticated',
     );
     expect(minionPauseText(t, { code: 'failures', at: 'x' })).toBe('два невдалі запуски поспіль');
   });

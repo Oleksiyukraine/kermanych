@@ -1,5 +1,7 @@
 # Design: claude-code as a selectable agent runtime alongside omp
 
+> Superseded in part by docs/specs/2026-11-05-remove-managed-claude-code.md: the managed claude-code runtime is deleted; «Керманич» runs only omp, and `claude-code` is now the provider that defaults launches to native claude.
+
 - **Date:** 2026-09-02
 - **Status:** Approved design (brainstorming complete); implementation plan pending
 - **Branch:** `feature/claude-code-runtime` (worktree off `origin/dev`)

@@ -1,13 +1,10 @@
 // apps/api/test/management-runtime.spec.ts
-// Increment 3, Task 4: the two ephemeral management children (chat + release notes) are
-// spawned through the runtime factory, so the operator's chosen backend answers a
-// management question exactly as it runs an agent. The seam is `createRuntime`: mock it,
-// record the kind, and prove the service resolves omp by default and the cached preference
-// when one is stored.
+// The two ephemeral management children (chat + release notes) are spawned through the
+// runtime factory. The seam is `createRuntime`: mock it and record the launch options.
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { ManagementChatAsk, ReleaseCommit, ReleaseNotesAsk, RpcEvent } from "@kermanych/core";
 
-const calls: { kind: string; opts: { cwd: string; tools?: string[]; appendSystemPrompt?: string } }[] = [];
+const calls: { opts: { cwd: string; tools?: string[]; appendSystemPrompt?: string } }[] = [];
 // The events the mocked child "emits" the moment it is written to — one terminal turn.
 let script: RpcEvent[] = [];
 
@@ -37,8 +34,8 @@ class FakeRuntime {
 }
 
 vi.mock("../src/runtime/agent-runtime", () => ({
-  createRuntime: vi.fn((kind: string, opts: { cwd: string; tools?: string[] }) => {
-    calls.push({ kind, opts });
+  createRuntime: vi.fn((opts: { cwd: string; tools?: string[] }) => {
+    calls.push({ opts });
     return new FakeRuntime();
   }),
 }));
@@ -83,59 +80,43 @@ function notesAsk(): ReleaseNotesAsk {
 const commit: ReleaseCommit = { date: "2026-08-20", author: "Оля", subject: "додано експорт у PDF", body: "" };
 
 // A worktree stub whose branch/log answers let generate() reach the one-shot child — the
-// only part this spec cares about is which runtime that child is spawned on.
+// only part this spec cares about is how that child is spawned.
 const fakeWorktree = {
   listBranches: async () => ["main"],
   logRange: async () => [commit],
 } as unknown as WorktreeService;
 
-function registry(runtime?: "omp" | "claude-code"): RegistryService {
+function registry(): RegistryService {
   const r = new RegistryService(":memory:");
   r.upsertProject({ id: "p1", name: "Альфа", localRepoPath: "/repos/alpha" });
-  if (runtime) r.setAuthSession({ userId: "u1", accessToken: "t", agentRuntime: runtime });
   return r;
 }
 
 beforeEach(() => {
   calls.length = 0;
   script = reply("готово");
-  delete process.env.KERMANYCH_RUNTIME;
 });
 
 describe("ManagementChatService runtime", () => {
-  it("defaults to omp when no preference is cached", async () => {
+  it("spawns one read-only child in the bound repository", async () => {
     const svc = new ManagementChatService(registry());
     await svc.ask(chatAsk(), "u1");
     expect(calls).toHaveLength(1);
-    expect(calls[0]?.kind).toBe("omp");
     expect(calls[0]?.opts.tools).toEqual(["read", "grep", "glob"]);
     expect(calls[0]?.opts.cwd).toBe("/repos/alpha");
   });
 
-  it("spawns the cached claude-code runtime when the user chose it", async () => {
-    const svc = new ManagementChatService(registry("claude-code"));
-    await svc.ask(chatAsk(), "u1");
-    expect(calls).toHaveLength(1);
-    expect(calls[0]?.kind).toBe("claude-code");
-  });
 });
 
 describe("ReleaseNotesService runtime", () => {
-  it("defaults to omp when no preference is cached", async () => {
+  it("spawns one read-only child in the bound repository", async () => {
     const svc = new ReleaseNotesService(registry(), fakeWorktree);
     await svc.generate(notesAsk());
     expect(calls).toHaveLength(1);
-    expect(calls[0]?.kind).toBe("omp");
     expect(calls[0]?.opts.tools).toEqual(["read", "grep", "glob"]);
     expect(calls[0]?.opts.cwd).toBe("/repos/alpha");
   });
 
-  it("spawns the cached claude-code runtime when the user chose it", async () => {
-    const svc = new ReleaseNotesService(registry("claude-code"), fakeWorktree);
-    await svc.generate(notesAsk());
-    expect(calls).toHaveLength(1);
-    expect(calls[0]?.kind).toBe("claude-code");
-  });
 
   // The child's one reply IS the note, and the note is always English: the operator's
   // agent-language directive («write every reply in Ukrainian») must not reach it.

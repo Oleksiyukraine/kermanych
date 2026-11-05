@@ -35,7 +35,7 @@ import {
   upsertPlaneIssues,
 } from "@kermanych/cloud";
 import type { PlaneIntegration, PlaneIssue } from "@kermanych/cloud";
-import type { ImageInput, Session } from "@kermanych/core";
+import type { ImageInput, NativeHarness, Session } from "@kermanych/core";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { AuthService } from "../auth/auth.service";
 import { RegistryService } from "../registry/registry.service";
@@ -983,6 +983,7 @@ export class PlaneService {
     userId: string,
     transitionId?: string,
     images?: ImageInput[],
+    native?: NativeHarness,
   ): Promise<PlaneLaunchResult> {
     const c = await this.withIntegration(integrationId, userId);
     const raw = await c.client.getIssueByKey(key);
@@ -1000,7 +1001,7 @@ export class PlaneService {
       planeKey: key,
     });
 
-    const session = await this.supervisor.createSessionFromTask(task.id, userId, images);
+    const session = await this.supervisor.createSessionFromTask(task.id, userId, images, native);
     await patchPlaneIssueBinding(c.cloud, c.integration.id, raw.id, { kermanychProjectId: projectId, taskId: task.id });
 
     if (!transitionId) return { session };

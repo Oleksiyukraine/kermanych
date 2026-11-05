@@ -21,7 +21,6 @@ import { claudeHistoryToOmp } from "../runtime/claude-history";
 import { messagesToTranscript, type OmpMessage, type Rehydrated } from "../supervisor/messages-to-transcript";
 import { firstPrUrl } from "../supervisor/pr-url";
 import { CHAT_TOOLS } from "../supervisor/chat-tools";
-import { claudeToolName } from "../runtime/claude-code-runtime";
 import { claudeMcpConfigPath, claudeSettingsPath, codexConfigArgs, codexHookPath, NATIVE_TOKEN_ENV, NATIVE_URL_ENV, ompExtensionPath } from "./native-hooks";
 import { BrowserMcpService } from "../browser/browser-mcp.service";
 import { MCP_TOKEN_ENV, MCP_URL_ENV, ompMcpBridgePath } from "../runtime/omp-mcp-bridge";
@@ -37,6 +36,9 @@ export type NativeEvent =
 
 // claude's switch off the alternate screen (core NativeSettings.claudeFullScreen).
 export const CLAUDE_INLINE_ENV = "CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN";
+
+// CHAT_TOOLS name tools the way omp does (lowercase); Claude Code's built-ins are capitalised.
+const CLAUDE_TOOL_NAMES: Record<string, string> = { read: "Read", grep: "Grep", glob: "Glob", bash: "Bash", edit: "Edit", write: "Write" };
 
 // The live overlay the supervisor merges over a native row while its harness runs.
 export type NativeLive = Pick<Session, "status" | "currentTool" | "error" | "terminalId">;
@@ -265,7 +267,7 @@ export class NativeSessionService implements OnModuleInit, OnModuleDestroy {
   private runs = new Map<string, Run>();
   private starting = new Map<string, Promise<void>>();
   private sub: Subscription;
-  // The SDK's history reader — a test seam, like ClaudeCodeRuntime's.
+  // The SDK's history reader — a test seam.
   readClaudeHistory: (sessionId: string, options?: GetSessionMessagesOptions) => Promise<SessionMessage[]> = getSessionMessages;
 
   constructor(
@@ -276,7 +278,7 @@ export class NativeSessionService implements OnModuleInit, OnModuleDestroy {
     // native session» (docs/specs/2026-10-05-embedded-browser.md → Who gets the tools).
     @Optional() private browser?: BrowserMcpService,
     // The machine resource profile (docs/specs/2026-10-21-machine-resource-profile.md): native
-    // claude gets the same CLAUDE_CODE_* limits as a managed one, and every harness the lower
+    // claude gets its CLAUDE_CODE_* limits, and every harness the lower
     // priority. Optional so specs construct the service without it — then nothing is limited.
     @Optional() private resources?: MachineResourcesService,
   ) {
@@ -356,7 +358,7 @@ export class NativeSessionService implements OnModuleInit, OnModuleDestroy {
           // omp's bridge reads the browser server from here, and codex its bearer
           // (`bearer_token_env_var`); claude has both in its --mcp-config.
           ...(mcp && session.runtime !== "claude-code" ? { [MCP_URL_ENV]: mcp.url, [MCP_TOKEN_ENV]: mcp.token } : {}),
-          // claude's subagent/background limits, as a managed claude gets them through the SDK.
+          // claude's subagent/background limits (CLAUDE_CODE_*).
           ...(session.runtime === "claude-code" ? this.resources?.claudeEnv() : undefined),
           // Off the alternate screen unless the operator chose claude's full-screen layout: that
           // screen keeps no scrollback, so the Лог's find would reach only the rows on screen.
@@ -398,7 +400,7 @@ export class NativeSessionService implements OnModuleInit, OnModuleDestroy {
     const harness: NativeHarness = session.runtime ?? "omp";
     switch (harness) {
       case "claude-code": {
-        const tools = chat ? ["--tools", CHAT_TOOLS.map(claudeToolName).join(",")] : [];
+        const tools = chat ? ["--tools", CHAT_TOOLS.map((t) => CLAUDE_TOOL_NAMES[t] ?? t).join(",")] : [];
         const settings = await claudeSettingsPath();
         const mcpArgs = mcp ? ["--mcp-config", await claudeMcpConfigPath(session.id, mcp)] : [];
         if (resume && session.ompSessionId)
@@ -637,7 +639,9 @@ export class NativeSessionService implements OnModuleInit, OnModuleDestroy {
       case "claude-code": {
         if (!session.ompSessionId) return [];
         const cwd = this.cwd(session);
-        return claudeHistoryToOmp(await this.readClaudeHistory(session.ompSessionId, cwd ? { dir: cwd } : undefined));
+        const inCwd = cwd ? await this.readClaudeHistory(session.ompSessionId, { dir: cwd }) : [];
+        // Nothing under the cwd (e.g. its worktree is gone): without `dir` the SDK searches every project.
+        return claudeHistoryToOmp(inCwd.length ? inCwd : await this.readClaudeHistory(session.ompSessionId));
       }
       case "omp":
         return session.ompSessionFile ? ompFileMessages(await readFile(session.ompSessionFile, "utf8")) : [];

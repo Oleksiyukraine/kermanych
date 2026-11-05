@@ -48,15 +48,15 @@ describe("a runtime exit settles the session", () => {
     const { created, session } = await chat();
     expect(created.status).toBe("done");
 
-    exits.at(-1)!(null, "Claude Code is not signed in: Not logged in · Please run /login", "claude_not_authenticated");
+    exits.at(-1)!(null, "omp is not signed in: run `omp login`", "omp_not_authenticated");
 
-    expect(session()).toMatchObject({ status: "error", errorCode: "claude_not_authenticated" });
+    expect(session()).toMatchObject({ status: "error", errorCode: "omp_not_authenticated" });
   });
 
   it("leaves a done session done when its child exits for any other reason", async () => {
     const { session } = await chat();
 
-    exits.at(-1)!(0, "claude query ended");
+    exits.at(-1)!(0, "omp exited");
 
     expect(session().status).toBe("done");
     expect(session().errorCode).toBeUndefined();

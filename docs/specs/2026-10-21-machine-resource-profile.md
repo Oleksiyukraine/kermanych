@@ -1,5 +1,7 @@
 # Machine resource profile: Kermanych sizes its own load to the machine
 
+> Superseded in part by docs/specs/2026-11-05-remove-managed-claude-code.md: the claude limits reach only native claude sessions; there is no managed claude.
+
 ## Goal
 
 A developer reports that his machine nearly freezes once 6+ `node` processes run. He sees it on

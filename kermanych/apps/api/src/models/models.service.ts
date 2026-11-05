@@ -1,9 +1,8 @@
 // apps/api/src/models/models.service.ts
 import { Injectable, Logger } from "@nestjs/common";
 import { spawn } from "node:child_process";
-import type { AgentRuntimeKind, ModelOption } from "@kermanych/core";
+import type { ModelOption } from "@kermanych/core";
 import { mapOmpModels } from "./omp-models";
-import { fetchClaudeCatalog } from "./claude-models";
 
 // The catalog is a local sqlite-backed read of what omp itself was built with: it changes
 // only when omp is updated or `omp models refresh` runs, so five minutes is still a current
@@ -21,27 +20,20 @@ const MAX_BYTES = 1 << 20;
 @Injectable()
 export class ModelsService {
   private readonly log = new Logger(ModelsService.name);
-  // Two TTL buckets keyed by runtime: an omp session and a claude session offer different
-  // catalogs, and the picker asks per session. Same TTL, same degrade-to-`[]` contract.
-  private cached: Partial<Record<AgentRuntimeKind, { at: number; value: ModelOption[] }>> = {};
-  private inFlight: Partial<Record<AgentRuntimeKind, Promise<ModelOption[]>>> = {};
-
-  // The claude catalog fetcher, exposed as a plain seam so the test can replace it without
-  // spinning a real SDK query. Defaults to the SDK-backed fetch.
-  claudeCatalog: () => Promise<ModelOption[]> = fetchClaudeCatalog;
+  private cached?: { at: number; value: ModelOption[] };
+  private inFlight?: Promise<ModelOption[]>;
 
   // Never rejects: a missing binary, a wedged process or a payload from a future omp all
   // degrade to `[]`. The picker then falls back to the session's stored model as its only
   // option instead of an error — the column is free-form TEXT, so a launch still works.
-  list(runtime: AgentRuntimeKind = "omp"): Promise<ModelOption[]> {
-    const cached = this.cached[runtime];
+  list(): Promise<ModelOption[]> {
+    const cached = this.cached;
     if (cached && Date.now() - cached.at < TTL_MS) return Promise.resolve(cached.value);
-    const inFlight = this.inFlight[runtime];
-    if (inFlight) return inFlight;
-    const run = this.load(runtime);
-    this.inFlight[runtime] = run;
+    if (this.inFlight) return this.inFlight;
+    const run = this.load();
+    this.inFlight = run;
     void run.finally(() => {
-      if (this.inFlight[runtime] === run) delete this.inFlight[runtime];
+      if (this.inFlight === run) this.inFlight = undefined;
     });
     return run;
   }
@@ -50,37 +42,26 @@ export class ModelsService {
   // alone — often the operator alias it was launched with. An id present under two providers
   // resolves to the catalog's FIRST entry, which is omp's own precedence order (the order its
   // `--model` matcher resolves in); a caller that already knows the provider — the UI always
-  // does, it got it from GET /models — never reaches this path. omp-only: the claude adapter
-  // takes the provider as a constant (`anthropic`), so it never needs this lookup.
+  // does, it got it from GET /models — never reaches this path.
   async provider(modelId: string): Promise<string | undefined> {
     return (await this.list()).find((m) => m.id === modelId)?.provider;
   }
 
-  // A model belongs to a runtime only if that runtime's catalog lists it. A selection carried
-  // across a runtime switch — e.g. a claude model left over after the operator switches to omp —
-  // is dropped to undefined so the spawned backend falls back to its own default rather than
-  // running the wrong provider's model. An unreadable catalog ([]) keeps the wanted id untouched:
-  // a transient failure must never clobber a launch parameter (the column is free-form TEXT).
-  async validModel(runtime: AgentRuntimeKind, wanted: string | undefined): Promise<string | undefined> {
+  // A model is valid only if omp's catalog lists it; anything else (e.g. a model id omp no
+  // longer offers) is dropped to undefined so the spawned omp falls back to its own default.
+  // An unreadable catalog ([]) keeps the wanted id untouched: a transient failure must never
+  // clobber a launch parameter (the column is free-form TEXT).
+  async validModel(wanted: string | undefined): Promise<string | undefined> {
     if (!wanted) return undefined;
-    const catalog = await this.list(runtime);
+    const catalog = await this.list();
     if (catalog.length === 0) return wanted;
     return catalog.some((m) => m.id === wanted) ? wanted : undefined;
   }
 
-  private async load(runtime: AgentRuntimeKind): Promise<ModelOption[]> {
+  private async load(): Promise<ModelOption[]> {
     const at = Date.now();
-    const value =
-      runtime === "claude-code"
-        ? await this.claudeCatalog().catch((err: unknown) => {
-            // `warn`, not `debug`: this is the loudest symptom of an unusable claude backend
-            // (the picker simply renders empty), and at debug level the one line explaining a
-            // mysteriously model-less UI was invisible in a normal run.
-            this.log.warn(`claude model catalog unavailable: ${(err as Error).message}`);
-            return [] as ModelOption[];
-          })
-        : mapOmpModels(await this.readOmp());
-    this.cached[runtime] = { at, value };
+    const value = mapOmpModels(await this.readOmp());
+    this.cached = { at, value };
     return value;
   }
 

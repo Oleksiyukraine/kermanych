@@ -11,6 +11,13 @@ export const en: MessageSchema = {
       message: 'Nothing here.',
       home: 'Go home',
     },
+    // The note in the ЦУК and Management fields when omp is unusable: Kermanych's AI functions
+    // run only on omp (docs/specs/2026-11-05-remove-managed-claude-code.md, decision 8).
+    omp: {
+      missing: 'Kermanych’s AI functions run on omp, and omp was not found on this machine. Install omp and make sure the “omp” command resolves.',
+      signedOut: 'Kermanych’s AI functions run on omp, and omp is not signed in on this machine. Run “omp login” in a terminal.',
+      recheck: 'Check again',
+    },
     nav: {
       workspaces: 'Workspaces',
       newWorkspace: 'New workspace',
@@ -71,10 +78,10 @@ export const en: MessageSchema = {
       accountsAvg: '{count} accounts, on average',
       resetsIn: ' — resets in {time}',
       accountSettings: 'account settings',
-      // The top-bar pill (composables/useProviderSignIn.ts): the operator's AI provider CLI
-      // is signed out on this machine. Its tooltip is `errors.runtime_<code>`, which names the
+      // The top-bar pill: omp is signed out on this machine (checked through
+      // GET /account/runtime/check). Its tooltip is `errors.runtime_<code>`, which names the
       // command; this line follows it.
-      aiLoginRequired: 'AI login required',
+      aiLoginRequired: 'omp login required',
       aiLoginRecheck: 'Click to check again.',
       pullDone: 'done',
       pullFailed: 'failed',
@@ -381,7 +388,11 @@ export const en: MessageSchema = {
     native: {
       modeLabel: 'Mode',
       modeManaged: 'Kermanych',
-      modeHint: 'omp / claude / codex — the harness’s own TUI in a terminal, without Kermanych’s wrapper',
+      modeHint: 'The default is the AI provider in Settings. omp / claude / codex — the harness’s own TUI in a terminal, without Kermanych’s wrapper',
+      // The reason on a native session's blocked controls (decision 8 of the 2026-11-05 spec).
+      managedOnly: 'Only in Kermanych mode (omp)',
+      modelInTui: 'Only in Kermanych mode (omp). A native session picks its model and effort in its own TUI with /model.',
+      designManagedOnly: 'A design launches only in Kermanych mode (omp).',
       label: '{harness} · native',
       idle: 'The harness is not running. Resume the session to open its TUI here.',
       resume: 'Resume',
@@ -884,15 +895,22 @@ export const en: MessageSchema = {
     },
   },
   onboarding: {
-    runtime: {
+    // The first-sign-in choice of the AI provider (MainLayout). The provider is the default mode,
+    // and Kermanych's AI functions run on omp whatever the choice, so an omp check sits below.
+    provider: {
       title: 'Choose your AI provider',
-      blurb: 'All your agents run on this backend. You can change it later in profile settings.',
+      blurb: 'The provider decides which mode tasks and chats launch in when you do not pick one. You can change it later: Settings → App → AI provider.',
       omp: 'omp',
-      claude: 'claude-code',
+      ompHint: 'Kermanych mode: Kermanych drives the session — skills, documentation, Reviewer, branches, voice.',
+      claude: 'claude',
+      claudeHint: 'Claude Code’s own TUI in the session’s terminal.',
+      codex: 'codex',
+      codexHint: 'codex’s own TUI in the session’s terminal.',
+      ompNote: 'Kermanych’s AI functions — Management, ЦУК, release notes, Slack, branch names — run on omp whichever provider you pick.',
       confirm: 'Continue',
-      checking: 'Checking whether this backend works on this machine…',
-      ready: 'The backend answers — you are good to go.',
-      checkFailed: 'The backend did not answer. You can continue, but agents will not start until this is fixed.',
+      checking: 'Checking omp on this machine…',
+      ready: 'omp answers.',
+      checkFailed: 'Could not check omp. You can continue, but Kermanych’s AI functions will not work until omp does.',
     },
     checklist: {
       navLabel: 'Get started',
@@ -1317,8 +1335,8 @@ export const en: MessageSchema = {
       },
       'app-runtime': {
         label: 'AI provider',
-        sub: 'Agent backend',
-        blurb: 'Which engine runs your agents. Applies to new sessions.',
+        sub: 'Default mode',
+        blurb: 'Which mode tasks and chats launch in when you do not pick one.',
       },
       'app-voice': {
         label: 'Voice',
@@ -1570,11 +1588,11 @@ export const en: MessageSchema = {
       languageNote: 'The conversation uses the agent’s language: {language}. Change it in “AI provider → Agent communication language”.',
     },
     runtime: {
-      current: 'Current: {name}',
-      omp: 'omp',
-      claude: 'claude-code',
-      note: 'Existing sessions keep their current backend.',
-      checking: 'Checking that the CLI is ready…',
+      label: 'Provider',
+      omp: 'omp — Kermanych',
+      claude: 'claude — its own TUI',
+      codex: 'codex — its own TUI',
+      note: 'The default mode for New task, Chat, and launches from the Board, Jira, Linear, Plane and ЦУК. Design, Minion, Tester and Reviewer always run in Kermanych mode, and Kermanych’s AI functions run on omp.',
       nativeLabel: 'Native Claude Code sessions',
       claudeFullScreen: 'Full-screen layout',
       claudeFullScreenNote: 'Full screen pins the input to the bottom, but keeps only the visible screen: find in the Лог reaches only what is on it. Off, the whole history stays in the terminal and can be searched. Applies when a session next starts or resumes.',
@@ -1791,7 +1809,7 @@ export const en: MessageSchema = {
       importBtn: 'Import from disk…',
       importTitle: 'Import a skill from disk',
       importLead: 'Skills in this machine’s folders. Import copies only the SKILL.md text into the library: it is a snapshot, the original goes on living its own life.',
-      importDelivery: 'omp takes a library skill when it decides to; claude-code gets it only when it is assigned in “Agents” or “Triggers”.',
+      importDelivery: 'In Kermanych mode omp takes a library skill when it decides to; native sessions do not see Kermanych’s library.',
       importOther: 'Another folder…',
       importNone: 'The standard folders (~/.omp/agent/skills, ~/.claude/skills, ~/.agents/skills, ~/.codex/skills) hold no skills. Use “Another folder…”.',
       importEmptyFolder: 'No skills here: no SKILL.md in the folder itself, and no folder with one a level down.',
@@ -3240,6 +3258,8 @@ export const en: MessageSchema = {
       toTask: 'Task →',
       toTaskTip: 'A card to implement this design, from its README and screenshots',
       placeholder: 'describe what to change on the screen, or point at an element with ◎…',
+      // A design session a previous build launched natively: the page renders KPanel only.
+      nativeBlocked: 'The Design page works only with Kermanych-mode (omp) sessions. This session is native, so its log and composer are not available here.',
     },
     canvas: {
       desktopOnly: 'The canvas exists only in the desktop app: the web build has no session browser. Below is the design’s saved folder; the log and composer on the right work here too.',
@@ -3289,10 +3309,6 @@ export const en: MessageSchema = {
     // The session could not start because this machine's agent backend is unusable. Each
     // message names the one command that repairs it: without that, the operator only learned
     // that a session failed, not what to do about it.
-    runtime_claude_not_authenticated:
-      'Claude is not signed in on this machine — run “claude /login” in a terminal, then try again',
-    runtime_claude_binary_missing:
-      'The claude binary is not installed — run “pnpm install” in the kermanych folder, then try again',
     runtime_omp_not_authenticated:
       'omp is not signed in on this machine — run “omp login” in a terminal, then try again',
     runtime_omp_binary_missing:
@@ -3311,6 +3327,9 @@ export const en: MessageSchema = {
     attachment_too_large: 'file “{name}” is too large (max 20 MiB)',
     native_busy: 'The agent is working or waiting for you in the terminal — try again once it finishes its turn',
     native_unsupported: 'In a native session, do this in the harness itself',
+    // A row of managed claude-code, which no longer exists (2026-11-05 spec, decision 9).
+    managed_claude_removed:
+      'Managed claude-code was removed from Kermanych, so this session cannot continue in Kermanych mode. Open its conversation in a terminal: claude --resume <the id on its Session tab>.',
     // An in-place agent works in the project checkout itself — the refusals name what blocks
     // it and the two ways out: clean the checkout, or keep the worktree isolation on.
     inplace_tree_dirty:
@@ -3382,10 +3401,6 @@ export const en: MessageSchema = {
     // The backend child died MID-SESSION — its launch succeeded long ago, so there is nobody to
     // throw to and this transcript row is the only account of it. The same fault at launch time
     // becomes a `runtime_*` error above instead.
-    claude_not_authenticated:
-      'Claude signed out — the session stopped. Run “claude /login” in a terminal and send your message again.',
-    claude_binary_missing:
-      'The claude binary went missing — the session stopped. Run “pnpm install” in the kermanych folder and send your message again.',
     omp_not_authenticated:
       'omp signed out — the session stopped. Run “omp login” in a terminal and send your message again.',
     omp_binary_missing:

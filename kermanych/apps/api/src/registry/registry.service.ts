@@ -6,8 +6,8 @@ import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { mkdirSync } from "node:fs";
 import { Subject } from "rxjs";
-import { isThinkingLevel, isAgentRuntime, isNativeHarness, isAgentLanguage, isFindingKind, isPlatform, parseFindingTarget, docsPolicy, combineReportWrites, readMinionResult, isMinionPauseCode, clampMinionCap, MINION_CAP_DEFAULT, isDevicePlatform } from "@kermanych/core";
-import type { AgentFinding, DeviceChoice, DocsPolicy, FindingReport, FindingTarget, MinionPause, MinionResult, NativeSettings, Platform, Project, ResourceDecision, Session, SessionDevice, SessionStatus, ThinkingLevel, Usage, AgentRuntimeKind, AgentLanguage, TaskReportsWrite, TesterSettings } from "@kermanych/core";
+import { isThinkingLevel, isNativeHarness, isAgentLanguage, isFindingKind, isPlatform, parseFindingTarget, docsPolicy, combineReportWrites, readMinionResult, isMinionPauseCode, clampMinionCap, MINION_CAP_DEFAULT, isDevicePlatform, ACTIVE_STATUSES } from "@kermanych/core";
+import type { AgentFinding, DeviceChoice, DocsPolicy, FindingReport, FindingTarget, MinionPause, MinionResult, NativeSettings, Platform, Project, ResourceDecision, Session, SessionDevice, SessionStatus, ThinkingLevel, Usage, AgentLanguage, TaskReportsWrite, TesterSettings } from "@kermanych/core";
 
 // The cached Supabase session. Lives in SQLite so a restarted api still knows who
 // its user is without a cloud round trip.
@@ -16,7 +16,6 @@ export type AuthSessionRow = {
   accessToken: string;
   expiresAt?: string;
   githubUsername?: string;
-  agentRuntime?: AgentRuntimeKind;
   agentLanguage?: AgentLanguage;
 };
 
@@ -387,9 +386,8 @@ export class RegistryService {
     } catch {
       /* column already exists */
     }
-    // Additive migration: per-user agent runtime preference (omp vs claude-code) cached
-    // alongside the Supabase session so the api knows which backend to spawn without a
-    // cloud round trip.
+    // Additive migration, now unused: the per-user runtime preference once cached here. The
+    // column stays so an older api can still open this database.
     try {
       this.db.exec(`ALTER TABLE auth_session ADD COLUMN agent_runtime TEXT`);
     } catch {
@@ -490,6 +488,7 @@ export class RegistryService {
     } catch {
       /* column already exists */
     }
+    this.retireManagedClaude();
     // The first index in this schema: listSessions(projectId) filters on project_id on
     // every board render and every supervisor lookup.
     this.db.exec(`CREATE INDEX IF NOT EXISTS sessions_project_idx ON sessions (project_id)`);
@@ -590,6 +589,30 @@ export class RegistryService {
       `CREATE TABLE IF NOT EXISTS tester_accounts (id TEXT PRIMARY KEY, project_id TEXT NOT NULL, name TEXT NOT NULL, login TEXT NOT NULL, password TEXT NOT NULL, note TEXT NOT NULL DEFAULT '', position INTEGER NOT NULL)`,
     );
     this.db.exec(`CREATE INDEX IF NOT EXISTS tester_accounts_project_idx ON tester_accounts (project_id)`);
+  }
+
+  // Managed claude-code sessions are gone (docs/specs/2026-11-05-remove-managed-claude-code.md,
+  // decision 9). A managed row stamped `claude-code` loses its slot-queue entry and stops if it
+  // was running; a plain agent or chat row becomes a native claude session (its claude session
+  // id resumes in the TUI); any other such row (design, «Посіпака», «Тестувальник», review, …)
+  // is archived. Runs on every start; a second run changes nothing.
+  private retireManagedClaude(): void {
+    const active = ACTIVE_STATUSES.map(() => "?").join(",");
+    this.db.transaction(() => {
+      this.db
+        .prepare(
+          `UPDATE sessions SET pending_prompt = NULL, slot_queued_at = NULL, status = CASE WHEN status IN (${active}) THEN 'stopped' ELSE status END
+           WHERE runtime = 'claude-code' AND native = 0`,
+        )
+        .run(...ACTIVE_STATUSES);
+      this.db
+        .prepare(
+          `UPDATE sessions SET native = 1
+           WHERE runtime = 'claude-code' AND native = 0 AND kind IN ('agent','chat') AND design_dir IS NULL AND minion = 0 AND tester = 0`,
+        )
+        .run();
+      this.db.prepare(`UPDATE sessions SET archived = 1 WHERE runtime = 'claude-code' AND native = 0`).run();
+    })();
   }
 
   // v1 (2026-08-21, team cloud): `groups` becomes `projects`, its id becomes the CLOUD
@@ -1215,15 +1238,14 @@ export class RegistryService {
   getAuthSession(): AuthSessionRow | undefined {
     const row = this.db
       .prepare(
-        `SELECT user_id as userId, access_token as accessToken, expires_at as expiresAt, github_username as githubUsername, agent_runtime as agentRuntime, agent_language as agentLanguage FROM auth_session WHERE id = 1`,
+        `SELECT user_id as userId, access_token as accessToken, expires_at as expiresAt, github_username as githubUsername, agent_language as agentLanguage FROM auth_session WHERE id = 1`,
       )
-      .get() as (AuthSessionRow & { agentRuntime: string | null; agentLanguage: string | null }) | undefined;
+      .get() as (AuthSessionRow & { agentLanguage: string | null }) | undefined;
     if (!row) return undefined;
     return {
       ...row,
       expiresAt: row.expiresAt ?? undefined,
       githubUsername: row.githubUsername ?? undefined,
-      agentRuntime: isAgentRuntime(row.agentRuntime) ? row.agentRuntime : undefined,
       agentLanguage: isAgentLanguage(row.agentLanguage) ? row.agentLanguage : undefined,
     };
   }
@@ -1231,9 +1253,9 @@ export class RegistryService {
   setAuthSession(row: AuthSessionRow): void {
     this.db
       .prepare(
-        `INSERT OR REPLACE INTO auth_session (id, user_id, access_token, expires_at, github_username, agent_runtime, agent_language) VALUES (1,?,?,?,?,?,?)`,
+        `INSERT OR REPLACE INTO auth_session (id, user_id, access_token, expires_at, github_username, agent_language) VALUES (1,?,?,?,?,?)`,
       )
-      .run(row.userId, row.accessToken, row.expiresAt ?? null, row.githubUsername ?? null, row.agentRuntime ?? null, row.agentLanguage ?? null);
+      .run(row.userId, row.accessToken, row.expiresAt ?? null, row.githubUsername ?? null, row.agentLanguage ?? null);
   }
 
   clearAuthSession(): void {

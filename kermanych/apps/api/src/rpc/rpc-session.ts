@@ -112,7 +112,7 @@ export class RpcSession implements AgentRuntime {
   // outstanding command promises, then notify exit callbacks. Callers pass the live `ready_` at fire time;
   // rejectBeforeReady is a no-op once start() has already settled, so a post-ready failure only fans out.
   // A signed-out omp exits before `ready` ("No models available. Use /login…"), so the cause is
-  // classified here and rides the launch rejection as `.code`, the way ClaudeCodeRuntime's does.
+  // classified here and rides the launch rejection as `.code`.
   private failAll(e: Error, code: number | null, ready_: boolean, rejectBeforeReady: (e: Error) => void) {
     const cause = authFailureCode(e.message);
     if (!ready_) rejectBeforeReady(cause ? new AuthFailure(cause, e.message) : e);

@@ -1,5 +1,7 @@
 # Branch name generated from the task, not transliterated
 
+> Superseded in part by docs/specs/2026-11-05-remove-managed-claude-code.md: the slug is always written by omp's `pi/smol`; claude's `haiku` is no longer used.
+
 ## Goal
 
 Card «Зробити автоматичне генерування назви гілки з контексту задачі»: an agent's branch name

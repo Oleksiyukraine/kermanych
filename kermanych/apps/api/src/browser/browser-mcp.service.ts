@@ -1,8 +1,8 @@
 // apps/api/src/browser/browser-mcp.service.ts
 // The session browser's agent side (docs/specs/2026-10-05-embedded-browser.md): the tools that
 // drive ONE session's embedded browser view, spoken as MCP over the local api — the same
-// four-method Streamable HTTP subset as management-mcp.service.ts, so claude consumes it
-// natively (SDK `mcpServers`, native `--mcp-config`) and omp through runtime/omp-mcp-bridge.ts.
+// four-method Streamable HTTP subset as management-mcp.service.ts, so native claude consumes it
+// natively (`--mcp-config`) and omp through runtime/omp-mcp-bridge.ts.
 //
 // The bearer is per SESSION, not per child: a session's managed child and its native harness
 // are relaunched freely (resume, reap, restart), and each relaunch must keep reaching the same

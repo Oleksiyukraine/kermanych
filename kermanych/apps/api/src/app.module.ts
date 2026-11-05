@@ -73,7 +73,7 @@ import { DeviceGateway } from "./ws/device.gateway";
     // The local omp model catalog (`omp models --json`), read by GET /models and by the
     // supervisor when a running session's model is changed by provider + id.
     ModelsService,
-    // The "is this backend usable on this machine?" preflight behind GET
+    // The "is omp usable on this machine?" preflight behind GET
     // /account/runtime/check. Distinct from ModelsService on purpose: that one degrades every
     // failure to an empty catalog so a picker always renders, which is precisely the swallowing
     // this check exists to undo.
@@ -91,15 +91,15 @@ import { DeviceGateway } from "./ws/device.gateway";
     ManagementMcpService,
     // ЦУК, the console behind the avatar (docs/specs/2026-11-04-cuk-control-console.md): one
     // tool-less child per user on the same chat pool as the Менеджмент assistant. Knows only
-    // the runtime preference (RegistryService) and the renice (MachineResourcesService).
+    // the language preference (RegistryService) and the renice (MachineResourcesService).
     CukChatService,
     // The Release Notes generator: one one-shot omp child per request, reading the bound
     // repo's git history through { RegistryService, WorktreeService }. Like the chat it
     // knows nothing about SupervisorService — a generation has no session and no worktree.
     ReleaseNotesService,
     // Names a new agent's branch from its task (docs/specs/2026-10-26-branch-name-from-task.md):
-    // one tool-less one-shot child on the runtime's fast model. The supervisor depends on it;
-    // it knows nothing back, only the runtime preference (RegistryService).
+    // one tool-less one-shot omp child on its fast model. The supervisor depends on it;
+    // it knows nothing back.
     BranchNameService,
     // The voice conversation (docs/specs/2026-11-02-voice-conversation.md): the operator's OpenAI
     // key (RegistryService) and the SDP exchange with GPT-Live. The bridge to the agent runs in

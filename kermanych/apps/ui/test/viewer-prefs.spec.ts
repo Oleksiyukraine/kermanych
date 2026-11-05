@@ -45,21 +45,6 @@ describe('rememberedViewMode', () => {
   });
 });
 
-describe('launch mode', () => {
-  it('opens on managed until a mode is picked, then on the picked one', async () => {
-    const { readLaunchMode, writeLaunchMode } = await import('../src/lib/native-session');
-    expect(readLaunchMode()).toBe('managed');
-    writeLaunchMode('claude');
-    expect(readLaunchMode()).toBe('claude');
-  });
-
-  it('falls back to managed for a stored value that is not a mode', async () => {
-    localStorage.setItem('kermanych.launcher.mode', 'vim');
-    const { readLaunchMode } = await import('../src/lib/native-session');
-    expect(readLaunchMode()).toBe('managed');
-  });
-});
-
 describe('useSplitRatio', () => {
   const key = (k: string) => new KeyboardEvent('keydown', { key: k });
 

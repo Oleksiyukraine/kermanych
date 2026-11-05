@@ -21,7 +21,7 @@ import {
   Req,
   ForbiddenException,
 } from "@nestjs/common";
-import type { ImageInput } from "@kermanych/core";
+import { isNativeHarness, type ImageInput } from "@kermanych/core";
 import { LinearService, type LinearIssueDraft } from "../linear/linear.service";
 import { LinearHttpError } from "../linear/linear-client";
 
@@ -215,12 +215,13 @@ export class LinearController {
   async launch(
     @Param("workspaceId") ws: string,
     @Param("key") key: string,
-    @Body() b: { projectId: string; transitionId?: string; images?: ImageInput[] },
+    @Body() b: { projectId: string; transitionId?: string; images?: ImageInput[]; native?: string },
     @Req() req: Authed,
   ) {
     if (!b?.projectId) throw new BadRequestException("projectId is required");
+    if (b.native !== undefined && !isNativeHarness(b.native)) throw new BadRequestException(`unknown native harness ${JSON.stringify(b.native)}`);
     try {
-      return await this.linear.launch(ws, key, b.projectId, req.user.id, b.transitionId, b.images);
+      return await this.linear.launch(ws, key, b.projectId, req.user.id, b.transitionId, b.images, b.native);
     } catch (err) {
       rethrow(err);
     }

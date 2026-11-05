@@ -2,7 +2,7 @@
 import { isAgentLanguage, agentLanguageDirective, type AgentLanguage } from "@kermanych/core";
 
 // The agent communication language for a launch: env override (dev) beats the cached cloud
-// preference. Unlike the runtime, there is no default — an unset preference resolves to
+// preference. There is no default — an unset preference resolves to
 // undefined, meaning "inject nothing" and let the agent keep its own default.
 export function resolveLanguage(
   env: string | undefined,

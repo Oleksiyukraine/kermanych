@@ -132,15 +132,19 @@
           @keydown="onLogResizeKeydown"
         ></div>
 
-        <!-- LOG — the Дизайнер's transcript and composer, the Агенти «Лог» tab as is. -->
+        <!-- LOG — the Дизайнер's transcript and composer, the Агенти «Лог» tab as is. KPanel
+             renders only a «Керманич» session, so a native design session (only older builds
+             could launch one) gets a note saying why instead; the stage keeps working. -->
         <aside class="design__log" :style="{ width: logWidth + 'px' }">
           <KTabs v-model="logTab" :tabs="logTabs" class="design__log-tabs">
-            <template #end>
+            <template v-if="!design.native" #end>
               <button type="button" class="design__log-ctl" @click="onExpandAll(true)">{{ t('agents.detail.expandAll') }}</button>
               <button type="button" class="design__log-ctl" @click="onExpandAll(false)">{{ t('agents.detail.collapseAll') }}</button>
             </template>
           </KTabs>
+          <p v-if="design.native" class="design__canvas-note" role="note">{{ t('design.page.nativeBlocked') }}</p>
           <KPanel
+            v-else
             ref="panelEl"
             class="design__panel"
             :bare="true"

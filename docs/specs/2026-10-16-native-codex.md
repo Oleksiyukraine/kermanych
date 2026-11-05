@@ -1,5 +1,7 @@
 # Native `codex`: a third harness in its own TUI
 
+> Superseded in part by docs/specs/2026-11-05-remove-managed-claude-code.md: codex is also a provider value that makes native codex the default launch mode.
+
 ## Goal
 
 The launcher «Режим» and the «Чат» mode chip offer `Керманич` (managed) and two native

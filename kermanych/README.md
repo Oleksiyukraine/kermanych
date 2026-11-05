@@ -6,18 +6,17 @@ Quasar (Vue 3) UI. Each session gets its own git worktree and its own
 agent runtime child, so several agents can work in isolation at the
 same time and you drive them all from one board.
 
-Kermanych drives a pluggable `AgentRuntime` behind one factory: a session's
-child is either an `omp` runtime (an `omp --mode rpc` child) or a
-`claude-code` runtime (via the `@anthropic-ai/claude-agent-sdk`). The backend
-is a per-user preference (see below); everything above the runtime seam — the
-board, transcripts, worktrees, the RPC bridge — is shared.
+Kermanych drives one managed backend: a «Керманич» session's child is an `omp --mode rpc`
+process. A session can instead run a harness's own TUI natively — `omp`, `claude` or `codex`
+(see «Native sessions» below). Everything above the runtime seam — the board, transcripts,
+worktrees, the RPC bridge — is shared.
 
 - **API** — NestJS. Manages sessions, git worktrees, the SQLite registry, and
   the runtime bridge to each agent child. Speaks REST + WebSocket.
 - **UI** — Quasar/Vue 3. A single dashboard for creating sessions, watching
   their turns stream in, and answering interactive prompts.
-- **One session = one git worktree + one runtime child** of the session's
-  chosen backend (`omp` or `claude-code`). Worktrees live under
+- **One session = one git worktree + one child**: an `omp` runtime for «Керманич», or the
+  native harness's TUI. Worktrees live under
   `~/.kermanych/worktrees/<sessionId>`; the registry DB is
   `~/.kermanych/kermanych.sqlite`.
 
@@ -27,54 +26,54 @@ board, transcripts, worktrees, the RPC bridge — is shared.
   prebuilt binary is ABI-stable across Node ≥22.12 and the bundled Electron, so
   no per-version rebuild is needed. Older Node (including 22.11) crashes the
   native addon.
-- **`omp` on your PATH, authenticated.** Sessions on the `omp` backend spawn
-  `omp --mode rpc`; if `omp` is missing or unauthenticated, they cannot start.
-- **Claude signed in on this machine.** Required when a user's runtime preference
-  is `claude-code`. The *binary* does not need to be on your PATH — the SDK ships
-  its own as an optional platform package (`@anthropic-ai/claude-agent-sdk-<os>-<arch>`,
-  ~200 MB) that `pnpm install` fetches. What must come from your machine is the
-  **authentication**: the same credentials `claude /login` writes. A signed-out
-  machine, or one where that 200 MB package did not install, cannot start
-  `claude-code` sessions — the app names which of the two it is when you pick
-  the backend, when a session fails to launch, and when a running session's
-  turn is refused (see «Signed out» below).
+- **`omp` on your PATH, authenticated.** «Керманич» sessions spawn `omp --mode rpc`, and
+  Kermanych's own AI functions (Менеджмент, ЦУК, release notes, Slack answers, branch names,
+  the Посіпака preflight) run on omp whatever your provider. If `omp` is missing or signed out,
+  they cannot run — the app names which of the two it is (see «Signed out» below).
+- **`claude` / `codex` on your PATH** — only for native sessions of that harness, signed in
+  the harness's own way.
 - **pnpm** (the repo pins its version via `packageManager` in
   `package.json`).
 
-### Runtime preference
+### Provider
 
-Which backend a session uses is a per-user choice. An onboarding gate on first
-sign-in picks `omp` or `claude-code`; you can change it later in profile
-settings, and the `KERMANYCH_RUNTIME` env var is a dev override. The choice
-applies to sessions created afterwards: each session keeps the runtime it was
-created with, and resuming or branching a session never switches its backend.
+The provider — `omp`, `claude` or `codex` (stored as `omp | claude-code | codex`) — is a
+per-user choice that sets the **default launch mode**: omp → «Керманич», claude → native
+`claude`, codex → native `codex`. The UI applies it wherever you do not pick a mode yourself:
+«Дошка» ▶, the Jira, Linear and Plane launch dialogs, ЦУК, the «Режим» that «Нова задача» opens
+with and the «Чат» chip (both can still be changed per launch; neither remembers the last pick).
+Design cards, Посіпака, Тестувальник, Ревізор and branches always run in «Керманич». The api
+itself keeps «no `native` = managed».
 
-Picking a backend runs a preflight against it — `GET /account/runtime/check?runtime=<kind>`
-— so an unusable one is named where the choice is made rather than surfacing later
-as a session that never answers. For `claude-code` it asks the SDK for the signed-in
-account (a signed-out claude still lists every model, so the catalog proves nothing);
-only a first-party setup with no OAuth login and no `ANTHROPIC_API_KEY` counts as signed
-out, so Bedrock/Vertex/gateway setups are never flagged. For `omp` it asks for the model
-catalog, which omp fills only from providers it holds credentials for, so an empty one
-means signed out. It reports either `{ ok: true }` or `{ ok: false, code }` where `code`
-names the fix (signed out vs binary missing). The check never blocks the choice: you may
-be about to run `claude /login`.
+The value lives in `profiles.agent_runtime` (no migration; a stored `claude-code` now means
+native claude by default) and is read and written by the UI directly. An onboarding gate with the
+three choices shows only when that read succeeded and no value is set; a failed read means
+«Керманич» and no gate. Change it later in Settings → Застосунок → «ШІ-провайдер». Spec:
+`docs/specs/2026-11-05-remove-managed-claude-code.md`.
 
-If sessions on a backend refuse to start, that same code is what the error names.
-To see the raw reason directly, the api logs it at `warn` — including the one line
-explaining an empty model picker, which is the loudest symptom of an unusable
-backend.
+The gate runs an advisory omp check — `GET /account/runtime/check` — and the top-bar pill repeats
+it (see «Signed out»), because every choice uses omp for Kermanych's AI functions. It asks omp for
+the model catalog, which omp fills only from providers it holds credentials for, so an empty one
+means signed out. It reports either `{ ok: true }` or `{ ok: false, code }` where `code` names the
+fix (signed out vs binary missing). The check never blocks the choice: you may be about to run
+`omp login`.
 
-Not every feature is available on both. TTSR triggers, the skill-overlay
-config, subscription-plan spend, and the plan/todo chip are `omp`-only; on the
-`claude-code` backend, skills reach the agent inline through the prompt. The
-agent map («Карта агентів», see below) shows the subagents of sessions on both backends.
-Per-session token spend is tracked on both.
+If sessions refuse to start, that same code is what the error names. To see the raw reason
+directly, the api logs it at `warn` — including the one line explaining an empty model picker,
+which is the loudest symptom of an unusable omp.
 
-Claude sessions read your own Claude Code settings: Kermanych passes no `settingSources`, so the
-SDK loads `~/.claude/settings.json` and the project's `.claude/settings*.json`, the same as a
-`claude` you start yourself. What you set there beats what Kermanych sets (next section); the
-same knobs without Kermanych: [`docs/claude-resource-limits.md`](./docs/claude-resource-limits.md).
+The agent map («Карта агентів», see below) shows the subagents of «Керманич» sessions; TTSR
+triggers, the skill-overlay config, subscription-plan spend and the plan/todo chip are omp
+features too.
+
+**Legacy rows.** Sessions created on the removed managed `claude-code` backend are fixed up at
+every start: plain agents and chats become native claude sessions continued in the same folder
+with `claude --resume <id>`; discussions, reviews, testers, designs and Посіпака runs are
+archived. Any managed spawn of such a row is refused with `managed_claude_removed`.
+
+Native claude reads your own Claude Code settings (`~/.claude/settings.json`, the project's
+`.claude/settings*.json`); what you set there beats what Kermanych sets (next section); the same
+knobs without Kermanych: [`docs/claude-resource-limits.md`](./docs/claude-resource-limits.md).
 
 ### Machine resources («Ресурси машини»)
 
@@ -121,22 +120,22 @@ With the limits on:
 
 #### Signed out
 
-A signed-out provider CLI does not always stop a session from launching: claude starts
-fine and refuses only the first turn (`Not logged in · Please run /login`). Kermanych
-shows it in two places:
+A signed-out omp does not always stop a session from launching. Kermanych shows it in two
+places:
 
 - **The session.** Its status reads «login required» instead of «error» or
-  «Launching…», and the panel's banner names the command (`claude /login` or
-  `omp login`). The child is stopped. Log in in a terminal and send the message
-  again: the next send respawns the session on the new credentials. A chat or a
-  session in review that is signed out mid-conversation gets the same state.
-- **The top bar.** An «AI login required» pill appears beside the settings gear while
-  the backend you chose is signed out. Its tooltip names the command. The app runs the
-  preflight again every 5 minutes while the window is visible, when the window regains
-  focus, and when you click the pill, so it clears on its own once you have logged in.
+  «Launching…», and the panel's banner names the command (`omp login`). The child is
+  stopped. Log in in a terminal and send the message again: the next send respawns the
+  session on the new credentials. A chat or a session in review that is signed out
+  mid-conversation gets the same state.
+- **The top bar.** A «Потрібен вхід в omp» pill appears beside the settings gear while
+  omp is signed out. Its tooltip names the command. The app runs the omp check again every
+  5 minutes while the window is visible, when the window regains focus, and when you click
+  the pill, so it clears on its own once you have logged in. ЦУК and the Менеджмент chat show
+  a blocking note with the fix (install omp / `omp login`) while omp is missing or signed out.
 
-Native sessions (the harness's own TUI) show the CLI's login screen in their terminal.
-They get only the top-bar pill. codex is not checked.
+Native sessions (the harness's own TUI) show the CLI's own login screen in their terminal;
+only omp is checked.
 
 ### Agent communication language
 
@@ -145,10 +144,9 @@ Settings → Застосунок → «ШІ-провайдер». It is stored 
 (`profiles.agent_language`) and cached by the local API; `KERMANYCH_LANGUAGE` (any of the
 codes, e.g. `uk` or `en-ste-80`) is a dev override. Unset means no preference: the agent keeps
 its own default. The choice reaches every managed spawn — agents, chats, discussions, reviews,
-resumes and the «Менеджмент» chat — as a system-prompt append
-(`--append-system-prompt` for `omp`, `systemPrompt.append` for `claude-code`), read fresh on
-each spawn. Native sessions get nothing, and neither does the release-notes generator: its one
-reply is the note, and a note is always written in English.
+resumes and the «Менеджмент» chat — as a system-prompt append (`--append-system-prompt`), read
+fresh on each spawn. Native sessions get nothing, and neither does the release-notes generator:
+its one reply is the note, and a note is always written in English.
 
 Three entries are levels of [ASD-STE100 Simplified Technical English](https://www.asd-ste100.org/),
 the controlled English of aircraft maintenance manuals, rather than plain languages:
@@ -543,7 +541,7 @@ Setting up the Slack app, once per workspace:
   connected to Slack. Any member can paste the same two tokens there to host the bot
   too — Slack hands each message to one connection, so nobody is answered twice. The
   documentation search runs under that member's own login, and the answer is generated
-  by their agent runtime (omp or Claude Code) on their plan.
+  through omp on their plan.
 - **Tokens are local.** Both tokens are stored in this machine's registry SQLite and
   never reach the cloud; the cloud row (`workspace_slack_integrations`, created by the
   additive `20261005090000_slack_integration.sql` — push it before shipping this UI)
@@ -925,8 +923,9 @@ ChatGPT app is not used. A missing binary shows `command not found` in the «Л�
   post-PR warning (see «Cloud tasks and local sessions») are managed-only.
 - **Not available** for native sessions: changing model or effort from Kermanych, harness
   commands from a composer, answering prompts outside the terminal, discussion branches,
-  review and images. On the agent map a native session appears without subagents. Launches
-  from «Дошка» and «В беклог» stay managed.
+  review and images; these controls stay visible but blocked with the reason «Лише в режимі
+  «Керманич» (omp)». On the agent map a native session appears without subagents. Launches from
+  «Дошка», the trackers and ЦУК follow your provider (see «Provider»).
 - **codex specifics.** codex trusts hooks only after review and asks about every new folder;
   Kermanych passes both answers on the command line for that launch — the session's folder as
   trusted (`-c projects={…}`) and a `trusted_hash` for exactly its own hooks
@@ -945,7 +944,7 @@ ChatGPT app is not used. A missing binary shows `command not found` in the «Л�
 
 The «Чат» page offers the same choice per thread (spec:
 `docs/specs/2026-10-06-native-chats.md`). The chip next to «+ Новий» picks the **Режим** of
-the next chat — `Керманич`, `omp`, `claude` or `codex` — and is remembered on this machine; a thread
+the next chat — `Керманич`, `omp`, `claude` or `codex` — and defaults to your provider each time; a thread
 keeps the mode it was created with, and its card shows that harness's mark. A native chat
 opens the harness's TUI idle in the project folder; type the first message into it. After
 each turn the first message becomes the thread's name, as for a managed chat.
@@ -1445,7 +1444,7 @@ developer's machine. The direction is always task → session.
    (lowercase, Latin, `a-z0-9` joined with `-`, at most 40 characters; the launcher's
    hint shows the result when it differs from what was typed), and no model is asked. Left
    blank, the slug is a short English summary of the card's title and description written by
-   the fast model of your runtime (omp's `pi/smol` role, claude's `haiku`) in one tool-less call
+   omp's fast model (`pi/smol` role) in one tool-less call
    bounded at 15 s to start and 15 s to answer. When that call fails or times out, the slug is
    the title transliterated to Latin, cut at a whole word within 40 characters. A slug already
    taken in the project gets `-2`, `-3`, … (Specs: `docs/specs/2026-10-26-branch-name-from-task.md`,
@@ -1741,14 +1740,14 @@ what Kermanych appends that no override changes, and how it ends.
 A skill is a named instruction pack an agent can use. A session can get skills from three
 places:
 
-| Source | managed `omp` | managed `claude-code` | native session |
-| --- | --- | --- | --- |
-| the repository's `.omp/skills`, `.claude/skills`, `.agent(s)/skills`, `.codex/skills`, `.github/skills` | finds all of them itself | only `.claude/skills` | whatever the harness finds |
-| your home folders (`~/.omp/agent/skills`, `~/.claude/skills`, `~/.agents/skills`, `~/.codex/skills`) | finds them itself | only `~/.claude/skills` and plugins | whatever the harness finds |
-| the Kermanych library (user, project and workspace rows plus the defaults) | as a library the model picks from | only when the skill is assigned | no |
+| Source | «Керманич» (omp) | native session |
+| --- | --- | --- |
+| the repository's `.omp/skills`, `.claude/skills`, `.agent(s)/skills`, `.codex/skills`, `.github/skills` | finds all of them itself | whatever the harness finds |
+| your home folders (`~/.omp/agent/skills`, `~/.claude/skills`, `~/.agents/skills`, `~/.codex/skills`) | finds them itself | whatever the harness finds |
+| the Kermanych library (user, project and workspace rows plus the defaults) | as a library the model picks from | no |
 
-A skill **assigned** in «Агенти» or «Тригери» is pasted into the agent's instruction on both
-managed runtimes. A repository skill with the same name always wins over a library skill.
+A skill **assigned** in «Агенти» or «Тригери» is pasted into the agent's instruction. A
+repository skill with the same name always wins over a library skill.
 
 - **Import from disk.** «Імпортувати з диска…» lists the skills in the four home folders on this
   machine. «Інша тека…» browses any folder, hidden ones included, and takes either one skill
@@ -1759,8 +1758,7 @@ managed runtimes. A repository skill with the same name always wins over a libra
   At project scope it refuses a name a repository skill owns, because that copy would never be
   used.
 - **From the repository.** At project scope the pane shows a read-only «З репозиторію» block for
-  the bound checkout's skills. «Агенти» and «Тригери» offer those names for assignment. That is
-  how a `claude-code` session gets, say, an `.agents/skills` skill it would not find by itself.
+  the bound checkout's skills. «Агенти» and «Тригери» offer those names for assignment.
 - **Where a library skill comes from.** A user, project or workspace row with a default's name
   replaces that default for every session it reaches. In a session's transcript a skill read is
   badged `бібліотека` for a default and `користувач`, `проєкт` or `воркспейс` for a library row.
@@ -1875,8 +1873,6 @@ paths are defaults that user instructions override, and the policy is exactly su
 instruction, so specs and plans land in `docs/specs` / `docs/plans`. Superpowers has no notion
 of `docs/schemas`, `docs/handoffs` or `docs/api-requests` and does not add the
 `## Documentation impact` section. Those come from the policy, the skills and the gate.
-The claude-code runtime loads the user's `~/.claude` settings, plugins included: Kermanych sets
-no `settingSources`, and the SDK then loads every settings source.
 
 **Limits.** A session that was already running when the switch or a rule changed gets the new
 policy in its system prompt on its next spawn (resume, restart). The gate applies to it
@@ -1944,7 +1940,7 @@ right. (Spec: `docs/specs/2026-11-04-cuk-control-console.md`.)
 - **What it does.** Answers about the state («хто чекає на мою відповідь?», «що впало?», «що на
   дошці?»); opens a tab, a Менеджмент section or any settings pane; selects a workspace or a
   project; opens a session; files a card into the backlog or launches an agent on a task (plain or
-  «Глибокий аналіз», with the project's defaults and your launch mode); sends a message to an
+  «Глибокий аналіз», with the project's defaults and your provider's launch mode); sends a message to an
   agent; stops, resumes, restarts, archives or unarchives a session; starts or stops its preview;
   writes to the notepad. It has no file tools — it answers from the app's state, and the agent it
   launches reads the code — and runs on `claude-sonnet-5` for speed. It sees attached images, not
@@ -2162,8 +2158,7 @@ Wherever it is opened, that chat is a real assistant, and it is deliberately nar
   the turn — so it sees Jira's answer, including a refusal, and can fix and retry before it
   replies. Every call runs under your own personal Jira token and reaches only the sites of
   the boards the workspace connected; each chat's agent child gets its own bearer secret,
-  revoked with the conversation. The claude runtime takes the endpoint as a native MCP server
-  (`mcp__kermanych__jira_*`); omp, which reads MCP servers only from config files, gets it
+  revoked with the conversation. omp, which reads MCP servers only from config files, gets it
   through a small generated extension (`apps/api/src/runtime/omp-mcp-bridge.ts`) with the URL
   and secret in its environment. What that covers:
   - **Reading the whole picture.** JQL search across the site (any project, open or done,
@@ -2337,7 +2332,7 @@ back to you instead of silently dropped.
 ### Its conversation
 
 One conversation per Воркспейс (`management:<workspaceId>`), held open as a git-free child
-on your chosen runtime (`omp` or `claude-code`) in the first bound repository of the group
+on omp in the first bound repository of the group
 — or in your home directory when none is bound — with no worktree, no branch and no row on
 the Агенти board. Switching workspace in
 the sidebar switches conversation; «Новий чат» drops the child so the next question starts

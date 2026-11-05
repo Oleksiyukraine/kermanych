@@ -26,7 +26,6 @@ import type { SlackIntegration } from "@kermanych/cloud";
 import { AuthService } from "../auth/auth.service";
 import { RegistryService, type SlackTokenRow } from "../registry/registry.service";
 import { runOneShot } from "../runtime/one-shot";
-import { resolveRuntime } from "../runtime/resolve-runtime";
 import { FAST_MODEL } from "../assistant/models";
 import { CodedError } from "../management/coded-error";
 import { SlackClient, type SlackChannel, type SlackIdentity } from "./slack-client";
@@ -269,7 +268,6 @@ export class SlackService implements OnModuleInit, OnModuleDestroy {
       // Tool-less, in the home directory: the answer comes from the fragments in the prompt,
       // and there is no repository this child should be able to wander into.
       const { text } = await runOneShot({
-        kind: resolveRuntime(process.env.KERMANYCH_RUNTIME, this.registry.getAuthSession()?.agentRuntime),
         cwd: homedir(),
         prompt,
         noTools: true,

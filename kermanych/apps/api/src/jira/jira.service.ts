@@ -27,7 +27,7 @@ import {
   upsertJiraIssues,
 } from "@kermanych/cloud";
 import type { JiraIntegration, JiraIssue } from "@kermanych/cloud";
-import type { ImageInput, Session } from "@kermanych/core";
+import type { ImageInput, NativeHarness, Session } from "@kermanych/core";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { AuthService } from "../auth/auth.service";
 import { RegistryService } from "../registry/registry.service";
@@ -648,6 +648,7 @@ export class JiraService {
     userId: string,
     transitionId?: string,
     images?: ImageInput[],
+    native?: NativeHarness,
   ): Promise<JiraLaunchResult> {
     const { cloud, integration, client } = await this.withIntegration(integrationId, userId);
     const raw = await client.getIssue(key);
@@ -666,7 +667,7 @@ export class JiraService {
       jiraKey: key,
     });
 
-    const session = await this.supervisor.createSessionFromTask(task.id, userId, images);
+    const session = await this.supervisor.createSessionFromTask(task.id, userId, images, native);
     await patchJiraIssueBinding(cloud, integration.id, raw.id, {
       kermanychProjectId: projectId,
       taskId: task.id,

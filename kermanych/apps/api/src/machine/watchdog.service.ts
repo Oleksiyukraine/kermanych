@@ -123,10 +123,10 @@ export class WatchdogService implements OnModuleInit, OnModuleDestroy {
     this.timer = undefined;
   }
 
-  // Called again for the same child once it is really initialised (claude after its system
-  // init, a native TUI after its first hook): the MCP servers it started by then join the
-  // baseline. The previous baseline stays in force until the new one is read. A new pid is a
-  // new child, so its entry replaces the old one.
+  // Called once a child is up (an omp child after start(), a native TUI after its first hook):
+  // what it started by then — its MCP servers — forms the baseline. A repeat call for the same
+  // pid re-reads the baseline, the previous one staying in force until then. A new pid is a new
+  // child, so its entry replaces the old one.
   track(sessionId: string, sessionName: string, pid: number): void {
     const cur = this.tracked.get(sessionId);
     const entry: Tracked = cur?.pid === pid ? cur : { sessionName, pid, reads: 0 };

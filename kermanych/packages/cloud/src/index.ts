@@ -96,7 +96,7 @@ export {
   isTerminalTaskStatus,
 } from "./status";
 
-export { getMyAgentRuntime, setMyAgentRuntime, getMyAgentLanguage, setMyAgentLanguage } from "./account";
+export { getMyAgentProvider, setMyAgentProvider, getMyAgentLanguage, setMyAgentLanguage } from "./account";
 
 export type { CloudProjectPatch, CloudProjectInsert } from "./projects";
 export {

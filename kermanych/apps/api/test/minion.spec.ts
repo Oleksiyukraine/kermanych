@@ -36,7 +36,7 @@ import type { DeviceApi } from "../src/device/device.contract";
 import type { MachineResourcesService } from "../src/machine/machine-resources.service";
 import type { RuntimeCheck, RuntimeCheckService } from "../src/runtime/runtime-check.service";
 
-// Every managed spawn, whatever the runtime: the kind, the launch options and the child.
+// Every managed spawn: the launch options and the child.
 type FakeChild = {
   opts: Record<string, unknown>;
   prompts: string[];
@@ -45,9 +45,9 @@ type FakeChild = {
   emit: (e: RpcEvent) => void;
   exit: (code: number | null, reason: string, cause?: string) => void;
 };
-const spawns: { kind: string; opts: Record<string, unknown>; child: FakeChild }[] = [];
-// The next child's start fails the way both runtimes fail it: the exit callbacks fire first
-// (omp's failAll, claude's death path), then start() rejects.
+const spawns: { opts: Record<string, unknown>; child: FakeChild }[] = [];
+// The next child's start fails the way omp fails it: the exit callbacks fire first
+// (omp's failAll), then start() rejects.
 const startFailure = vi.hoisted(() => ({ next: undefined as string | undefined }));
 vi.mock("../src/runtime/agent-runtime", () => {
   class FakeRuntime {
@@ -107,9 +107,9 @@ vi.mock("../src/runtime/agent-runtime", () => {
     }
   }
   return {
-    createRuntime: (kind: string, opts: Record<string, unknown>) => {
+    createRuntime: (opts: Record<string, unknown>) => {
       const child = new FakeRuntime(opts);
-      spawns.push({ kind, opts, child: child as unknown as FakeChild });
+      spawns.push({ opts, child: child as unknown as FakeChild });
       return child;
     },
   };
@@ -225,7 +225,7 @@ function make() {
     cloudClient: () => ({}),
   } as unknown as AuthService;
   const skills = Object.assign(stubSkills(), { assignedForNames: async () => ({ block: "", view: [], missing: [] }) });
-  const models = { validModel: async (_r: string, w: string | undefined) => w } as unknown as ModelsService;
+  const models = { validModel: async (w: string | undefined) => w } as unknown as ModelsService;
   const browser = new BrowserMcpService(registry, { urlOf: () => undefined } as unknown as PreviewService, {} as DeviceApi, http);
   const sup = new SupervisorService(registry, worktree as unknown as WorktreeService, auth, skills, models, undefined, browser, resources);
   const runtimeCheck = { check: vi.fn(async () => preflight) };
@@ -343,25 +343,6 @@ describe("which card the minion takes", () => {
     // At the cap (1) the next poll takes nothing.
     await minion.poll();
     expect(claims).toEqual(["oldest"]);
-  });
-
-  it("gives a claude run disallowedTools instead of the overlay, on its first spawn and on a wake", async () => {
-    process.env.KERMANYCH_RUNTIME = "claude-code";
-    try {
-      const { minion, bindProject, minionSessions, sup } = make();
-      bindProject("p1");
-      card({ id: "a", projectId: "p1" });
-      await minion.poll();
-      expect(spawns[0]!.kind).toBe("claude-code");
-      expect(spawns[0]!.opts.disallowedTools).toEqual(["AskUserQuestion"]);
-
-      const [s] = minionSessions();
-      await sup.restartSession(s!.id);
-      expect(spawns).toHaveLength(2);
-      expect(spawns[1]!.opts.disallowedTools).toEqual(["AskUserQuestion"]);
-    } finally {
-      delete process.env.KERMANYCH_RUNTIME;
-    }
   });
 
   it("takes nothing while paused", async () => {
@@ -483,7 +464,7 @@ describe("the claim", () => {
     preflight = { ok: false, code: "omp_not_authenticated" };
 
     await minion.poll();
-    expect(runtimeCheck.check).toHaveBeenCalledWith("omp");
+    expect(runtimeCheck.check).toHaveBeenCalledWith();
     expect(claims).toEqual([]);
     expect(minion.state().pause).toMatchObject({ code: "signed_out" });
 

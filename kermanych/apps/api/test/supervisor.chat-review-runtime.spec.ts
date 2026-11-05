@@ -1,17 +1,14 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { WorktreeService } from "../src/worktree/worktree.service";
-import type { AgentRuntimeKind } from "@kermanych/core";
 
-// createChat and reviewSession are FRESH sessions (Task 2): they stamp the user's preference
-// (runtimeFor → resolveRuntime) and spawn on that backend through the factory. We spy on the
-// factory to prove BOTH the stamped Session.runtime and the kind the factory is invoked with.
-// agent-runtime's only runtime value export is createRuntime (the rest are types), so a
-// wholesale mock is complete and never loads the real omp/claude backends.
-type FactoryCall = { kind: string; opts: Record<string, unknown> };
-const calls: FactoryCall[] = [];
+// createChat and reviewSession are FRESH sessions: they stamp `omp` and spawn through the
+// factory. We spy on the factory to prove the spawn and its fork handle. agent-runtime's only
+// runtime value export is createRuntime (the rest are types), so a wholesale mock is complete
+// and never loads the real omp backend.
+const calls: Record<string, unknown>[] = [];
 vi.mock("../src/runtime/agent-runtime", () => ({
-  createRuntime: (kind: string, opts: Record<string, unknown>) => {
-    calls.push({ kind, opts });
+  createRuntime: (opts: Record<string, unknown>) => {
+    calls.push(opts);
     return {
       start: async () => {},
       isAlive: () => true,
@@ -56,52 +53,31 @@ function make() {
   return { sup, registry };
 }
 
-function prefer(registry: RegistryService, runtime: AgentRuntimeKind) {
-  registry.setAuthSession({ userId: "u", accessToken: "t", agentRuntime: runtime });
-}
-
 beforeEach(() => {
   calls.length = 0;
-  delete process.env.KERMANYCH_RUNTIME;
 });
 
-describe("createChat runtime routing", () => {
-  it("stamps and spawns claude-code when that is the cached preference", async () => {
-    const { sup, registry } = make();
-    prefer(registry, "claude-code");
-    const g = registry.upsertProject({ id: "p1", name: "g", localRepoPath: "/tmp/proj" });
-
-    const chat = await sup.createChat(g.id);
-
-    expect(chat.runtime).toBe("claude-code");
-    expect(calls.at(-1)).toMatchObject({ kind: "claude-code" });
-  });
-
-  it("defaults to omp with no preference", async () => {
+describe("createChat", () => {
+  it("stamps omp and spawns it", async () => {
     const { sup, registry } = make();
     const g = registry.upsertProject({ id: "p1", name: "g", localRepoPath: "/tmp/proj" });
 
     const chat = await sup.createChat(g.id);
 
     expect(chat.runtime).toBe("omp");
-    expect(calls.at(-1)).toMatchObject({ kind: "omp" });
+    expect(calls).toHaveLength(1);
   });
 });
 
-// claude reports a session UUID (kept in ompSessionId) and never a session file, so a promotion
-// that looked only for the file refused every claude chat as "no session yet".
-describe("promoteChatToAgent runtime routing", () => {
-  it("forks a claude-code chat from its session UUID on claude-code", async () => {
+describe("promoteChatToAgent", () => {
+  it("refuses a chat the removed managed claude-code ran, spawning nothing", async () => {
     const { sup, registry } = make();
-    prefer(registry, "claude-code");
     const g = registry.upsertProject({ id: "p1", name: "g", localRepoPath: "/tmp/proj" });
-    const chat = await sup.createChat(g.id);
-    registry.updateSession(chat.id, { ompSessionId: "claude-uuid-1" });
+    const chat = registry.createSession({ projectId: g.id, name: "чат 1", task: "t", worktreePath: "", branch: "", worktree: false, kind: "chat", runtime: "claude-code", status: "done" });
 
-    const agent = await sup.promoteChatToAgent(chat.id, "card-1");
-
-    expect(agent.runtime).toBe("claude-code");
-    expect(calls.at(-1)).toMatchObject({ kind: "claude-code", opts: { fork: "claude-uuid-1", cwd: agent.worktreePath } });
+    await expect(sup.promoteChatToAgent(chat.id, "card-1")).rejects.toMatchObject({ code: "managed_claude_removed" });
+    expect(calls).toEqual([]);
+    expect(registry.listSessions().find((x) => x.id === chat.id)).toMatchObject({ kind: "chat", status: "done" });
   });
 
   it("forks an omp chat from its session file even when it also has an id", async () => {
@@ -112,11 +88,11 @@ describe("promoteChatToAgent runtime routing", () => {
 
     await sup.promoteChatToAgent(chat.id, "card-1");
 
-    expect(calls.at(-1)).toMatchObject({ kind: "omp", opts: { fork: "/tmp/chat.jsonl" } });
+    expect(calls.at(-1)).toMatchObject({ fork: "/tmp/chat.jsonl" });
   });
 });
 
-describe("reviewSession runtime routing", () => {
+describe("reviewSession", () => {
   function seedParent(registry: RegistryService) {
     const g = registry.upsertProject({ id: "p1", name: "g", localRepoPath: "/tmp/proj" });
     const parent = registry.createSession({ projectId: g.id, name: "AAA", task: "Add feature X", worktreePath: "/tmp/wt", branch: "feature/aaa" });
@@ -124,24 +100,13 @@ describe("reviewSession runtime routing", () => {
     return parent;
   }
 
-  it("stamps and spawns claude-code when that is the cached preference", async () => {
-    const { sup, registry } = make();
-    prefer(registry, "claude-code");
-    const parent = seedParent(registry);
-
-    const review = await sup.reviewSession(parent.id);
-
-    expect(review.runtime).toBe("claude-code");
-    expect(calls.at(-1)).toMatchObject({ kind: "claude-code" });
-  });
-
-  it("defaults to omp with no preference", async () => {
+  it("stamps omp and spawns it", async () => {
     const { sup, registry } = make();
     const parent = seedParent(registry);
 
     const review = await sup.reviewSession(parent.id);
 
     expect(review.runtime).toBe("omp");
-    expect(calls.at(-1)).toMatchObject({ kind: "omp" });
+    expect(calls).toHaveLength(1);
   });
 });

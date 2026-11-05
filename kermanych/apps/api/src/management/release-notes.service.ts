@@ -21,10 +21,8 @@ import type {
   ReleaseNotesAuthorsReply,
   ReleaseNotesReply,
   ReleaseSource,
-  AgentRuntimeKind,
 } from "@kermanych/core";
 import { runOneShot } from "../runtime/one-shot";
-import { resolveRuntime } from "../runtime/resolve-runtime";
 import { RegistryService } from "../registry/registry.service";
 import { WorktreeService } from "../worktree/worktree.service";
 import { MANAGEMENT_TOOLS } from "./management-chat.service";
@@ -53,12 +51,6 @@ export class ReleaseNotesService {
     private registry: RegistryService,
     private worktree: WorktreeService,
   ) {}
-
-  // Per-user preference (Inc 2/3): env override → cached cloud preference → omp. A generation
-  // has no sessions row to stamp, so the runtime is resolved fresh for its one-shot child.
-  private runtimeFor(): AgentRuntimeKind {
-    return resolveRuntime(process.env.KERMANYCH_RUNTIME, this.registry.getAuthSession()?.agentRuntime);
-  }
 
   async generate(ask: ReleaseNotesAsk): Promise<ReleaseNotesReply> {
     const startedAt = Date.now();
@@ -127,7 +119,6 @@ export class ReleaseNotesService {
     // operator's chosen language, and this child's one reply IS the note, which is always
     // English (release-notes-prompt.ts).
     const generated = await runOneShot({
-      kind: this.runtimeFor(),
       cwd,
       prompt,
       tools: [...MANAGEMENT_TOOLS],

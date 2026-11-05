@@ -227,7 +227,7 @@ describe("«Зупинити команду»", () => {
 describe("baseline", () => {
   it("re-tracking the same child adds what it started since to the baseline", async () => {
     const wd = await tracked();
-    // claude's system init starts its MCP server after the first track.
+    // The child starts a server after the first track; a same-pid track() re-reads its tree.
     table = [...AT_READY, proc(120, 100, 50, "node late-mcp")];
     wd.track("s1", "Сесія 1", 100);
     await settle();

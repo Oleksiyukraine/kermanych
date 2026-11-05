@@ -1,6 +1,6 @@
 import { steDirective, type SteLevel } from "./ste";
 
-// The language the agent communicates back in. Mirrors AgentRuntimeKind's shape: a frozen
+// The language the agent communicates back in. Mirrors NativeHarness's shape: a frozen
 // tuple as the single source of truth, a derived union, and a boundary guard used wherever
 // the value arrives as an unvalidated string (HTTP body, cloud row, env var). Unset (null /
 // absent) means "no preference" — the agent keeps its own default and no directive is injected.
@@ -64,9 +64,8 @@ export function agentLanguageEnglishName(lang: AgentLanguage): string {
   return isSteLanguage(lang) ? "English" : AGENT_LANGUAGE_ENGLISH_NAMES[lang];
 }
 
-// The system-prompt append that makes the agent talk back in the chosen language. Backend-
-// neutral text: omp receives it via `--append-system-prompt`, the claude SDK via
-// `systemPrompt.append`. Names the language in English (an instruction to the model) and in
+// The system-prompt append that makes the agent talk back in the chosen language. omp receives
+// it via `--append-system-prompt`. Names the language in English (an instruction to the model) and in
 // its endonym so the model cannot misread the tag. An ASD-STE100 level gets the level's own
 // directive: English plus its writing rules (ste.ts).
 export function agentLanguageDirective(lang: AgentLanguage): string {

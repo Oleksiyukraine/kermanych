@@ -171,7 +171,9 @@ Native claude uses three things from the managed backend's code:
      - the sign-in copy in `auth.service.ts`;
      - the reads and writes of `auth_session.agent_runtime`. The SQLite column itself stays,
        unused.
-   - **Failed cloud read:** «Керманич» is the default and no gate is shown.
+   - **Failed cloud read:** «Керманич» is the default and no gate is shown. A failed re-read for
+     the same user (a token refresh while offline) keeps the provider already read; only a
+     different user's session starts from «Керманич».
    - *Accepted limit:* an older build reads `codex` as «not chosen» and shows its own gate.
    - *Rejected:* a new `agent_provider` column. It needs a push before shipping and a fallback read,
      only to spare old builds one question.
@@ -184,13 +186,16 @@ Native claude uses three things from the managed backend's code:
    - Under the choices is an advisory omp check, because every choice uses omp for those
      functions.
 
-7. **«Потрібен вхід в AI» watches only omp.**
+7. **«Потрібен вхід в omp» watches only omp.**
    - `GET /account/runtime/check` drops its `runtime` parameter and checks omp.
-   - The same omp check (`RuntimeCheckService`) serves the pill, the gate and Settings through that
-     endpoint, and the Посіпака preflight directly.
+   - The same omp check (`RuntimeCheckService`) serves the pill and the gate through that
+     endpoint, and the Посіпака preflight directly. Settings runs no check of its own: the pill
+     already covers omp everywhere.
    - The pill still shows only for `omp_not_authenticated`. The blocking notes in decision 8 also
      act on `omp_binary_missing`.
    - Native harnesses show their own sign-in in their terminal, as today.
+   - A launch-time `omp_binary_missing` counts as an ordinary Посіпака failure, as the preflight
+     already treats it; only `omp_not_authenticated` pauses Посіпака as signed out.
    - These codes go: `claude_not_authenticated`, `claude_binary_missing` and
      `runtime_claude_*`.
 
@@ -221,6 +226,8 @@ Native claude uses three things from the managed backend's code:
      - A row still waiting for a slot loses its queue fields (`pending_prompt`, `slot_queued_at`)
        and stays `stopped`. «Продовжити» starts it.
    - **Every other such row is archived:** discussions, reviews, testers, designs and minion runs.
+     An active status becomes `stopped` for these rows too, so an archived run never holds a
+     Посіпака slot or keeps its card «running».
      - The api refuses any managed spawn of a row whose runtime is not omp, before any side effect,
        with a new code `managed_claude_removed`.
      - The «Сесія» tab keeps the engine id and its `claude --resume` hint.
@@ -228,8 +235,8 @@ Native claude uses three things from the managed backend's code:
      history reader searches every claude project (`getSessionMessages` without `dir`; per the SDK
      typings, an omitted `dir` searches all projects). So a row whose worktree is gone still shows
      its history.
-   - *Unverified:* whether `claude --resume` opens a session the SDK wrote. The smoke run checks
-     this before the fixup relies on it.
+   - *Verified:* `claude --resume <id>` (claude 2.1.285) opens a session the SDK wrote
+     (`entrypoint: "sdk-ts"`) and shows its earlier turns (see Verification).
    - *Rejected:* retiring every row. Running agents could then not be continued inside Kermanych.
    - *Rejected:* a read-only managed path over the SDK. That is a second claude path.
 
@@ -254,6 +261,7 @@ Native claude uses three things from the managed backend's code:
   - remove `AGENT_RUNTIMES`, `AgentRuntimeKind`, `isAgentRuntime` and `managedRuntime`;
   - add `AgentProvider`, `isAgentProvider` and the provider → launch-mode mapping.
 - `i18n-codes.ts`: remove the claude codes; add `managed_claude_removed`.
+- `types.ts`: the `notice` RpcEvent loses `code` (no runtime tags one any more); comments.
 - `language.ts`: fix the comments.
 
 ### `packages/cloud`
@@ -280,15 +288,20 @@ Native claude uses three things from the managed backend's code:
 - `registry/registry.service.ts`: the fixup; remove `agentRuntime` from the cached row.
 - `http/session-failure.ts`: omp codes only.
 - Jira, Linear and Plane: the controllers and services accept `native`.
-- `native/native-session.service.ts`: the local `claudeToolName` and the history fallback.
-- `machine/watchdog.service.ts`: remove the managed-claude baseline branch.
+- `native/native-session.service.ts`: the claude tool-name map (`CLAUDE_TOOL_NAMES`) moves here;
+  the history fallback.
+- `supervisor/transcript-reducer.ts`: no coded-notice passthrough.
+- `supervisor/supervisor.service.ts` / `machine/watchdog.service.ts`: the watchdog re-baseline on
+  `ready` (managed claude reported it late) goes; `startChild` takes the baseline after `start()`.
 - `management/management-prompt.ts`: remove the `mcp__` prefix line.
 
 ### `apps/ui`
 
 - `stores/auth.ts`: the provider, without the gate on a failed read.
 - `layouts/MainLayout.vue`: the gate with three choices.
-- `composables/useProviderSignIn.ts`: becomes the omp check.
+- `composables/useProviderSignIn.ts` → `stores/omp-check.ts`: one shared omp check for the pill
+  and the ЦУК / Менеджмент composer (`components/assistant/AssistantComposer.vue`,
+  `CukAssistant.vue`).
 - `pages/SettingsPage.vue`: the provider select; the note and blurb are rewritten.
 - `lib/native-session.ts`: no `readLaunchMode` / `writeLaunchMode`; a default-mode helper (the
   provider plus the design-card rule).
@@ -327,31 +340,55 @@ Native claude uses three things from the managed backend's code:
   - the refusal of a native design card;
   - the `native` check on tracker launches;
   - the UI default mode for each provider × design-card combination.
+- **Added:** `assigned-skills-prompt.spec.ts` (the skills cases moved out of
+  `claude-event-map.usage.spec.ts`), `jira.controller.spec.ts` (the tracker `native` check).
 
 ## Verification
 
-- **Suites,** run one at a time with `--maxWorkers=4`: `vitest run` in `apps/api`,
-  `packages/core`, `packages/cloud` and `apps/ui`. Also `tsc --noEmit` in `apps/api` and `vue-tsc`
-  in `apps/ui`.
+Run on 2026-11-05 with claude 2.1.285 and omp 18.12.1. vitest 2.x needs `--minWorkers=1` next to
+`--maxWorkers=4`.
+
+- **Suites,** one at a time: `packages/core` 320 passed; `packages/cloud` 194 passed, 72 skipped
+  (the existing Supabase-backed cases); `apps/api` 1306 passed, 4 skipped; `apps/ui` 928 passed.
+  `tsc --noEmit` (api) and `vue-tsc --noEmit` (ui) report no errors.
 - **`git grep`:** no `ClaudeCodeRuntime`, `resolveRuntime`, `KERMANYCH_RUNTIME`,
-  `AgentRuntimeKind` or `runtime_claude_` is left. `claude-code` appears only as the native harness
-  id.
-- **Smoke run** of the built api in preview mode (an isolated DB) with the UI in the session
-  browser, on a throwaway repository:
-  - **Provider default:**
-    - provider = omp → «Нова задача» opens in «Керманич»;
-    - provider = claude → it opens in `claude`, and «Дошка» ▶ starts a native claude session;
-    - a design card launches as «Керманич»;
-    - «Чат» «+ Новий» follows the provider.
-  - **Blocking elements:** on a native agent, ⋯ shows ⚖ and ⑂ disabled with the reason; a native
-    chat shows ▶ disabled.
-  - **Without omp** (`PATH` without it): ЦУК and the Менеджмент field show the blocking note.
-  - **Legacy rows:** seed one managed `claude-code` agent and one discussion, both with real
-    session files.
-    - After start, the agent is native.
-    - «Продовжити» runs `claude --resume <id>` and the earlier turns are on screen.
-    - The discussion is archived, and a send to it answers `managed_claude_removed`.
-    - The history of the agent is readable after its worktree is removed.
+  `AgentRuntimeKind`, `isAgentRuntime`, `managedRuntime`, `runtime_claude_`, `readLaunchMode` or
+  `useProviderSignIn` in code. `claude-code` appears only as the native harness id, the provider
+  value and the legacy-row handling.
+- **`claude --resume` on an SDK session**, before the fixup relied on it: a copy of an SDK-written
+  session (`entrypoint: "sdk-ts"`) in a throwaway folder, opened in a pty with
+  `claude --resume <id> --fork-session`: after the trust dialog the TUI showed the earlier turns
+  and waited at its prompt. Nothing was sent; no file was written.
+- **Smoke run:** the built api in preview mode (isolated DB) and the UI in the session browser, on
+  a throwaway git repository with a worktree and a copy of a real SDK session file.
+  - **Legacy rows.** Seeded: a managed `claude-code` agent (`queued`, with a queued prompt), its
+    discussion, a merged managed agent with no worktree, and a native design row. After start:
+    the agent was native, `stopped`, its queue fields empty; the discussion archived; the merged
+    agent native. `POST /sessions/<discussion>/message` and `/resume` answered
+    `400 {code: managed_claude_removed}`. `GET /sessions/<id>/transcript` returned the earlier
+    turns for the agent (its worktree) and for the merged agent (no worktree: the no-`dir`
+    fallback). «Продовжити» ran `claude --resume <id> --settings … --mcp-config …`; after the trust
+    dialog the TUI showed the earlier turns. «Зупинити» left no claude process.
+  - **Provider default** (the provider set in the store; the preview has no cloud profile): omp →
+    «Нова задача» opened in «Керманич»; claude → `claude`; codex → `codex` (nothing remembered
+    between opens). The «Чат» chip followed the provider; «+ Новий» with claude opened a native
+    claude chat, and the automatic first chat was managed, stamped `runtime = omp`.
+  - **Blocking elements.** On the native agent ⋯ showed ⚖ and ⑂ dimmed; a click and ⌘D toasted
+    «Лише в режимі «Керманич» (omp)»; 🎤 in the header the same. The native chat's ▶ and 🎤
+    toasted the reason and promoted nothing. In a native «Режим» the launcher's Хелпери,
+    Зображення, model and effort were blocked, the model row's tooltip naming `/model`. «Дизайн»
+    showed the note for the native design row.
+  - **omp check.** `GET /account/runtime/check` → `{ok: true}`; `GET /account/runtime` → 404. With
+    the shared check set to `omp_binary_missing`, ЦУК showed the note and disabled its field,
+    Хелпери, attach and send; «Перевірити ще раз» re-ran the real check and cleared it.
+    `omp_not_authenticated` raised the top-bar pill «Потрібен вхід в omp». With the provider
+    unset, the gate showed the three choices with their hints and «omp відповідає.». Settings →
+    «ШІ-провайдер» offered omp — «Керманич» / claude — власний TUI / codex — власний TUI.
+  - **Not exercised:** «Дошка» ▶ and the tracker dialogs in the UI (the preview has no cloud
+    board; covered by the `defaultLaunchMode` cases and the tracker controller test); an api
+    without omp on `PATH` (its verdict is covered by `runtime-check.spec.ts`); the Менеджмент field
+    (the preview has no workspace; it is the same composer as ЦУК's); writing the provider from
+    the gate or Settings (the preview has no Supabase).
 
 ## Documentation impact
 

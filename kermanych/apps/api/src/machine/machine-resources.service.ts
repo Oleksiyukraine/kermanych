@@ -1,6 +1,6 @@
 // The machine resource profile (docs/specs/2026-10-21-machine-resource-profile.md): what this
 // machine is, which limits apply to it, whether the operator agreed, and how those limits reach
-// an agent at spawn (omp overlay, claude env, nice, system-prompt paragraph). The table itself
+// an agent at spawn (omp overlay, native claude env, nice, system-prompt paragraph). The table itself
 // is the pure `profileFor` in @kermanych/core; this service owns the hardware reads, the
 // single-row storage and the operator's own config that outranks the profile (decision 10).
 import { Injectable, Logger } from "@nestjs/common";

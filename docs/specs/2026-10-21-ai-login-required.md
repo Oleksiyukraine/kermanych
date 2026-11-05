@@ -1,5 +1,7 @@
 # Showing «AI login required» when the provider CLI is signed out
 
+> Superseded in part by docs/specs/2026-11-05-remove-managed-claude-code.md: the pill and the check watch only omp (`GET /account/runtime/check` has no `runtime` parameter); the claude codes are removed.
+
 ## Goal
 
 The operator launches a session while the machine's AI provider CLI (`claude` or `omp`) is

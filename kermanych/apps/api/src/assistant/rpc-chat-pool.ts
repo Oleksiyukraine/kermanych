@@ -18,7 +18,6 @@ import {
   type Usage,
 } from "@kermanych/core";
 import { createRuntime, type AgentRuntime, type RuntimeLaunchOpts } from "../runtime/agent-runtime";
-import { resolveRuntime } from "../runtime/resolve-runtime";
 import { languageAppendFor } from "../runtime/resolve-language";
 import { limit } from "../runtime/limit";
 import { CodedError } from "../management/coded-error";
@@ -124,10 +123,7 @@ export class RpcChatPool<X = never> {
     }
     const { opts, extra } = launch();
     const append = languageAppendFor(this.cfg.registry.getAuthSession()?.agentLanguage);
-    // Per-user preference (Inc 2/3): env override → cached cloud preference → omp. These
-    // ephemeral chats have no sessions row to stamp, so the runtime is resolved fresh per child.
-    const kind = resolveRuntime(process.env.KERMANYCH_RUNTIME, this.cfg.registry.getAuthSession()?.agentRuntime);
-    const rpc = createRuntime(kind, {
+    const rpc = createRuntime({
       ...opts,
       ...(append ? { appendSystemPrompt: append } : {}),
       onSpawn: (pid) => this.cfg.resources?.renice(pid),

@@ -1,7 +1,6 @@
 // apps/api/src/management/management-mcp.service.ts
 // The Менеджмент assistant's tools, spoken as MCP (Streamable HTTP, JSON responses, no
-// server-sent stream) so both agent runtimes consume ONE server: the claude runtime natively
-// through the SDK's `mcpServers`, omp through the small bridge extension in
+// server-sent stream), which omp consumes through the small bridge extension in
 // runtime/omp-mcp-bridge.ts. Only the four methods a tool client needs are implemented —
 // initialize, ping, tools/list, tools/call — and notifications are acknowledged and ignored.
 //

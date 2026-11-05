@@ -29,7 +29,6 @@ import type {
   ModelOption,
   ApiErrorCode,
   ApiErrorParams,
-  AgentRuntimeKind,
   NativeHarness,
   AgentLanguage,
   DocsWriteKind,
@@ -497,16 +496,18 @@ export const api = {
   jiraDownloadAttachment: (integrationId: string, attachmentId: string): Promise<Blob> =>
     getBlob(`/jira/attachments/${integrationId}/${attachmentId}`),
 
+  // `native` launches the harness's own TUI in a pty instead of a managed session.
   jiraLaunch: (
     integrationId: string,
     key: string,
     projectId: string,
     transitionId?: string,
     images?: ImageInput[],
+    native?: NativeHarness,
   ): Promise<{ session: Session; transitionError?: string }> =>
     post<{ session: Session; transitionError?: string }>(
       `/jira/issues/${integrationId}/${encodeURIComponent(key)}/launch`,
-      { projectId, transitionId, images },
+      native ? { projectId, transitionId, images, native } : { projectId, transitionId, images },
     ),
 
   // ── Linear. The acting user comes from the guard's token; their Linear API key from the
@@ -554,10 +555,11 @@ export const api = {
     projectId: string,
     transitionId?: string,
     images?: ImageInput[],
+    native?: NativeHarness,
   ): Promise<{ session: Session; transitionError?: string }> =>
     post<{ session: Session; transitionError?: string }>(
       `/linear/issues/${workspaceId}/${encodeURIComponent(key)}/launch`,
-      { projectId, transitionId, images },
+      native ? { projectId, transitionId, images, native } : { projectId, transitionId, images },
     ),
 
   // ── Plane. The acting user comes from the guard's token; their Plane API token from the
@@ -653,10 +655,11 @@ export const api = {
     projectId: string,
     transitionId?: string,
     images?: ImageInput[],
+    native?: NativeHarness,
   ): Promise<{ session: Session; transitionError?: string }> =>
     post<{ session: Session; transitionError?: string }>(
       `/plane/issues/${integrationId}/${encodeURIComponent(key)}/launch`,
-      { projectId, transitionId, images },
+      native ? { projectId, transitionId, images, native } : { projectId, transitionId, images },
     ),
 
   // ── Slack. Tokens are per workspace (one Slack app per Kermanych workspace), so every
@@ -1053,26 +1056,14 @@ export const api = {
 
   clearAuthSession: (): Promise<void> => del('/auth/session'),
 
-  // Account-level runtime preference. GET reads the cached choice; POST refreshes it
+  // Is omp usable on THIS machine (installed and signed in)? omp runs «Керманич» and every
+  // headless AI function, whatever the provider. `code` is a NoticeCode the caller localizes;
+  // `reason` is raw prose for a failure we could not classify.
+  checkAccountRuntime: (): Promise<{ ok: boolean; code?: string; reason?: string }> =>
+    get<{ ok: boolean; code?: string; reason?: string }>('/account/runtime/check'),
+
+  // Account-level communication language. GET reads the cached choice; POST refreshes it
   // (stores/auth.ts writes to the cloud, then pings this to keep the cache current).
-  getAccountRuntime: (): Promise<{ runtime: AgentRuntimeKind | null }> =>
-    get<{ runtime: AgentRuntimeKind | null }>('/account/runtime'),
-
-  setAccountRuntime: (runtime: AgentRuntimeKind): Promise<void> =>
-    post<void>('/account/runtime', { runtime }),
-
-  // Is this backend usable on THIS machine (installed and signed in)? Asked when the operator
-  // picks one, so a signed-out CLI is named right there instead of surfacing later as a session
-  // that never answers. `code` is a NoticeCode the caller localizes; `reason` is raw prose for a
-  // failure we could not classify.
-  checkAccountRuntime: (
-    runtime: AgentRuntimeKind,
-  ): Promise<{ ok: boolean; code?: string; reason?: string }> =>
-    get<{ ok: boolean; code?: string; reason?: string }>(
-      `/account/runtime/check?runtime=${encodeURIComponent(runtime)}`,
-    ),
-
-  // Account-level communication language. Same cache-refresh pattern as the runtime above.
   getAccountLanguage: (): Promise<{ language: AgentLanguage | null }> =>
     get<{ language: AgentLanguage | null }>('/account/language'),
 

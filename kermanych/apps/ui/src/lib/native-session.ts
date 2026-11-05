@@ -1,32 +1,10 @@
 // Native sessions (docs/specs/2026-10-05-native-sessions.md): the harness runs as its own
 // TUI in a pty; the UI only picks the mode at launch and hosts the session's terminal.
-import type { NativeHarness, Session, TerminalInfo } from '@kermanych/core';
+import { providerHarness, type AgentProvider, type NativeHarness, type Session, type TerminalInfo } from '@kermanych/core';
 
 // The launcher's «Режим»: Kermanych's managed session, or one of the harnesses' own TUI.
 export type LaunchMode = 'managed' | 'omp' | 'claude' | 'codex';
 export const LAUNCH_MODES: readonly LaunchMode[] = ['managed', 'omp', 'claude', 'codex'];
-
-// The mode last picked in the launcher, which the next launcher opens with. A device-local
-// screen preference like the locale (lib/locale.ts): localStorage, never Supabase, and every
-// access guarded — an unreadable or unknown value falls back to `managed`.
-const LAUNCH_MODE_KEY = 'kermanych.launcher.mode';
-
-export function readLaunchMode(): LaunchMode {
-  try {
-    const v = typeof localStorage === 'undefined' ? null : localStorage.getItem(LAUNCH_MODE_KEY);
-    return (LAUNCH_MODES as readonly string[]).includes(v ?? '') ? (v as LaunchMode) : 'managed';
-  } catch {
-    return 'managed';
-  }
-}
-
-export function writeLaunchMode(mode: LaunchMode): void {
-  try {
-    if (typeof localStorage !== 'undefined') localStorage.setItem(LAUNCH_MODE_KEY, mode);
-  } catch {
-    // storage refused: the pick holds until the launcher closes
-  }
-}
 
 const HARNESS_MODE: Record<NativeHarness, Exclude<LaunchMode, 'managed'>> = {
   omp: 'omp',
@@ -45,6 +23,16 @@ const MODE_HARNESS: Record<LaunchMode, NativeHarness | undefined> = {
 // launches a managed session.
 export function nativeRuntimeFor(mode: LaunchMode): NativeHarness | undefined {
   return MODE_HARNESS[mode];
+}
+
+// The mode a launch takes when the operator does not pick one, and the mode the launcher and
+// the «Чат» chip open with (docs/specs/2026-11-05-remove-managed-claude-code.md, decision 4):
+// the provider's — omp is «Керманич», claude and codex their own TUI; unset is «Керманич». A
+// design card is always «Керманич»: the «Дизайн» page renders only a managed session.
+export function defaultLaunchMode(provider: AgentProvider | null | undefined, opts: { design?: boolean } = {}): LaunchMode {
+  if (opts.design) return 'managed';
+  const harness = providerHarness(provider);
+  return harness ? HARNESS_MODE[harness] : 'managed';
 }
 
 // The command the operator knows the harness by: `claude`, not the runtime id `claude-code`.

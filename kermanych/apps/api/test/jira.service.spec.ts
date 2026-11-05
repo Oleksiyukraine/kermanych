@@ -209,7 +209,7 @@ describe("launch", () => {
     expect(res.session).toEqual({ id: "s1" });
     expect(res.transitionError).toBeUndefined();
     expect(order).toEqual(["session", "transition"]);
-    expect(supervisor.createSessionFromTask).toHaveBeenCalledWith("t1", "u1", undefined);
+    expect(supervisor.createSessionFromTask).toHaveBeenCalledWith("t1", "u1", undefined, undefined);
     expect(spy).toHaveBeenCalledWith("w1", "KAN-42", "u1");
   });
 

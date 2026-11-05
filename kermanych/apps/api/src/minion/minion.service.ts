@@ -11,12 +11,11 @@
 // through the supervisor's `events$` like every other event.
 import { Injectable, type OnModuleDestroy, type OnModuleInit } from "@nestjs/common";
 import { claimMinionTask, listMinionCandidates, releaseLaunchClaim, type Task } from "@kermanych/cloud";
-import { clampMinionCap, MINION_FAILURE_LIMIT, MINION_POLL_MS, MINION_PREFLIGHT_TTL_MS, type AgentRuntimeKind, type MinionPause, type MinionState } from "@kermanych/core";
+import { clampMinionCap, MINION_FAILURE_LIMIT, MINION_POLL_MS, MINION_PREFLIGHT_TTL_MS, type MinionPause, type MinionState } from "@kermanych/core";
 import { RegistryService, type MinionSettingsRow } from "../registry/registry.service";
 import { SupervisorService, type MinionRunResult } from "../supervisor/supervisor.service";
 import { AuthService } from "../auth/auth.service";
 import { RuntimeCheckService, type RuntimeCheck } from "../runtime/runtime-check.service";
-import { resolveRuntime } from "../runtime/resolve-runtime";
 import { keepAwake } from "./keep-awake";
 import { AuthFailure } from "../runtime/auth-failure";
 
@@ -27,7 +26,7 @@ export class MinionService implements OnModuleInit, OnModuleDestroy {
   private polling?: Promise<void>;
   private again = false;
   // The last runtime preflight, trusted for MINION_PREFLIGHT_TTL_MS (decision 9).
-  private preflight?: { runtime: AgentRuntimeKind; at: number; check: RuntimeCheck };
+  private preflight?: { at: number; check: RuntimeCheck };
   // What the last poll saw; memory-only, like the poll itself.
   private waiting = 0;
   private lastPollAt?: string;
@@ -191,7 +190,7 @@ export class MinionService implements OnModuleInit, OnModuleDestroy {
         );
         // A child that refused to start signed out pauses at once, as a run that dies signed out
         // does.
-        const signedOut = err instanceof AuthFailure && err.code !== "claude_binary_missing";
+        const signedOut = err instanceof AuthFailure && err.code === "omp_not_authenticated";
         this.countFailure(`«${card.title}»: ${message}`, signedOut);
       }
       break;
@@ -211,13 +210,11 @@ export class MinionService implements OnModuleInit, OnModuleDestroy {
   }
 
   private async preflightCheck(): Promise<RuntimeCheck> {
-    // The signed-in user's runtime, resolved exactly as the supervisor resolves it for a launch.
-    const runtime = resolveRuntime(process.env.KERMANYCH_RUNTIME, this.registry.getAuthSession()?.agentRuntime);
     const now = Date.now();
     const cached = this.preflight;
-    if (cached && cached.runtime === runtime && now - cached.at < MINION_PREFLIGHT_TTL_MS) return cached.check;
-    const check = await this.runtimeCheck.check(runtime);
-    this.preflight = { runtime, at: now, check };
+    if (cached && now - cached.at < MINION_PREFLIGHT_TTL_MS) return cached.check;
+    const check = await this.runtimeCheck.check();
+    this.preflight = { at: now, check };
     return check;
   }
 

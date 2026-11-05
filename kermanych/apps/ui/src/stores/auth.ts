@@ -2,8 +2,8 @@
 import { defineStore } from 'pinia';
 import { markRaw, ref } from 'vue';
 import type { Session as SupabaseSession, SupabaseClient } from '@supabase/supabase-js';
-import { cloudEnv, createCloudClient, type Profile, getMyAgentRuntime, setMyAgentRuntime, getMyAgentLanguage, setMyAgentLanguage } from '@kermanych/cloud';
-import type { AgentRuntimeKind, AgentLanguage } from '@kermanych/core';
+import { cloudEnv, createCloudClient, type Profile, getMyAgentProvider, setMyAgentProvider, getMyAgentLanguage, setMyAgentLanguage } from '@kermanych/cloud';
+import type { AgentProvider, AgentLanguage } from '@kermanych/core';
 import { api, setAuthToken, setUnauthorizedHandler } from '../lib/api';
 import { IS_PREVIEW, PREVIEW_USER_ID } from '../lib/preview';
 import { useOrchestrator } from './orchestrator';
@@ -31,12 +31,20 @@ export const useAuth = defineStore('auth', () => {
   const user = ref<{ id: string } | null>(null);
   const profile = ref<Profile | null>(null);
   const accessToken = ref<string | null>(null);
-  const runtime = ref<AgentRuntimeKind | null>(null);
+  // The AI provider: the default launch mode (omp → «Керманич», claude-code / codex → that
+  // harness's own TUI). null when unset or not read.
+  const provider = ref<AgentProvider | null>(null);
   const language = ref<AgentLanguage | null>(null);
-  // True while the account's runtime is being read from the cloud after a fresh session.
-  // `runtime === null` alone cannot tell «not chosen» from «not read yet», and the runtime
-  // gate in MainLayout must not pop up for a returning user during that read.
-  const runtimeLoading = ref(false);
+  // True only when the cloud read succeeded and no provider is stored: the one case the
+  // onboarding gate in MainLayout asks. A failed read leaves it false — «Керманич» is the
+  // default and no gate is raised over a cloud hiccup.
+  const providerUnset = ref(false);
+  // True while the account's provider is being read from the cloud after a fresh session, so
+  // the gate does not flash up for a returning user during that read.
+  const providerLoading = ref(false);
+  // The user the current `provider` was read for. A failed re-read (a token refresh while the
+  // cloud is unreachable) keeps that user's provider instead of dropping launches to «Керманич».
+  let providerFor: string | undefined;
 
   let resolveReady: () => void = () => undefined;
   // Resolves once the initial session (if any) has been read and handed to the
@@ -84,8 +92,8 @@ export const useAuth = defineStore('auth', () => {
         if (mine !== applied) return;
       }
       // Raised before `user` is set, so the gate never sees a signed-in user with an unread
-      // runtime.
-      if (fresh) runtimeLoading.value = true;
+      // provider.
+      if (fresh) providerLoading.value = true;
       const meta = (session.user.user_metadata ?? {}) as {
         user_name?: string;
         full_name?: string;
@@ -103,13 +111,21 @@ export const useAuth = defineStore('auth', () => {
       accessToken.value = session.access_token;
       setAuthToken(session.access_token);
       if (!fresh) return;
-      // Best-effort runtime load: never block the UI for a stale cloud read.
+      // Best-effort provider load: never block the UI for a stale cloud read. A failed read never
+      // raises the gate; it keeps what was read for this same user, and starts anyone else from
+      // «Керманич».
       try {
-        runtime.value = await getMyAgentRuntime(client);
+        provider.value = await getMyAgentProvider(client);
+        providerUnset.value = provider.value === null;
+        providerFor = session.user.id;
       } catch {
-        runtime.value = null;
+        if (providerFor !== session.user.id) {
+          provider.value = null;
+          providerUnset.value = false;
+          providerFor = undefined;
+        }
       } finally {
-        runtimeLoading.value = false;
+        providerLoading.value = false;
       }
       // Same best-effort load for the communication language.
       try {
@@ -124,6 +140,9 @@ export const useAuth = defineStore('auth', () => {
     user.value = null;
     profile.value = null;
     accessToken.value = null;
+    provider.value = null;
+    providerUnset.value = false;
+    providerFor = undefined;
     // Send the sign-out WHILE the token is still installed: DELETE
     // /api/auth/session is guarded. Skip it entirely if we never had one, so a
     // 401 cannot bounce back into signOut() and loop.
@@ -149,14 +168,12 @@ export const useAuth = defineStore('auth', () => {
     // hand over), and deliberately no 401 handler is installed: a preview must never
     // bounce itself to a login screen. `profile` stays null, which is the truth here.
     //
-    // Seed a default runtime too: a preview has no cloud to persist a choice against
-    // (chooseRuntime would throw on the missing Supabase project), so the onboarding gate
-    // — which fires while `runtime` is null — would trap the operator behind a modal whose
-    // only exit is a save that cannot succeed. Adopting `omp` (the same default the rest of
-    // the UI falls back to) skips the gate; no real agent work runs in a preview anyway.
+    // Seed the provider too: a preview has no cloud to persist a choice against
+    // (chooseProvider would throw on the missing Supabase project). `omp` is the default the
+    // rest of the UI falls back to; no real agent work runs in a preview anyway.
     if (IS_PREVIEW) {
       user.value = { id: PREVIEW_USER_ID };
-      runtime.value = 'omp';
+      provider.value = 'omp';
       resolveReady();
       return ready;
     }
@@ -250,14 +267,11 @@ export const useAuth = defineStore('auth', () => {
     return signingOut;
   }
 
-  async function chooseRuntime(kind: AgentRuntimeKind): Promise<void> {
-    await setMyAgentRuntime(client, kind);   // cloud = source of truth
-    await api.setAccountRuntime(kind);        // refresh local API cache
-    runtime.value = kind;
-    // The model catalog is runtime-specific (omp and claude expose different models) and the
-    // orchestrator caches it; force a refetch so every picker offers the new runtime's models
-    // instead of the previous runtime's stale list.
-    await useOrchestrator().loadModels(true);
+  async function chooseProvider(next: AgentProvider): Promise<void> {
+    await setMyAgentProvider(client, next);   // cloud = source of truth
+    provider.value = next;
+    providerUnset.value = false;
+    providerFor = user.value?.id;
   }
 
   async function chooseLanguage(lang: AgentLanguage): Promise<void> {
@@ -268,5 +282,5 @@ export const useAuth = defineStore('auth', () => {
     // catalog dimension.
   }
 
-  return { client, user, profile, accessToken, runtime, runtimeLoading, language, ready, init, signInWithGithub, signOut, chooseRuntime, chooseLanguage };
+  return { client, user, profile, accessToken, provider, providerUnset, providerLoading, language, ready, init, signInWithGithub, signOut, chooseProvider, chooseLanguage };
 });
