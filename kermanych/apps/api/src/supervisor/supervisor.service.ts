@@ -11,7 +11,6 @@ import type { SplitDiff } from "../worktree/split-diff";
 import { createRuntime, type AgentRuntime, type RuntimeLaunchOpts } from "../runtime/agent-runtime";
 import { BrowserMcpService } from "../browser/browser-mcp.service";
 import { browserHost } from "../browser/browser-host";
-import { resolveRuntime } from "../runtime/resolve-runtime";
 import { languageAppendFor } from "../runtime/resolve-language";
 import { messagesToTranscript } from "./messages-to-transcript";
 import { reduceRpcEvents, toolRowMatches, type SkillLabel, type SkillSource } from "./transcript-reducer";
@@ -47,8 +46,6 @@ import {
   parseCommand,
   type ParsedCommand,
   INITIAL_STATUS,
-  isAgentRuntime,
-  managedRuntime,
   reduceStatus,
   ACTIVE_STATUSES,
   slugify,
@@ -74,7 +71,6 @@ import {
   type ThinkingLevel,
   type ToolLine,
   type TranscriptEntry,
-  type AgentRuntimeKind,
   type NativeHarness,
   type Notice,
   type SubagentInfo,
@@ -209,8 +205,6 @@ type Live = {
   subagentsSig?: string;
   // The child's pid (RuntimeLaunchOpts.onSpawn), for the memory watchdog's process tree.
   pid?: number;
-  // The watchdog's baseline was re-taken on the child's `ready` (onRpcEvent).
-  baselined?: boolean;
   // A message just went to this idle child and its turn has not reported yet: the child holds
   // an agent slot from the write, not from its first event, or a second waiting session could
   // slip into the same slot in between. Cleared by the first status change (onRpcEvent).
@@ -791,7 +785,7 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     const queuedAt = this.registry.slotQueuedAt();
     const at = (s: Session) => queuedAt.get(s.id) ?? Date.parse(s.createdAt);
     const rows = this.registry.listSessions().filter((s) => {
-      if ((s.kind !== "agent" && s.tester !== true) || this.waiting.has(s.id)) return false;
+      if ((s.kind !== "agent" && s.tester !== true) || this.waiting.has(s.id) || this.managedClaude(s)) return false;
       // A «Тестувальник» run waits with its whole opening prompt on the row (runTester parks it
       // with it); without one there is nothing to start it with.
       if (s.tester === true) return s.status === "queued" && !!s.pendingPrompt?.trim();
@@ -802,8 +796,7 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
         return false;
       }
       if (s.pendingPrompt !== undefined) return true;
-      const handle = managedRuntime(s.runtime) === "claude-code" ? s.ompSessionId : s.ompSessionFile;
-      return !s.native && s.status === "queued" && !handle && (!s.worktree || !!s.worktreePath);
+      return !s.native && s.status === "queued" && !s.ompSessionFile && (!s.worktree || !!s.worktreePath);
     });
     for (const s of rows.sort((a, b) => at(a) - at(b))) {
       const text = s.pendingPrompt ?? s.task;
@@ -825,21 +818,17 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
 
   // The profile's part of one managed spawn, spread into createRuntime opts at every site like
   // systemAppendOpts: the omp overlays (the project's skill library, then the machine limits —
-  // later wins), claude's CLAUDE_CODE_* limits, and right after the spawn the renice plus the pid
-  // the watchdog will follow. Every kind gets it, chats included; only agents count for slots.
-  // A «Посіпака» run also loses its ask tool here, on its first spawn and on every wake alike
-  // (docs/specs/2026-10-23-minion-auto-run.md, decision 9): omp through a third overlay,
-  // claude through `disallowedTools`.
-  private async spawnOpts(id: string, runtime: AgentRuntimeKind, cwd: string, skillsConfig: string | undefined): Promise<Pick<RuntimeLaunchOpts, "configPaths" | "env" | "onSpawn" | "disallowedTools">> {
+  // later wins), and right after the spawn the renice plus the pid the watchdog will follow.
+  // Every kind gets it, chats included; only agents count for slots. A «Посіпака» run also loses
+  // its ask tool here through a third overlay, on its first spawn and on every wake alike
+  // (docs/specs/2026-10-23-minion-auto-run.md, decision 9).
+  private async spawnOpts(id: string, cwd: string, skillsConfig: string | undefined): Promise<Pick<RuntimeLaunchOpts, "configPaths" | "onSpawn">> {
     const minion = this.registry.listSessions().find((x) => x.id === id)?.minion === true;
-    const overlay = runtime === "omp" ? await this.resources?.ompOverlay(cwd) : undefined;
-    const noAsk = minion && runtime === "omp" ? await noAskOverlay() : undefined;
+    const overlay = await this.resources?.ompOverlay(cwd);
+    const noAsk = minion ? await noAskOverlay() : undefined;
     const configPaths = [skillsConfig, overlay, noAsk].filter((p): p is string => !!p);
-    const env = runtime === "claude-code" ? this.resources?.claudeEnv() : undefined;
     return {
       ...(configPaths.length ? { configPaths } : {}),
-      ...(env ? { env } : {}),
-      ...(minion && runtime === "claude-code" ? { disallowedTools: ["AskUserQuestion"] } : {}),
       onSpawn: (pid) => {
         this.resources?.renice(pid);
         // wireLive ran before start(), so this is the Live of the child just spawned.
@@ -847,6 +836,17 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
         if (l) l.pid = pid;
       },
     };
+  }
+
+  // A row the removed managed claude-code backend ran: it cannot be continued in «Керманич».
+  private managedClaude(s: Session): boolean {
+    return !s.native && s.runtime !== undefined && s.runtime !== "omp";
+  }
+
+  // Called first in every managed spawn of an existing row, before any side effect.
+  private refuseManagedClaude(s: Session): void {
+    if (this.managedClaude(s))
+      throw new CodedError("managed_claude_removed", "керований claude-code прибрано з Керманича — цю сесію не можна продовжити в режимі «Керманич»");
   }
 
   // start() plus the watchdog's baseline: what the child runs once it is ready (MCP servers,
@@ -857,10 +857,8 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     if (pid !== undefined) this.trackChild(id, pid);
   }
 
-  // `again`: the same child, now initialised — the watchdog takes its baseline anew, so what
-  // it started since (claude's MCP servers come up only with its first turn) is never a victim.
-  private trackChild(id: string, pid: number, again = false): void {
-    if (!this.watchdog || (!again && this.tracked.get(id) === pid)) return;
+  private trackChild(id: string, pid: number): void {
+    if (!this.watchdog || this.tracked.get(id) === pid) return;
     this.tracked.set(id, pid);
     this.watchdog.track(id, this.registry.listSessions().find((x) => x.id === id)?.name ?? id, pid);
   }
@@ -1084,6 +1082,9 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     const task = await getTask(client, taskId);
     if (!task) throw new Error("task not found");
     if (task.assigneeId && task.assigneeId !== userId) throw new Error("task assigned to someone else");
+    // A design card runs only in «Керманич»: the «Дизайн» page renders a managed session only
+    // (docs/specs/2026-11-05-remove-managed-claude-code.md, decision 4).
+    if (native && task.design) throw nativeUnsupported();
 
     // A second launch of a running card mints a second worktree and a second omp child
     // bound to the same taskId; both would then mirror status for it and the board would
@@ -1179,12 +1180,11 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
       undefined,
       task.branch ?? project.defaultBranch,
     );
-    const runtime = native ?? this.runtimeFor();
-    // A model chosen under a different runtime (e.g. a claude model left selected after the
-    // operator switches to omp) is dropped so the spawned backend uses its own default rather
-    // than running the wrong provider's model; an unreadable catalog keeps the id untouched.
-    // A native session carries neither model nor effort: the harness's own `/model` owns them.
-    const model = native ? undefined : await this.models.validModel(this.runtimeFor(), task.model);
+    const runtime = native ?? "omp";
+    // A model the omp catalog no longer offers is dropped so omp uses its own default; an
+    // unreadable catalog keeps the id untouched. A native session carries neither model nor
+    // effort: the harness's own `/model` owns them.
+    const model = native ? undefined : await this.models.validModel(task.model);
     // The design's folder is named once, from the launch day and the branch's own slug (already
     // made unique), and stays on the row: a resume or a slot replay reads it back, never re-derives.
     const designDir = design ? designDirFor(todayIso(), branch.slice("design/".length)) : undefined;
@@ -1198,9 +1198,7 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
       worktree,
       baseBranch,
       model,
-      // Unvalidated free-text, exactly like `effort`: omp clamps what it accepts. The only
-      // clamp here is cross-runtime (validModel above), so an omp task never inherits a claude
-      // model left selected from a previous session.
+      // Unvalidated free-text, exactly like `effort`: omp clamps what it accepts.
       effort: native ? undefined : task.effort,
       prefix,
       runtime,
@@ -1240,13 +1238,12 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     if (native) return this.createNativeChat(projectId, `чат ${n}`, native);
     const session = this.registry.createSession({
       projectId, name: `чат ${n}`, task: "", worktreePath: "", branch: "",
-      worktree: false, kind: "chat", status: "queued", runtime: this.runtimeFor(),
+      worktree: false, kind: "chat", status: "queued", runtime: "omp",
     });
     const configPath = await this.ompSkills(project.id, project.localRepoPath, session.id);
     const extensionPath = await this.ompTriggers(project.id, project.localRepoPath, session.id);
     const browserMcp = this.browser?.bindingFor(session.id);
-    const runtime = managedRuntime(session.runtime);
-    const rpc = createRuntime(runtime, { cwd: project.localRepoPath, ...launchToolsFor("chat"), ...(await this.spawnOpts(session.id, runtime, project.localRepoPath, configPath)), ...(extensionPath ? { extensionPath } : {}), ...(browserMcp ? { mcp: browserMcp } : {}), ...this.systemAppendOpts(project.id, "chat") });
+    const rpc = createRuntime({ cwd: project.localRepoPath, ...launchToolsFor("chat"), ...(await this.spawnOpts(session.id, project.localRepoPath, configPath)), ...(extensionPath ? { extensionPath } : {}), ...(browserMcp ? { mcp: browserMcp } : {}), ...this.systemAppendOpts(project.id, "chat") });
     const live = this.wireLive(session.id, rpc, "queued");
     try {
       await this.startChild(session.id, rpc);
@@ -1304,18 +1301,14 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     if (chat.kind !== "chat") throw new Error("not a chat session");
     // Promotion forks the conversation into a new worktree; a native harness has no fork.
     if (chat.native) throw nativeUnsupported();
+    this.refuseManagedClaude(chat);
     const project = this.boundProject(chat.projectId);
 
-    // The fork continues on the chat's own backend (R1/R2), the same per-backend handle
-    // branchSession reads: omp forks the session FILE, claude the session UUID (stored in
-    // ompSessionId — claude never reports a file). launch spawns on session.runtime, which
-    // the promotion leaves as the chat's.
-    const chatRuntime = managedRuntime(chat.runtime);
-    let forkHandle = chatRuntime === "claude-code" ? chat.ompSessionId : chat.ompSessionFile;
+    // The fork reads the chat's omp session FILE, the same handle branchSession reads.
+    let forkHandle = chat.ompSessionFile;
     if (!forkHandle) {
       await this.refreshState(chatId);
-      const fresh = this.registry.listSessions().find((x) => x.id === chatId);
-      forkHandle = chatRuntime === "claude-code" ? fresh?.ompSessionId : fresh?.ompSessionFile;
+      forkHandle = this.registry.listSessions().find((x) => x.id === chatId)?.ompSessionFile;
     }
     if (!forkHandle)
       throw new Error("chat has no omp session yet — send a message before starting implementation");
@@ -1428,17 +1421,12 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     return { branch, baseBranch };
   }
 
-  // Per-user preference (Inc 2): env override → cached cloud preference → omp.
-  private runtimeFor(_session?: Session): AgentRuntimeKind {
-    return resolveRuntime(process.env.KERMANYCH_RUNTIME, this.registry.getAuthSession()?.agentRuntime);
-  }
-
   // The system-prompt append for one spawn, shaped for a spread into any createRuntime() opts:
   // the user's agent communication language, then — when the project's documentation switch is
   // on — the policy built from its per-kind rules (docsPolicyAppend), then what the session
   // kind's tool restriction means for the model (launchAppendFor). Every createRuntime site
-  // passes it, so the policy reaches chats, agents, discussions, reviews and resumes alike on
-  // both runtimes. Empty object when nothing applies, so the agent keeps its own default. Read
+  // passes it, so the policy reaches chats, agents, discussions, reviews and resumes alike.
+  // Empty object when nothing applies, so the agent keeps its own default. Read
   // fresh per spawn: a preference or setting change takes on the next spawn without a restart.
   private systemAppendOpts(projectId: string, kind: Session["kind"]): { appendSystemPrompt?: string } {
     const language = languageAppendFor(this.registry.getAuthSession()?.agentLanguage);
@@ -1466,6 +1454,7 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
   ): Promise<Session> {
     const { id, branch, worktree, baseBranch, task } = session;
     if (!project.localRepoPath) throw new Error("project not bound");
+    this.refuseManagedClaude(session);
     const { images, fork } = opts;
     const firstPrompt = opts.firstPrompt ?? task;
     let wtDir = "";
@@ -1538,8 +1527,7 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     const configPath = await this.ompSkills(project.id, cwd, id);
     const extensionPath = await this.ompTriggers(project.id, cwd, id);
     const browserMcp = this.browser?.bindingFor(id);
-    const runtime = managedRuntime(saved.runtime);
-    const rpc = createRuntime(runtime, { cwd, model, ...(effort ? { thinking: effort } : {}), ...(fork ? { fork } : {}), ...(await this.spawnOpts(id, runtime, cwd, configPath)), ...(extensionPath ? { extensionPath } : {}), ...(browserMcp ? { mcp: browserMcp } : {}), ...this.systemAppendOpts(project.id, saved.kind) });
+    const rpc = createRuntime({ cwd, model, ...(effort ? { thinking: effort } : {}), ...(fork ? { fork } : {}), ...(await this.spawnOpts(id, cwd, configPath)), ...(extensionPath ? { extensionPath } : {}), ...(browserMcp ? { mcp: browserMcp } : {}), ...this.systemAppendOpts(project.id, saved.kind) });
     const live = this.wireLive(id, rpc, "queued");
     try {
       await this.startChild(id, rpc);
@@ -1614,8 +1602,9 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
   private async relaunch(id: string, firstPrompt: string): Promise<void> {
     const s = this.registry.listSessions().find((x) => x.id === id);
     if (!s) return;
+    this.refuseManagedClaude(s);
     const project = this.boundProject(s.projectId);
-    const fork = s.native ? undefined : managedRuntime(s.runtime) === "claude-code" ? s.ompSessionId : s.ompSessionFile;
+    const fork = s.native ? undefined : s.ompSessionFile;
     await this.deferredLaunch(id, () => this.spawnLaunched(s, project, { firstPrompt, staleFrom: "", ...(fork ? { fork } : {}) }, false));
   }
 
@@ -1675,15 +1664,13 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     const g = this.boundProject(s.projectId);
     if (s.kind !== "agent") throw new Error("can only branch an agent session");
     if (s.native) throw nativeUnsupported();
+    this.refuseManagedClaude(s);
 
-    // A fork can only continue on the parent's backend (R1/R2): omp resumes from the parent's
-    // session FILE, claude resumes from the parent's session UUID (stored in ompSessionId).
-    const parentRuntime = managedRuntime(s.runtime);
-    let forkHandle = parentRuntime === "claude-code" ? s.ompSessionId : s.ompSessionFile;
+    // The fork resumes from the parent's omp session FILE.
+    let forkHandle = s.ompSessionFile;
     if (!forkHandle) {
       await this.refreshState(parentId);
-      const fresh = this.registry.listSessions().find((x) => x.id === parentId);
-      forkHandle = parentRuntime === "claude-code" ? fresh?.ompSessionId : fresh?.ompSessionFile;
+      forkHandle = this.registry.listSessions().find((x) => x.id === parentId)?.ompSessionFile;
     }
     if (!forkHandle) throw new Error("agent has no omp session yet — send a first message before branching");
 
@@ -1699,17 +1686,16 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
       worktree: false,
       kind: "discussion",
       parentSessionId: parentId,
-      runtime: parentRuntime,
+      runtime: "omp",
     });
 
     const configPath = await this.ompSkills(s.projectId, cwd, child.id);
     const extensionPath = await this.ompTriggers(s.projectId, cwd, child.id);
-    const rpc = createRuntime(parentRuntime, { cwd, fork: forkHandle, ...launchToolsFor("discussion"), ...(await this.spawnOpts(child.id, parentRuntime, cwd, configPath)), ...(extensionPath ? { extensionPath } : {}), ...this.systemAppendOpts(s.projectId, "discussion") });
+    const rpc = createRuntime({ cwd, fork: forkHandle, ...launchToolsFor("discussion"), ...(await this.spawnOpts(child.id, cwd, configPath)), ...(extensionPath ? { extensionPath } : {}), ...this.systemAppendOpts(s.projectId, "discussion") });
     const childLive = this.wireLive(child.id, rpc, "queued");
     try {
       await this.startChild(child.id, rpc);
-      // Both backends now re-render the parent transcript: omp forks the session file, claude
-      // forks the session UUID, and getAllMessages() reads either back through the same seam.
+      // The fork re-renders the parent transcript: getAllMessages() reads the forked file back.
       this.rehydrate(childLive, child.id, await rpc.getAllMessages());
       this.events.next({ type: "transcript_reset", sessionId: child.id, entries: childLive.transcript });
       await this.refreshState(child.id);
@@ -1767,7 +1753,7 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
       worktree: false,
       kind: "review",
       parentSessionId: parentId,
-      runtime: this.runtimeFor(),
+      runtime: "omp",
     });
 
     const { template, block } = await this.agentPrompt(s.projectId, "review", cwd);
@@ -1776,8 +1762,7 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
 
     const configPath = await this.ompSkills(s.projectId, cwd, child.id);
     const extensionPath = await this.ompTriggers(s.projectId, cwd, child.id);
-    const childRuntime = managedRuntime(child.runtime);
-    const rpc = createRuntime(childRuntime, { cwd, ...launchToolsFor("review"), ...(await this.spawnOpts(child.id, childRuntime, cwd, configPath)), ...(extensionPath ? { extensionPath } : {}), ...this.systemAppendOpts(s.projectId, "review") });
+    const rpc = createRuntime({ cwd, ...launchToolsFor("review"), ...(await this.spawnOpts(child.id, cwd, configPath)), ...(extensionPath ? { extensionPath } : {}), ...this.systemAppendOpts(s.projectId, "review") });
     const childLive = this.wireLive(child.id, rpc, "queued");
     try {
       await this.startChild(child.id, rpc);
@@ -1871,7 +1856,7 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
       worktree: false,
       kind: "review",
       parentSessionId: parentId,
-      runtime: this.runtimeFor(),
+      runtime: "omp",
       tester: true,
     });
     // Run now in a free slot, or replayed by the queue when one frees up.
@@ -1893,9 +1878,8 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     if (!this.registry.listSessions().some((x) => x.id === child.id)) return; // discarded while it waited
     const configPath = await this.ompSkills(child.projectId, cwd, child.id);
     const extensionPath = await this.ompTriggers(child.projectId, cwd, child.id);
-    const childRuntime = managedRuntime(child.runtime);
     const browserMcp = this.browser?.bindingFor(child.id);
-    const rpc = createRuntime(childRuntime, { cwd, ...launchToolsFor("review"), ...(await this.spawnOpts(child.id, childRuntime, cwd, configPath)), ...(extensionPath ? { extensionPath } : {}), ...(browserMcp ? { mcp: browserMcp } : {}), ...this.systemAppendOpts(child.projectId, "review") });
+    const rpc = createRuntime({ cwd, ...launchToolsFor("review"), ...(await this.spawnOpts(child.id, cwd, configPath)), ...(extensionPath ? { extensionPath } : {}), ...(browserMcp ? { mcp: browserMcp } : {}), ...this.systemAppendOpts(child.projectId, "review") });
     const childLive = this.wireLive(child.id, rpc, "queued");
     try {
       await this.startChild(child.id, rpc);
@@ -2116,13 +2100,6 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     l.state = reduceStatus(l.state, e);
     // The child reported on the turn it was sent: its status alone says whether it holds a slot.
     if (l.state.status !== before) l.turnPending = false;
-    // claude reports `ready` only with its first turn, when its MCP servers have started: the
-    // watchdog re-takes its baseline then (omp's comes before start() resolves, same effect).
-    // Once per child — a later baseline would spare the very commands the watchdog is for.
-    if (e.type === "ready" && l.pid !== undefined && !l.baselined) {
-      l.baselined = true;
-      this.trackChild(id, l.pid, true);
-    }
     // One reducer for the live stream and for rehydrated history, so a session that
     // streamed and the same session after a reload produce identical entries.
     const reduced = reduceRpcEvents([e], {
@@ -2397,6 +2374,7 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
       await this.withSlot(s, () => this.requireNative().start(s, { resume: true }), () => this.resume(id));
       return { ok: true };
     }
+    if (s) this.refuseManagedClaude(s);
     await this.liveOrResume(id);
     return { ok: true };
   }
@@ -2442,6 +2420,8 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     // Refused now, not after a wait: a parked message the harness cannot take would vanish on
     // replay with nobody left to tell (deliverNative's own check).
     if (row.native && (images?.length || (fromOperator && parseCommand(text)))) throw nativeUnsupported();
+    // Refused before it could park: a removed managed claude-code row never spawns again.
+    this.refuseManagedClaude(row);
     const parked = replay ?? (() => this.deliver(id, text, mode === "prompt" && this.turnRunning(row) ? "follow_up" : mode, images, fromOperator, undefined, opts));
     return this.withSlot(row, () => this.deliverNow(row, text, mode, images, fromOperator, opts), parked, { text, images });
   }
@@ -3583,11 +3563,9 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
       });
   }
 
-  // Merge a runtime's subagent snapshot into the tree. The omp registry carries id/index/
-  // status/agent; the claude runtime's snapshot additionally carries tokens/duration/tool
-  // count (read from the SDK task lifecycle), so those are picked up here when present — omp
-  // fills the same fields later from the `task` tool details instead. `parentId` comes from a
-  // dotted id (`Parent.Child`).
+  // Merge the omp registry's subagent snapshot (id/index/status/agent, and whatever else a row
+  // carries) into the tree; tokens/duration/tool count arrive later from the `task` tool
+  // details. `parentId` comes from a dotted id (`Parent.Child`).
   private mergeRegistry(l: Live, rows: SubagentInfo[]): void {
     const map = l.subagents ?? (l.subagents = new Map());
     for (const r of rows) {
@@ -3941,7 +3919,7 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
       // A sign-out is never a clean end, whatever the row said a moment ago: a chat sits at
       // `done` between turns, so its first turn on a signed-out CLI died «done» and the operator
       // saw nothing. Only `stopped` (the operator's own stop) outranks it.
-      const signedOut = cause === "claude_not_authenticated" || cause === "omp_not_authenticated";
+      const signedOut = cause === "omp_not_authenticated";
       // A minion child that dies before its launch returned is that launch's failure: launchTask
       // removes the row and MinionService puts the card back in the backlog. An `error` pushed
       // from here would race that release to the card (and lose to tasks_guard once the card is
@@ -3987,6 +3965,7 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
   private async doResume(id: string): Promise<Live> {
     const s = this.registry.listSessions().find((x) => x.id === id);
     if (!s) throw new Error("session not found");
+    this.refuseManagedClaude(s);
     const g = this.boundProject(s.projectId);
     if (s.kind === "agent" && s.worktree && !s.worktreePath)
       throw new Error("session was merged and its worktree retired — reopen it to continue");
@@ -4001,31 +3980,19 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     const dir = s.worktreePath || parent?.worktreePath || g.localRepoPath;
     if (s.kind === "agent" && !s.worktree && (await this.worktree.currentBranch(g.localRepoPath)) !== s.branch)
       throw new Error(`project is not on ${s.branch} — switch to it or delete the agent`);
-    // A fork can only continue on its own backend (R1/R2): omp reloads its saved session FILE
-    // through switch_session; claude resumes the same session UUID (stored in ompSessionId) in
-    // place via opts.resume at start(), where switch_session is a no-op. One resume handle,
-    // read per backend, so both re-render their prior transcript on wake.
-    const runtimeKind = managedRuntime(s.runtime);
-    const resumeHandle = runtimeKind === "claude-code" ? s.ompSessionId : s.ompSessionFile;
-    // The SDK mints a claude fork's own id only on its first turn, so a discussion woken before
-    // the operator wrote to it has nothing to resume. Fork the parent again, as branchSession
-    // did — a blank session would lose the parent's transcript and the agent's context.
-    const refork = runtimeKind === "claude-code" && s.kind === "discussion" && !resumeHandle ? parent?.ompSessionId : undefined;
-    if (refork && parent) this.assertTurnEnded(parent.id, "waking this branch");
+    // omp reloads the saved session FILE through switch_session, re-rendering its transcript.
+    const resumeHandle = s.ompSessionFile;
     const configPath = await this.ompSkills(s.projectId, dir, id);
     const extensionPath = await this.ompTriggers(s.projectId, dir, id);
     // Forks (discussion/review) never get the session browser; agents, chats and a «Тестувальник»
     // run (docs/specs/2026-11-04-qa-tester-agent.md, decision 8) do.
     const browserMcp = (s.kind === "discussion" || s.kind === "review") && s.tester !== true ? undefined : this.browser?.bindingFor(id);
-    const handle = refork ? { fork: refork } : runtimeKind === "claude-code" && resumeHandle ? { resume: resumeHandle } : {};
-    const rpc = createRuntime(runtimeKind, { cwd: dir, ...launchToolsFor(s.kind), ...handle, ...(await this.spawnOpts(id, runtimeKind, dir, configPath)), ...(extensionPath ? { extensionPath } : {}), ...(browserMcp ? { mcp: browserMcp } : {}), ...this.systemAppendOpts(s.projectId, s.kind) });
+    const rpc = createRuntime({ cwd: dir, ...launchToolsFor(s.kind), ...(await this.spawnOpts(id, dir, configPath)), ...(extensionPath ? { extensionPath } : {}), ...(browserMcp ? { mcp: browserMcp } : {}), ...this.systemAppendOpts(s.projectId, s.kind) });
     const live = this.wireLive(id, rpc, s.status);
     try {
       await this.startChild(id, rpc);
-      if (resumeHandle || refork) {
-        // omp loads the saved file into the freshly spawned child; claude already resumed (or
-        // forked) at start(), and a fork with no id of its own reads the parent's history.
-        if (runtimeKind !== "claude-code" && resumeHandle) await rpc.switchSession(resumeHandle);
+      if (resumeHandle) {
+        await rpc.switchSession(resumeHandle);
         this.rehydrate(live, id, await rpc.getAllMessages());
       }
       // Re-assert the chosen effort AFTER switch_session: the reloaded session file carries its

@@ -37,8 +37,6 @@ export type NoticeCode =
   // machine fault is a thrown error when it stops a session from starting, and a transcript
   // notice when it kills one already running. They are also `Session.errorCode`, set from the
   // runtime's exit cause (supervisor.service.ts wireLive).
-  | "claude_not_authenticated" // claude-code-runtime.ts — the claude CLI is signed out (params: none)
-  | "claude_binary_missing" // claude-code-runtime.ts — the SDK's platform binary is absent (params: none)
   | "omp_not_authenticated" // rpc-session.ts exit cause — the omp CLI is signed out (params: none)
   | "omp_binary_missing" // rpc-session.ts exit cause — omp is not on PATH (params: none)
   // supervisor.service.ts — the machine resource profile (docs/specs/2026-10-21-machine-resource-profile.md):
@@ -118,17 +116,18 @@ export type ApiErrorCode =
   | "omp_exited_during_generation" // release-notes.service.ts:110 — the omp child died mid-generation (params: { reason })
   | "generation_timeout" // release-notes.service.ts:122 — generation did not finish in time (params: { seconds })
   | "model_no_text" // release-notes.service.ts:139 — the model returned no text (params: none)
-  // runtime/*-runtime.ts via supervisor.service.ts — a session that could NOT START because
-  // the machine's agent backend is unusable. Distinct from the NoticeCode twins above: these
-  // abort the launch, so the operator gets a thrown error naming the one command that fixes
-  // it rather than a session that exists but can never answer.
-  | "runtime_claude_not_authenticated" // claude-code-runtime.ts start() — claude CLI signed out (params: none)
-  | "runtime_claude_binary_missing" // claude-code-runtime.ts start() — SDK platform binary absent (params: none)
+  // rpc/rpc-session.ts via supervisor.service.ts — a session that could NOT START because
+  // omp on this machine is unusable. Distinct from the NoticeCode twins above: these abort the
+  // launch, so the operator gets a thrown error naming the one command that fixes it rather
+  // than a session that exists but can never answer.
   | "runtime_omp_not_authenticated" // rpc-session.ts start() — omp CLI signed out (params: none)
   | "runtime_omp_binary_missing" // rpc-session.ts start() — omp not on PATH (params: none)
   // native/native-session.service.ts via supervisor.service.ts — a native session refusing:
   | "native_busy" // a helper prompt while the native harness is mid-turn or waiting on the operator (params: none)
   | "native_unsupported" // an action only a managed session supports (model, effort, branch, review, images…) (params: none)
+  // supervisor.service.ts — a managed spawn of a row stamped with a runtime other than omp: a
+  // leftover of the removed managed claude-code (docs/specs/2026-11-05-remove-managed-claude-code.md)
+  | "managed_claude_removed" // (params: none)
   // supervisor.service.ts resolveLaunchParams — an in-place (non-worktree) launch refused:
   | "inplace_tree_dirty" // the project checkout has uncommitted changes (params: { count, files } — files: the first few paths, comma-joined, `…` when cut)
   | "inplace_already_active" // another in-place agent already owns the project checkout (params: none)
@@ -160,8 +159,6 @@ export const NOTICE_CODES = [
   "context_compact_failed",
   "base_fetch_failed",
   "pr_behind_base",
-  "claude_not_authenticated",
-  "claude_binary_missing",
   "omp_not_authenticated",
   "omp_binary_missing",
   "slot_wait",
@@ -231,12 +228,11 @@ export const API_ERROR_CODES = [
   "omp_exited_during_generation",
   "generation_timeout",
   "model_no_text",
-  "runtime_claude_not_authenticated",
-  "runtime_claude_binary_missing",
   "runtime_omp_not_authenticated",
   "runtime_omp_binary_missing",
   "native_busy",
   "native_unsupported",
+  "managed_claude_removed",
   "inplace_tree_dirty",
   "inplace_already_active",
   "inplace_detached_head",

@@ -112,13 +112,13 @@ export {
 } from "./release-notes";
 export { THINKING_LEVELS, isThinkingLevel, type ThinkingLevel } from "./thinking";
 export {
-  AGENT_RUNTIMES,
-  isAgentRuntime,
-  type AgentRuntimeKind,
   NATIVE_HARNESSES,
   isNativeHarness,
-  managedRuntime,
   type NativeHarness,
+  AGENT_PROVIDERS,
+  isAgentProvider,
+  providerHarness,
+  type AgentProvider,
 } from "./runtime";
 export {
   AGENT_LANGUAGES,

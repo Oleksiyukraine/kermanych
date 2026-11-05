@@ -39,7 +39,7 @@
               :key="ex"
               class="cuk__example"
               type="button"
-              :disabled="chat.busy || chat.resetting"
+              :disabled="chat.busy || chat.resetting || ompCheck.blocked"
               @click="composerEl?.send(ex)"
             >{{ ex }}</button>
           </div>
@@ -94,6 +94,7 @@
 import { computed, nextTick, onUnmounted, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { useCukChat } from 'stores/cuk-chat';
+import { useOmpCheck } from 'stores/omp-check';
 import KChatMessage from 'components/kit/KChatMessage.vue';
 import KSpinner from 'components/kit/KSpinner.vue';
 import AssistantComposer from './AssistantComposer.vue';
@@ -111,6 +112,8 @@ const emit = defineEmits<{ toggle: [] }>();
 
 const { t } = useI18n();
 const chat = useCukChat();
+// omp missing or signed out: the composer shows why, and the example chips cannot send either.
+const ompCheck = useOmpCheck();
 const composerEl = ref<InstanceType<typeof AssistantComposer> | null>(null);
 const logEl = ref<HTMLElement | null>(null);
 

@@ -371,14 +371,13 @@ describe("watchdog baseline", () => {
     return { watchdog, tracks };
   }
 
-  it("a managed child is tracked when started and re-baselined once on its first `ready`", async () => {
+  it("a managed child is tracked once, when started", async () => {
     const { watchdog, tracks } = fakeWatchdog();
     const { launch } = make(undefined, { watchdog });
     const a = await launch("a");
     expect(tracks).toEqual([{ id: a.id, pid: CHILD_PID }]);
     instances[0].emit({ type: "ready" } as RpcEvent);
-    instances[0].emit({ type: "ready" } as RpcEvent);
-    expect(tracks).toEqual([{ id: a.id, pid: CHILD_PID }, { id: a.id, pid: CHILD_PID }]);
+    expect(tracks).toEqual([{ id: a.id, pid: CHILD_PID }]);
   });
 
   it("a native harness is tracked on its first report after the spawn, not on the spawn", () => {

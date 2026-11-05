@@ -7,10 +7,10 @@ import type { CloudProject, Task } from "@kermanych/cloud";
 import { DEFAULT_DOCS_POLICY, DEFAULT_HELPERS, docsPolicyAppend, deepAnalysisPrompt, designDirFor } from "@kermanych/core";
 import { todayIso } from "../src/management/management-prompt";
 
-// The runtime-aware model guard (ModelsService.validModel) is not under test here; an identity
+// The model guard (ModelsService.validModel) is not under test here; an identity
 // stub returns the wanted model unchanged so createSessionFromTask keeps task.model as before.
 function stubModels(): ModelsService {
-  return { validModel: async (_r: string, w: string | undefined) => w } as unknown as ModelsService;
+  return { validModel: async (w: string | undefined) => w } as unknown as ModelsService;
 }
 
 // Capture every spawned RpcSession so a test can prove whether a launch happened.

@@ -1,7 +1,6 @@
 // apps/api/test/account.controller.spec.ts
 import { describe, it, expect } from "vitest";
 import { BadRequestException } from "@nestjs/common";
-import type { AgentRuntimeKind } from "@kermanych/core";
 import { AccountController } from "../src/http/account.controller";
 import type { RegistryService } from "../src/registry/registry.service";
 import type { AuthSessionRow } from "../src/registry/registry.service";
@@ -15,89 +14,24 @@ function make(getSession?: AuthSessionRow | undefined, setCalled?: (row: AuthSes
   return new AccountController(registry, checks());
 }
 
-// The preflight seam. Defaults to "usable" so every pre-existing case below is unaffected by
-// its arrival; the checkRuntime tests supply their own verdict.
+// The preflight seam; the checkRuntime tests supply their own verdict.
 function checks(verdict: { ok: boolean; code?: string } = { ok: true }) {
   return { check: async () => verdict } as unknown as RuntimeCheckService;
 }
 
 describe("AccountController", () => {
-  it("GET /account/runtime returns null when no auth session", () => {
-    const controller = make(undefined);
-    expect(controller.getRuntime()).toEqual({ runtime: null });
-  });
-
-  it("GET /account/runtime returns null when session has no agentRuntime", () => {
-    const controller = make({ userId: "u1", accessToken: "tok" });
-    expect(controller.getRuntime()).toEqual({ runtime: null });
-  });
-
-  it("GET /account/runtime returns cached agentRuntime", () => {
-    const controller = make({ userId: "u1", accessToken: "tok", agentRuntime: "claude-code" });
-    expect(controller.getRuntime()).toEqual({ runtime: "claude-code" });
-  });
-
-  it("POST /account/runtime throws BadRequestException for invalid runtime", () => {
-    const controller = make({ userId: "u1", accessToken: "tok" });
-    expect(() => controller.setRuntime({ runtime: "invalid" })).toThrow(BadRequestException);
-  });
-
-  it("POST /account/runtime throws BadRequestException when not signed in", () => {
-    const controller = make(undefined);
-    expect(() => controller.setRuntime({ runtime: "claude-code" })).toThrow(BadRequestException);
-  });
-
-  it("POST /account/runtime sets agentRuntime and preserves existing session", () => {
-    let captured: AuthSessionRow | undefined;
-    const existing: AuthSessionRow = { userId: "u1", accessToken: "tok", githubUsername: "alice" };
-    const controller = make(existing, (row) => (captured = row));
-
-    const result = controller.setRuntime({ runtime: "claude-code" });
-
-    expect(result).toEqual({ runtime: "claude-code" });
-    expect(captured).toEqual({
-      userId: "u1",
-      accessToken: "tok",
-      githubUsername: "alice",
-      agentRuntime: "claude-code" as AgentRuntimeKind,
-    });
-  });
-
-  it("POST /account/runtime updates existing agentRuntime", () => {
-    let captured: AuthSessionRow | undefined;
-    const existing: AuthSessionRow = {
-      userId: "u1",
-      accessToken: "tok",
-      githubUsername: "alice",
-      agentRuntime: "omp",
-    };
-    const controller = make(existing, (row) => (captured = row));
-
-    controller.setRuntime({ runtime: "claude-code" });
-
-    expect(captured?.agentRuntime).toBe("claude-code");
-  });
-
-  // GET /account/runtime/check — the preflight the onboarding gate and profile settings call so
-  // the operator learns a backend is unusable AT THE MOMENT THEY PICK IT, not after a chat that
-  // cannot answer. Read-only: it never writes the preference, so a failed check leaves the
-  // operator free to pick it anyway (they may be about to run `claude /login`).
-  it("GET /account/runtime/check passes a usable backend through", async () => {
+  // GET /account/runtime/check — the omp preflight. Read-only: it only reports what to fix.
+  it("GET /account/runtime/check passes a usable omp through", async () => {
     const controller = new AccountController({} as unknown as RegistryService, checks({ ok: true }));
-    expect(await controller.checkRuntime("claude-code")).toEqual({ ok: true });
+    expect(await controller.checkRuntime()).toEqual({ ok: true });
   });
 
-  it("GET /account/runtime/check reports the cause of an unusable backend", async () => {
+  it("GET /account/runtime/check reports the cause of an unusable omp", async () => {
     const controller = new AccountController(
       {} as unknown as RegistryService,
-      checks({ ok: false, code: "claude_not_authenticated" }),
+      checks({ ok: false, code: "omp_not_authenticated" }),
     );
-    expect(await controller.checkRuntime("claude-code")).toEqual({ ok: false, code: "claude_not_authenticated" });
-  });
-
-  it("GET /account/runtime/check rejects a runtime it does not know", async () => {
-    const controller = new AccountController({} as unknown as RegistryService, checks());
-    await expect(controller.checkRuntime("nonsense")).rejects.toThrow(BadRequestException);
+    expect(await controller.checkRuntime()).toEqual({ ok: false, code: "omp_not_authenticated" });
   });
 
   it("GET /account/language returns null when unset", () => {
@@ -120,13 +54,13 @@ describe("AccountController", () => {
 
   it("POST /account/language sets agentLanguage and preserves the rest of the session", () => {
     let captured: AuthSessionRow | undefined;
-    const existing: AuthSessionRow = { userId: "u1", accessToken: "tok", agentRuntime: "omp" };
+    const existing: AuthSessionRow = { userId: "u1", accessToken: "tok", githubUsername: "alice" };
     const controller = make(existing, (row) => (captured = row));
 
     const result = controller.setLanguage({ language: "en" });
 
     expect(result).toEqual({ language: "en" });
-    expect(captured).toEqual({ userId: "u1", accessToken: "tok", agentRuntime: "omp", agentLanguage: "en" });
+    expect(captured).toEqual({ userId: "u1", accessToken: "tok", githubUsername: "alice", agentLanguage: "en" });
   });
 
   it("GET /account/skill-improvement is on until the cache knows otherwise", () => {

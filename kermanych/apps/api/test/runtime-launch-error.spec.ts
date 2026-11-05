@@ -9,23 +9,21 @@ import type { ApiErrorBody } from "@kermanych/core";
 // to the `ApiErrorBody` the UI localizes.
 describe("sessionFailure", () => {
   it("promotes a runtime launch code to a localizable ApiErrorBody", () => {
-    const err = new Error("Claude Code process exited with code 1. stderr: Invalid API key · Please run /login") as Error & { code?: string };
-    err.code = "claude_not_authenticated";
+    const err = new Error("omp child exited (code 1) before completing request: run `omp login`") as Error & { code?: string };
+    err.code = "omp_not_authenticated";
 
     const thrown = sessionFailure(err);
 
     expect(thrown).toBeInstanceOf(BadRequestException);
     const body = thrown.getResponse() as ApiErrorBody;
-    expect(body.code).toBe("runtime_claude_not_authenticated");
+    expect(body.code).toBe("runtime_omp_not_authenticated");
     // The child's own words stay as the fallback prose: a UI build that does not know the code
     // must still show something an operator can act on.
-    expect(body.message).toContain("Please run /login");
+    expect(body.message).toContain("omp login");
   });
 
   it("maps every runtime cause to its own launch code", () => {
     const cases: Array<[string, string]> = [
-      ["claude_not_authenticated", "runtime_claude_not_authenticated"],
-      ["claude_binary_missing", "runtime_claude_binary_missing"],
       ["omp_not_authenticated", "runtime_omp_not_authenticated"],
       ["omp_binary_missing", "runtime_omp_binary_missing"],
     ];

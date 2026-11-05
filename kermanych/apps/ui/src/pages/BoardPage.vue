@@ -465,6 +465,7 @@ import { UNASSIGNED, filterTasks, scopedProjectIds } from '../lib/scope';
 import { ASSIGNMENT_REFUSALS } from '../lib/cloud-errors';
 import { autoRunSwitchLocked, boardTasks, canAssignTask, canRunTask, cardModesFromCard } from '../lib/tasks-view';
 import { cardDecisionReason, cardNotNeededReason } from '../lib/minion';
+import { defaultLaunchMode, nativeRuntimeFor } from '../lib/native-session';
 import JiraBoardView from 'components/jira/JiraBoardView.vue';
 import LinearBoardView from 'components/linear/LinearBoardView.vue';
 import PlaneBoardView from 'components/plane/PlaneBoardView.vue';
@@ -1162,10 +1163,12 @@ type LaunchOutcome = 'started' | 'unbound' | 'failed';
 
 // Starts the session and, once it exists, closes whichever modal asked and goes to the
 // Агенти board. `report` puts a refusal where the operator is looking (the open modal).
+// The mode is the provider's default; a design card is always «Керманич».
 async function runLaunch(task: Task, report: (message: string) => void): Promise<LaunchOutcome> {
   launching.value = task.id;
   try {
-    const session = await api.createSessionFromTask(task.id);
+    const native = nativeRuntimeFor(defaultLaunchMode(auth.provider, { design: task.design }));
+    const session = await api.createSessionFromTask(task.id, undefined, native);
     editorOpen.value = false;
     bindingOpen.value = false;
     local.notify(t('board.notify.sessionStarted', { name: session.name }), 'info');

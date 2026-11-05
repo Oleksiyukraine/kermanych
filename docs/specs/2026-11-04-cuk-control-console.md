@@ -1,5 +1,7 @@
 # ЦУК: the avatar opens Kermanych's control console
 
+> Superseded in part by docs/specs/2026-11-05-remove-managed-claude-code.md: ЦУК runs on omp and launches agents with the provider's default mode, not a remembered one.
+
 - **Branch:** `feature/redesign-avatar-control-console`
 - **Scope:** `apps/ui` (the launcher window, a new ЦУК store and views, the shared composer, the
   notepad skin of «Список дій», settings labels, i18n `uk` / `en`), `apps/api` (a ЦУК chat

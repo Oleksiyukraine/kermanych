@@ -1,5 +1,7 @@
 # «ШІ-команда → Навички»: import a skill from disk, show the repository's own
 
+> Superseded in part by docs/specs/2026-11-05-remove-managed-claude-code.md: there is no managed claude-code runtime, so the skill rules for it no longer apply.
+
 - **Date:** 2026-10-22
 - **Scope:** `packages/core` (types, name normalisation), `apps/api` (local skill scan and
   read, `/fs/list` hidden mode, the project skills payload), `apps/ui` (import picker,

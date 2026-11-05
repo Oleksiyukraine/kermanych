@@ -100,15 +100,34 @@
               <span class="chat__detail-status mono">{{ harnessLabel }} · {{ statusWord(chatSession) }}</span>
               <div class="chat__actions">
                 <!-- `title` names the action even while disabled; the reason a disabled ▶ can't
-                     act is the visible note strip under this bar. A native chat has no fork to
-                     promote with, so it has no ▶. -->
+                     act is the visible note strip under this bar. Promotion is «Керманич»-only,
+                     so a native chat's ▶ is blocked with that reason instead — aria-disabled,
+                     not disabled, so v-tip still gets mouseenter/focusin; a click toasts it. -->
                 <KIconButton
-                  v-if="!chatSession.native"
+                  v-if="chatSession.native"
+                  class="chat__blocked-btn"
+                  aria-disabled="true"
+                  :title="t('agents.native.managedOnly')"
+                  :aria-label="`${t('kit.panel.promoteAgent')} — ${t('agents.native.managedOnly')}`"
+                  @click="explainBlocked"
+                >▶</KIconButton>
+                <KIconButton
+                  v-else
                   :loading="promoting"
                   :disabled="sessionPending"
                   :title="promoting ? t('kit.panel.promoting') : t('kit.panel.promoteAgent')"
                   @click="promote"
                 >▶</KIconButton>
+                <!-- The voice conversation runs only through KPanel («Керманич»): a native
+                     thread shows 🎤 blocked the same way. -->
+                <KIconButton
+                  v-if="chatSession.native"
+                  class="chat__blocked-btn"
+                  aria-disabled="true"
+                  :title="t('agents.native.managedOnly')"
+                  :aria-label="`${t('kit.composer.voice')} — ${t('agents.native.managedOnly')}`"
+                  @click="explainBlocked"
+                ><KIcon name="mic" /></KIconButton>
                 <KIconButton
                   :loading="filing"
                   :title="t('kit.panel.promoteTask')"
@@ -268,13 +287,14 @@ import { useVoicePanel } from '../composables/useVoicePanel';
 import { nextMode as modeFor } from '../lib/message-mode';
 import { useOptimisticValue } from '../composables/useOptimisticValue';
 import { useLoadPhase } from '../composables/useLoadPhase';
-import { LAUNCH_MODES, nativeHarnessName, nativeRuntimeFor, sessionLaunchMode, type LaunchMode } from '../lib/native-session';
+import { defaultLaunchMode, LAUNCH_MODES, nativeHarnessName, nativeRuntimeFor, sessionLaunchMode, type LaunchMode } from '../lib/native-session';
 import { needsSignIn } from '../lib/session-auth';
 import KPanel from 'components/kit/KPanel.vue';
 import KRequestBlock from 'components/kit/KRequestBlock.vue';
 import KSessionCard from 'components/kit/KSessionCard.vue';
 import KStatusDot from 'components/kit/KStatusDot.vue';
 import KIconButton from 'components/kit/KIconButton.vue';
+import KIcon from 'components/kit/KIcon.vue';
 import KBtn from 'components/kit/KBtn.vue';
 import KTabs from 'components/kit/KTabs.vue';
 import SessionFindings from 'components/agents/SessionFindings.vue';
@@ -346,8 +366,12 @@ const chatSession = computed(() => store.sessions.find((s) => s.id === chatId.va
 // The voice conversation (docs/specs/2026-11-02-voice-conversation.md) with this thread.
 const voicePanel = useVoicePanel(() => chatSession.value);
 // Promotion grows a worktree, so it is refused without a local binding; the strip states why.
-// A native chat has no ▶ at all, so there is nothing for the strip to explain.
+// A native chat's ▶ is blocked for being «Керманич»-only and carries that reason itself.
 const promoteBlocked = computed(() => !!chatSession.value && !chatSession.value.native && !isBound.value);
+// A blocked control's reason, on click — hover and focus show it through v-tip.
+function explainBlocked(): void {
+  store.notify(t('agents.native.managedOnly'), 'info');
+}
 const harnessLabel = computed(() => {
   const s = chatSession.value;
   const harness = s?.runtime || 'omp';
@@ -359,12 +383,16 @@ const running = computed(
 // A native chat's harness is up (its TUI has a pty): ■ stops it whatever the turn is doing.
 const nativeLive = computed(() => !!chatSession.value?.native && !!chatSession.value.terminalId);
 
-// «Режим» of the next chat (docs/specs/2026-10-06-native-chats.md), remembered on this
-// machine — the page has no form to reset it with, unlike the agents launcher. An unknown
-// stored value (nothing yet, another build's mode) is Kermanych's managed chat.
-const CHAT_MODE_KEY = 'kermanych.chat.mode';
-const chatMode = ref<LaunchMode>(LAUNCH_MODES.find((m) => m === localStorage.getItem(CHAT_MODE_KEY)) ?? 'managed');
-watch(chatMode, (m) => localStorage.setItem(CHAT_MODE_KEY, m));
+// «Режим» of the next chat (docs/specs/2026-10-06-native-chats.md): the provider's default
+// (docs/specs/2026-11-05-remove-managed-claude-code.md decision 4), and it follows a provider
+// change. A pick holds until then; nothing is remembered across visits.
+const chatMode = ref<LaunchMode>(defaultLaunchMode(auth.provider));
+watch(
+  () => auth.provider,
+  (p) => {
+    chatMode.value = defaultLaunchMode(p);
+  },
+);
 const modeOptions = computed(() =>
   LAUNCH_MODES.map((m) => ({ value: m, label: m === 'managed' ? t('agents.native.modeManaged') : m })),
 );
@@ -1103,6 +1131,18 @@ watch(chatId, () => {
     transform: rotate(90deg);
     border-color: var(--k-danger);
     color: var(--k-danger);
+  }
+}
+
+// «Керманич»-only controls on a native thread (▶, 🎤): KIconButton's own disabled look, kept on
+// an aria-disabled button so its tooltip stays reachable.
+.chat__actions .chat__blocked-btn {
+  opacity: 0.45;
+  cursor: default;
+
+  &:hover {
+    border-color: var(--k-line);
+    color: var(--k-muted);
   }
 }
 

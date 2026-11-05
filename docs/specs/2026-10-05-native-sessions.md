@@ -1,5 +1,7 @@
 # Native sessions: `omp` / `claude` in their own TUI
 
+> Superseded in part by docs/specs/2026-11-05-remove-managed-claude-code.md: launches from «Дошка», the trackers and ЦУК follow the provider's default mode, the launcher no longer remembers «Режим», and «Керманич»-only controls are shown blocked instead of hidden.
+
 ## Goal
 
 Some operators do not want Kermanych's wrapper around the harness — they are used to the

@@ -41,7 +41,7 @@ import { todoPlainText } from '../lib/home-todo';
 import { SETTINGS_CATEGORIES } from '../lib/settings';
 import { bucketOf } from '../lib/buckets';
 import { nextMode } from '../lib/message-mode';
-import { nativeRuntimeFor, readLaunchMode } from '../lib/native-session';
+import { defaultLaunchMode, nativeRuntimeFor } from '../lib/native-session';
 import { taskInsertFromDraft } from '../lib/tasks-view';
 import { cukBoardRows, cukSessionRows, findSessionByRef } from '../lib/cuk-digest';
 import { findProjectByName } from './management-actions';
@@ -338,7 +338,8 @@ export const useCukChat = defineStore('cuk-chat', () => {
       result('info', globalTr.t('cuk.result.cardCreated', { title: created.title, project: project.name }));
       return;
     }
-    const session = await api.createSessionFromTask(created.id, undefined, nativeRuntimeFor(readLaunchMode()));
+    const native = nativeRuntimeFor(defaultLaunchMode(auth.provider, { design: created.design }));
+    const session = await api.createSessionFromTask(created.id, undefined, native);
     result('info', globalTr.t('cuk.result.agentStarted', { title: created.title, project: project.name }), session.id);
   }
 

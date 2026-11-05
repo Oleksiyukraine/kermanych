@@ -25,7 +25,7 @@ import {
   upsertLinearIssues,
 } from "@kermanych/cloud";
 import type { LinearIntegration, LinearIssue } from "@kermanych/cloud";
-import type { ImageInput, Session } from "@kermanych/core";
+import type { ImageInput, NativeHarness, Session } from "@kermanych/core";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { AuthService } from "../auth/auth.service";
 import { RegistryService } from "../registry/registry.service";
@@ -372,6 +372,7 @@ export class LinearService {
     userId: string,
     transitionId?: string,
     images?: ImageInput[],
+    native?: NativeHarness,
   ): Promise<LinearLaunchResult> {
     const { cloud, integration, client } = await this.withIntegration(workspaceId, userId);
     const raw = await client.getIssue(key);
@@ -388,7 +389,7 @@ export class LinearService {
       linearKey: key,
     });
 
-    const session = await this.supervisor.createSessionFromTask(task.id, userId, images);
+    const session = await this.supervisor.createSessionFromTask(task.id, userId, images, native);
     await patchLinearIssueBinding(cloud, integration.id, raw.id, {
       kermanychProjectId: projectId,
       taskId: task.id,

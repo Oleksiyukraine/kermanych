@@ -190,17 +190,17 @@
           ><KIcon class="shell__voice-icon" name="micOff" /></KIconButton>
           <KIconButton :loading="voice.bar.phase === 'ending'" :title="t('kit.voiceBar.end')" @click="void voice.end()">✕</KIconButton>
         </div>
-        <!-- AI LOGIN REQUIRED — the provider CLI behind the operator's runtime is signed out on
-             this machine (composables/useProviderSignIn.ts). Present only then; its tooltip
+        <!-- OMP LOGIN REQUIRED — omp, which runs «Керманич» and Kermanych's AI functions, is
+             signed out on this machine (stores/omp-check.ts). Present only then; its tooltip
              names the command, a click asks again after the operator has logged in. -->
         <button
-          v-if="signInCode"
+          v-if="ompCheck.signedOut"
           type="button"
           class="shell__signin mono"
           role="alert"
           v-tip="signInHint"
           :aria-label="`${t('common.nav.aiLoginRequired')}. ${signInHint}`"
-          @click="recheckSignIn"
+          @click="ompCheck.recheck()"
         ><span aria-hidden="true">⚠</span> {{ t('common.nav.aiLoginRequired') }}</button>
         <!-- ONE gear, into pages/SettingsPage.vue. It used to be three controls —
              a workspace ⚙, a project ⚙ and a `$` for the `.env` — each opening its
@@ -462,41 +462,38 @@
       </template>
     </KModal>
 
-    <!-- ONBOARDING RUNTIME GATE — one-time choice when auth.runtime is unset. Not dismissible:
-         the operator MUST pick a backend before any agent work can proceed. Once chosen it lives
-         in auth and can be changed later through profile settings. -->
+    <!-- ONBOARDING PROVIDER GATE — one-time choice when the account has no provider stored.
+         Not dismissible: the operator MUST pick one. It sets the default launch mode and can be
+         changed later in Settings. -->
     <KModal
       :model-value="showOnboarding"
-      :title="t('onboarding.runtime.title')"
+      :title="t('onboarding.provider.title')"
       @update:model-value="() => {}"
     >
       <div class="shell__form">
         <p class="shell__hint">
-          {{ t('onboarding.runtime.blurb') }}
+          {{ t('onboarding.provider.blurb') }}
         </p>
         <div class="shell__runtime-picker">
           <button
+            v-for="opt in providerOptions"
+            :key="opt.value"
             class="shell__runtime-option"
-            :class="{ 'shell__runtime-option--selected': onboardingChoice === 'omp' }"
-            @click="pickRuntime('omp')"
+            :class="{ 'shell__runtime-option--selected': onboardingChoice === opt.value }"
+            @click="onboardingChoice = opt.value"
           >
-            {{ t('onboarding.runtime.omp') }}
-          </button>
-          <button
-            class="shell__runtime-option"
-            :class="{ 'shell__runtime-option--selected': onboardingChoice === 'claude-code' }"
-            @click="pickRuntime('claude-code')"
-          >
-            {{ t('onboarding.runtime.claude') }}
+            <span>{{ opt.label }}</span>
+            <span class="shell__runtime-option-hint">{{ opt.hint }}</span>
           </button>
         </div>
+        <p class="shell__hint">{{ t('onboarding.provider.ompNote') }}</p>
 
-        <!-- PREFLIGHT — the picked backend is asked whether it is actually usable on this
-             machine. It never blocks the choice (the operator may be about to sign in); it
-             names the one command that repairs it, right where the choice is made. -->
-        <p v-if="runtimeChecking" class="shell__hint">{{ t('onboarding.runtime.checking') }}</p>
-        <p v-else-if="runtimeProblem" class="shell__error" role="alert">{{ runtimeProblem }}</p>
-        <p v-else-if="runtimeOk" class="shell__runtime-ok">{{ t('onboarding.runtime.ready') }}</p>
+        <!-- OMP CHECK — every choice uses omp for Kermanych's AI functions, so omp is asked once
+             when the gate opens. Advisory: it never blocks the choice (the operator may be
+             about to install or sign in); it names the one command that repairs it. -->
+        <p v-if="ompChecking" class="shell__hint">{{ t('onboarding.provider.checking') }}</p>
+        <p v-else-if="ompProblem" class="shell__error" role="alert">{{ ompProblem }}</p>
+        <p v-else-if="ompOk" class="shell__runtime-ok">{{ t('onboarding.provider.ready') }}</p>
       </div>
       <template #controls>
         <KBtn
@@ -505,7 +502,7 @@
           :loading="onboardingBusy"
           @click="submitOnboarding()"
         >
-          {{ t('onboarding.runtime.confirm') }}
+          {{ t('onboarding.provider.confirm') }}
         </KBtn>
       </template>
     </KModal>
@@ -520,7 +517,7 @@
     />
     <KDirPicker v-model="onbPickerOpen" :start="onbPickerStart" @select="onOnboardingFolderChosen($event)" />
 
-    <!-- MACHINE RESOURCES CONSENT (spec decision 2). Dismissible, unlike the runtime gate:
+    <!-- MACHINE RESOURCES CONSENT (spec decision 2). Dismissible, unlike the provider gate:
          Керманич runs without limits, so closing it any way other than the three buttons
          stores nothing and it simply comes back on the next start. -->
     <KModal
@@ -577,7 +574,7 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, onUnmounted, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { useI18n } from 'vue-i18n';
-import type { MachineResources, ResourceDecision } from '@kermanych/core';
+import type { AgentProvider, MachineResources, ResourceDecision } from '@kermanych/core';
 import { useOrchestrator } from 'stores/orchestrator';
 import { useProjects } from 'stores/projects';
 import { useAuth } from 'stores/auth';
@@ -602,7 +599,7 @@ import { until, renderTime } from '../lib/time';
 import { useNow } from '../composables/useNow';
 import { useSubscriptionUsage } from '../composables/useSubscriptionUsage';
 import { hardwareLine, useResourcesConsent } from '../composables/useResourcesConsent';
-import { useProviderSignIn } from '../composables/useProviderSignIn';
+import { useOmpCheck } from '../stores/omp-check';
 import KRailItem, { type RailProject } from 'components/kit/KRailItem.vue';
 import KWorkspaceRow from 'components/kit/KWorkspaceRow.vue';
 import KTopNav from 'components/kit/KTopNav.vue';
@@ -919,9 +916,9 @@ onMounted(async () => {
     );
   }
   // Now the cloud list is in, decide whether a fresh account needs the checklist. Skipped
-  // while the runtime gate is still up (auth.runtime === null): the gate is answered first,
-  // and its watcher above opens the checklist the moment it is.
-  if (auth.runtime !== null) {
+  // until the provider gate is settled and down: the gate is answered first, and its watcher
+  // below opens the checklist the moment it is.
+  if (providerSettled.value) {
     onb.maybeAutoOpen();
     void offerResources();
   }
@@ -1410,61 +1407,65 @@ function openCreateProject(workspaceId: string): void {
 }
 
 
-// ONBOARDING RUNTIME GATE — a one-time modal shown when auth.runtime is null. The operator
-// picks which backend their agents run on (omp or claude-code), and the choice is persisted
-// through auth.chooseRuntime. Not dismissible: the modal has no cancel, and the
-// @update:model-value handler is a no-op, so the only way out is to make a choice.
-// Held back while the account's runtime is still being read: for a returning user `runtime`
-// is null only until that read lands, and the gate must not flash up in between.
-const showOnboarding = computed(() => !!auth.user && !auth.runtimeLoading && auth.runtime === null);
-const onboardingChoice = ref<'omp' | 'claude-code' | null>(null);
+// ONBOARDING PROVIDER GATE — a one-time modal shown when the cloud read succeeded and the
+// account has no provider stored (a failed read raises nothing: «Керманич» is the default). The
+// operator picks omp / claude / codex, which sets the default launch mode, and the choice is
+// persisted through auth.chooseProvider. Not dismissible: the modal has no cancel, and the
+// @update:model-value handler is a no-op, so the only way out is to make a choice. Held back
+// while the provider is still being read, so it never flashes up for a returning user.
+const showOnboarding = computed(() => !!auth.user && !auth.providerLoading && auth.providerUnset);
+// Signed in, the provider read landed and the gate is not up: what the first-run checklist and
+// the resources consent wait for, so neither stacks over the gate.
+const providerSettled = computed(() => !!auth.user && !auth.providerLoading && !auth.providerUnset);
+const onboardingChoice = ref<AgentProvider | null>(null);
+const providerOptions = computed<{ value: AgentProvider; label: string; hint: string }[]>(() => [
+  { value: 'omp', label: t('onboarding.provider.omp'), hint: t('onboarding.provider.ompHint') },
+  { value: 'claude-code', label: t('onboarding.provider.claude'), hint: t('onboarding.provider.claudeHint') },
+  { value: 'codex', label: t('onboarding.provider.codex'), hint: t('onboarding.provider.codexHint') },
+]);
 
-// PREFLIGHT state for the picked backend. The whole point is timing: the operator learns their
-// claude is signed out while they are choosing it, instead of after creating a chat that never
-// answers. It is advisory — `submitOnboarding` does not consult it — because a failing check is
-// often about to be fixed in a terminal, and trapping the operator behind it would be worse
-// than the silence this replaces.
-const runtimeChecking = ref(false);
-const runtimeOk = ref(false);
-const runtimeProblem = ref('');
+// OMP CHECK for the gate, run once when it opens. The operator learns omp is missing or signed
+// out while choosing, instead of after a ЦУК or Менеджмент send that never answers. Advisory —
+// `submitOnboarding` does not consult it — because a failing check is often about to be fixed
+// in a terminal, and trapping the operator behind it would be worse than the silence.
+const ompChecking = ref(false);
+const ompOk = ref(false);
+const ompProblem = ref('');
 
-// Bumped on every pick: a slow check for the previous option must not overwrite the verdict
-// (or clear «перевіряю») of the one the operator picked after it.
-let pickGeneration = 0;
-async function pickRuntime(kind: 'omp' | 'claude-code'): Promise<void> {
-  const mine = ++pickGeneration;
-  onboardingChoice.value = kind;
-  runtimeChecking.value = true;
-  runtimeOk.value = false;
-  runtimeProblem.value = '';
+async function checkOmpForGate(): Promise<void> {
+  ompChecking.value = true;
+  ompOk.value = false;
+  ompProblem.value = '';
   try {
-    const verdict = await api.checkAccountRuntime(kind);
-    if (mine !== pickGeneration) return;
+    const verdict = await api.checkAccountRuntime();
     if (verdict.ok) {
-      runtimeOk.value = true;
+      ompOk.value = true;
       return;
     }
     // A classified cause has a localized `errors.runtime_*` message naming the fix; anything
-    // else falls back to the backend's own words, which beat a generic "something went wrong".
+    // else falls back to the check's own words, which beat a generic "something went wrong".
     const key = `errors.runtime_${verdict.code ?? ''}`;
-    runtimeProblem.value =
+    ompProblem.value =
       verdict.code && te(key)
         ? t(key)
-        : verdict.reason || t('onboarding.runtime.checkFailed');
+        : verdict.reason || t('onboarding.provider.checkFailed');
   } catch {
     // The check itself could not run (api still booting). Not the operator's problem to solve,
-    // and not a reason to claim the backend is broken — say nothing and let them proceed.
-    if (mine === pickGeneration) runtimeProblem.value = '';
+    // and not a reason to claim omp is broken — say nothing and let them proceed.
+    ompProblem.value = '';
   } finally {
-    if (mine === pickGeneration) runtimeChecking.value = false;
+    ompChecking.value = false;
   }
 }
+watch(showOnboarding, (open) => {
+  if (open) void checkOmpForGate();
+}, { immediate: true });
 
 // A failure keeps the modal open for a retry and toasts the reason.
 const { run: submitOnboarding, busy: onboardingBusy } = useAsyncAction(async () => {
   if (!onboardingChoice.value) return;
-  // Runtime is now set, showOnboarding becomes false, modal auto-hides.
-  await auth.chooseRuntime(onboardingChoice.value);
+  // The provider is now set, showOnboarding becomes false, modal auto-hides.
+  await auth.chooseProvider(onboardingChoice.value);
 });
 
 // FIRST-RUN CHECKLIST — the open/dismiss/ack state lives in stores/onboarding.ts; this layout
@@ -1509,22 +1510,18 @@ const { run: onOnboardingFolderChosen } = useAsyncAction(async (path: string) =>
   store.notify(t('settings.binding.bound', { path: trimmed }));
 });
 
-// Auto-open once the runtime gate is answered (null → chosen). A returning account whose
-// runtime is already set sees no change here and is handled by the onMounted call below,
-// which fires only after the cloud read so a fully-set-up account is not re-onboarded.
-watch(
-  () => auth.runtime,
-  (kind) => {
-    if (kind !== null) {
-      onb.maybeAutoOpen();
-      void offerResources();
-    }
-  },
-);
+// Auto-open once the provider gate is answered or the read lands without one. The onMounted
+// call above covers an account already settled by the time the cloud project list is in.
+watch(providerSettled, (settled) => {
+  if (settled) {
+    onb.maybeAutoOpen();
+    void offerResources();
+  }
+});
 
 // ── MACHINE RESOURCES CONSENT ───────────────────────────────────────────────
-// Asked once per window, after the runtime gate (never stacked over it: both call sites gate
-// on `auth.runtime`) and AFTER the first-run checklist: a fresh account sets up its first
+// Asked once per window, after the provider gate (never stacked over it: both call sites wait
+// for `providerSettled`) and AFTER the first-run checklist: a fresh account sets up its first
 // project before being asked about limits, and two modals never stack.
 const consent = useResourcesConsent();
 const consentBusy = ref(false);
@@ -1703,11 +1700,16 @@ const accountName = computed(() =>
 const { usage: planUsage } = useSubscriptionUsage();
 const planNow = useNow(30_000);
 
-// AI LOGIN REQUIRED — the top-bar pill. The tooltip reuses the launch-refusal sentence, which
-// names the provider and the command that signs it back in.
-const { code: signInCode, recheck: recheckSignIn } = useProviderSignIn();
+// OMP LOGIN REQUIRED — the top-bar pill. The tooltip reuses the launch-refusal sentence, which
+// names the command that signs omp back in. This layout owns the shared check's refresh rules.
+const ompCheck = useOmpCheck();
+let stopOmpCheck: (() => void) | undefined;
+onMounted(() => {
+  stopOmpCheck = ompCheck.start();
+});
+onUnmounted(() => stopOmpCheck?.());
 const signInHint = computed(() =>
-  signInCode.value ? `${t(`errors.runtime_${signInCode.value}`)}. ${t('common.nav.aiLoginRecheck')}` : '',
+  ompCheck.signedOut ? `${t('errors.runtime_omp_not_authenticated')}. ${t('common.nav.aiLoginRecheck')}` : '',
 );
 
 const planLines = computed(() =>
@@ -2334,6 +2336,9 @@ const pullHint = computed(() => {
 
 .shell__runtime-option {
   flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
   padding: 12px 16px;
   background: var(--k-bg);
   border: 2px solid var(--k-line);
@@ -2341,8 +2346,16 @@ const pullHint = computed(() => {
   color: var(--k-text);
   font-size: 14px;
   font-weight: 500;
+  text-align: left;
   cursor: pointer;
   transition: all 0.15s ease;
+}
+
+.shell__runtime-option-hint {
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 1.4;
+  color: var(--k-muted);
 }
 
 .shell__runtime-option:hover {
@@ -2356,8 +2369,8 @@ const pullHint = computed(() => {
   color: var(--k-accent);
 }
 
-/* The preflight's affirmative line. Muted rather than loud: a working backend is the
-   expected case, and only the failure above it needs to catch the eye. */
+/* The omp check's affirmative line. Muted rather than loud: a working omp is the expected
+   case, and only the failure above it needs to catch the eye. */
 .shell__runtime-ok {
   margin-top: 8px;
   font-size: 13px;

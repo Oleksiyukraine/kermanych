@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { TerminalInfo } from '@kermanych/core';
-import { engineIdLabelKey, nativeRuntimeFor, panelTerminals, sessionCostKnown, sessionLaunchMode } from '../src/lib/native-session';
+import { defaultLaunchMode, engineIdLabelKey, nativeRuntimeFor, panelTerminals, sessionCostKnown, sessionLaunchMode } from '../src/lib/native-session';
 
 describe('nativeRuntimeFor', () => {
   it('maps the launcher mode to from-task `native`', () => {
@@ -8,6 +8,23 @@ describe('nativeRuntimeFor', () => {
     expect(nativeRuntimeFor('omp')).toBe('omp');
     expect(nativeRuntimeFor('claude')).toBe('claude-code');
     expect(nativeRuntimeFor('codex')).toBe('codex');
+  });
+});
+
+describe('defaultLaunchMode', () => {
+  it('follows the provider for an ordinary card', () => {
+    expect(defaultLaunchMode('omp')).toBe('managed');
+    expect(defaultLaunchMode('claude-code')).toBe('claude');
+    expect(defaultLaunchMode('codex')).toBe('codex');
+    expect(defaultLaunchMode(null)).toBe('managed');
+    expect(defaultLaunchMode(undefined)).toBe('managed');
+    expect(defaultLaunchMode('claude-code', { design: false })).toBe('claude');
+  });
+
+  it('is «Керманич» for a design card whatever the provider', () => {
+    for (const provider of ['omp', 'claude-code', 'codex', null, undefined] as const) {
+      expect(defaultLaunchMode(provider, { design: true })).toBe('managed');
+    }
   });
 });
 
@@ -20,8 +37,8 @@ describe('sessionLaunchMode', () => {
     expect(sessionLaunchMode({ native: true })).toBe('omp');
   });
 
-  it('is Kermanych for a managed session, whatever runtime it drives', () => {
-    expect(sessionLaunchMode({ runtime: 'claude-code' })).toBe('managed');
+  it('is Kermanych for a managed session', () => {
+    expect(sessionLaunchMode({ runtime: 'omp' })).toBe('managed');
     expect(sessionLaunchMode({ native: false, runtime: 'omp' })).toBe('managed');
   });
 });
@@ -45,7 +62,7 @@ describe('sessionCostKnown', () => {
     expect(sessionCostKnown({ native: true, runtime: 'codex' })).toBe(false);
     expect(sessionCostKnown({ native: true, runtime: 'claude-code' })).toBe(false);
     expect(sessionCostKnown({ native: true, runtime: 'omp' })).toBe(true);
-    expect(sessionCostKnown({ runtime: 'claude-code' })).toBe(true);
+    expect(sessionCostKnown({ runtime: 'omp' })).toBe(true);
   });
 });
 

@@ -6,7 +6,7 @@
 //
 // Deliberately NOT a conversation (no map of live children, no idle TTL): keeping the child
 // alive would keep a resident process for a follow-up that arrives, if ever, as a new ask.
-import type { AgentRuntimeKind, RpcEvent } from "@kermanych/core";
+import type { RpcEvent } from "@kermanych/core";
 import { createRuntime } from "./agent-runtime";
 import { reduceRpcEvents, sumTurnUsage, type TurnSpend } from "../supervisor/transcript-reducer";
 import { limit } from "./limit";
@@ -19,7 +19,6 @@ const START_TIMEOUT_MS = 30_000;
 const TURN_TIMEOUT_MS = 240_000;
 
 export type OneShotInput = {
-  kind: AgentRuntimeKind;
   cwd: string;
   prompt: string;
   tools?: string[];
@@ -40,7 +39,7 @@ export type OneShotInput = {
 // prompt has not already forbidden — but a child that tries anyway is simply dropped by the
 // timeout, never left hanging a request.
 export async function runOneShot(opts: OneShotInput): Promise<{ text: string; spend: TurnSpend }> {
-  const rpc = createRuntime(opts.kind, {
+  const rpc = createRuntime({
     cwd: opts.cwd,
     ...(opts.tools ? { tools: opts.tools } : {}),
     ...(opts.noTools ? { noTools: true } : {}),

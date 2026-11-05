@@ -1,12 +1,10 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { WorktreeService } from "../src/worktree/worktree.service";
 
-// A backend whose child cannot launch — the signed-out / missing-binary case. Before this,
-// claude's start() resolved over the corpse, so createChat marked the chat `done` (ready), the
-// operator typed into a dead queue, and the only account of it was one warn row. The contract
+// A backend whose child cannot launch — the signed-out / missing-binary case. The contract
 // under test: a launch that fails must FAIL the call, leave no half-built session behind, and
 // carry the localizable cause so the UI can name the command that repairs the machine.
-const DEAD_MSG = "Claude Code process exited with code 1. stderr: Invalid API key · Please run /login";
+const DEAD_MSG = "omp is not signed in: run `omp login`";
 
 let startBehaviour: "die" | "live" = "die";
 
@@ -15,7 +13,7 @@ vi.mock("../src/runtime/agent-runtime", () => ({
     start: async () => {
       if (startBehaviour === "die") {
         const err = new Error(DEAD_MSG) as Error & { code?: string };
-        err.code = "claude_not_authenticated";
+        err.code = "omp_not_authenticated";
         throw err;
       }
     },
@@ -55,31 +53,27 @@ function make() {
     diff: vi.fn().mockResolvedValue(""),
   };
   const sup = new SupervisorService(registry, worktree as unknown as WorktreeService, offlineAuth(), stubSkills());
-  registry.setAuthSession({ userId: "u", accessToken: "t", agentRuntime: "claude-code" });
   const project = registry.upsertProject({ id: "p1", name: "g", localRepoPath: "/tmp/proj" });
   return { sup, registry, project };
 }
 
 beforeEach(() => {
   startBehaviour = "die";
-  delete process.env.KERMANYCH_RUNTIME;
 });
 
 describe("createChat over a backend that cannot launch", () => {
   it("fails the call instead of returning a chat that can never answer", async () => {
     const { sup, project } = make();
-    await expect(sup.createChat(project.id)).rejects.toThrow(/Please run \/login/);
+    await expect(sup.createChat(project.id)).rejects.toThrow(/omp login/);
   });
 
   it("carries the localizable cause through to the caller", async () => {
     const { sup, project } = make();
     const err = await sup.createChat(project.id).catch((e: unknown) => e as Error & { code?: string });
-    expect(err.code).toBe("claude_not_authenticated");
+    expect(err.code).toBe("omp_not_authenticated");
   });
 
-  // The rollback already existed for omp (whose start() always rejected on a dead child); this
-  // pins it for the claude path now that it can reject too. A leftover row would show up on the
-  // board as a chat that opens to nothing.
+  // A leftover row would show up on the board as a chat that opens to nothing.
   it("leaves no session row behind", async () => {
     const { sup, registry, project } = make();
     await sup.createChat(project.id).catch(() => {});
@@ -91,7 +85,7 @@ describe("createChat over a backend that cannot launch", () => {
     await sup.createChat(project.id).catch(() => {});
     startBehaviour = "live";
     const chat = await sup.createChat(project.id);
-    expect(chat.runtime).toBe("claude-code");
+    expect(chat.runtime).toBe("omp");
     expect(chat.status).toBe("done");
   });
 });

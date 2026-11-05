@@ -97,8 +97,8 @@ export {
 } from "./status";
 
 export {
-  getMyAgentRuntime,
-  setMyAgentRuntime,
+  getMyAgentProvider,
+  setMyAgentProvider,
   getMyAgentLanguage,
   setMyAgentLanguage,
   getMySkillImprovement,

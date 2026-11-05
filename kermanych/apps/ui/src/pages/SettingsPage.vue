@@ -570,19 +570,15 @@
         <!-- ── APP · ШІ-ПРОВАЙДЕР ───────────────────────────────────────────── -->
         <div v-else-if="section.key === 'app-runtime'" class="set__form">
           <div class="set__group">
-            <span class="set__label">{{ t('settings.runtime.current', { name: auth.runtime ?? 'omp' }) }}</span>
-            <!-- Applies on selection: the runtime choice is written to the cloud
-                 immediately and affects new sessions. Existing sessions keep their
-                 backend as noted. -->
+            <span class="set__label">{{ t('settings.runtime.label') }}</span>
+            <!-- Applies on selection: the provider is written to the cloud immediately and sets
+                 the default launch mode of launches made afterwards. -->
             <KSelect
-              :model-value="runtimePick.value"
-              :options="RUNTIME_OPTIONS"
-              :loading="runtimePick.pending"
-              @update:model-value="runtimePick.set"
+              :model-value="providerPick.value"
+              :options="PROVIDER_OPTIONS"
+              :loading="providerPick.pending"
+              @update:model-value="providerPick.set"
             />
-            <p v-if="runtimeChecking" class="set__note set__checking" role="status">
-              <KSpinner :size="11" />{{ t('settings.runtime.checking') }}
-            </p>
             <p class="set__note">{{ t('settings.runtime.note') }}</p>
           </div>
 
@@ -979,7 +975,7 @@ import { onBeforeRouteLeave, useRoute, useRouter } from 'vue-router';
 import { useI18n } from 'vue-i18n';
 import { confirmAction } from '../lib/confirm';
 import type { EnvFileView, ThinkingLevel, AgentLanguage, DocsPolicyKey, DocsRule, MachineResources, NativeSettings, Platform } from '@kermanych/core';
-import { AGENT_LANGUAGES, AGENT_LANGUAGE_LABELS, DEFAULT_DOCS_POLICY, DOCS_LAYOUT, DOCS_RULES, VOICE_IDS } from '@kermanych/core';
+import { AGENT_LANGUAGES, AGENT_LANGUAGE_LABELS, DEFAULT_DOCS_POLICY, DOCS_LAYOUT, DOCS_RULES, VOICE_IDS, isAgentProvider } from '@kermanych/core';
 import type { AssignableRole, WorkspaceMember, WorkspaceRole } from '@kermanych/cloud';
 import type { KTheme } from '@kermanych/tokens';
 import { useOrchestrator } from 'stores/orchestrator';
@@ -1038,12 +1034,11 @@ import KModal from 'components/kit/KModal.vue';
 import KTag from 'components/kit/KTag.vue';
 import KLangToggle from 'components/kit/KLangToggle.vue';
 import KSkeleton from 'components/kit/KSkeleton.vue';
-import KSpinner from 'components/kit/KSpinner.vue';
 import SteGuide from 'components/settings/SteGuide.vue';
 
 const store = useOrchestrator();
 const projects = useProjects();
-const { t, te } = useI18n();
+const { t } = useI18n();
 const auth = useAuth();
 const route = useRoute();
 const router = useRouter();
@@ -1820,46 +1815,19 @@ function pickTheme(next: KTheme, e: MouseEvent): void {
   setTheme(next, el instanceof HTMLElement ? el.getBoundingClientRect() : null);
 }
 
-const RUNTIME_OPTIONS = computed<readonly KSelectOption[]>(() => [
+const PROVIDER_OPTIONS = computed<readonly KSelectOption[]>(() => [
   { value: 'omp', label: t('settings.runtime.omp') },
   { value: 'claude-code', label: t('settings.runtime.claude') },
+  { value: 'codex', label: t('settings.runtime.codex') },
 ]);
 
-// The CLI self-check after a runtime switch. Deliberately AFTER the write and never
-// blocking it: the operator owns the preference, and this only spares them discovering a
-// signed-out CLI through a session that silently never answers. It can take a while (it
-// runs the CLI), so the pane says «перевіряю» meanwhile. Not a guarded action: a second pick
-// while the first check runs must check the NEW runtime, and the older check's verdict (about
-// a runtime no longer chosen) is dropped — the latest pick wins.
-const runtimeChecking = ref(false);
-let runtimeCheckRun = 0;
-async function checkRuntime(kind: 'omp' | 'claude-code'): Promise<void> {
-  const run = ++runtimeCheckRun;
-  runtimeChecking.value = true;
-  try {
-    const verdict = await api.checkAccountRuntime(kind);
-    if (run !== runtimeCheckRun || verdict.ok) return;
-    const key = `errors.runtime_${verdict.code ?? ''}`;
-    store.notify(
-      verdict.code && te(key) ? t(key) : verdict.reason || t('onboarding.runtime.checkFailed'),
-      'error',
-    );
-  } catch {
-    // The check could not run (api restarting). The preference is saved either way, and a
-    // failed self-test is not something to report as a backend fault.
-  } finally {
-    if (run === runtimeCheckRun) runtimeChecking.value = false;
-  }
-}
-
-const runtimePick = reactive(
+// Unset shows omp: it is the effective default («Керманич»).
+const providerPick = reactive(
   useOptimisticValue<string>(
-    () => auth.runtime ?? 'omp',
+    () => auth.provider ?? 'omp',
     async (next) => {
-      if (auth.runtime === next) return;
-      const kind = next as 'omp' | 'claude-code';
-      await auth.chooseRuntime(kind);
-      void checkRuntime(kind);
+      if (auth.provider === next || !isAgentProvider(next)) return;
+      await auth.chooseProvider(next);
     },
   ),
 );
@@ -2464,13 +2432,6 @@ const badges = computed<Record<string, number | undefined>>(() => ({
   color: var(--k-accent);
   text-decoration: underline;
   text-underline-offset: 2px;
-}
-
-// «перевіряю» under the runtime select: the spinner sits on the text's baseline.
-.set__checking {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--k-sp-1);
 }
 
 .set__error {

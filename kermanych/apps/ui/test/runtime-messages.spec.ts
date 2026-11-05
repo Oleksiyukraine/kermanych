@@ -3,12 +3,12 @@ import { uk } from '../src/i18n/uk';
 import { en } from '../src/i18n/en';
 import type { MessageSchema } from '../src/i18n/schema';
 
-// The exact keys MainLayout/SettingsPage build at runtime (`errors.runtime_${code}`) from the
-// codes the preflight and a failed launch return. A typo in either half would leave the
-// operator with a generic fallback and no command to run — invisible to every other test.
+// The exact keys MainLayout builds at runtime (`errors.runtime_${code}`) from the codes the omp
+// check and a failed launch return. A typo in either half would leave the operator with a
+// generic fallback and no command to run — invisible to every other test.
 // `as const` types the lookups below against the message schema, so a key missing from it fails
 // typecheck as well as the run.
-const CODES = ['claude_not_authenticated', 'claude_binary_missing', 'omp_not_authenticated', 'omp_binary_missing'] as const;
+const CODES = ['omp_not_authenticated', 'omp_binary_missing'] as const;
 const LOCALES: ReadonlyArray<readonly [string, MessageSchema]> = [['uk', uk], ['en', en]];
 
 describe('runtime failure messages resolve', () => {

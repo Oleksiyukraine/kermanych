@@ -1,7 +1,6 @@
 // apps/api/test/branch-name.spec.ts
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { OneShotInput } from "../src/runtime/one-shot";
-import type { RegistryService } from "../src/registry/registry.service";
 
 const calls: OneShotInput[] = [];
 let answer: () => Promise<{ text: string }> = async () => ({ text: "add-oauth-login" });
@@ -14,9 +13,8 @@ vi.mock("../src/runtime/one-shot", () => ({
 
 import { BranchNameService, branchNamePrompt, modelBranchSlug } from "../src/supervisor/branch-name.service";
 
-function service(agentRuntime?: "omp" | "claude-code"): BranchNameService {
-  const registry = { getAuthSession: () => (agentRuntime ? { agentRuntime } : undefined) } as unknown as RegistryService;
-  return new BranchNameService(registry);
+function service(): BranchNameService {
+  return new BranchNameService();
 }
 
 describe("modelBranchSlug", () => {
@@ -53,26 +51,15 @@ describe("branchNamePrompt", () => {
 });
 
 describe("BranchNameService.suggest", () => {
-  const env = process.env.KERMANYCH_RUNTIME;
   beforeEach(() => {
     calls.length = 0;
     answer = async () => ({ text: "add-oauth-login" });
-    delete process.env.KERMANYCH_RUNTIME;
-  });
-  afterEach(() => {
-    if (env === undefined) delete process.env.KERMANYCH_RUNTIME;
-    else process.env.KERMANYCH_RUNTIME = env;
   });
 
   it("asks omp's smol role, tool-less, with the launch bounds", async () => {
     expect(await service().suggest({ title: "Додати вхід через GitHub", description: "OAuth" })).toBe("add-oauth-login");
     expect(calls).toHaveLength(1);
-    expect(calls[0]).toMatchObject({ kind: "omp", model: "pi/smol", noTools: true, startTimeoutMs: 15_000, turnTimeoutMs: 15_000 });
-  });
-
-  it("asks haiku on the claude-code runtime", async () => {
-    await service("claude-code").suggest({ title: "Add login" });
-    expect(calls[0]).toMatchObject({ kind: "claude-code", model: "haiku" });
+    expect(calls[0]).toMatchObject({ model: "pi/smol", noTools: true, startTimeoutMs: 15_000, turnTimeoutMs: 15_000 });
   });
 
   it("answers undefined when the model fails, so the launch falls back", async () => {

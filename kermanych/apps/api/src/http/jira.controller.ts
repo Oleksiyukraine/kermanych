@@ -23,7 +23,7 @@ import {
   ForbiddenException,
 } from "@nestjs/common";
 import { Buffer } from "node:buffer";
-import type { ImageInput } from "@kermanych/core";
+import { isNativeHarness, type ImageInput } from "@kermanych/core";
 import { JiraService, type JiraIssueDraft, type JiraWorklogDraft } from "../jira/jira.service";
 import { JiraHttpError, type JiraWorklogAdjust } from "../jira/jira-client";
 // Structural, not `express`: @types/express is not a dependency here, and these three
@@ -363,12 +363,13 @@ export class JiraController {
   async launch(
     @Param("integrationId") integrationId: string,
     @Param("key") key: string,
-    @Body() b: { projectId: string; transitionId?: string; images?: ImageInput[] },
+    @Body() b: { projectId: string; transitionId?: string; images?: ImageInput[]; native?: string },
     @Req() req: Authed,
   ) {
     if (!b?.projectId) throw new BadRequestException("projectId is required");
+    if (b.native !== undefined && !isNativeHarness(b.native)) throw new BadRequestException(`unknown native harness ${JSON.stringify(b.native)}`);
     try {
-      return await this.jira.launch(integrationId, key, b.projectId, req.user.id, b.transitionId, b.images);
+      return await this.jira.launch(integrationId, key, b.projectId, req.user.id, b.transitionId, b.images, b.native);
     } catch (err) {
       rethrow(err);
     }
