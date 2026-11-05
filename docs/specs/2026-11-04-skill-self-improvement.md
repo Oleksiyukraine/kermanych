@@ -83,9 +83,10 @@ Researched in its docs ([skills](https://hermes-agent.nousresearch.com/docs/user
 - **Cloud cost.** Supabase bills by plan, compute, database size, egress and Realtime. API
   requests are unlimited on every plan ([pricing](https://supabase.com/pricing)). The hosted
   project is on Free and is already over its egress quota, 11.4 of 5 GB
-  (`docs/specs/2026-11-03-board-egress-and-lag.md`). Every launch reads the whole library, bodies
-  included, at least twice (`materialize` and `assignedFor`). This is reported as finding
-  `1d9d25ba` and is outside this task.
+  (`docs/specs/2026-11-03-board-egress-and-lag.md`). A launch used to read the whole library,
+  bodies included, at least twice; that was reported as finding `1d9d25ba` and fixed on `dev` by
+  PR #247, merged into this branch: the launch-time callers now share one read per scope for
+  30 s (`SkillsService.readSkills`).
 - **omp's own `autolearn`** (`manage_skill`, `~/.omp/agent/managed-skills/`) exists but is off,
   and Kermanych does not use it.
 
@@ -219,11 +220,16 @@ Researched in its docs ([skills](https://hermes-agent.nousresearch.com/docs/user
   - a `find` is missing or not unique (the error carries the current text);
   - the result is over 64 000 bytes (omp's cap for managed skills);
   - it is the sixth improvement in the session;
-  - the operator is signed out or the cloud is unreachable («Not recorded; continue your task»);
+  - the operator is signed out or the cloud is unreachable («Not applied: … Continue your task.»);
   - the switch is off.
-- **Concurrency.** The api applies improvements of one skill one at a time. It re-reads the row
-  right before writing, which catches a write from another machine in between. A `find` that no
-  longer matches is refused, and the error carries the current text.
+- **Concurrency and the launch cache.** The api applies improvements of one skill one at a time.
+  It reads the library fresh — the editor's read, not a launch's cached copy — and re-reads the
+  personal row right before writing, which catches a write from another machine in between. A
+  `find` that no longer matches is refused, and the error carries the current text. After the
+  write it drops every cached library read that holds the operator's rows
+  (`SkillsService.forgetLibrary`), so their next launch uses the new text at once. A rollback or
+  a share made in ЦУК writes from the browser, past the api: a session launched within 30 s of it
+  may still get the text from before (the launch cache's window).
 - **The record.**
   - The table `skill_improvements` has `id`, `user_id`, `skill_name`, `team_scope` (`default` |
     `workspace` | `project` | `none`), `team_owner_id`, `created_copy`, `before_body`, `edits`
@@ -284,23 +290,28 @@ Researched in its docs ([skills](https://hermes-agent.nousresearch.com/docs/user
 
 ## Cost estimate
 
-Assumptions per user: a skill text of about 3 KB; 3 improvements a day, each opened once; 3 app
-starts a day; up to 5 personal copies; about 15 launches a day, wakes included; and, as today,
-two library reads per launch.
+Assumptions per user: a skill text of about 3 KB; a library of about ten custom skills (~30 KB;
+Kermanych's defaults live in code and cost nothing); 3 improvements a day, each opened once; 3 app
+starts a day; up to 5 personal copies; about 15 launches a day, wakes included; one library read
+per launch (PR #247).
 
-- An improvement: the user-row upsert returns the row (~3 KB) and the record insert returns
-  nothing. Realtime delivers a light row (~0.4 KB) to each open app.
+- An improvement: the fresh library read (~30 KB), the user-row upsert returns the row (~3 KB),
+  the record insert returns only its id. Realtime delivers a light row (~0.4 KB) to each open
+  app. About 100 KB a day.
 - Opening an entry: the record (~4 KB) and, for the line about a changed team text, the team rows
-  of that name (~3 KB).
-- The column after sign-in: at most 100 light rows (~40 KB at most).
+  of that name (~3 KB). About 21 KB a day.
+- The column after sign-in: at most 100 light rows (~40 KB). At most 120 KB a day.
 - Launch reads: each personal copy adds its text to every library read, which comes to
-  5 × 3 KB × 2 × 15 ≈ 450 KB a day.
+  5 × 3 KB × 15 ≈ 225 KB a day.
 
-That totals about 15 MB of egress per user a month, 13.5 MB of it from launch reads. For 10 users
-it is about 150 MB a month (3% of Free's 5 GB); for 100 users, about 1.5 GB (30% of Free, 0.6% of
-Pro's 250 GB). Fixing finding `1d9d25ba` halves the launch part. Size: at most 100 records of
-about 4 KB, about 0.4 MB per user before Postgres compresses the text; for 100 users, about 40 MB
-(8% of Free's 500 MB).
+That totals about 14 MB of egress per user a month. For 10 users it is about 140 MB a month (3% of
+Free's 5 GB); for 100 users, about 1.4 GB (28% of Free, 0.6% of Pro's 250 GB). Size: at most 100
+records of about 4 KB, about 0.4 MB per user before Postgres compresses the text; for 100 users,
+about 40 MB (8% of Free's 500 MB).
+
+This corrects the estimate given in the interview (about 15 MB per user a month). That one left out
+the library read each improvement makes and counted two library reads per launch, which PR #247
+then fixed. The totals barely move.
 
 ## Out of scope
 
@@ -310,12 +321,12 @@ about 4 KB, about 0.4 MB per user before Postgres compresses the text; for 100 u
 - A team-wide history or approvals.
 - A Hermes-style curator.
 - Native sessions.
-- The repeated library read at launch (finding `1d9d25ba`).
 
 ## Implementation
 
 The branch was fast-forwarded to `origin/dev` (`39ed733c`) before this document, because ЦУК
-exists only there.
+exists only there. Before the pull request, `origin/dev` was merged in again; it brought PR #247,
+the launch-time library cache.
 
 - **Migration** `kermanych/supabase/migrations/20261104120000_skill_improvements.sql` adds:
   - the table;
@@ -342,9 +353,12 @@ exists only there.
   state and `seen_at` updates, and the Realtime binding with `select`. `skills.ts` gains
   `getAiSkill`; `account.ts` gains a read and a write for the switch.
 - **api:**
-  - `apps/api/src/skills/skill-improvement.service.ts` resolves the text fresh, refuses, applies
-    the edits (re-based once if the personal copy moved), writes the user row and the record, and
-    undoes the row when the record cannot be written. Improvements of one skill run one at a time.
+  - `apps/api/src/skills/skill-improvement.service.ts` reads the library fresh
+    (`readSkills(scope, true)`), refuses, applies the edits (re-based once if the personal copy
+    moved), writes the user row and the record, and undoes the row when the record cannot be
+    written. Improvements of one skill run one at a time. After a write it drops the cached reads
+    of the operator's rows with `SkillsService.forgetLibrary`, which `readSkills`' `fresh` branch
+    now uses too.
   - `apps/api/src/skills/improve-skill-tool.ts` holds the definition (fields asked in the
     operator's agent language) and the call.
   - `browser-mcp.service.ts` lists the tool (a managed `agent` or `chat` session, not a tester
@@ -380,9 +394,12 @@ exists only there.
   - `@kermanych/cloud` — 13 files passed, 2 skipped (the RLS suites need a local stack); 203 tests,
     including `skill-improvements.spec.ts` (mapping, the light list, seen marks, the binding's
     filter and `select`) and the switch in `account.spec.ts`.
-  - `@kermanych/api` — typecheck clean; 132 files passed, 1 skipped; 1401 tests, including
+  - `@kermanych/api` — typecheck clean; 133 files passed, 1 skipped; 1406 tests, including
     `skill-improvement.spec.ts` (every refusal, a write with the right team scope and copy flag,
     re-basing, the undo when the record fails, the cap) and the tool's place in `tools/list`.
+    `skills.library-read.spec.ts` has a case where the two branches meet: an improvement applies
+    to the cloud's text rather than a launch's cached read, and the next launch gets the new text.
+    Before the fix it failed with «Not applied: edit 1's `find` does not occur…».
   - `@kermanych/ui` — 86 files, 939 tests, including `notification-center.spec.ts` (bind before the
     first read, no toast for old records, one toast per new record whose «Переглянути» opens and
     marks it, updates from elsewhere, a refused seen mark, sign-out, both rollback paths).

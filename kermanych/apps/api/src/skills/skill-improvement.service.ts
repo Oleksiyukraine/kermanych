@@ -141,9 +141,11 @@ export class SkillImprovementService {
         `Not applied: "${name}" is a repository skill (${repoPath}); it outranks the library, so a personal copy would never be used. Propose the change with report_finding instead.`,
       );
 
+    // The editor's read: the edits apply to the cloud's text, not to a launch's cached copy of it
+    // (SkillsService.readSkills), which may predate an improvement or a rollback made seconds ago.
     let rows;
     try {
-      rows = await this.skills.readSkills(scope);
+      rows = await this.skills.readSkills(scope, true);
     } catch (err) {
       return unreachable(err);
     }
@@ -208,6 +210,8 @@ export class SkillImprovementService {
     } catch (err) {
       return unreachable(err);
     }
+    // The operator's next launch reads the improved text, not a cached read from before the write.
+    this.skills.forgetLibrary(owner);
     let id: string;
     try {
       id = await this.cloud.insertSkillImprovement(client, {
@@ -231,6 +235,7 @@ export class SkillImprovementService {
         if (createdCopy) await this.cloud.deleteAiSkill(client, owner, name);
         else await this.cloud.upsertAiSkill(client, { owner, name, description: fresh?.description ?? entry.def.description, body: base, enabled: true });
       } catch { /* best-effort; the refusal below still tells the agent nothing was recorded */ }
+      this.skills.forgetLibrary(owner);
       return no(`Not applied: the change could not be recorded (${msg(err)}); the skill was left as it was.`);
     }
     return {

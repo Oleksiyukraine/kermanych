@@ -44,7 +44,7 @@ function make(opts: { rows?: AiSkill[]; kind?: Session["kind"]; native?: boolean
   // The cloud's user rows, mutated by the fake upsert/delete so the re-read sees writes.
   const store = new Map<string, AiSkill>((opts.rows ?? []).filter((r) => r.owner.scope === "user").map((r) => [r.name, r]));
   const rows = opts.rows ?? [];
-  const skills = { readSkills: vi.fn(async () => rows) } as unknown as SkillsService;
+  const skills = { readSkills: vi.fn(async () => rows), forgetLibrary: vi.fn() } as unknown as SkillsService;
   const auth = {
     current: () => (opts.signedIn === false ? undefined : { userId: "u1" }),
     cloudClient: () => ({}),
