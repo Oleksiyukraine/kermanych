@@ -385,6 +385,7 @@ export const en: MessageSchema = {
       label: '{harness} · native',
       idle: 'The harness is not running. Resume the session to open its TUI here.',
       resume: 'Resume',
+      engineIdOmp: 'omp session',
       engineIdHintOmp: 'The omp session file. To continue it without Kermanych: cd into the session’s worktree and run omp --resume <this file>.',
       engineIdCodex: 'codex session',
       engineIdHintCodex: 'The codex session id. To continue it without Kermanych: cd into the session’s worktree and run codex resume <this id>.',
