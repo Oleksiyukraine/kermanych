@@ -31,7 +31,7 @@ import { mkdirSync, realpathSync, lstatSync, writeFileSync } from "node:fs";
 import { basename, dirname, isAbsolute, join, relative, sep } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { RegistryService } from "../registry/registry.service";
-import { PreviewService } from "../preview/preview.service";
+import { PreviewService, type PreviewStartOptions } from "../preview/preview.service";
 import { FINDING_TOOL_NAMES, callFindingTool, findingTools } from "../findings/findings-tools";
 import { resolveLanguage } from "../runtime/resolve-language";
 import { OUTCOME_TOOL, callOutcomeTool } from "../minion/outcome-tool";
@@ -40,9 +40,11 @@ import { IMPROVE_SKILL_TOOL_NAME, callImproveSkillTool, improveSkillTool } from 
 import { SkillImprovementService } from "../skills/skill-improvement.service";
 import {
   CREDENTIAL_TOOL_DEF,
+  DEVICE_CREDENTIAL_TOOL_DEF,
   QA_CHECKLIST_TOOL_DEF,
   QA_RESULT_TOOL_DEF,
   TESTER_QA_TOOL_NAMES,
+  activeTesterOf,
   callTesterQaTool,
   credentialValue,
   isTesterSession,
@@ -50,6 +52,7 @@ import {
 } from "../tester/tester-tools";
 import {
   CREDENTIAL_TOOL,
+  DEVICE_CREDENTIAL_TOOL,
   DEVICE_BUTTONS,
   DEVICE_PLATFORM_BUTTONS,
   PREVIEW_CONFIG_PATH,
@@ -300,7 +303,9 @@ const PREVIEW_START_PLATFORM = {
   description: "Which device to run on when the file configures both; it becomes this project's default on this machine. Omit to keep the session's device (or the project's default).",
 };
 
-function previewTools(device: boolean) {
+// `tester`: a «Тестувальник» run on a Mobile project (docs/specs/2026-11-04-tester-mobile-device.md,
+// decision 1) — its first start is a clean one, and it cannot switch the device's platform.
+function previewTools(device: boolean, tester = false) {
   const shared = device ? DEVICE_PREVIEW_SHARED : PREVIEW_SHARED;
   return [
     {
@@ -308,7 +313,10 @@ function previewTools(device: boolean) {
       description: device
         ? `${shared} Start it: the file is read and validated first, then the steps run. Answers once the app runs on the device (drive it with the device_* tools), ` +
           "or after 60 s with the step it is still waiting for — follow it with preview_status (booting a device and a first native build take minutes). A failure answers with the failed step and the last lines of its log. " +
-          "Already running → the running state; pass `restart: true` to stop the services and run setup, services, install and the launch again (the device keeps running). Passing another `platform` restarts on that device. " +
+          "Already running → the running state; pass `restart: true` to stop the services and run setup, services, install and the launch again (the device keeps running). " +
+          (tester
+            ? "Your first call in this run restarts the preview with the app's data cleared (a clean start), whatever it is doing; later calls start it as usual. The run uses the session's current device. "
+            : "Passing another `platform` restarts on that device. ") +
           "A missing or invalid file is refused with the reason: write or fix `.kermanych/preview.json` by the preview-config skill."
         : `${shared} Start it: the file is read and validated first, then \`setup\` and each service run until ready. Answers with the URL and the service ports once it runs (the session browser then opens the page; check your work there with the browser tools), ` +
           "or after 60 s with the step it is still waiting for — follow it with preview_status. A failure answers with the failed step and the last lines of its log. Already running → the running state; pass `restart: true` to stop and start again (after you changed the code a running dev server does not reload, or the file). " +
@@ -317,7 +325,7 @@ function previewTools(device: boolean) {
         type: "object",
         properties: {
           restart: { type: "boolean", description: "Stop the running preview first and start it again (default false).", default: false },
-          ...(device ? { platform: PREVIEW_START_PLATFORM } : {}),
+          ...(device && !tester ? { platform: PREVIEW_START_PLATFORM } : {}),
         },
         additionalProperties: false,
       },
@@ -738,9 +746,13 @@ export class BrowserMcpService {
   // beside the navigate it depends on — observed with omp), and one page cannot serve two
   // actions at once, so a session's calls run one after another in arrival order.
   private queues = new Map<string, Promise<unknown>>();
-  // The refs of each session's latest device_snapshot (mobile decision 10): a ref is bound to
-  // the snapshot that gave it.
+  // The refs of each device's latest device_snapshot (mobile decision 10), keyed by the device's
+  // session: a ref is bound to the snapshot that gave it.
   private deviceRefs = new Map<string, Map<string, DeviceRef>>();
+  // A Mobile tester run's clean start (docs/specs/2026-11-04-tester-mobile-device.md, decision 1),
+  // by tester session id: `starting` once its first preview_start asked for one, `done` once the
+  // doer's preview ran after it. Until then the run's device tools are refused.
+  private cleanStarts = new Map<string, "starting" | "done">();
 
   constructor(
     private registry: RegistryService,
@@ -755,11 +767,28 @@ export class BrowserMcpService {
     @Optional() private improvements?: SkillImprovementService,
   ) {}
 
-  // Whose live preview a session's preview tools act on: its own, or for a tester run the
-  // parent's (docs/specs/2026-11-04-qa-tester-agent.md, decision 6) — no second set of dev
-  // servers from the same worktree.
+  // Whose live preview — and, in a Mobile project, whose device — a session's tools act on: its
+  // own, or for a tester run the parent's (docs/specs/2026-11-04-qa-tester-agent.md, decision 6;
+  // docs/specs/2026-11-04-tester-mobile-device.md, decision 1) — no second set of dev servers
+  // from the same worktree, no second device.
   private previewOwner(session: Session): string {
     return isTesterSession(session) && session.parentSessionId ? session.parentSessionId : session.id;
+  }
+
+  // The doer's device belongs to its tester until the run is retired
+  // (docs/specs/2026-11-04-tester-mobile-device.md, decision 2).
+  private refuseWhileTested(session: Session): void {
+    if (activeTesterOf(this.registry.listSessions(), session.id)) throw new Error(DEVICE_BUSY);
+  }
+
+  // Whether a tester run has had its clean start: asked for by its first preview_start, and the
+  // doer's preview has run since.
+  private testerCleaned(testerId: string, ownerId: string): boolean {
+    const mark = this.cleanStarts.get(testerId);
+    if (mark === "done") return true;
+    if (mark !== "starting" || this.preview.state(ownerId)?.phase !== "running") return false;
+    this.cleanStarts.set(testerId, "done");
+    return true;
   }
 
   tokenFor(sessionId: string): string {
@@ -778,6 +807,7 @@ export class BrowserMcpService {
 
   revoke(sessionId: string): void {
     this.deviceRefs.delete(sessionId);
+    this.cleanStarts.delete(sessionId);
     const token = this.tokens.get(sessionId);
     if (!token) return;
     this.tokens.delete(sessionId);
@@ -825,10 +855,12 @@ export class BrowserMcpService {
         const authRow = this.registry.getAuthSession();
         const language = resolveLanguage(process.env.KERMANYCH_LANGUAGE, authRow?.agentLanguage);
         const findings = findingTools(language);
-        // A tester run (a `review` child stamped `tester`) gets the agent's browser and preview
-        // plus its QA and credential tools; any other review or discussion fork is never handed
-        // this server at all.
+        // A tester run (a `review` child stamped `tester`) gets the agent's browser or device and
+        // the parent's preview, plus its QA and credential tools; any other review or discussion
+        // fork is never handed this server at all. In a Mobile project the device and the preview
+        // are the doer's (docs/specs/2026-11-04-tester-mobile-device.md, decisions 1 and 7).
         const tester = isTesterSession(session);
+        const device = platformHasDevice(platform);
         // Only a managed agent or chat session improves skills: a native TUI or a review fork
         // never read the library's skills through Kermanych, and the switch off means off.
         const improve =
@@ -836,10 +868,9 @@ export class BrowserMcpService {
         const tools = [
           ...(browserHost() && platformHasBrowser(platform) ? TOOLS : []),
           ...(browserHost() && platformHasBrowser(platform) && tester ? [CREDENTIAL_TOOL_DEF] : []),
-          // A tester run drives the parent's web preview only; a Mobile project's device belongs
-          // to the agent session.
-          ...((agent && platformHasPreview(platform)) || (tester && platformHasBrowser(platform)) ? previewTools(platformHasDevice(platform)) : []),
-          ...(agent && platformHasDevice(platform) ? DEVICE_TOOLS : []),
+          ...((agent || tester) && platformHasPreview(platform) ? previewTools(device, tester) : []),
+          ...((agent || tester) && device ? DEVICE_TOOLS : []),
+          ...(tester && device ? [DEVICE_CREDENTIAL_TOOL_DEF] : []),
           ...findings,
           ...(session?.minion === true ? [OUTCOME_TOOL] : []),
           ...(tester ? [QA_RESULT_TOOL_DEF, QA_CHECKLIST_TOOL_DEF] : []),
@@ -876,13 +907,17 @@ export class BrowserMcpService {
         else if (PREVIEW_TOOL_NAMES.has(name)) run = this.callPreview(sessionId, name, args);
         else if (UNQUEUED.has(name)) run = this.call(sessionId, name, args);
         else {
-          // The device has one screen as the page has one view: its actions queue the same way.
-          const exec = DEVICE_TOOL_NAMES.has(name) ? () => this.callDevice(sessionId, name, args) : () => this.call(sessionId, name, args);
-          run = (this.queues.get(sessionId) ?? Promise.resolve()).then(exec);
+          // The device has one screen as the page has one view: its actions queue the same way —
+          // on the device's own session, which for a tester run is the doer's.
+          const onDevice = DEVICE_TOOL_NAMES.has(name) || name === DEVICE_CREDENTIAL_TOOL;
+          const exec = onDevice ? () => this.callDevice(sessionId, name, args) : () => this.call(sessionId, name, args);
+          const caller = onDevice ? this.registry.listSessions().find((s) => s.id === sessionId) : undefined;
+          const key = caller ? this.previewOwner(caller) : sessionId;
+          run = (this.queues.get(key) ?? Promise.resolve()).then(exec);
           const tail = run.catch(() => undefined);
-          this.queues.set(sessionId, tail);
+          this.queues.set(key, tail);
           void tail.then(() => {
-            if (this.queues.get(sessionId) === tail) this.queues.delete(sessionId);
+            if (this.queues.get(key) === tail) this.queues.delete(key);
           });
         }
         try {
@@ -1022,33 +1057,51 @@ export class BrowserMcpService {
   }
 
   // No queue and no host: the preview runs in the api (decision 8 — agent sessions of a project
-  // with a browser, or with a device: mobile decision 8).
+  // with a browser, or with a device: mobile decision 8). A tester run acts on its doer's.
   private async callPreview(sessionId: string, name: string, args: Record<string, unknown>): Promise<ToolResult> {
     const session = this.registry.listSessions().find((s) => s.id === sessionId);
     if (!session) throw new Error("This session no longer exists.");
-    if (session.kind !== "agent" && !isTesterSession(session)) throw new Error(`The live preview is only for agent sessions (this is a ${session.kind}).`);
+    const tester = isTesterSession(session);
+    if (session.kind !== "agent" && !tester) throw new Error(`The live preview is only for agent sessions (this is a ${session.kind}).`);
     const platform = this.registry.listProjects().find((p) => p.id === session.projectId)?.platform;
     if (!platformHasPreview(platform)) throw new Error(`The live preview is off: this is a ${platform} project.`);
     const onDevice = platformHasDevice(platform);
-    if (onDevice && isTesterSession(session)) throw new Error("A «Тестувальник» run has no device preview: it tests web projects.");
+    const owner = this.previewOwner(session);
     // The operator's «Агент» pause covers starting and stopping, not reading. A device's pause
-    // lives in the api, since the device exists in the web build too (mobile decision 9); a web
-    // preview's is the pause of the caller's own page.
+    // lives in the api, since the device exists in the web build too (mobile decision 9), and is
+    // the device's own — the doer's for its tester too; a web preview's is the pause of the
+    // caller's own page.
     if (name === "preview_start" || name === "preview_stop") {
-      if (onDevice && this.device.paused(sessionId)) throw new Error(DEVICE_PAUSED);
+      if (onDevice && !tester) this.refuseWhileTested(session);
+      if (onDevice && this.device.paused(owner)) throw new Error(DEVICE_PAUSED);
       if (!onDevice && browserHost()?.isPaused(sessionId) === true)
         throw new Error("The operator paused your control of this session's browser and preview. Ask them to resume it, or wait.");
     }
-    sessionId = this.previewOwner(session);
+    const testerId = session.id;
+    sessionId = owner;
     switch (name) {
       case "preview_start": {
         const platformArg = args.platform ?? undefined;
         if (platformArg !== undefined && !isDevicePlatform(platformArg)) throw new Error("`platform` must be ios or android");
-        try {
-          this.preview.start(sessionId, { restart: bool(args, "restart", false), ...(platformArg !== undefined ? { platform: platformArg } : {}) });
-        } catch (err) {
-          const message = (err as Error).message;
-          throw new Error(message.includes(PREVIEW_CONFIG_PATH) ? `${message}. Write or fix the file by the preview-config skill, then call preview_start again.` : message);
+        let opts: PreviewStartOptions = { restart: bool(args, "restart", false), ...(platformArg !== undefined ? { platform: platformArg } : {}) };
+        // A Mobile tester run's first start is a clean one (docs/specs/2026-11-04-tester-mobile-device.md,
+        // decision 1). A clean start still under way is followed, not started again.
+        let follow = false;
+        if (tester && onDevice) {
+          if (platformArg !== undefined) throw new Error("A «Тестувальник» run cannot pick the platform: it tests on the session's current device.");
+          if (!this.testerCleaned(testerId, owner)) {
+            follow = this.cleanStarts.get(testerId) === "starting" && this.preview.state(owner)?.phase === "starting";
+            opts = { restart: true, clean: true };
+          }
+        }
+        if (!follow) {
+          try {
+            this.preview.start(sessionId, opts);
+          } catch (err) {
+            const message = (err as Error).message;
+            throw new Error(message.includes(PREVIEW_CONFIG_PATH) ? `${message}. Write or fix the file by the preview-config skill, then call preview_start again.` : message);
+          }
+          if (opts.clean) this.cleanStarts.set(testerId, "starting");
         }
         const state = await this.preview.settled(sessionId, PREVIEW_START_WAIT_MS);
         if (state?.phase !== "failed") return text(describePreview(state));
@@ -1085,15 +1138,24 @@ export class BrowserMcpService {
     }
   }
 
-  // The session's device (mobile decision 10): an agent session of a Mobile project, on the
-  // session's queue, under the operator's pause. The gate is checked on every call: tools listed
-  // before the project left Mobile stay in the agent's list.
+  // The session's device (mobile decision 10): an agent session of a Mobile project — or its
+  // tester run, on the doer's device — on the device's queue, under the operator's pause. The
+  // gate is checked on every call: tools listed before the project left Mobile stay in the list.
   private async callDevice(sessionId: string, name: string, args: Record<string, unknown>): Promise<ToolResult> {
     const session = this.registry.listSessions().find((s) => s.id === sessionId);
     if (!session) throw new Error("This session no longer exists.");
-    if (session.kind !== "agent") throw new Error(`The device is only for agent sessions (this is a ${session.kind}).`);
+    const tester = isTesterSession(session);
+    if (session.kind !== "agent" && !tester) throw new Error(`The device is only for agent sessions (this is a ${session.kind}).`);
     const platform = this.registry.listProjects().find((p) => p.id === session.projectId)?.platform;
     if (!platformHasDevice(platform)) throw new Error(`The device is off: this project's platform is ${platform ?? "not set"}, not Mobile.`);
+    // A tester run drives its doer's device, once its clean start has run; the doer is locked out
+    // meanwhile (docs/specs/2026-11-04-tester-mobile-device.md, decisions 1 and 2).
+    const owner = tester ? this.registry.listSessions().find((s) => s.id === session.parentSessionId) : session;
+    if (!owner) throw new Error("The tested session no longer exists.");
+    if (tester && !this.testerCleaned(session.id, owner.id))
+      throw new Error("Start the preview with preview_start first: a «Тестувальник» run starts from a clean app.");
+    if (!tester) this.refuseWhileTested(session);
+    sessionId = owner.id;
     if (this.device.paused(sessionId)) throw new Error(DEVICE_PAUSED);
     const runtime = this.device.runtime(sessionId);
     if (!runtime) throw new Error("The device is not running. Start the live preview with preview_start: it boots the device.");
@@ -1106,9 +1168,10 @@ export class BrowserMcpService {
       }
       case "device_screenshot": {
         const path = optStr(args, "path");
-        if (path !== undefined && (!session.worktree || !session.worktreePath))
+        // A tester run's screenshots go into the tested session's worktree: it has none of its own.
+        if (path !== undefined && (!owner.worktree || !owner.worktreePath))
           throw new Error("`path` needs a session with its own worktree; this one works in the operator's checkout.");
-        const file = path === undefined ? undefined : screenshotFile(session.worktreePath, path);
+        const file = path === undefined ? undefined : screenshotFile(owner.worktreePath, path);
         const png = await this.device.screenshot(sessionId);
         if (!file) return { content: [{ type: "image", data: png.toString("base64"), mimeType: "image/png" }] };
         mkdirSync(dirname(file), { recursive: true });
@@ -1170,6 +1233,18 @@ export class BrowserMcpService {
         if (typed) await this.device.type(sessionId, typed);
         if (submit) await this.device.press(sessionId, "enter");
         return text(`typed ${[...typed].length} characters${submit ? " and pressed Enter" : ""}`);
+      }
+      case DEVICE_CREDENTIAL_TOOL: {
+        if (!tester) throw new Error(`${DEVICE_CREDENTIAL_TOOL} is only for «Тестувальник» runs.`);
+        const { account, field, value } = credentialValue(this.registry, session.projectId, args);
+        const submit = bool(args, "submit", false);
+        try {
+          await this.device.type(sessionId, value, { secret: true });
+          if (submit) await this.device.press(sessionId, "enter");
+        } catch (err) {
+          throw new Error(maskSecret((err as Error)?.message ?? String(err), value));
+        }
+        return text(`typed the ${field} of «${account.name}»${submit ? " and pressed Enter" : ""}`);
       }
       case "device_press": {
         const button = str(args, "button");
@@ -1260,6 +1335,8 @@ export class BrowserMcpService {
 }
 
 const DEVICE_PAUSED = "The operator paused your control of this session's device and preview. Ask them to resume it, or wait.";
+const DEVICE_BUSY =
+  "The device is busy with a «Тестувальник» run of this session: wait until it ends (the operator hands its result over to you or discards it). preview_status and preview_logs still answer.";
 const SWIPE_DIRECTIONS = ["up", "down", "left", "right"];
 
 function unitsOf(runtime: DeviceRuntime): string {

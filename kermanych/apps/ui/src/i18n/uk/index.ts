@@ -831,6 +831,8 @@ export const uk = {
       runningTip: 'Відкрити сесію тестувальника',
       scopeTitle: 'Які пункти перевірити',
       allPassed: 'Усі пункти пройдено — тестування перевірить їх усі заново.',
+      // A Mobile project (docs/specs/2026-11-04-tester-mobile-device.md, decision 6).
+      deviceClean: 'Дані застосунку на пристрої сесії буде очищено, а превʼю перезапущено',
       scope: {
         open: 'Непройдені',
         all: 'Усі',
@@ -843,9 +845,16 @@ export const uk = {
       'no-card': 'Тестування працює лише для сесій, запущених із картки: чеклист зберігається на картці.',
       busy: 'Агент зараз працює — дочекайтеся кінця його ходу.',
       'no-browser': 'Потрібен браузер застосунку Керманич для компʼютера — у вебверсії його немає.',
-      platform: 'Проєкт без браузера (бекенд або мобільний) — тестувальнику нічого відкривати.',
+      platform: 'Проєкт без браузера й пристрою (бекенд) — тестувальнику нічого відкривати.',
       'no-preview': 'Спершу налаштуйте превʼю у вкладці «Браузер»: без .kermanych/preview.json тестувальнику нічого відкривати.',
       previewInvalid: 'Спершу виправте превʼю у вкладці «Браузер»: файл .kermanych/preview.json з помилкою — {error}',
+      noPreviewDevice: 'Спершу налаштуйте превʼю у вкладці «Пристрій»: без .kermanych/preview.json із блоком device тестувальнику нічого запускати.',
+      previewInvalidDevice: 'Спершу виправте превʼю у вкладці «Пристрій»: файл .kermanych/preview.json з помилкою — {error}',
+    },
+    // The doer's «Пристрій» tab while its tester drives the device (decision 3).
+    device: {
+      busy: 'Пристрій зайнятий тестуванням',
+      open: 'Відкрити сесію тестувальника',
     },
     verdict: {
       passed: 'пройдено',
@@ -879,6 +888,8 @@ export const uk = {
       loginPath: 'Сторінка входу',
       loginPathPlaceholder: '/login',
       loginPathHint: 'Необовʼязково. Без неї тестувальник шукатиме вхід сам.',
+      loginPathPlaceholderDevice: 'myapp://login',
+      loginPathHintDevice: 'Необовʼязково. Deep link екрана входу, напр. myapp://login — тестувальник відкриє його на пристрої. Шлях без схеми (/login) тут ігнорується.',
       notes: 'Нотатки для тестувальника',
       notesPlaceholder: 'Тестові дані, обмеження, чого не натискати…',
       save: 'Зберегти',

@@ -1285,6 +1285,9 @@ it and shows the screen live in the tab, in the desktop app and the web build al
   refused), `device_swipe`, `device_type`, `device_press`, `device_wait_for`, `device_open_url`,
   `device_app` (launch / terminate / restart) and `device_rotate`; `preview_start` takes
   `platform`, and `preview_logs` has the step `device` (the app's log).
+- **«Тестувальник».** A tester run drives this session's device with the same tools and locks the
+  doer out of it until the run ends; its first start clears the app's data
+  (see [«Тестувальник»](#тестувальник-qa-runs)).
 - **Not limited.** Devices have no cap; each costs about 2–3 GB of RAM while booted.
 - **API.** `GET /api/sessions/:id/device`, `PUT /api/projects/:id/device-choice`,
   `PUT /api/sessions/:id/device/pause`, `POST /api/sessions/:id/device/pick`,
@@ -1682,17 +1685,18 @@ request with nobody watching.
 
 ### «Тестувальник» (QA runs)
 
-«Тестувальник» (code id `tester`) walks the card's QA checklist in the live browser, item by item,
-and records a verdict for each (spec: `docs/specs/2026-11-04-qa-tester-agent.md`).
+«Тестувальник» (code id `tester`) walks the card's QA checklist in the live browser — or, in a Mobile
+project, on the session's device — item by item, and records a verdict for each (specs:
+`docs/specs/2026-11-04-qa-tester-agent.md`, `docs/specs/2026-11-04-tester-mobile-device.md`).
 
 - **Where it starts.** «Виконати тестування» on the «Завершити» sheet and in the header of the
   session's **QA** tab. It is a separate child session `тестування: <name>` next to the doer, like
-  a review: it reads the code but never edits or commits it. It needs the desktop app, a project
-  whose platform has a browser, a session started from a card, a valid `.kermanych/preview.json` in
-  the doer's directory (the preview itself may be stopped: the tester starts it), and a doer that is
-  not mid-turn; otherwise the button is disabled with the reason. One tester per session at a time:
-  while it runs, the button reads «Тестування триває» and opens it. It takes an agent slot like any
-  session.
+  a review: it reads the code but never edits or commits it. It needs a project with a browser (and
+  then the desktop app) or a Mobile project (either build; a back-end project cannot be tested), a
+  session started from a card, a valid `.kermanych/preview.json` in the doer's directory (the preview
+  itself may be stopped: the tester starts it), and a doer that is not mid-turn; otherwise the button
+  is disabled with the reason. One tester per session at a time: while it runs, the button reads
+  «Тестування триває» and opens it. It takes an agent slot like any session.
 - **Which items.** The first run checks every item. Once items carry verdicts, the button offers
   «Непройдені» (failed, blocked and untested — the default) or «Усі»; a run clears the old verdicts of
   the items it is about to check. When the card has no checklist yet, the tester composes one first
@@ -1702,6 +1706,19 @@ and records a verdict for each (spec: `docs/specs/2026-11-04-qa-tester-agent.md`
   project's browser. The back end it talks to is whatever the doer's **Змінні** (`.env`) say. Watch it
   in the tester session's «Браузер» tab. A sign-in the agent cannot pass (OAuth, SSO) is yours to
   complete there.
+- **A Mobile project.** The tester drives the doer's own device and preview, not a copy. Its first
+  `preview_start` restarts the doer's preview with the app's data cleared — `pm clear` on Android;
+  on iOS the app is uninstalled and the simulator's keychain reset — before `setup`, the services and
+  `install`, which put the app back, so every run starts signed out on a fresh build of the worktree.
+  The button says so: «Дані застосунку на пристрої сесії буде очищено, а превʼю перезапущено». Its
+  device tools are refused until that start has run. Until the run is handed over or discarded, the
+  doer's `device_*`, `preview_start` and `preview_stop` are refused (`preview_status` and
+  `preview_logs` still answer); your own ▶ / ◼ and input are not locked. The tester session has a
+  «Пристрій» tab with the doer's device (the same screen, controls and pause), and the doer's tab
+  shows «Пристрій зайнятий тестуванням» with a link to the run. Logins and passwords are typed with
+  `device_type_credential`, and a value pasted through the device clipboard is wiped from it
+  afterwards. «Сторінка входу» takes a deep link there (`myapp://login`), which the tester opens on
+  the device; a path such as `/login` is ignored.
 - **Verdicts.** Each item gets ✓ passed, ✗ failed or ⏸ blocked with the agent's note (and a screenshot
   under `docs/qa/<date>-<branch>/` for a failure), next to the human checkbox, on the QA tab and in the
   board's card dialog. The checkbox keeps meaning «a person checked it»; the tester never ticks it.

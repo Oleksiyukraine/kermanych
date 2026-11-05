@@ -4,6 +4,8 @@ import {
   qaItemsInScope,
   qaScreenshotDir,
   testerAccountsBlock,
+  testerContract,
+  testerLoginPathLine,
   testerRefusal,
 } from "../src/tester";
 import type { QaChecklistItem } from "../src/task-actions";
@@ -61,6 +63,27 @@ test("the screenshot dir is dated and branch-derived, safe for a path", () => {
   expect(qaScreenshotDir(new Date("2026-11-04T23:00:00Z"), "feature/add-qa-tester")).toBe("docs/qa/2026-11-04-add-qa-tester");
 });
 
+describe("a Mobile project's run (docs/specs/2026-11-04-tester-mobile-device.md)", () => {
+  test("the sign-in line opens a deep link on the device and ignores a web path", () => {
+    expect(testerLoginPathLine(" myapp://login ", "mobile")).toBe("`myapp://login` — open it with `device_open_url`");
+    expect(testerLoginPathLine("/login", "mobile")).toMatch(/not set/);
+    expect(testerLoginPathLine("/login", "web")).toBe("/login");
+    expect(testerLoginPathLine("", undefined)).toMatch(/not set/);
+  });
+
+  test("the contract drives the device and types credentials with the device tool", () => {
+    const mobile = testerContract("docs/qa/x", "mobile");
+    expect(mobile).toMatch(/first call is `preview_start`/);
+    expect(mobile).toMatch(/`device_screenshot` and `path` set to `docs\/qa\/x\/<itemId>\.png`/);
+    expect(mobile).toMatch(/only with `device_type_credential`/);
+    expect(mobile).not.toMatch(/browser_/);
+    const web = testerContract("docs/qa/x", "web");
+    expect(web).toMatch(/`browser_screenshot`/);
+    expect(web).toMatch(/only with `browser_type_credential`/);
+    expect(web).not.toMatch(/device_/);
+  });
+});
+
 describe("testerRefusal", () => {
   const ok = {
     kind: "agent",
@@ -70,7 +93,7 @@ describe("testerRefusal", () => {
     taskId: "t",
     runningTester: false,
     browserHost: true,
-    platformHasBrowser: true,
+    platform: "web" as const,
     previewConfig: "ok" as const,
   };
 
@@ -88,21 +111,28 @@ describe("testerRefusal", () => {
     [{ status: "merged" }, "finished"],
     [{ worktreePath: "" }, "finished"],
     [{ taskId: undefined }, "no-card"],
-    [{ platformHasBrowser: false }, "platform"],
+    [{ platform: "backend" }, "platform"],
     [{ browserHost: false }, "no-browser"],
+    [{ browserHost: false, platform: undefined }, "no-browser"],
     [{ status: "thinking" }, "busy"],
     [{ status: "tool" }, "busy"],
     [{ previewConfig: "missing" }, "no-preview"],
     [{ previewConfig: "invalid" }, "no-preview"],
     // Named before a busy doer: waiting for its turn to end would not make the file appear.
     [{ previewConfig: "missing", status: "thinking" }, "no-preview"],
-    [{ previewConfig: "missing", platformHasBrowser: false }, "platform"],
+    [{ previewConfig: "missing", platform: "backend" }, "platform"],
   ] as const)("%o → %s", (patch, reason) => {
     expect(testerRefusal({ ...ok, ...patch })).toBe(reason);
   });
 
   test("an unknown preview config refuses nothing", () => {
     expect(testerRefusal({ ...ok, previewConfig: undefined })).toBeNull();
+  });
+
+  test("a Mobile project is tested on the device, in the web build too", () => {
+    expect(testerRefusal({ ...ok, platform: "mobile" })).toBeNull();
+    expect(testerRefusal({ ...ok, platform: "mobile", browserHost: false })).toBeNull();
+    expect(testerRefusal({ ...ok, platform: "mobile", previewConfig: "invalid" })).toBe("no-preview");
   });
 
   test("an in-place session (no worktree) is not finished for lacking a path", () => {

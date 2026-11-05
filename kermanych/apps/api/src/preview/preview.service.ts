@@ -78,7 +78,10 @@ export type PreviewChange = { sessionId: string; state: PreviewState | null };
 // POST /sessions/:id/preview/app and the agent's device_app.
 export type PreviewAppAction = "launch" | "terminate" | "restart";
 
-export type PreviewStartOptions = { restart?: boolean; platform?: DevicePlatform; base?: string };
+// `clean`: the app's data is cleared after the device boots, before anything installs or starts
+// it — a «Тестувальник» run's clean start (docs/specs/2026-11-04-tester-mobile-device.md,
+// decision 1). Meaningless without a device.
+export type PreviewStartOptions = { restart?: boolean; platform?: DevicePlatform; base?: string; clean?: boolean };
 
 // Lines kept per step (decision 7), and how many end a `failed` error.
 const LOG_LINES = 2000;
@@ -429,6 +432,17 @@ export class PreviewService implements OnModuleInit, OnModuleDestroy {
           this.device.terminate(id, app).catch((err: unknown) => this.log(run, PREVIEW_DEVICE_STEP, `could not stop the previous ${app}: ${(err as Error).message}`)),
         );
         if (run.halted) return;
+        // Before `setup`, the services and `install`: a `"device": true` service such as
+        // `flutter run` exits with the app, so its data cannot be cleared under it.
+        if (opts.clean) {
+          this.log(run, PREVIEW_DEVICE_STEP, `clearing the data of ${app}`);
+          const started = Date.now();
+          await this.guard(run, this.device.clearApp(id, app)).catch((err: unknown) => {
+            throw new StepFailure(PREVIEW_DEVICE_STEP, `could not clear the data of ${app}: ${(err as Error).message}`);
+          });
+          if (run.halted) return;
+          this.log(run, PREVIEW_DEVICE_STEP, `cleared the data of ${app} in ${((Date.now() - started) / 1000).toFixed(1)} s`);
+        }
         // The app's own log, from now on: a device service or `install` may start it.
         run.stopAppLogs = this.device.appLogs(id, app, (line) => this.log(run, PREVIEW_DEVICE_STEP, line));
         starting(PREVIEW_DEVICE_STEP, services);
