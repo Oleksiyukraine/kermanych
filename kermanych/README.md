@@ -641,7 +641,7 @@ they rely on — **must raise the minimum app version in the same file**, to the
 that works with the new schema:
 
 ```sql
-update public.app_release_policy set min_app_version = '0.4.0', updated_at = now();
+update public.app_release_policy set min_app_version = '1.4.0', updated_at = now();
 ```
 
 Older apps then show «Потрібне оновлення» instead of failing screen by screen. Push such a
@@ -903,13 +903,13 @@ Spec: `docs/specs/2026-10-12-desktop-releases-and-updates.md`. Versions are semv
 (`apps/ui/package.json`), tags are `v<version>`, notes live in [`CHANGELOG.md`](./CHANGELOG.md),
 in English.
 
-1. `pnpm release:prepare 0.2.0` — refuses a version that is not higher than the current one,
-   writes it into `apps/ui/package.json` and adds an empty `## 0.2.0 — <date>` section to
+1. `pnpm release:prepare 1.3.0` — refuses a version that is not higher than the current one,
+   writes it into `apps/ui/package.json` and adds an empty `## 1.3.0 — <date>` section to
    `CHANGELOG.md`. Write the notes there (Менеджмент → «Реліз-ноти» can draft them), open a
    PR, merge it.
-2. `git tag v0.2.0 && git push origin v0.2.0`.
+2. `git tag v1.3.0 && git push origin v1.3.0`.
 3. `.github/workflows/release.yml` checks that the tag equals the package version and that the
-   section has notes (`pnpm release:notes 0.2.0`), builds the signed, notarized macOS dmg + zip
+   section has notes (`pnpm release:notes 1.3.0`), builds the signed, notarized macOS dmg + zip
    and the Linux AppImage, and publishes one GitHub Release with both and the notes. There is
    no draft step: installed apps see it on their next check. If either build fails, nothing is
    published.

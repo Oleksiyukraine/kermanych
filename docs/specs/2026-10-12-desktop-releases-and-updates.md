@@ -156,10 +156,12 @@ that tell them what changed.
     (`2026-10-09-release-notes-english.md`), so its draft is usable as is, and the GitHub Release
     page is readable by anyone. Rejected: Ukrainian only; both languages (two files per version).
 
-11. **Versions are semver, starting at `0.1.0`.** `apps/ui/package.json` holds the version
-    (`app.getVersion()`, the update feed and `min_app_version` all compare it as semver). New
-    features raise the minor, fixes the patch. The operator decides when to go to `1.0.0`. Tags
-    are `v<version>`. Rejected: starting at `1.0.0`; CalVer.
+11. **Versions are semver; the first release is `1.2.0`.** `apps/ui/package.json` holds the
+    version (`app.getVersion()`, the update feed and `min_app_version` all compare it as semver).
+    New features raise the minor, fixes the patch. Tags are `v<version>`. Decided `0.1.0` first;
+    changed after merging `dev`, where the team had been seeing a hand-written `v1.1.0` → `v1.1.2`
+    label in the app: a first release below that would read as a step back. Rejected: `1.1.3`
+    (a patch number for the change that brings updates); keeping `0.1.0`; CalVer.
 
 ## Release procedure (what the operator does)
 
@@ -251,12 +253,13 @@ Every release:
   `0.0.0`; `anon` update and `authenticated` insert are denied; a second row and a malformed
   version are rejected; a migration-style update to 0.4.0 is read back by `anon`.
 - Not verified, needs the operator's credentials or a second release: signing and notarization,
-  the workflow on GitHub, the Linux AppImage build, and a real update 0.1.0 → 0.1.1 (Squirrel.Mac
+  the workflow on GitHub, the Linux AppImage build, and a real update 1.2.0 → 1.2.1 (Squirrel.Mac
   installing after `before-quit` has closed the api). Plan: the contributor tries a
-  `workflow_dispatch` AppImage; then tag `v0.1.0`, install from the dmg, check
-  `spctl -a -vv` («Notarized Developer ID»), start a session from a Finder launch; then tag
-  `v0.1.1` and check the banner, «Що нового», the restart confirmation, the restart into 0.1.1
-  with its «Що нового» once, and that a plain quit also installs.
+  `workflow_dispatch` AppImage; then tag `v1.2.0`, install from the dmg, check
+  `spctl -a -vv` («Notarized Developer ID»), start a session from a Finder launch, try the iOS
+  device preview and a voice conversation; then tag `v1.2.1` and check the banner, «Що нового»,
+  the restart confirmation, the restart into 1.2.1 with its «Що нового» once, and that a plain
+  quit also installs.
 
 ## After merging `dev` (2026-11-05, 231 commits)
 

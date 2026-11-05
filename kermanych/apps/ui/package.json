@@ -1,6 +1,6 @@
 {
   "name": "@kermanych/ui",
-  "version": "0.1.0",
+  "version": "1.2.0",
   "description": "Kermanych v2 web UI (Quasar SPA)",
   "productName": "Kermanych",
   "type": "module",

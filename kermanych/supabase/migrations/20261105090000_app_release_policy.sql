@@ -8,7 +8,7 @@
 -- read, tightens a policy they rely on) raises the minimum IN THE SAME FILE, to the first
 -- release that works with the new schema:
 --
---   update public.app_release_policy set min_app_version = '0.4.0', updated_at = now();
+--   update public.app_release_policy set min_app_version = '1.4.0', updated_at = now();
 --
 -- Readable without signing in: the gate must also stop an old app on the sign-in screen.
 -- Nobody writes it from a client; it changes only through migrations.
