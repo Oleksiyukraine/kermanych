@@ -10,6 +10,7 @@ import {
   toCommentaryChunks,
   unwrapVoiceMessage,
   voiceMessagePrompt,
+  VOICE_PHRASE_GAP_MS,
   VOICE_SILENCE_HANGUP_MS,
 } from "../src/voice-bridge";
 import { voiceLanguage } from "../src/voice";
@@ -31,11 +32,29 @@ describe("voice message wrapping", () => {
 describe("takeUtterance", () => {
   it("takes the fragments up to the delegation and keeps the later ones", () => {
     const heard = [
-      { text: "Додай ", startMs: 100 },
-      { text: "кнопку  ", startMs: 600 },
-      { text: "а ще", startMs: 2500 },
+      { text: "Додай ", startMs: 100, endMs: 500 },
+      { text: "кнопку  ", startMs: 600, endMs: 900 },
+      { text: "а ще", startMs: 2500, endMs: 2800 },
     ];
-    expect(takeUtterance(heard, 1000)).toEqual({ text: "Додай кнопку", rest: [{ text: "а ще", startMs: 2500 }] });
+    expect(takeUtterance(heard, 1000)).toEqual({ text: "Додай кнопку", rest: [{ text: "а ще", startMs: 2500, endMs: 2800 }] });
+  });
+
+  it("drops the background heard before the operator's last phrase", () => {
+    const heard = [
+      { text: "Завтра хмарно, ", startMs: 0, endMs: 1500 },
+      { text: "дощ увечері.", startMs: 1600, endMs: 3000 },
+      { text: "Запусти ", startMs: 3000 + VOICE_PHRASE_GAP_MS, endMs: 6500 },
+      { text: "тести", startMs: 6600, endMs: 7000 },
+    ];
+    expect(takeUtterance(heard, 7000)).toEqual({ text: "Запусти тести", rest: [] });
+  });
+
+  it("keeps a phrase whole across a pause shorter than the gap", () => {
+    const heard = [
+      { text: "Додай кнопку, ", startMs: 0, endMs: 1000 },
+      { text: "а потім тест", startMs: 1000 + VOICE_PHRASE_GAP_MS - 1, endMs: 5000 },
+    ];
+    expect(takeUtterance(heard, 5000).text).toBe("Додай кнопку, а потім тест");
   });
 });
 
