@@ -31,18 +31,26 @@ export function unwrapVoiceMessage(text: string): string | null {
 // ── What the operator said ────────────────────────────────────────────────────
 
 /** One `session.input_transcript.delta`, on the Live session's timeline. */
-export type HeardFragment = { text: string; startMs: number };
+export type HeardFragment = { text: string; startMs: number; endMs: number };
+
+// A silence this long between two fragments ends a phrase (docs/specs/2026-11-04-voice-background-noise.md,
+// decision 2): what came before it is background the input transcript picked up — a TV, music,
+// people in the room — not the request the delegation is for.
+export const VOICE_PHRASE_GAP_MS = 3000;
 
 /**
- * The words of one delegation: every fragment that started at or before the delegation's
- * `offset_ms`, in delivery order, and the fragments left for the next one. Fragments of the
- * phrase can still arrive after the delegation event, which is why the caller waits a moment
- * before taking it.
+ * The words of one delegation: the last continuous phrase among the fragments that started at or
+ * before the delegation's `offset_ms`, and the fragments left for the next one. Fragments before
+ * that phrase are dropped. Fragments of the phrase can still arrive after the delegation event,
+ * which is why the caller waits a moment before taking it.
  */
 export function takeUtterance(heard: readonly HeardFragment[], offsetMs: number): { text: string; rest: HeardFragment[] } {
   const taken = heard.filter((f) => f.startMs <= offsetMs);
   const rest = heard.filter((f) => f.startMs > offsetMs);
-  return { text: taken.map((f) => f.text).join("").replace(/\s+/g, " ").trim(), rest };
+  let first = taken.length - 1;
+  while (first > 0 && taken[first]!.startMs - taken[first - 1]!.endMs < VOICE_PHRASE_GAP_MS) first--;
+  const phrase = taken.slice(Math.max(first, 0));
+  return { text: phrase.map((f) => f.text).join("").replace(/\s+/g, " ").trim(), rest };
 }
 
 // ── What a delegation becomes ─────────────────────────────────────────────────
@@ -205,7 +213,9 @@ export const PROGRESS_EVERY_MS = 15_000;
 
 // ── When it ends ──────────────────────────────────────────────────────────────
 
-// Decision 8: no operator speech, no GPT-Live speech and no running agent turn for this long.
+// Decision 8: no GPT-Live speech, no hand-off and no running agent turn for this long. The input
+// transcript alone never counts: it is background as often as the operator
+// (docs/specs/2026-11-04-voice-background-noise.md, decision 5).
 export const VOICE_SILENCE_HANGUP_MS = 180_000;
 
 export function shouldHangUp(lastActivityAt: number, agentBusy: boolean, now: number): boolean {

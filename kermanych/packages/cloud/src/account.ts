@@ -51,3 +51,25 @@ export async function setMyAgentLanguage(client: SupabaseClient, lang: AgentLang
   const { error } = await client.from("profiles").update({ agent_language: lang }).eq("id", uid);
   if (error) throw new Error(error.message);
 }
+
+// «Вдосконалювати навички» (docs/specs/2026-11-04-skill-self-improvement.md): whether the
+// operator's sessions get the `improve_skill` tool. The column is `not null default true`, so
+// null here means only «unreadable» — the caller keeps what it had.
+export async function getMySkillImprovement(client: SupabaseClient): Promise<boolean | null> {
+  const { data: auth } = await client.auth.getUser();
+  const uid = auth.user?.id;
+  if (!uid) return null;
+  const { data, error } = await client.from("profiles").select("skill_improvement").eq("id", uid).single();
+  if (error || !data) return null;
+  if (typeof data !== "object" || !("skill_improvement" in data)) return null;
+  const v = data.skill_improvement;
+  return typeof v === "boolean" ? v : null;
+}
+
+export async function setMySkillImprovement(client: SupabaseClient, on: boolean): Promise<void> {
+  const { data: auth } = await client.auth.getUser();
+  const uid = auth.user?.id;
+  if (!uid) throw new Error("not signed in");
+  const { error } = await client.from("profiles").update({ skill_improvement: on }).eq("id", uid);
+  if (error) throw new Error(error.message);
+}

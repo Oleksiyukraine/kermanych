@@ -258,7 +258,7 @@ Every release:
   `v0.1.1` and check the banner, «Що нового», the restart confirmation, the restart into 0.1.1
   with its «Що нового» once, and that a plain quit also installs.
 
-## After merging `dev` (2026-11-05, 221 commits)
+## After merging `dev` (2026-11-05, 231 commits)
 
 What `dev` brought that touches this plan, and how the merge handled it:
 
@@ -285,8 +285,8 @@ What `dev` brought that touches this plan, and how the merge handled it:
   `20261105090000_app_release_policy.sql`.
 - Checked after the merge: `pnpm build:app --publish never` (dmg + zip, `serve-sim` and `ws` in
   `app.asar.unpacked`, the microphone text in `Info.plist`); the packaged app started with
-  launchd's `PATH` found `omp` and `xcrun simctl` and drew the app; tests `core` 330, `cloud` 193,
-  `ui` 932, `api` 1389 passed; `vue-tsc` clean.
+  launchd's `PATH` found `omp` and `xcrun simctl` and drew the app; tests (after the last 10 commits
+  of `dev` as well) `core` 359, `cloud` 203, `ui` 945, `api` 1406 passed; `vue-tsc` clean.
 
 
 ## Documentation impact

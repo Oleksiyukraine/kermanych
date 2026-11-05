@@ -1065,8 +1065,9 @@ voice: it never answers about the code itself, and asks back only when it did no
   can use `gpt-live-1`. The same pane picks the voice (default `marin`); the conversation speaks
   the agent's language («Мова спілкування агента», an ASD-STE100 level is English), or the UI
   language when none is set.
-- **What the agent gets.** Your words since the previous hand-off, sent in the same mode typed
-  text takes — so speaking during a running turn steers it — under a short voice note (a speech
+- **What the agent gets.** Your last phrase before the hand-off — words before a pause of 3 s or
+  more are dropped, so a TV heard while the agent worked never rides along — sent in the same
+  mode typed text takes — so speaking during a running turn steers it — under a short voice note (a speech
   transcript, answer briefly, no tables). The log shows your own words with a 🎤 mark, after a
   restart too. When the turn ends GPT-Live retells the last reply (code blocks and tables become
   «shown in the chat»); while the agent works it gets silent progress, so «що він зараз робить?»
@@ -1077,9 +1078,16 @@ voice: it never answers about the code itself, and asks back only when it did no
 - **One conversation per app**, bound to the session it started in: switch pages or agents and
   it keeps talking to that session; a pill beside the settings gear shows it with 🔇 and ✕.
   Starting one elsewhere asks first. It ends on «Завершити», when the session is archived,
-  removed or errors, when the window closes, and after **3 minutes of silence** (no speech either
-  way and no running turn). Ending it never stops the agent. A dropped connection is not
-  re-established.
+  removed or errors, when the window closes, and after **3 minutes of silence** (GPT-Live silent,
+  nothing handed to the agent, no running turn — background sound does not count). Ending it
+  never stops the agent. A dropped connection is not re-established.
+- **A noisy room** (spec: `docs/specs/2026-11-04-voice-background-noise.md`). GPT-Live is told
+  that a TV, music or other people are not addressed to it. A noise gate lets GPT-Live hear the
+  microphone only while you are louder than a threshold: Settings → «Голос» → «Поріг шуму
+  мікрофона» (off / low / medium — the default / high), applied at once; the mark on the voice
+  bar's level meter is the threshold, and the meter dims while GPT-Live does not hear you. The
+  browser's automatic gain is off in a conversation, so a distant TV is not lifted to your
+  level. A loud source right next to the microphone still passes: a headset helps most.
 - **Cost.** $0.05 per minute of conversation, billed per second to your key, plus 15 s at each
   connection start; the agent runs on your usual Claude / omp plan.
 - **macOS microphone.** The first conversation triggers the system prompt
@@ -1857,6 +1865,36 @@ managed runtimes. A repository skill with the same name always wins over a libra
   `GET /api/skills/import/read?dir=` (reads only `SKILL.md`), and `GET /api/fs/list?hidden=1`.
   Spec: `docs/specs/2026-10-22-skill-import.md`.
 
+#### Agents improve your skills
+
+A managed session's agent can improve a library skill it used, the way Hermes Agent does (spec:
+`docs/specs/2026-11-04-skill-self-improvement.md`). It calls the `improve_skill` tool of its
+`kermanych` MCP server when you corrected how it did a kind of task the skill describes, when the
+skill turned out wrong, outdated or missing a step, or when it found a non-obvious working method
+after failed attempts. Nothing waits for approval: the change applies at once, and you can roll it
+back.
+
+- **Where it lands.** In your personal layer: a user-scope row with the skill's name, which outranks
+  the project, workspace and default text in your next sessions on every runtime that receives
+  the library. Teammates are not affected. The personal layer applies in all your projects, so
+  the agent writes only general lessons; a fact about one repository goes to a «Знахідка» as a
+  proposal for that repository's `AGENTS.md` or docs instead.
+- **What it may change.** Existing library skills it saw in the session — yours, the project's, the
+  workspace's and Kermanych's defaults — by exact replacements: each `find` must occur exactly once
+  in the skill's current text. It creates no skills. Repository skills (they outrank the library,
+  so a copy would never be used) and skills from home folders are refused.
+- **Limits.** At most 5 improvements per session; a skill may grow to 64 000 bytes. Each change is
+  recorded in the cloud table `skill_improvements` (only you read it; the newest 100 are kept).
+- **Who gets the tool.** Managed agent sessions (deep analysis, designer and «Посіпака» runs
+  included) and project chats, on `omp` and `claude-code`. Not native sessions, discussion and
+  review forks, or tester runs. Turn it off in Settings → «ШІ-провайдер» → «Вдосконалювати
+  навички» (per account; sessions launched afterwards follow it). Routes:
+  `GET /api/account/skill-improvement`, `POST /api/account/skill-improvement` (`{ on }`).
+- **Seeing and undoing it** happens in ЦУК's «Центр сповіщень» (below).
+- **Before shipping the client** apply `supabase/migrations/20261104120000_skill_improvements.sql`
+  to the team's project (see «Applying a migration to the team's project»); until then the tool
+  answers «Not applied» and the column shows the read error.
+
 ### Project documentation
 
 A project can require that its tasks are documented in its repository. The rules live in the
@@ -2020,8 +2058,9 @@ A small character — the logo's `›_` as a face — peeks out of the window's 
 Click it, press <kbd>Ctrl</kbd>/<kbd>⌘</kbd>+<kbd>K</kbd> (matched by the physical key, so the
 Ukrainian layout works; also inside a session's browser page), or draw a counter-clockwise circle
 with the mouse, no button held, and a large window opens in the middle of the screen:
-**ЦУК — «Центр управління Керманича»**, a console for Kermanych itself, with a notepad on its
-right. (Spec: `docs/specs/2026-11-04-cuk-control-console.md`.)
+**ЦУК — «Центр управління Керманича»**, a console for Kermanych itself, with «Центр сповіщень» on
+its left and a notepad on its right. (Specs: `docs/specs/2026-11-04-cuk-control-console.md`,
+`docs/specs/2026-11-04-skill-self-improvement.md`.)
 
 - **One conversation for the whole app.** ЦУК sees every workspace, project and session on this
   machine and the open board cards; whatever the header has selected is its default target
@@ -2047,6 +2086,20 @@ right. (Spec: `docs/specs/2026-11-04-cuk-control-console.md`.)
   List — the same list, on this machine, as the Менеджмент → Огляд tile, so a line written in one
   is in the other. Without a workspace it asks you to pick one. Below ~900 px of window width it
   hides behind 📝.
+- **«Центр сповіщень» is the left column.** Built like the notepad — a clipboard with the
+  notifications as slips on it, newest on top. Today it lists one kind: changes agents made to your
+  skills (see «Agents improve your skills» above). A new one also raises a toast in the bottom-right
+  corner, «Я вдосконалив навичку X: …», with «Переглянути», on every machine where your Kermanych
+  is open; the character wears its dot until you look. Opening an entry shows over the console the
+  before / after diff, the agent's reason and the session, and two buttons:
+  - **«Відкотити»** restores the skill to how it was before that change. Later changes of the same
+    skill go with it, and the confirmation names them; if that change created your personal copy,
+    the copy is deleted and the team or default text applies again.
+  - **«Поширити на команду»** (the workspace owner only) writes your copy's text to the scope the
+    skill came from — that project or that workspace; a default goes to the workspace — and deletes
+    your copy. The confirmation warns when the team text changed after your copy was made.
+
+  Below ~1280 px of window width the column hides behind 🔔, which carries the count of new entries.
 - **The Менеджмент assistant is the second panel.** For the owner and managers of the current
   workspace the window is an accordion: ЦУК expanded (every opening starts there), «Асистент
   менеджменту» folded to its bar above it. Clicking a bar swaps them; the one composer at the

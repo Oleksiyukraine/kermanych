@@ -349,7 +349,7 @@ export class SkillsService {
     const now = Date.now();
     const key = scopeOwners(scope).map((o) => `${o.scope}:${o.id}`).join("|");
     if (fresh) {
-      for (const k of this.library.keys()) if (k.split("|").includes(`project:${scope.projectId}`)) this.library.delete(k);
+      this.forgetLibrary({ scope: "project", id: scope.projectId });
     } else {
       const hit = this.library.get(key);
       if (hit && hit.expires > now) return hit.rows;
@@ -367,6 +367,15 @@ export class SkillsService {
   readAgents = (scope: AiScopeSet): Promise<AiAgent[]> => this.readAll(scope, listAiAgents);
   readCustomDirs = (cwd: string): Promise<string[] | undefined> => readOmpCustomDirectories(cwd);
   private library = new Map<string, { expires: number; rows: Promise<AiSkill[]> }>();
+
+  // Drop every cached read that holds `owner`'s rows, so the next caller reads the cloud: a write
+  // at that owner reaches the next launch at once instead of after LIBRARY_TTL_MS. A user owner is
+  // in every scope that user launches with — skill self-improvement writes there
+  // (skills/skill-improvement.service.ts) and the tool promises the next launch the new text.
+  forgetLibrary(owner: AiOwner): void {
+    const tag = `${owner.scope}:${owner.id}`;
+    for (const k of this.library.keys()) if (k.split("|").includes(tag)) this.library.delete(k);
+  }
 
   // One cloud call per owner, under the signed-in user's JWT. A member of a project is a
   // member of its workspace and owns their own user rows, so all present owners read; an

@@ -40,3 +40,11 @@ declare module '*.md?raw' {
   const content: string;
   export default content;
 }
+
+// Vite's `?worker&url` import: the URL of a separately bundled module (the voice conversation's
+// noise-gate worklet, lib/voice-gate.worklet.ts). Declared here like ImportMeta above, because
+// `vite/client`'s own declarations do not resolve from this package.
+declare module '*?worker&url' {
+  const url: string;
+  export default url;
+}

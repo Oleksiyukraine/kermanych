@@ -96,7 +96,14 @@ export {
   isTerminalTaskStatus,
 } from "./status";
 
-export { getMyAgentRuntime, setMyAgentRuntime, getMyAgentLanguage, setMyAgentLanguage } from "./account";
+export {
+  getMyAgentRuntime,
+  setMyAgentRuntime,
+  getMyAgentLanguage,
+  setMyAgentLanguage,
+  getMySkillImprovement,
+  setMySkillImprovement,
+} from "./account";
 export { getMinAppVersion } from "./app-release";
 
 export type { CloudProjectPatch, CloudProjectInsert } from "./projects";
@@ -173,9 +180,24 @@ export {
 export {
   toAiSkill,
   listAiSkills,
+  getAiSkill,
   upsertAiSkill,
   deleteAiSkill,
 } from "./skills";
+
+export type { SkillImprovementChange, SkillImprovementChannelState } from "./skill-improvements";
+export {
+  toSkillImprovementEntry,
+  toSkillImprovement,
+  insertSkillImprovement,
+  countSessionSkillImprovements,
+  listSkillImprovementEntries,
+  getSkillImprovement,
+  listAppliedSkillImprovements,
+  setSkillImprovementState,
+  markSkillImprovementsSeen,
+  subscribeSkillImprovements,
+} from "./skill-improvements";
 
 export { toAiAgentSkill, listAiAgentSkills, setAiAgentSkills } from "./agent-skills";
 
