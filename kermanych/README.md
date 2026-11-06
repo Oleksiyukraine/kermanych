@@ -1889,7 +1889,9 @@ no documentation checkboxes. «Доповнити документацію» sen
 exactly the missing documents and closes the sheet. You watch the agent write and commit them
 in the transcript, and it pushes them if the PR is already open. Changed documents appear in
 the session's «Документація» tab tagged специфікація / план / схема / хендоф / запит API /
-дизайн.
+дизайн. Every path in the tab, read or changed, has a copy mark beside it that puts the path
+on the clipboard as shown: repository-relative for a changed document, as the agent named it
+for a read one. It works after «Завершити» too.
 
 The tab survives an API restart and «Завершити». The documents a session read, the documents
 it changed and the skills on «Сесія» are kept on its card (`tasks.docs_report`,

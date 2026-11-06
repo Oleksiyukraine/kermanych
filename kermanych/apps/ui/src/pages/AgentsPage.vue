@@ -768,6 +768,13 @@
               <ul class="agents__docs-read">
                 <li v-for="p in usedDocs" :key="p" class="agents__docs-read-item">
                   <span class="agents__docs-read-path mono">{{ p }}</span>
+                  <button
+                    v-tip="t('agents.docs.copyPath')"
+                    type="button"
+                    class="agents__docs-copy"
+                    :aria-label="t('agents.docs.copyPath')"
+                    @click="copyDocPath(p)"
+                  ><KIcon name="copy" /></button>
                 </li>
               </ul>
             </section>
@@ -789,6 +796,13 @@
                         <span class="agents__diff-del">−{{ d.removed }}</span>
                       </span>
                     </div>
+                    <button
+                      v-tip="t('agents.docs.copyPath')"
+                      type="button"
+                      class="agents__docs-copy"
+                      :aria-label="t('agents.docs.copyPath')"
+                      @click="copyDocPath(d.path)"
+                    ><KIcon name="copy" /></button>
                   </div>
                   <div v-else class="agents__docs-row">
                     <button
@@ -807,6 +821,13 @@
                         <span class="agents__diff-del">−{{ d.removed }}</span>
                       </span>
                     </button>
+                    <button
+                      v-tip="t('agents.docs.copyPath')"
+                      type="button"
+                      class="agents__docs-copy"
+                      :aria-label="t('agents.docs.copyPath')"
+                      @click="copyDocPath(d.path)"
+                    ><KIcon name="copy" /></button>
                     <button
                       v-if="canTaskFromDoc(d.path)"
                       v-tip="t(isDesignReadme(d.path) ? 'agents.docs.toTaskHintDesign' : 'agents.docs.toTaskHint')"
@@ -1955,6 +1976,18 @@ async function copySessionId(id: string | undefined): Promise<void> {
   try {
     await navigator.clipboard.writeText(id);
     store.notify(t('agents.session.sessionIdCopied'), 'info');
+  } catch (e) {
+    store.notify(e instanceof Error ? e.message : String(e), 'error');
+  }
+}
+
+// «Документація»: every listed path — read or changed, live or the card's copy after
+// «Завершити» — copies as it is shown (repository-relative for a change, as the agent named it
+// for a read), so the operator can paste it into a prompt or an editor without selecting it.
+async function copyDocPath(path: string): Promise<void> {
+  try {
+    await navigator.clipboard.writeText(path);
+    store.notify(t('agents.docs.pathCopied'), 'info');
   } catch (e) {
     store.notify(e instanceof Error ? e.message : String(e), 'error');
   }
@@ -4508,15 +4541,33 @@ function openDocTask(path: string): void {
 
   &:hover { text-decoration: underline; }
 }
+// «Скопіювати шлях»: a bare muted mark beside every path, so the row keeps its height and the
+// accent stays on «Задача →».
+.agents__docs-copy {
+  flex: none;
+  display: flex;
+  padding: 2px;
+  border: none;
+  border-radius: var(--k-r-sm);
+  background: transparent;
+  color: var(--k-muted);
+  --k-icon-size: var(--k-icon-sm);
+  cursor: pointer;
+
+  &:hover { color: var(--k-text); }
+  &:focus-visible { outline: 1px solid var(--k-accent); outline-offset: 1px; }
+}
 .agents__docs-read-item {
   padding: 6px 0;
   border-bottom: 1px solid var(--k-line);
   display: flex;
-  flex-direction: column;
-  gap: 2px;
+  align-items: center;
+  gap: 8px;
   font-size: 12.5px;
 }
 .agents__docs-read-path {
+  flex: 1;
+  min-width: 0;
   color: var(--k-text);
   overflow: hidden;
   text-overflow: ellipsis;
