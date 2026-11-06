@@ -5,8 +5,8 @@ import {
   setMyAgentProvider,
   getMyAgentLanguage,
   setMyAgentLanguage,
-  getMySkillImprovement,
-  setMySkillImprovement,
+  getMySkillImprovementLevel,
+  setMySkillImprovementLevel,
 } from "../src/account";
 
 // A minimal fake matching the postgrest chain the helpers use. getMyAgentProvider does
@@ -75,9 +75,9 @@ describe("account language helpers", () => {
   });
 });
 
-describe("skill improvement switch", () => {
-  // Same postgrest chain, on the skill_improvement column.
-  function fakeSwitchClient(row: { skill_improvement: unknown }, sink?: (u: unknown) => void) {
+describe("skill improvement level", () => {
+  // Same postgrest chain, on the skill_improvement_level column.
+  function fakeLevelClient(row: { skill_improvement_level: unknown }, sink?: (u: unknown) => void) {
     return {
       auth: { getUser: async () => ({ data: { user: { id: "u1" } }, error: null }) },
       from() {
@@ -92,14 +92,15 @@ describe("skill improvement switch", () => {
     } as never;
   }
 
-  it("reads the stored boolean, and null for anything else", async () => {
-    expect(await getMySkillImprovement(fakeSwitchClient({ skill_improvement: false }))).toBe(false);
-    expect(await getMySkillImprovement(fakeSwitchClient({ skill_improvement: true }))).toBe(true);
-    expect(await getMySkillImprovement(fakeSwitchClient({ skill_improvement: "yes" }))).toBeNull();
+  it("reads a known level, and null for anything else", async () => {
+    expect(await getMySkillImprovementLevel(fakeLevelClient({ skill_improvement_level: "off" }))).toBe("off");
+    expect(await getMySkillImprovementLevel(fakeLevelClient({ skill_improvement_level: "active" }))).toBe("active");
+    expect(await getMySkillImprovementLevel(fakeLevelClient({ skill_improvement_level: true }))).toBeNull();
+    expect(await getMySkillImprovementLevel(fakeLevelClient({ skill_improvement_level: "eager" }))).toBeNull();
   });
   it("writes the snake_case column for the current user", async () => {
     let sent: unknown;
-    await setMySkillImprovement(fakeSwitchClient({ skill_improvement: true }, (u) => (sent = u)), false);
-    expect(sent).toEqual({ skill_improvement: false });
+    await setMySkillImprovementLevel(fakeLevelClient({ skill_improvement_level: "moderate" }, (u) => (sent = u)), "conservative");
+    expect(sent).toEqual({ skill_improvement_level: "conservative" });
   });
 });

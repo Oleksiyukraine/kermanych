@@ -10,6 +10,9 @@
 - **Status:** decisions agreed with the operator in the deep-analysis interview (2026-11-04),
   approved the same day; implemented on this branch (see «Verification»). The column's look is
   waiting for the operator's pick from the screenshots (decision 6).
+- **Amended** by `docs/specs/2026-11-06-skill-improvement-reflection.md` (2026-11-06): decision 2
+  gains a reflection step in Kermanych's PR, commit and design-save turns, and the switch under
+  «Defaults» becomes a four-value level.
 
 ## Goal
 

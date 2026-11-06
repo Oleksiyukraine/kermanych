@@ -1,5 +1,5 @@
 import { Injectable, Optional } from "@nestjs/common";
-import { cloudEnv, createCloudClient, getMyAgentLanguage, getMySkillImprovement } from "@kermanych/cloud";
+import { cloudEnv, createCloudClient, getMyAgentLanguage, getMySkillImprovementLevel } from "@kermanych/cloud";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { RegistryService, type AuthSessionRow } from "../registry/registry.service";
 
@@ -96,6 +96,10 @@ export class AuthService {
       };
     }
 
+    // A refreshed token of the same user keeps the cached level until the read below replaces it,
+    // so an «off» does not lapse into the default while the cloud is unreachable.
+    const kept = this.registry.getAuthSession();
+    if (kept?.userId === row.userId && kept.skillImprovementLevel) row = { ...row, skillImprovementLevel: kept.skillImprovementLevel };
     this.registry.setAuthSession(row);
     const prior = this.cached;
     // Re-presenting the cached token (a retried handoff) is no rotation: keep what it replaced.
@@ -120,15 +124,15 @@ export class AuthService {
       }
     } catch { /* offline or profile unreadable — cache stays, no directive is injected */ }
 
-    // And for the skill self-improvement switch (docs/specs/2026-11-04-skill-self-improvement.md),
-    // so the improve_skill gate reads it locally.
+    // And for the skill improvement level (docs/specs/2026-11-06-skill-improvement-reflection.md),
+    // so the improve_skill gate and the reflection step read it locally.
     try {
-      const on = await getMySkillImprovement(this.cloudClient());
-      if (on !== null) {
+      const level = await getMySkillImprovementLevel(this.cloudClient());
+      if (level !== null) {
         const cur = this.registry.getAuthSession();
-        if (cur) this.registry.setAuthSession({ ...cur, skillImprovement: on });
+        if (cur) this.registry.setAuthSession({ ...cur, skillImprovementLevel: level });
       }
-    } catch { /* offline or profile unreadable — cache stays; unknown counts as on */ }
+    } catch { /* offline or profile unreadable — cache stays; unknown counts as the default */ }
 
     return { userId: row.userId, githubUsername: row.githubUsername };
   }

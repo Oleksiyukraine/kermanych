@@ -107,6 +107,67 @@ export function skillTextBytes(text: string): number {
   return new TextEncoder().encode(text).length;
 }
 
+// ── the level (docs/specs/2026-11-06-skill-improvement-reflection.md) ─────────────
+
+/**
+ * How low the operator sets the bar for a lesson, in Settings → «ШІ-провайдер». `off` hands out
+ * neither the tool nor the reflection step and refuses a running session's call.
+ */
+export const SKILL_IMPROVEMENT_LEVELS = ["off", "conservative", "moderate", "active"] as const;
+export type SkillImprovementLevel = (typeof SKILL_IMPROVEMENT_LEVELS)[number];
+/** A level at which agents improve skills. */
+export type SkillImprovementOnLevel = Exclude<SkillImprovementLevel, "off">;
+/** The cloud column's default, and what an unknown (never read) level counts as. */
+export const DEFAULT_SKILL_IMPROVEMENT_LEVEL: SkillImprovementLevel = "moderate";
+
+export function isSkillImprovementLevel(v: unknown): v is SkillImprovementLevel {
+  return typeof v === "string" && (SKILL_IMPROVEMENT_LEVELS as readonly string[]).includes(v);
+}
+
+const CONSERVATIVE_WHEN =
+  "Improve a skill when: the operator corrected how you did a kind of task the skill describes; the skill turned out wrong, outdated or missing a step; " +
+  "or, after failed attempts, you found a working method that is not obvious.";
+
+/** The agents whose turn Kermanych ends with `skillReflectionBlock`: «Створити ПР», «Закоміти», «Зберегти дизайн». */
+export const SKILL_REFLECTION_AGENT_IDS: readonly string[] = ["pull-request", "commit", "design-save"];
+
+const LESSON_WHEN: Record<SkillImprovementOnLevel, string> = {
+  conservative: CONSERVATIVE_WHEN,
+  moderate:
+    `${CONSERVATIVE_WHEN} Repeated friction counts too: you went wrong more than once on a step the skill should have foreseen, ` +
+    "or the operator had to clarify something the skill could have said up front.",
+  active:
+    "Look for at least one improvement in every library skill you used: a missing step, an unclear rule, a correction by the operator, " +
+    "friction that repeated, or a working method found after failed attempts. Most sessions that used a skill show something it could say better.",
+};
+
+const LESSON_NEVER =
+  "Never for: a one-off task; an environment or setup failure the operator can fix; an attempt that never worked; claims that some tool does not work; " +
+  "facts about this one repository (commands, paths, conventions) — hand those to report_finding as a proposal for the repository's AGENTS.md or docs; " +
+  "secrets, tokens or personal data.";
+
+/** When an agent improves a skill at `level`: the same words in the tool's description and the reflection step. */
+export function skillLessonRule(level: SkillImprovementOnLevel): string {
+  return `${LESSON_WHEN[level]} ${LESSON_NEVER}`;
+}
+
+/**
+ * Kermanych's own last step of «Створити ПР», «Закоміти» and «Зберегти дизайн»: the moment the
+ * agent looks back at the session for skill lessons. Appended after the rendered instruction — the
+ * default or an override — so «Do only this» does not cancel it. The agent may meet it more than
+ * once per session, hence «not yet made in this session».
+ */
+export function skillReflectionBlock(level: SkillImprovementOnLevel): string {
+  return [
+    "Before you reply, look back over this session for skill improvements. This step is Kermanych's own and applies ",
+    "whatever the instruction above says. Consider the Kermanych library skills you used in this session: those you read ",
+    "and those pasted into your instructions. ",
+    skillLessonRule(level),
+    " For each improvement you have not yet made in this session, call `improve_skill`. If there is none, do not call it. ",
+    "Then finish the instruction above.",
+  ].join("");
+}
+
 // ── the record ─────────────────────────────────────────────────────────────────
 
 export const SKILL_IMPROVEMENT_STATES = ["applied", "rolled_back", "promoted"] as const;

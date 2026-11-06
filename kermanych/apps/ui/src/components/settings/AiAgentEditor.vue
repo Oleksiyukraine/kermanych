@@ -38,6 +38,12 @@
           <p class="aed__caption">{{ t('settings.aiAgents.baseSyncCaption') }}</p>
           <pre class="aed__text mono">{{ BASE_SYNC_PREVIEW }}</pre>
         </template>
+        <!-- docs/specs/2026-11-06-skill-improvement-reflection.md: the reflection step, at the
+             operator's own level; appended last, after any instruction. -->
+        <template v-if="SKILL_REFLECTION_AGENT_IDS.includes(def.id) && reflectionPreview">
+          <p class="aed__caption">{{ t('settings.aiAgents.reflectionCaption') }}</p>
+          <pre class="aed__text mono">{{ reflectionPreview }}</pre>
+        </template>
 
         <p v-if="rowError" class="aed__error mono">{{ rowError }}</p>
         <p v-else-if="saved" class="aed__saved">{{ t('settings.aiAgents.saved') }}</p>
@@ -114,7 +120,10 @@ import {
   ASSIGNED_BLOCK_HEADER,
   MINION_AGENT_ID,
   MINION_FINDINGS_SKILL,
+  DEFAULT_SKILL_IMPROVEMENT_LEVEL,
+  SKILL_REFLECTION_AGENT_IDS,
   baseSyncBlock,
+  skillReflectionBlock,
   effectiveInstruction,
   instructionErrors,
   type AgentDef,
@@ -150,6 +159,11 @@ const projects = useProjects();
 const { t } = useI18n();
 // Rendered here, not in the template: a literal `<base>` inside a mustache trips the SFC parser.
 const BASE_SYNC_PREVIEW = baseSyncBlock('<base>');
+// The reflection step at the operator's own level, as Kermanych appends it now; none at `off`.
+const reflectionPreview = computed(() => {
+  const level = auth.skillImprovementLevel ?? DEFAULT_SKILL_IMPROVEMENT_LEVEL;
+  return level === 'off' ? '' : skillReflectionBlock(level);
+});
 
 const view = ref<SkillView[]>([]);
 const bodyBytes = ref<Record<string, number>>({});

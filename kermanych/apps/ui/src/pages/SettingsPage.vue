@@ -622,16 +622,19 @@
 
           <div class="set__rule"></div>
 
-          <!-- docs/specs/2026-11-04-skill-self-improvement.md: whether this account's sessions get
-               the improve_skill tool. Cloud profile first, then the api's cache; sessions launched
-               afterwards follow it. -->
+          <!-- docs/specs/2026-11-06-skill-improvement-reflection.md: how low this account's bar for
+               skill improvements is, `off` included. Cloud profile first, then the api's cache:
+               Kermanych's PR, commit and design-save turns follow it at once, the tool's
+               description from the next launch. -->
           <div class="set__group">
-            <KCheckbox
+            <span class="set__label">{{ t('settings.skillImprovement.label') }}</span>
+            <KSelect
               :model-value="skillImprovementPick.value"
+              :options="SKILL_IMPROVEMENT_OPTIONS"
               :loading="skillImprovementPick.pending"
-              :label="t('settings.skillImprovement.label')"
               @update:model-value="skillImprovementPick.set"
             />
+            <p class="set__note">{{ t(`settings.skillImprovement.hint.${skillImprovementPick.value}`) }}</p>
             <p class="set__note">{{ t('settings.skillImprovement.note') }}</p>
           </div>
         </div>
@@ -974,8 +977,19 @@ import { computed, effectScope, onBeforeUnmount, onMounted, reactive, ref, watch
 import { onBeforeRouteLeave, useRoute, useRouter } from 'vue-router';
 import { useI18n } from 'vue-i18n';
 import { confirmAction } from '../lib/confirm';
-import type { EnvFileView, ThinkingLevel, AgentLanguage, DocsPolicyKey, DocsRule, MachineResources, NativeSettings, Platform } from '@kermanych/core';
-import { AGENT_LANGUAGES, AGENT_LANGUAGE_LABELS, DEFAULT_DOCS_POLICY, DOCS_LAYOUT, DOCS_RULES, VOICE_IDS, isAgentProvider } from '@kermanych/core';
+import type { EnvFileView, ThinkingLevel, AgentLanguage, DocsPolicyKey, DocsRule, MachineResources, NativeSettings, Platform, SkillImprovementLevel } from '@kermanych/core';
+import {
+  AGENT_LANGUAGES,
+  AGENT_LANGUAGE_LABELS,
+  DEFAULT_DOCS_POLICY,
+  DEFAULT_SKILL_IMPROVEMENT_LEVEL,
+  DOCS_LAYOUT,
+  DOCS_RULES,
+  SKILL_IMPROVEMENT_LEVELS,
+  VOICE_IDS,
+  isAgentProvider,
+  isSkillImprovementLevel,
+} from '@kermanych/core';
 import type { AssignableRole, WorkspaceMember, WorkspaceRole } from '@kermanych/cloud';
 import type { KTheme } from '@kermanych/tokens';
 import { useOrchestrator } from 'stores/orchestrator';
@@ -1874,13 +1888,16 @@ const languagePick = reactive(
   ),
 );
 
-// «Вдосконалювати навички». Unread (null) shows as on: the column defaults to true.
+// «Вдосконалювати навички». Unread (null) shows the cloud column's default.
+const SKILL_IMPROVEMENT_OPTIONS = computed<readonly KSelectOption[]>(() =>
+  SKILL_IMPROVEMENT_LEVELS.map((level) => ({ value: level, label: t(`settings.skillImprovement.level.${level}`) })),
+);
 const skillImprovementPick = reactive(
-  useOptimisticValue<boolean>(
-    () => auth.skillImprovement ?? true,
+  useOptimisticValue<string>(
+    () => auth.skillImprovementLevel ?? DEFAULT_SKILL_IMPROVEMENT_LEVEL,
     async (next) => {
-      if (auth.skillImprovement === next) return;
-      await auth.chooseSkillImprovement(next);
+      if (!isSkillImprovementLevel(next) || auth.skillImprovementLevel === next) return;
+      await auth.chooseSkillImprovementLevel(next);
     },
   ),
 );

@@ -12,6 +12,12 @@
           <p class="aro__caption">{{ t('settings.aiAgents.baseSyncCaption') }}</p>
           <pre class="aro__text mono">{{ BASE_SYNC_PREVIEW }}</pre>
         </template>
+        <!-- docs/specs/2026-11-06-skill-improvement-reflection.md: the reflection step, at the
+             operator's own level; appended last, after any instruction. -->
+        <template v-if="SKILL_REFLECTION_AGENT_IDS.includes(def.id) && reflectionPreview">
+          <p class="aro__caption">{{ t('settings.aiAgents.reflectionCaption') }}</p>
+          <pre class="aro__text mono">{{ reflectionPreview }}</pre>
+        </template>
       </section>
 
       <section class="aro__section">
@@ -42,10 +48,19 @@
 // the workspace scope, which the link switches to.
 import { computed } from 'vue';
 import { useI18n } from 'vue-i18n';
-import { MINION_AGENT_ID, MINION_FINDINGS_SKILL, baseSyncBlock, type AgentDef } from '@kermanych/core';
+import {
+  DEFAULT_SKILL_IMPROVEMENT_LEVEL,
+  MINION_AGENT_ID,
+  MINION_FINDINGS_SKILL,
+  SKILL_REFLECTION_AGENT_IDS,
+  baseSyncBlock,
+  skillReflectionBlock,
+  type AgentDef,
+} from '@kermanych/core';
 import type { AiOwner } from '@kermanych/cloud';
 import { resolveAgent } from '../../lib/ai-team';
 import { agentOwners, useAiAgentRows } from '../../composables/useAiAgentRows';
+import { useAuth } from 'stores/auth';
 import { useLoadPhase } from '../../composables/useLoadPhase';
 import KSkeleton from 'components/kit/KSkeleton.vue';
 
@@ -54,6 +69,12 @@ const emit = defineEmits<{ 'open-workspace': [] }>();
 const { t } = useI18n();
 // Rendered here, not in the template: a literal `<base>` inside a mustache trips the SFC parser.
 const BASE_SYNC_PREVIEW = baseSyncBlock('<base>');
+// The reflection step at the operator's own level, as Kermanych appends it now; none at `off`.
+const auth = useAuth();
+const reflectionPreview = computed(() => {
+  const level = auth.skillImprovementLevel ?? DEFAULT_SKILL_IMPROVEMENT_LEVEL;
+  return level === 'off' ? '' : skillReflectionBlock(level);
+});
 
 const { agents, skills, loaded, error } = useAiAgentRows(() => agentOwners(props.owner, props.workspaceId));
 const phase = useLoadPhase(() => !loaded.value && !error.value);

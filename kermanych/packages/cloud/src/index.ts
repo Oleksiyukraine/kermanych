@@ -101,8 +101,8 @@ export {
   setMyAgentProvider,
   getMyAgentLanguage,
   setMyAgentLanguage,
-  getMySkillImprovement,
-  setMySkillImprovement,
+  getMySkillImprovementLevel,
+  setMySkillImprovementLevel,
 } from "./account";
 
 export type { CloudProjectPatch, CloudProjectInsert } from "./projects";

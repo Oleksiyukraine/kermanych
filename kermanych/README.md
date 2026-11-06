@@ -1805,12 +1805,32 @@ repository skill with the same name always wins over a library skill.
 
 #### Agents improve your skills
 
-A managed session's agent can improve a library skill it used, the way Hermes Agent does (spec:
-`docs/specs/2026-11-04-skill-self-improvement.md`). It calls the `improve_skill` tool of its
-`kermanych` MCP server when you corrected how it did a kind of task the skill describes, when the
-skill turned out wrong, outdated or missing a step, or when it found a non-obvious working method
-after failed attempts. Nothing waits for approval: the change applies at once, and you can roll it
-back.
+A managed session's agent can improve a library skill it used, the way Hermes Agent does (specs:
+`docs/specs/2026-11-04-skill-self-improvement.md`, `docs/specs/2026-11-06-skill-improvement-reflection.md`).
+It calls the `improve_skill` tool of its `kermanych` MCP server. Nothing waits for approval: the
+change applies at once, and you can roll it back.
+
+- **When.** Kermanych ends «Створити ПР», «Закоміти» and «Зберегти дизайн» with its own step,
+  after the instruction (default or overridden) and every other block: the agent looks back over
+  the session at the library skills it used and calls the tool for each lesson it has not
+  recorded yet. A «Посіпака» run's PR goes through the same turn. The agent may also call the tool
+  on its own at any point.
+- **The level** in Settings → «ШІ-провайдер» → «Вдосконалювати навички» (per account) sets the
+  bar, in the same words in the tool's description and in that step:
+  - «Вимкнено» (`off`): no tool, no step, and a running session's call is refused;
+  - «Обережно» (`conservative`): you corrected how the agent did a kind of task a skill
+    describes, the skill proved wrong, outdated or missing a step, or a non-obvious method worked
+    after failed attempts;
+  - «Помірно» (`moderate`, the default): the same, plus repeated friction — the agent went wrong
+    more than once on a step the skill should have foreseen, or you had to clarify something it
+    could have said up front;
+  - «Активно» (`active`): the agent looks for at least one lesson in every skill it used.
+
+  Every level excludes one-offs, environment failures, attempts that never worked, claims that a
+  tool does not work, facts about one repository and secrets. The step follows a new level at
+  once; the tool's description follows it in sessions launched afterwards. Routes:
+  `GET /api/account/skill-improvement` → `{ level }`, `POST /api/account/skill-improvement`
+  (`{ level }`). «ШІ-команда» shows the step under the PR, commit and design-save agents.
 
 - **Where it lands.** In your personal layer: a user-scope row with the skill's name, which outranks
   the project, workspace and default text in your next sessions on every runtime that receives
@@ -1823,15 +1843,16 @@ back.
   so a copy would never be used) and skills from home folders are refused.
 - **Limits.** At most 5 improvements per session; a skill may grow to 64 000 bytes. Each change is
   recorded in the cloud table `skill_improvements` (only you read it; the newest 100 are kept).
-- **Who gets the tool.** Managed agent sessions (deep analysis, designer and «Посіпака» runs
-  included) and project chats, on `omp` and `claude-code`. Not native sessions, discussion and
-  review forks, or tester runs. Turn it off in Settings → «ШІ-провайдер» → «Вдосконалювати
-  навички» (per account; sessions launched afterwards follow it). Routes:
-  `GET /api/account/skill-improvement`, `POST /api/account/skill-improvement` (`{ on }`).
+- **Who gets the tool and the step.** Managed agent sessions (deep analysis, designer and
+  «Посіпака» runs included) and project chats (the tool only: a chat has none of the three turns).
+  Not native sessions, discussion and review forks, or tester runs. A session whose agent was
+  launched while the level was `off` gets no step until it is relaunched with the tool.
 - **Seeing and undoing it** happens in ЦУК's «Центр сповіщень» (below).
 - **Before shipping the client** apply `supabase/migrations/20261104120000_skill_improvements.sql`
-  to the team's project (see «Applying a migration to the team's project»); until then the tool
-  answers «Not applied» and the column shows the read error.
+  and `supabase/migrations/20261106120000_skill_improvement_level.sql` to the team's project (see
+  «Applying a migration to the team's project»). The second replaces `profiles.skill_improvement`
+  with `profiles.skill_improvement_level` (`off` stays off, on becomes `moderate`); an older client
+  then keeps its «unknown = on» fallback and cannot save its old switch until it is updated.
 
 ### Project documentation
 
