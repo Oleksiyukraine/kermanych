@@ -7,8 +7,8 @@
   `apps/ui` (ЦУК actions and cards, «Центр сповіщень» kinds and the «Розклад» tab, i18n `uk` /
   `en`), `apps/ui/src-electron` (background mode with a menu-bar icon), `kermanych/README.md`. No
   cloud migration.
-- **Status:** decisions agreed with the operator in the deep-analysis interview (2026-11-06);
-  waiting for approval before implementation.
+- **Status:** decisions agreed with the operator in the deep-analysis interview (2026-11-06),
+  approved the same day; plan: `docs/plans/2026-11-06-scheduled-tasks.md`.
 
 ## Goal
 
@@ -150,7 +150,9 @@ The operator wants tasks on a schedule, the way Hermes Agent has them
   (Mon–Fri), chosen days of the week, a day of the month (clamped to the month's last day), every
   N hours. A wall-clock time in the IANA zone of the machine at creation, stored on the task;
   daylight-saving gaps and doubled hours follow `Intl`'s «compatible» rule. No raw cron: ЦУК
-  translates the phrase. A «once» task switches itself off after it fires.
+  translates the phrase. A «once» task switches itself off after it fires. A «once» whose time has
+  already passed is refused (`schedule_at_past`) on create, on rescheduling and on resume; moving
+  a fired «once» to a future time turns it back on. «Через N хв» rounds up to the next whole minute.
 - **Editing never fires the past.** A changed schedule or a resumed task is re-armed from the
   moment of the change.
 - **Exactly once.** A run is claimed by inserting `(schedule_id, scheduled_for)` under a unique
@@ -160,6 +162,9 @@ The operator wants tasks on a schedule, the way Hermes Agent has them
 - **Slots.** A project run takes an agent slot like any launch and waits in the queue when the
   slots are full. One-shot runs (decision 9) do not take a slot; they run one at a time per
   machine.
+- **Background mode ends with the last live task.** The menu-bar icon stays while some task is
+  enabled and has a next firing or a run in flight; a fired «once» does not keep it.
+- **The first tick** runs 5 s after start, so a run never launches before the api listens.
 - **Unattended.** Every agent run gets the no-ask overlay and «Посіпака»'s time cap. Its opening
   prompt says: a scheduled task «<назва>», nobody will answer, analysis only (decision 2), the
   first line of the final answer is a one-line summary, ideas and bugs go through
@@ -168,8 +173,9 @@ The operator wants tasks on a schedule, the way Hermes Agent has them
   from ЦУК does; ЦУК sets another model only when the operator names one. A one-shot run uses
   the user's backend default.
 - **The project run's card** is hidden from the board (`hidden: true`), assigned to the operator,
-  `autoRun: false`, titled «Розклад · <назва> · <дата>». If the launch fails, the card is deleted,
-  so a failing daily task does not fill the backlog.
+  `autoRun: false`, titled «Розклад · <назва> · <дата>», branch `chore/schedule-<id prefix>`. If
+  the launch fails, the card is deleted, so a failing daily task does not fill the backlog. A run
+  still `running` when Kermanych restarts is failed and retired.
 - **Preconditions are checked before anything is spent:** the project is bound on this machine,
   the operator is signed in (project runs only), every named skill resolves. A failing check
   writes one «не виконано» slip with the reason and spends nothing.
@@ -183,7 +189,8 @@ The operator wants tasks on a schedule, the way Hermes Agent has them
 - **Keep-awake.** A running agent run holds the same `prevent-app-suspension` blocker «Посіпака»
   uses; nothing keeps the Mac awake between firings.
 - **Retention.** The latest 50 runs per task and the latest 200 local slips are kept; older rows
-  are dropped.
+  are dropped, except the run holding the task's latest occurrence, which keeps it from firing
+  twice. Deleting a task removes its runs (one in flight ends silently) and keeps its slips.
 - **Notifications** follow the existing path: a toast with «Переглянути» (opens ЦУК on the slip),
   an HTML5 notification while the window is unfocused or hidden, a Dock bounce. An unsigned build,
   where macOS refuses notifications, keeps the toast, the bounce and the slip.
@@ -193,20 +200,23 @@ The operator wants tasks on a schedule, the way Hermes Agent has them
 ## Implementation
 
 - **core:**
-  - `schedules.ts` — `ScheduleKind` (`reminder` | `agent`), `ScheduleSpec` (the presets above),
-    `ScheduledTask`, `ScheduleRun` and its statuses (`done`, `late`, `skipped`, `failed`) and
-    reasons; `validateSchedule` with stable refusal codes; `zonedInstant`, `nextOccurrences(n)`,
-    `latestOccurrence`, `dueOccurrence` (the decision 8 window), `describeSchedule` for the card
-    and the list.
+  - `schedules.ts` — `ScheduleKind` (`reminder` | `agent`), `ScheduleSpec` (the presets above)
+    and `ScheduleWhen` (a spec or «через N хв»), `ScheduledTask`, `ScheduleRun` (statuses
+    `running`, `done`, `skipped`, `failed`, and reasons), `ScheduleSlip`;
+    `validateScheduleSpec` / `validateScheduleDraft` / `validateSchedulePatch` with stable refusal
+    codes; `zonedInstant`, `nextOccurrences`, `latestOccurrence`, `catchUpWindowMs`,
+    `dueOccurrence` (the decision 8 window), `describeSchedule` for the card and the list.
   - `cuk-actions.ts` — `schedule.create`, `schedule.update`, `schedule.pause`,
     `schedule.resume`, `schedule.run`, `schedule.delete`, their validators, and
     `cukNeedsConfirm` per decision 7. Rejection codes in `i18n-codes.ts`.
-  - `ServerEvent` gains `schedule_slip` (a slip written) and `schedule_changed`.
+  - `ServerEvent` gains `schedules_update` (the whole list), `schedule_slip` (a slip written or
+    re-fired by a snooze) and `schedule_run_update`.
 - **api:**
   - Registry: tables `schedules`, `schedule_runs` (unique `(schedule_id, scheduled_for)`),
     `schedule_slips`.
-  - `schedules/schedule.service.ts` — the minute tick (`unref`), a kick at start and on wake,
-    the claim, the overlap skip, the catch-up window, the once switch-off, retention.
+  - `schedules/schedule.service.ts` — the minute tick (`unref`) and one tick at start (a timer
+    resumes after the Mac wakes, so the next tick sees the missed occurrence), the claim, the
+    overlap skip, the catch-up window, the once switch-off, re-arming, retention, snoozes.
   - Runners: reminders write a slip; project runs file the hidden card and launch through
     `createSessionFromTask` with the scheduled opening prompt, `assignedForNames` skills, the
     no-ask overlay and the time cap, then retire the worktree on the run's end (decision 10);
@@ -216,12 +226,12 @@ The operator wants tasks on a schedule, the way Hermes Agent has them
   - `cuk/cuk-prompt.ts` — the schedule verbs, the kinds, the analysis-only rule, the skill names
     and the task list in the context block.
 - **electron:** the menu-bar `Tray` and its menu; `window-all-closed` and the window's `close`
-  hide instead of quitting while the api reports an enabled task; ⌘Q and «Завершити» quit; the
-  `powerMonitor` `resume` event kicks the scheduler.
+  hide instead of quitting while the api reports an enabled task (`bootstrap({ schedules })`);
+  ⌘Q and «Завершити» quit.
 - **ui:**
   - `stores/schedules.ts` — the list, run history, slips; the socket events.
-  - `stores/notification-center.ts` — `NotificationItem` gains `reminder`, `schedule-run`,
-    `schedule-missed`; one feed by time.
+  - `stores/notification-center.ts` — `NotificationItem` gains `schedule-slip` (a reminder or a
+    run: done, skipped or failed); one feed by time.
   - `CukNotifications.vue` — the «Сповіщення | Розклад» tabs, the new slips; a schedule detail
     view over the console.
   - `stores/cuk-chat.ts`, `CukActionCard.vue` — the schedule actions and their card fields.
@@ -229,19 +239,44 @@ The operator wants tasks on a schedule, the way Hermes Agent has them
 
 ## Verification
 
-- **core:** occurrence math across both Kyiv DST changes, weekdays, chosen days, the 31st in a
-  short month, every N hours; the due rule — on time, the latest miss only, the 2–12 h window,
-  never before arming; validation codes; `cukNeedsConfirm` per decision 7.
-- **api:** the tick with fake timers — one claim per occurrence, a restart not refiring, the
-  overlap skip, catch-up inside and outside the window, the once switch-off; a project run's
-  hidden card, skills block, no-ask overlay and worktree removal on its end, a failed launch
-  deleting its card; a one-shot run's cwd and stored answer; the precondition slips.
-- **ui:** slip kinds and the merged feed; the action executor for each kind.
-- **Live preview:** ask ЦУК «нагадай мені через 2 хвилини випити воду» → the result line, the
-  task in «Розклад», the slip with its toast two minutes later; an agent task without a project
-  created through its card and run with «Запустити зараз»; pause and delete from ЦУК.
-- **Electron build:** closing the window with an enabled task leaves the menu-bar icon and fires a
-  reminder; with none, closing quits.
+- `pnpm --filter @kermanych/core test`: 438 passed. `test/schedules.spec.ts` covers the
+  occurrence math across both Kyiv DST changes, weekdays, chosen days, the 31st in a short month,
+  every N hours in a +05:30 zone; the due rule — on time, late inside the window, missed outside
+  it, reminders always firing, never at or before arming or the last claim; the validators and
+  `resolveWhen`. `cuk-actions.spec.ts` covers the schedule kinds and `cukNeedsConfirm` per
+  decision 7, an unknown ref meaning a card.
+- `apps/api` `vitest run`: 1365 passed, 4 skipped. `test/schedules.spec.ts` and
+  `test/registry.schedules.spec.ts` cover:
+  - the tick on its own timer; one claim per occurrence, a restart not refiring; the overlap
+    skip; catch-up inside and a «Пропущено» slip outside the window; the once switch-off; re-arming;
+  - a pause, a delete and a rename made while an earlier task of the same tick is launching;
+  - a past «once» refused on create (service and 400), on resume; re-enabling by rescheduling;
+  - a project run's hidden card, skills block, analysis-only prompt, a failed launch deleting the
+    card, the run's end writing the slip and retiring the worktree, the time cap failing it;
+  - a one-shot run's folder and stored answer; precondition failures spending nothing; delete
+    during a run releasing keep-awake and writing no slip; snooze re-firing; retention keeping
+    the dedupe row.
+- `apps/ui` `vitest run`: 961 passed (feed merge and new count, the slip toast, undo mapping,
+  every rejection code and run reason in both locales). `tsc --noEmit` (api) and `vue-tsc
+  --noEmit` (ui with `src-electron`, against the built api) are clean.
+- Live preview (`KERMANYCH_PREVIEW=1`, real ЦУК model):
+  - «Нагадай мені через 1 хвилину випити воду» → a reminder created at once with «Скасувати» in
+    the result line, the row in «Розклад»; at 22:44 the slip landed in «Сповіщення» with «Готово»
+    and «Відкласти», the toast with «Переглянути» and the character's dot; the «once» task then
+    showed «на паузі»;
+  - «Щоранку о 9:00 без проєкту: …» → a card with «без проєкту», the editable text and the next
+    three firings; «Виконати» created it; «Запустити зараз» in its view ran the one-shot agent,
+    the history showed «виконується» then «виконано» with the summary, and a slip with
+    «Відкрити» and a toast arrived;
+  - «Постав «Пораду дня» на паузу і видали нагадування «Вода»» → the pause ran at once with
+    «Скасувати», the delete came as a card and removed the task on «Виконати»;
+  - `POST /schedules` with a past «once» answered 400 `schedule_at_past`.
+- Review: a code review of the change found five issues (stale rows in the tick, keep-awake held
+  after a delete mid-run, a past «once» keeping background mode on, retention dropping the dedupe
+  row, a list update blanking the first feed load); all five are fixed with the tests above.
+- **Not exercised:** a project run end to end (the preview's seeded projects point at
+  non-existent paths and it has no cloud board — covered by the api tests with a fake supervisor
+  path); the Electron build (the menu-bar icon, hiding on close, ⌘Q) — only typechecked.
 
 ## Documentation
 

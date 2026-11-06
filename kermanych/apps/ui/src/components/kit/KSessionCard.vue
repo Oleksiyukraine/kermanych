@@ -50,12 +50,13 @@
           <KStatusDot :status="status" />
           <span v-if="statusLine" v-tip.overflow="statusTip" class="k-session-card__status-line">{{ statusLine }}</span>
         </span>
-        <span v-if="harness || deepAnalysis || design || minion || autoRun || needsDecision || notNeeded" class="k-session-card__marks mono">
+        <span v-if="harness || deepAnalysis || design || minion || schedule || autoRun || needsDecision || notNeeded" class="k-session-card__marks mono">
           <KHarnessMark v-if="harness" :harness="harness" />
           <KAnalysisMark v-if="deepAnalysis" />
           <KDesignMark v-if="design" />
           <KMinionMark v-if="minion" kind="running" />
           <KMinionMark v-else-if="autoRun" kind="allowed" />
+          <KScheduleMark v-if="schedule" :name="schedule" />
           <KDecisionMark v-if="needsDecision" :reason="needsDecision" />
           <KNotNeededMark v-else-if="notNeeded" :reason="notNeeded" />
         </span>
@@ -90,6 +91,7 @@ import KHarnessMark from './KHarnessMark.vue';
 import KAnalysisMark from './KAnalysisMark.vue';
 import KDesignMark from './KDesignMark.vue';
 import KMinionMark from './KMinionMark.vue';
+import KScheduleMark from './KScheduleMark.vue';
 import KDecisionMark from './KDecisionMark.vue';
 import KNotNeededMark from './KNotNeededMark.vue';
 import KSpinner from './KSpinner.vue';
@@ -141,7 +143,8 @@ import type { LaunchMode } from '../../lib/native-session';
 // shape, a different tooltip); `needsDecision` is the worded reason of a run that stopped on a
 // choice for the operator (KDecisionMark), `notNeeded` the evidence of a run that found nothing
 // to change (KNotNeededMark; never together with `needsDecision`). All sit with the analysis
-// mark, for the same reason: they say how this agent works.
+// mark, for the same reason: they say how this agent works. `schedule` names the scheduled task
+// whose run this session is (KScheduleMark, docs/specs/2026-11-06-scheduled-tasks.md, decision 5).
 //
 // `pending` — an action on this session is waiting for its result (stopped, deleted,
 // archived, forked…; stores/pending): the card dims, spins before the time, and its ✕ is blocked.
@@ -164,6 +167,8 @@ const props = withDefaults(
     design?: boolean | undefined;
     // Run by «Посіпака».
     minion?: boolean | undefined;
+    // A scheduled task's run: the task's name.
+    schedule?: string | undefined;
     // A card with «Дозволити автовиконання».
     autoRun?: boolean | undefined;
     // «Потрібне рішення», worded (lib/minion.ts minionReasonText); absent when nothing waits.
