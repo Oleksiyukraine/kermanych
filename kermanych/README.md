@@ -780,6 +780,12 @@ pnpm dev:ui           # Quasar UI on  http://localhost:5317
 Run the two dev commands in separate terminals, then open
 <http://localhost:5317> in your browser. The UI talks to the API on `:4317`.
 
+`pnpm test` (all packages, or one: `pnpm --filter @kermanych/api test`) first builds the
+package's workspace dependencies (`@kermanych/core`, `@kermanych/cloud`), as `dev` and `build`
+do: they resolve through `main: dist/index.js` and `dist/` is gitignored. Running bare
+`vitest run` in a fresh worktree instead fails with «Failed to resolve entry for package»
+until you run `pnpm --filter '@kermanych/ui^...' build` once.
+
 Only the app's own UI can hand the API a signed-in session (`POST /api/auth/session`, the one
 route without a bearer). The API accepts the handoff when it carries the current bearer (a
 token refresh), the desktop app's per-launch key, or — for a standalone `pnpm dev:api` — an
