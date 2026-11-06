@@ -1774,8 +1774,8 @@ const launchScopeName = computed(() => {
 // be: that one drew the OS rectangle after a ~1s delay, the single square bubble left in a
 // rounded UI. A <dt> is neither focusable nor disabled, so the directive fires on it.
 const skillsHint = computed(() => t('agents.session.skillsHint'));
-// The id is the same string the worktree folder under the project's .gitworktree is named after,
-// so the bubble says where to spend it rather than leaving an opaque uuid on screen.
+// The bubble says where to spend the id (bug reports, logs) rather than leaving an opaque uuid on
+// screen; the worktree folder is named after the branch, not the id.
 const sessionIdHint = computed(() => t('agents.session.idHint'));
 // The engine's own handle, which is what `--resume` takes — our id names the folder, not the
 // conversation. A claude or codex session keeps its id in `ompSessionId` (`codex resume`

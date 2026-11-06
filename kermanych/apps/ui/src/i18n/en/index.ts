@@ -152,6 +152,8 @@ export const en: MessageSchema = {
     close: 'Collapse files',
     noSelection: 'Pick a project or a session to see its files.',
     notBound: 'The project is not bound to a folder on this machine, so there are no files to show.',
+    checkout: 'Project folder',
+    pickTree: 'Folder to browse',
   },
   terminal: {
     title: 'Terminal',
@@ -326,9 +328,9 @@ export const en: MessageSchema = {
       cost: 'Cost',
       tokenTotal: '{n} tok',
       id: 'Session ID',
-      idHint: 'The session’s identifier in Kermanych. Its worktree — .gitworktree/<id> in the project — is named after it, so this is the string to quote in a bug report or when hunting for logs. The conversation with the engine has its own id, below.',
+      idHint: 'The session’s identifier in Kermanych — the string to quote in a bug report or when hunting for logs. Its worktree is named after its branch: .gitworktree/<branch> in the project. The conversation with the engine has its own id, below.',
       engineId: 'Claude Code session',
-      engineIdHint: 'The identifier of the conversation inside Claude Code. To continue it natively, without Kermanych: cd into the session’s worktree (cd .gitworktree/<Session ID> in the project) and run claude --resume <this id>. The history lives in ~/.claude/projects keyed by that very folder, so both ids are needed together.',
+      engineIdHint: 'The identifier of the conversation inside Claude Code. To continue it natively, without Kermanych: cd into the session’s worktree (cd .gitworktree/<branch> in the project) and run claude --resume <this id>. The history lives in ~/.claude/projects keyed by that very folder, so the folder and this id are needed together.',
     },
     docs: {
       usedTitle: 'Documentation used',

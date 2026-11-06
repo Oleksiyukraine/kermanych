@@ -17,7 +17,7 @@ worktrees, the RPC bridge — is shared.
   their turns stream in, and answering interactive prompts.
 - **One session = one git worktree + one child**: an `omp` runtime for «Керманич», or the
   native harness's TUI. Worktrees live under
-  the project's `.gitworktree/<sessionId>`; the registry DB is
+  the project's `.gitworktree/<branch>`; the registry DB is
   `~/.kermanych/kermanych.sqlite`.
 
 ## Prerequisites
@@ -1453,7 +1453,7 @@ developer's machine. The direction is always task → session.
    «Запустити» for an unbound project asks for the local git repository and stores that
    path locally (it never reaches the cloud).
 4. **Run** — `POST /api/sessions/from-task` creates a git worktree under
-   the project's `.gitworktree/<sessionId>`, copies the project's `carryFiles` (`.env` by
+   the project's `.gitworktree/<branch>`, copies the project's `carryFiles` (`.env` by
    default) into it, and spawns one `omp --mode rpc` child. From here on the session is an
    ordinary local session: it appears on the Агенти board and you drive it there. The branch
    is named `<prefix>/<slug>`: the prefix is the card's (`feature` by default). The slug is the

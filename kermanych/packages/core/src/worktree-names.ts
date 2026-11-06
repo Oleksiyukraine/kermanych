@@ -56,7 +56,12 @@ export function isGitBranchName(name: string): boolean {
   if (name.startsWith("/") || name.endsWith("/") || name.includes("//") || name.endsWith(".")) return false;
   return name.split("/").every((part) => !part.startsWith(".") && !part.endsWith(".lock"));
 }
-// A session's worktree lives inside its project's repository, under `.gitworktree/`.
-export function worktreeDir(repoRoot: string, sessionId: string): string {
-  return join(repoRoot, ".gitworktree", sessionId);
+// A session's worktree lives inside its project's repository at `.gitworktree/<branch>`, so the
+// folder reads as the work it holds. A slashed branch nests (`feature/x` → `.gitworktree/feature/x`),
+// which cannot collide: git refuses a branch `feature` beside `feature/x`, and refuses one branch
+// in two worktrees. The branch is a git-made name, so it has no `..` or leading-dot segment
+// (isGitBranchName) and cannot climb out of `.gitworktree/`.
+export function worktreeDir(repoRoot: string, branch: string): string {
+  if (!isGitBranchName(branch)) throw new Error(`not a branch name: ${branch}`);
+  return join(repoRoot, ".gitworktree", ...branch.split("/"));
 }

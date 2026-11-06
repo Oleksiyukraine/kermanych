@@ -149,6 +149,13 @@ export const useOrchestrator = defineStore('orchestrator', () => {
     localStorage.setItem('kermanych.fileManager.visible', fileManagerVisible.value ? '1' : '0');
     localStorage.setItem('kermanych.fileManager.side', fileManagerSide.value);
   }
+  // The tree the operator picked in the dock's worktree selector (composables/useFileSource),
+  // tagged with the selection it was made under: a different project or session drops it, and
+  // the dock follows the selection again.
+  const fileSourcePick = ref<{ scope: string; key: string } | undefined>();
+  function pickFileSource(scope: string, key: string): void {
+    fileSourcePick.value = { scope, key };
+  }
 
   let socket: Socket | undefined;
 
@@ -712,6 +719,8 @@ export const useOrchestrator = defineStore('orchestrator', () => {
     fileManagerVisible,
     fileManagerSide,
     toggleFileManager,
+    fileSourcePick,
+    pickFileSource,
     connect,
     onServerEvent,
     selectProject,

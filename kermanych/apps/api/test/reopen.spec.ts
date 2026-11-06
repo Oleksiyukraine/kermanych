@@ -107,14 +107,14 @@ test("reopenSession forks the branch afresh off the base when the session's bran
 // the reopen with "'<path>' already exists".
 test("reopenSession clears what was written back into the retired worktree's path", async () => {
   const id = await seedMerged();
-  const leftover = join(worktreeDir(repo, id), "apps", "ui", "node_modules", ".q-cache");
-  trash.push(worktreeDir(repo, id));
+  const leftover = join(worktreeDir(repo, "feature/task-one"), "apps", "ui", "node_modules", ".q-cache");
+  trash.push(worktreeDir(repo, "feature/task-one"));
   mkdirSync(leftover, { recursive: true });
   writeFileSync(join(leftover, "dev-spa"), "cache\n");
 
   const re = await sup.reopenSession(id);
 
-  expect(re.worktreePath).toBe(worktreeDir(repo, id));
+  expect(re.worktreePath).toBe(worktreeDir(repo, "feature/task-one"));
   expect(re.branch).toBe("feature/task-one");
   expect(existsSync(join(re.worktreePath, "feature.txt"))).toBe(true);
   expect(existsSync(leftover)).toBe(false);

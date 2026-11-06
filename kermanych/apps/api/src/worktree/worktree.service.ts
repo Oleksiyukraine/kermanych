@@ -1,8 +1,8 @@
 // apps/api/src/worktree/worktree.service.ts
 import { Injectable } from "@nestjs/common";
 import { spawn } from "node:child_process";
-import { readdir, readFile, rm, stat } from "node:fs/promises";
-import { join, resolve } from "node:path";
+import { readdir, readFile, rm, rmdir, stat } from "node:fs/promises";
+import { basename, dirname, join, resolve } from "node:path";
 import { addedFileDiff, splitDiff, type SplitDiff } from "./split-diff";
 import { isGitBranchName, type TreeEntry, type FileContent, type ReleaseCommit } from "@kermanych/core";
 
@@ -156,6 +156,17 @@ export class WorktreeService {
     const dotGit = await stat(join(wtDir, ".git")).catch(() => undefined);
     if (!dotGit?.isDirectory()) await rm(wtDir, { recursive: true, force: true, maxRetries: 3 }).catch(() => {});
     await git(repoDir, ["worktree", "prune"]);
+    await this.dropEmptyParents(wtDir);
+  }
+
+  // A branch-named worktree nests (`.gitworktree/feature/x`, worktreeDir): the prefix folders it
+  // leaves behind go too once empty, up to — never including — `.gitworktree` itself. rmdir
+  // removes only an empty folder, so a sibling worktree under the same prefix stops the walk.
+  private async dropEmptyParents(wtDir: string): Promise<void> {
+    if (!resolve(wtDir).split(/[\\/]/).includes(".gitworktree")) return;
+    for (let dir = dirname(resolve(wtDir)); basename(dir) !== ".gitworktree" && dir !== dirname(dir); dir = dirname(dir)) {
+      if (!(await rmdir(dir).then(() => true, () => false))) return;
+    }
   }
 
   async removeBranch(repoDir: string, branch: string): Promise<void> {
