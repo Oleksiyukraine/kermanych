@@ -160,6 +160,7 @@
               :deep-analysis="item.session.deepAnalysis"
               :design="!!item.session.designDir"
               :minion="item.session.minion"
+              :schedule="item.session.schedule?.name"
               :needs-decision="sessionDecisionReason(t, item.session)"
               :not-needed="sessionNotNeededReason(t, item.session)"
               :usage="item.session.usage"
@@ -249,6 +250,7 @@
             <KAnalysisMark v-if="selectedSession.deepAnalysis" />
             <KDesignMark v-if="selectedSession.designDir" />
             <KMinionMark v-if="selectedSession.minion" kind="running" />
+            <KScheduleMark v-if="selectedSession.schedule" :name="selectedSession.schedule.name" />
             <!-- A tester walks this session's QA checklist: the run is one click away. -->
             <button
               v-if="runningTester"
@@ -1377,6 +1379,7 @@ import KDesignMark from 'components/kit/KDesignMark.vue';
 import DocTaskDialog from 'components/docs/DocTaskDialog.vue';
 import { canTaskFromDoc, isDesignReadme } from '../lib/doc-task';
 import KMinionMark from 'components/kit/KMinionMark.vue';
+import KScheduleMark from 'components/kit/KScheduleMark.vue';
 import KDecisionMark from 'components/kit/KDecisionMark.vue';
 import KNotNeededMark from 'components/kit/KNotNeededMark.vue';
 import { cardDecisionReason, cardNotNeededReason, sessionDecisionReason, sessionNotNeededReason } from '../lib/minion';

@@ -140,6 +140,51 @@ describe("CukController", () => {
     expect(c.sessionsOmitted).toBe(0);
   });
 
+  it("caps the scheduled tasks and skills, drops unaddressable rows, and fills the clock", async () => {
+    const { ctl, seen } = make();
+    const many = <T>(n: number, row: (i: number) => T) => Array.from({ length: n }, (_, i) => row(i));
+    await ctl.ask(
+      body({
+        context: {
+          view: "agents",
+          workspaces: [],
+          projects: [],
+          sessions: [],
+          board: [],
+          places: [],
+          timeZone: "Europe/Kyiv",
+          now: "2026-11-06T18:42+02:00",
+          schedules: [
+            { ref: "", name: "без ref", type: "reminder", when: "щодня о 19:00", enabled: true },
+            { ref: "x1", name: "дивний", type: "cron", when: "?", enabled: true },
+            ...many(60, (i) => ({ ref: `r${i}`, name: `t${i}`, type: "agent", project: "Альфа", when: "щодня о 09:00", next: "2026-11-07T09:00", enabled: i % 2 === 0 })),
+          ],
+          skills: [" weekly-report ", "weekly-report", "", 7, ...many(120, (i) => `skill-${i}`)],
+        },
+      }),
+      REQ,
+    );
+    const c = seen.ask!.context;
+    expect(c.now).toBe("2026-11-06T18:42+02:00");
+    expect(c.timeZone).toBe("Europe/Kyiv");
+    // The two bad rows count toward the cap of 50 and are dropped.
+    expect(c.schedules).toHaveLength(48);
+    expect(c.schedules[0]).toEqual({ ref: "r0", name: "t0", type: "agent", project: "Альфа", when: "щодня о 09:00", next: "2026-11-07T09:00", enabled: true });
+    expect(c.skills[0]).toBe("weekly-report");
+    expect(new Set(c.skills).size).toBe(c.skills.length);
+    expect(c.skills.length).toBeLessThanOrEqual(100);
+  });
+
+  it("gives a digest without a clock this machine's zone and time", async () => {
+    const { ctl, seen } = make();
+    await ctl.ask(body(), REQ);
+    const c = seen.ask!.context;
+    expect(c.timeZone).toBe(Intl.DateTimeFormat().resolvedOptions().timeZone);
+    expect(c.now).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/);
+    expect(c.schedules).toEqual([]);
+    expect(c.skills).toEqual([]);
+  });
+
   it("resets the caller's own conversation", async () => {
     const { ctl, seen } = make();
     expect(await ctl.reset(REQ)).toEqual({ ok: true });

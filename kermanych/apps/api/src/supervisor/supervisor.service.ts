@@ -140,6 +140,7 @@ import { MachineResourcesService } from "../machine/machine-resources.service";
 import { WatchdogService } from "../machine/watchdog.service";
 import { BranchNameService, type BranchContext } from "./branch-name.service";
 import { noAskOverlay } from "../minion/ask-overlay";
+import { scheduledRunPrompt } from "../schedules/schedule-prompt";
 import { EnvFileService } from "../env/env-file.service";
 import { GithubClient, GithubHttpError, parseGithubPrUrl, parseGithubRemote, type GithubPull } from "../github/github-client";
 import { PreviewService } from "../preview/preview.service";
@@ -294,6 +295,30 @@ export type MinionRunResult = {
   signedOut?: boolean;
 };
 
+// A scheduled run in a project (docs/specs/2026-11-06-scheduled-tasks.md), kept like MinionRun
+// beside the Live map. Memory-only: after an api restart ScheduleService fails what was running.
+type ScheduledRun = {
+  scheduleId: string;
+  // The launch has not returned yet: a child that dies now is the launch's failure, which
+  // ScheduleService records from the launch's own throw.
+  starting?: boolean;
+  capTimer?: NodeJS.Timeout;
+};
+
+// How a scheduled run ended, told once on scheduleRunEnd$. `done`: its first turn settled, and
+// `answer` is the last assistant text of that turn. `failed`: the child died, the launch failed
+// after waiting for a slot, or the operator stopped, finished or deleted the session (`detail`
+// says which; `byOperator` then, and the session is left as the operator made it). `timeout`:
+// «Посіпака»'s time cap ran out.
+export type ScheduleRunEnd = {
+  sessionId: string;
+  scheduleId: string;
+  outcome: "done" | "failed" | "timeout";
+  answer?: string;
+  detail?: string;
+  byOperator?: boolean;
+};
+
 // The transcript badge for a library skill: where the text the agent read comes from. A
 // library row names its owner scope, and one that replaces a Kermanych default says so too —
 // that is the row to delete to get the default back, and without the scope the operator has
@@ -372,6 +397,12 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
   // writes of one worktree never interleave.
   private synergyAsks = new Map<string, { request: string; page?: string }[]>();
   private synergyGit = new Map<string, Promise<unknown>>();
+  // Scheduled runs in a project on this machine, by session id (docs/specs/2026-11-06-scheduled-
+  // tasks.md): in flight from the launch until their end is told on scheduleRunEnd$, which
+  // ScheduleService records. The supervisor never knows ScheduleService either.
+  private scheduleRuns = new Map<string, ScheduledRun>();
+  private scheduleEnds = new Subject<ScheduleRunEnd>();
+  readonly scheduleRunEnd$: Observable<ScheduleRunEnd> = this.scheduleEnds.asObservable();
 
   // A finished session's omp child stays resident so a follow-up resumes instantly — but a
   // live `omp --mode rpc` process is by far the largest thing this service keeps alive (a big
@@ -561,6 +592,7 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
   onModuleDestroy(): void {
     clearInterval(this.reaper);
     for (const run of this.minionRuns.values()) this.clearMinionClock(run);
+    for (const run of this.scheduleRuns.values()) clearTimeout(run.capTimer);
     for (const live of this.map.values()) {
       this.stopPoll(live);
       void live.rpc.stop();
@@ -870,11 +902,13 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
   // later wins), and right after the spawn the renice plus the pid the watchdog will follow.
   // Every kind gets it, chats included; only agents count for slots. A «Посіпака» run also loses
   // its ask tool here through a third overlay, on its first spawn and on every wake alike
-  // (docs/specs/2026-10-23-minion-auto-run.md, decision 9).
+  // (docs/specs/2026-10-23-minion-auto-run.md, decision 9), and so does a scheduled run while it
+  // is in flight (docs/specs/2026-11-06-scheduled-tasks.md, «Unattended») — once it ended and the
+  // operator reopened it, it is an ordinary conversation again.
   private async spawnOpts(id: string, cwd: string, skillsConfig: string | undefined): Promise<Pick<RuntimeLaunchOpts, "configPaths" | "onSpawn">> {
-    const minion = this.registry.listSessions().find((x) => x.id === id)?.minion === true;
+    const unattended = this.registry.listSessions().find((x) => x.id === id)?.minion === true || this.scheduleRuns.has(id);
     const overlay = await this.resources?.ompOverlay(cwd);
-    const noAsk = minion ? await noAskOverlay() : undefined;
+    const noAsk = unattended ? await noAskOverlay() : undefined;
     const configPaths = [skillsConfig, overlay, noAsk].filter((p): p is string => !!p);
     return {
       ...(configPaths.length ? { configPaths } : {}),
@@ -1174,10 +1208,29 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     return this.launchTask(task, userId, { minion: true });
   }
 
-  // The one launch of a claimed card, shared by the operator's ▶ and the minion: the binding,
-  // the project refresh, the launch parameters, the row, and its removal when the launch fails.
-  private async launchTask(task: Task, userId: string, opts: { images?: ImageInput[]; native?: NativeHarness; minion?: boolean }): Promise<Session> {
-    const { images, native, minion } = opts;
+  // A scheduled agent run in a project (docs/specs/2026-11-06-scheduled-tasks.md): ScheduleService
+  // filed and claimed the hidden card and deletes it when this throws. The ordinary task launch
+  // with these differences: the row is stamped with its task, it always gets a worktree, it is
+  // never native, deep analysis or design, its opening prompt is the scheduled-run instruction
+  // (openingPrompt), and it runs without the ask tool under the minion's time cap. Unlike the
+  // minion it takes a slot like any launch and waits in the queue when none is free.
+  launchScheduled(task: Task, userId: string, schedule: { id: string; name: string }): Promise<Session> {
+    return this.launchTask(task, userId, { schedule });
+  }
+
+  // The one launch of a claimed card, shared by the operator's ▶, the minion and the scheduler:
+  // the binding, the project refresh, the launch parameters, the row, and its removal when the
+  // launch fails.
+  private async launchTask(
+    task: Task,
+    userId: string,
+    opts: { images?: ImageInput[]; native?: NativeHarness; minion?: boolean; schedule?: { id: string; name: string } },
+  ): Promise<Session> {
+    const { images, schedule } = opts;
+    const native = schedule ? undefined : opts.native;
+    // Everything a minion run leaves out, a scheduled run leaves out too.
+    const minion = opts.minion === true;
+    const unattended = minion || !!schedule;
     const client = this.auth.cloudClient();
     const local = this.registry.listProjects().find((p) => p.id === task.projectId);
     if (!local?.localRepoPath) throw new Error("project not bound");
@@ -1206,7 +1259,7 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     // vocabularies instead of casting, so a bad card cannot produce a bogus branch prefix.
     // A design card is always a `design/` branch, whatever the card says
     // (docs/specs/2026-10-29-design-tab.md); a minion never runs one (its queries skip them).
-    const design = task.design && !minion;
+    const design = task.design && !unattended;
     const prefix: BranchPrefix = design
       ? "design"
       : (BRANCH_PREFIXES as readonly string[]).includes(task.prefix ?? "")
@@ -1216,9 +1269,9 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     // A shared card must never commandeer another developer's checkout, which is what the
     // hardcoded `true` here used to guarantee. The in-place option is personal, so it
     // survives exactly for the person who filed the card — for anybody else the card is
-    // isolated, whatever it says. A minion run is always isolated: the operator works in that
-    // checkout.
-    const inPlace = !minion && task.worktree === false && task.createdBy === userId;
+    // isolated, whatever it says. A minion or scheduled run is always isolated: the operator
+    // works in that checkout.
+    const inPlace = !unattended && task.worktree === false && task.createdBy === userId;
     const worktree = !inPlace;
 
     const { branch, baseBranch } = await this.resolveLaunchParams(
@@ -1254,20 +1307,25 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
       ...(native ? { native: true } : {}),
       // A «Глибокий аналіз» card opens with the wrapped prompt (launch → openingPrompt). The
       // minion never takes one: that agent interviews a person.
-      ...(task.deepAnalysis && !minion ? { deepAnalysis: true } : {}),
+      ...(task.deepAnalysis && !unattended ? { deepAnalysis: true } : {}),
       ...(designDir ? { designDir } : {}),
       ...(minion ? { minion: true } : {}),
       // A minion run of a finding card carries the kind for its opening prompt (decision 14).
       ...(minion && task.findingKind ? { findingKind: task.findingKind } : {}),
+      ...(schedule ? { schedule } : {}),
     });
     if (minion) this.minionRuns.set(session.id, { phase: "work", starting: true });
+    if (schedule) this.scheduleRuns.set(session.id, { scheduleId: schedule.id, starting: true });
     try {
       const launched = await this.launch(session, project, { images, ...(minion ? { direct: true } : {}) });
       const run = this.minionRuns.get(session.id);
       if (run) run.starting = false;
+      const scheduled = this.scheduleRuns.get(session.id);
+      if (scheduled) scheduled.starting = false;
       return launched;
     } catch (err) {
       this.forgetMinionRun(session.id);
+      this.forgetScheduleRun(session.id);
       this.browser?.revoke(session.id);
       this.registry.removeSession(session.id);
       this.events.next({ type: "session_removed", sessionId: session.id });
@@ -1629,11 +1687,16 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
         // keeps the slash, a notice says what was added, the model reads the instruction.
         const helped = expandHelpers(firstPrompt);
         if (helped.used.length) this.appendEntry(id, this.noticeEntry(helperNotice(helped.used)));
-        const directives = saved.taskId ? `${COAUTHOR_DIRECTIVE}\n\n${DOC_MAINTAIN_DIRECTIVE}` : COAUTHOR_DIRECTIVE;
+        // A scheduled run commits nothing (docs/specs/2026-11-06-scheduled-tasks.md, decision 2),
+        // so neither the co-author trailer nor the doc-maintain line applies to it.
+        const scheduled = this.scheduleRuns.has(id);
+        const directives = scheduled ? "" : saved.taskId ? `${COAUTHOR_DIRECTIVE}\n\n${DOC_MAINTAIN_DIRECTIVE}` : COAUTHOR_DIRECTIVE;
         const modelPrompt = await this.openingPrompt(saved, helped.text, cwd);
-        rpc.prompt(`${modelPrompt}\n\n${directives}`, images);
-        // A minion run's time cap counts from this spawn to its first verdict (decision 9).
+        rpc.prompt(directives ? `${modelPrompt}\n\n${directives}` : modelPrompt, images);
+        // A minion run's time cap counts from this spawn to its first verdict (decision 9); a
+        // scheduled run's from this spawn to its end.
         if (saved.minion) this.startMinionClock(id);
+        if (scheduled) this.startScheduleClock(id);
       } else {
         // No opening message (a forked agent continuing the chat) — sit idle, ready for input.
         live.live.status = "done";
@@ -1653,7 +1716,8 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
   }
 
   // A launch replayed after waiting for a slot has nobody awaiting it, so a failure lands on the
-  // row: `error`, with the worktree kept — the next message starts the agent there.
+  // row: `error`, with the worktree kept — the next message starts the agent there. A scheduled
+  // run that fails so has ended: ScheduleService records it and retires the worktree.
   private async deferredLaunch(id: string, spawn: () => Promise<unknown>): Promise<void> {
     try {
       await spawn();
@@ -1662,6 +1726,7 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
       if (!this.registry.listSessions().some((x) => x.id === id)) return;
       this.registry.updateSession(id, { status: "error" });
       this.pushUpdate(id);
+      this.endScheduleRun(id, { outcome: "failed", detail: (err as Error).message });
     }
   }
 
@@ -1688,6 +1753,21 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
   // `minion-findings` skill after the assigned ones (decision 14): a repository, project,
   // workspace or user skill of that name wins, and a team that switched it off gets the line alone.
   private async openingPrompt(session: Session, firstPrompt: string, cwd: string): Promise<string> {
+    // A scheduled run (docs/specs/2026-11-06-scheduled-tasks.md, «Unattended»): the run's rules,
+    // the task's skills — resolved here, in the worktree, so a repository skill wins — and the
+    // task's prompt, which is the card's description. No «ШІ-команда» role around it: the
+    // operator's prompt is the whole assignment.
+    if (session.schedule && this.scheduleRuns.has(session.id) && firstPrompt.trim()) {
+      const names = this.registry.getSchedule(session.schedule.id)?.skills ?? [];
+      let block = "";
+      if (names.length)
+        try {
+          block = (await this.skills.assignedForNames(this.aiScope(session.projectId), names, cwd)).block;
+        } catch (err) {
+          console.warn(`[supervisor] no skills for scheduled run ${session.id}: ${(err as Error).message}`);
+        }
+      return scheduledRunPrompt({ name: session.schedule.name, prompt: firstPrompt, skillsBlock: block, project: true });
+    }
     if (session.minion && firstPrompt.trim()) {
       const kind = session.findingKind;
       const { template, block } = await this.agentPrompt(session.projectId, MINION_AGENT_ID, cwd, kind ? [MINION_FINDINGS_SKILL] : []);
@@ -2279,6 +2359,8 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
       this.registry.updateSession(id, { status: settled });
       // …and then records the result, or sends the docs or PR turn the verdict leads to.
       minionStep?.after();
+      // A scheduled run ends with its turn: what it answered is the run's result.
+      if (row?.schedule) this.onScheduleTurnEnd(id, l.transcript);
       this.refreshState(id);
       this.stopPoll(l);
       // A turn cannot end with a tool still running, so anything left here belongs to a call
@@ -3184,6 +3266,8 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
   async stopSession(id: string) {
     // The operator's stop ends a «Посіпака» run; the result is written while the turn still runs.
     await this.endMinionRun(id);
+    // …and a scheduled run in flight ends failed; the session is the operator's from here.
+    this.endScheduleRun(id, { outcome: "failed", detail: "stopped by the operator", byOperator: true });
     // A session waiting for a slot has nothing running: stopping it takes it off the queue and
     // drops its pending message. A parked launch never got a child, so its row rests `stopped`.
     if (this.unpark(id)) {
@@ -3239,6 +3323,7 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     // Off the slot queue first, so nothing starts it while it is being torn down.
     this.unpark(id);
     await this.endMinionRun(id);
+    this.endScheduleRun(id, { outcome: "failed", detail: "deleted by the operator", byOperator: true });
     // Before the worktree goes: the preview runs in it. PREVIEW_DIR goes too (decision 3), and
     // the device's clone (mobile decision 4).
     await this.preview?.forget(id);
@@ -3610,6 +3695,7 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     // the card keeps the ones earlier turns sent.
     // A «Посіпака» run still in flight ends `stopped`; one that already ended keeps its result.
     await this.endMinionRun(id);
+    this.endScheduleRun(id, { outcome: "failed", detail: "finished by the operator", byOperator: true });
     // A «Тестувальник» run of this session stops before the worktree it tests in goes
     // (docs/specs/2026-11-04-qa-tester-agent.md, decision 13). closeMerged finishes through here.
     for (const t of this.registry.listSessions().filter((x) => x.parentSessionId === id && x.tester === true && x.status !== "merged"))
@@ -3902,6 +3988,74 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
       if (typeof r.exitCode === "number") node.status = r.exitCode === 0 ? (r.aborted === true ? "aborted" : "done") : "error";
       map.set(r.id, node);
     }
+  }
+
+  // ── Scheduled runs (docs/specs/2026-11-06-scheduled-tasks.md) ───────────────────────────────
+  //
+  // A scheduled run in a project analyses and answers in one turn (decision 2). Its end — the
+  // turn settling, the child dying, the time cap, the operator stepping in — is told once on
+  // scheduleRunEnd$; ScheduleService records it and calls retireScheduledRun (decision 10).
+
+  private forgetScheduleRun(id: string): void {
+    const run = this.scheduleRuns.get(id);
+    if (run) clearTimeout(run.capTimer);
+    this.scheduleRuns.delete(id);
+  }
+
+  // Once per run: whatever comes second (the child's exit after the cap, a stop after the end)
+  // finds nothing. A run whose launch has not returned yet ends through the launch's throw.
+  private endScheduleRun(id: string, end: Omit<ScheduleRunEnd, "sessionId" | "scheduleId">): void {
+    const run = this.scheduleRuns.get(id);
+    if (!run || run.starting) return;
+    this.forgetScheduleRun(id);
+    this.scheduleEnds.next({ sessionId: id, scheduleId: run.scheduleId, ...end });
+  }
+
+  // The turn settled: its last assistant text is the answer, whose first line is the summary.
+  private onScheduleTurnEnd(id: string, transcript: readonly TranscriptEntry[]): void {
+    const answer = transcript.findLast((e): e is Extract<TranscriptEntry, { kind: "assistant_text" }> => e.kind === "assistant_text");
+    this.endScheduleRun(id, { outcome: "done", ...(answer ? { answer: answer.text } : {}) });
+  }
+
+  // «Посіпака»'s time cap, from the spawn: past it the run has failed, and its retirement stops
+  // the child.
+  private startScheduleClock(id: string): void {
+    const run = this.scheduleRuns.get(id);
+    if (!run) return;
+    clearTimeout(run.capTimer);
+    run.capTimer = setTimeout(() => this.endScheduleRun(id, { outcome: "timeout" }), MINION_TIME_CAP_MS);
+    run.capTimer.unref();
+  }
+
+  // Decision 10: the run committed nothing, so its worktree and temporary branch go, and the
+  // session keeps its row and transcript, retired as after «Завершити» — reopenSession forks a
+  // fresh worktree off the base for a follow-up. No commit and no documentation gate: there is
+  // nothing to keep. Never throws; a tree git refuses to remove is logged and left.
+  async retireScheduledRun(id: string): Promise<void> {
+    const s = this.registry.listSessions().find((x) => x.id === id);
+    if (!s) return;
+    this.forgetScheduleRun(id);
+    this.unpark(id);
+    await this.queueTaskReport(id, this.map.get(id)?.transcript);
+    await this.preview?.retire(id).catch(() => {});
+    const l = this.map.get(id);
+    if (l) {
+      l.live.status = "stopped";
+      this.stopPoll(l);
+      await l.rpc.stop().catch(() => {});
+      this.map.delete(id);
+      this.toolDetails.dropSession(id);
+      this.skillLabels.delete(id);
+    }
+    const g = this.registry.listProjects().find((p) => p.id === s.projectId);
+    if (g?.localRepoPath && s.worktree) {
+      const warn = (err: unknown) => console.warn(`[supervisor] retiring scheduled run ${id}: ${(err as Error).message}`);
+      if (s.worktreePath) await this.worktree.removeWorktree(g.localRepoPath, s.worktreePath).catch(warn);
+      if (s.branch) await this.worktree.removeBranch(g.localRepoPath, s.branch).catch(warn);
+    }
+    if (this.registry.listSessions().some((x) => x.id === id)) this.registry.updateSession(id, { status: "merged", worktreePath: "" });
+    this.pushUpdate(id);
+    this.drainSlots();
   }
 
   // ── «Посіпака» runs (docs/specs/2026-10-23-minion-auto-run.md, decisions 9-10) ─────────────
@@ -4220,7 +4374,7 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
       // removes the row and MinionService puts the card back in the backlog. An `error` pushed
       // from here would race that release to the card (and lose to tasks_guard once the card is
       // unassigned again), so the row is left for the launch to remove.
-      const launchFailure = this.minionRuns.get(sessionId)?.starting === true;
+      const launchFailure = this.minionRuns.get(sessionId)?.starting === true || this.scheduleRuns.get(sessionId)?.starting === true;
       // `in_review` counts as ended cleanly: the PR turn finished, and the reaper stops that
       // child on purpose (a review takes as long as a human takes). Without it here, every
       // reaped review session would flip to `error` on its own child's exit.
@@ -4233,6 +4387,8 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
         this.pushUpdate(sessionId);
         // A minion run that dies is a failed run; a signed-out one also pauses the minion.
         this.onMinionDeath(sessionId, reason, signedOut);
+        // A scheduled run that dies has ended, failed.
+        this.endScheduleRun(sessionId, { outcome: "failed", detail: reason });
       }
       live.turnPending = false;
       this.untrackChild(sessionId, live.pid);

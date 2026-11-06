@@ -63,9 +63,11 @@ import { DeviceService } from "./device/device.service";
 import { DEVICE_API } from "./device/device.contract";
 import { DeviceController } from "./http/device.controller";
 import { DeviceGateway } from "./ws/device.gateway";
+import { SchedulesController } from "./http/schedules.controller";
+import { ScheduleService } from "./schedules/schedule.service";
 
 @Module({
-  controllers: [AuthController, ProjectsController, SessionsController, FsController, UsageController, CloudController, SkillsController, SkillImportController, ManagementController, ManagementMcpController, CukController, ModelsController, JiraController, LinearController, PlaneController, SlackController, AccountController, DocsController, NativeController, BrowserMcpController, MachineController, MinionController, TesterController, VoiceController, DeviceController],
+  controllers: [AuthController, ProjectsController, SessionsController, FsController, UsageController, CloudController, SkillsController, SkillImportController, ManagementController, ManagementMcpController, CukController, ModelsController, JiraController, LinearController, PlaneController, SlackController, AccountController, DocsController, NativeController, BrowserMcpController, MachineController, MinionController, TesterController, VoiceController, DeviceController, SchedulesController],
   providers: [
     RegistryService, WorktreeService, SupervisorService, PreviewService, EnvFileService, EventsGateway,
     UsageService,
@@ -162,6 +164,11 @@ import { DeviceGateway } from "./ws/device.gateway";
     // supervisor (launchMinion) and counts its runs' results (minionResult$); the supervisor
     // never knows it, and its `minion_update` rides the supervisor's `events$` to the socket.
     MinionService,
+    // «Задачі за розкладом» (docs/specs/2026-11-06-scheduled-tasks.md): the local tasks, the
+    // minute tick, reminders, and the agent runs — a project run through the supervisor
+    // (launchScheduled, scheduleRunEnd$), a run without a project on its own chat pool. The
+    // supervisor never knows it; its events ride the supervisor's `events$` to the socket.
+    ScheduleService,
     // The session's virtual device (docs/specs/2026-11-03-mobile-device-preview.md): clones of the
     // machine's iOS simulators / AVDs, booted for the preview's `device` step. PreviewService,
     // BrowserMcpService and the supervisor depend on the DeviceApi interface under DEVICE_API, so

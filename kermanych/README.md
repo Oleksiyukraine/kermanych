@@ -2071,7 +2071,8 @@ its left and a notepad on its right. (Specs: `docs/specs/2026-11-04-cuk-control-
   project; opens a session; files a card into the backlog or launches an agent on a task (plain or
   «Глибокий аналіз», with the project's defaults and your provider's launch mode); sends a message to an
   agent; stops, resumes, restarts, archives or unarchives a session; starts or stops its preview;
-  writes to the notepad. It has no file tools — it answers from the app's state, and the agent it
+  writes to the notepad; schedules reminders and agent runs («Розклад», below). It has no file
+  tools — it answers from the app's state, and the agent it
   launches reads the code — and runs on `claude-sonnet-5` for speed. It sees attached images, not
   documents.
 - **What waits for you.** Navigation, selection and the notepad happen at once (opening a screen
@@ -2081,13 +2082,14 @@ its left and a notepad on its right. (Specs: `docs/specs/2026-11-04-cuk-control-
   says what happened is written by the app after the call answered, never by the model.
 - **What it does not do.** Nothing irreversible: deleting a session or a card, finish, a pull
   request, a merge, risks, release notes, Jira. Asked for one, it opens the screen with the button
-  and names it.
+  and names it. The one deletion it offers is a scheduled task of yours, and only on a card.
 - **The notepad is «Список дій».** The ruled page on the right is the current workspace's Action
   List — the same list, on this machine, as the Менеджмент → Огляд tile, so a line written in one
   is in the other. Without a workspace it asks you to pick one. Below ~900 px of window width it
   hides behind 📝.
 - **«Центр сповіщень» is the left column.** Built like the notepad — a clipboard with the
-  notifications as slips on it, newest on top. Today it lists one kind: changes agents made to your
+  notifications as slips on it, newest on top, and a second tab, «Розклад» (below). Besides
+  scheduled reminders and runs, it lists changes agents made to your
   skills (see «Agents improve your skills» above). A new one also raises a toast in the bottom-right
   corner, «Я вдосконалив навичку X: …», with «Переглянути», on every machine where your Kermanych
   is open; the character wears its dot until you look. Opening an entry shows over the console the
@@ -2113,6 +2115,50 @@ does not work over a session's browser page, which the app cannot see the mouse 
 character is yours to pick in the same pane, under «Персонаж ЦУК»: ten drawings, from the
 terminal bot (the default) to the original glossy drop, a cowboy, a Cossack and Darth Vader; the
 choice is kept on this computer. (docs/specs/2026-11-03-assistant-mascot-choice.md)
+
+### «Розклад» — reminders and agent runs on a schedule
+
+Ask ЦУК in plain words and it schedules the task (spec: `docs/specs/2026-11-06-scheduled-tasks.md`):
+«нагадай випити вітаміни о 19:00», «щовечора о 19:00 генеруй звіт по проєкту X навичкою Y»,
+«щоранку о 9:00 пропонуй одне покращення для платформи», «нагадай через 20 хвилин про міт».
+Scheduled tasks are yours and live on this machine only (`~/.kermanych/kermanych.sqlite`); nobody
+else sees them and nothing is written to the cloud apart from a run's hidden board card.
+
+- **Two kinds.** A **reminder** spends nothing: at its time a slip lands in «Центр сповіщень» with
+  a toast, a system notification and a Dock bounce. An **agent task** starts an agent with the
+  skills you named.
+  - With a project, every run is a session in «Агенти» marked «Розклад · <назва>», launched from a
+    hidden card with the project's defaults in a fresh worktree. When it ends, the worktree and its
+    temporary branch are removed and the session keeps its transcript; a follow-up message reopens
+    it. The sessions stay until you archive them.
+  - Without a project, the run is a one-shot agent in `~/.kermanych/schedules/<id>/` with the
+    skills, web search and page reading; its whole answer is stored in the slip, and «Обговорити в
+    ЦУК» puts it into the console.
+- **A scheduled agent only analyses.** It reads, runs tests and the preview and reports; it never
+  commits or opens a pull request, cannot ask you anything, and stops at «Посіпака»'s time cap.
+  The first line of its answer is the slip's summary; ideas and bugs arrive as findings.
+- **Schedules:** once (a date and time, or «через N хв»), daily, weekdays, chosen days of the
+  week, a day of the month (the 31st means the month's last day), every N hours — always a wall
+  clock in your time zone. Editing a schedule never fires a past time, and a one-off time that has
+  already passed is refused.
+- **What waits for you.** Creating or changing a reminder and pausing anything happen at once, and
+  the result line has «Скасувати». Creating, changing or resuming an agent task and «запусти
+  зараз» show a card with the project, the editable text, the skills and the next three firings.
+  Deleting always asks.
+- **Where to see them.** «Центр сповіщень» has two tabs. «Сповіщення» is the feed: skill changes,
+  reminders (with «Готово» and «Відкласти» 10 хв / 1 год), finished runs and runs that were
+  skipped or failed, with the reason. «Розклад» lists the tasks with their next firing and a pause
+  switch; opening one shows its text, skills, run history, «Запустити зараз» and «Видалити».
+- **When Kermanych is closed or the Mac sleeps.** Nothing fires then. While at least one enabled
+  task has a firing ahead (or a run going), closing the window keeps Kermanych running with an
+  icon in the menu bar («Відкрити Керманич», the next firing, «Завершити»); ⌘Q quits. A missed
+  reminder lands once, marked «пропущено». A missed agent run is caught up once if it is still
+  within half its period (between 2 and 12 hours) — a 19:00 daily report runs at 22:00, not the
+  next morning; past that you get a «Пропущено» slip with «Запустити зараз».
+- **Limits.** One run per occurrence; an occurrence that comes while the previous run of the same
+  task is still going is skipped. A project run takes an agent slot and waits in the queue like any
+  launch; the precondition checks (signed in, project bound here, skills found) fail it before
+  anything is spent. The latest 50 runs per task and 200 slips are kept.
 
 ## The Менеджмент tab and its assistant
 

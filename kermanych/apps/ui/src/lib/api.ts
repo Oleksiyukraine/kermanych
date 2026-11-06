@@ -52,6 +52,11 @@ import type {
   QaRunScope,
   TesterSettings,
   SynergyStepsView,
+  ScheduledTask,
+  ScheduleDraft,
+  SchedulePatch,
+  ScheduleRun,
+  ScheduleSlip,
 } from '@kermanych/core';
 import type {
   CloudProject,
@@ -201,6 +206,10 @@ async function getBlob(path: string): Promise<Blob> {
 
 async function put<T>(path: string, body: unknown): Promise<T> {
   return (await (await send('PUT', path, { json: body })).json()) as T;
+}
+
+async function patch<T>(path: string, body: unknown): Promise<T> {
+  return (await (await send('PATCH', path, { json: body })).json()) as T;
 }
 
 async function del(path: string): Promise<void> {
@@ -770,6 +779,36 @@ export const api = {
   cukChat: (ask: CukChatAsk): Promise<CukChatReply> => post<CukChatReply>('/cuk/chat', ask),
 
   resetCukChat: (): Promise<{ ok: boolean }> => post<{ ok: boolean }>('/cuk/chat/reset', {}),
+
+  // «Задачі за розкладом» (docs/specs/2026-11-06-scheduled-tasks.md, decision 1): personal and
+  // machine-local, so only this api has them. A refused draft or patch is a 400 with the core
+  // rejection's `code`+`params`, which ApiError localizes. The list also arrives whole with every
+  // `schedules_update`, slips one by one with `schedule_slip`.
+  schedules: (): Promise<{ tasks: ScheduledTask[] }> => get<{ tasks: ScheduledTask[] }>('/schedules'),
+
+  createSchedule: (draft: ScheduleDraft): Promise<ScheduledTask> => post<ScheduledTask>('/schedules', draft),
+
+  patchSchedule: (id: string, p: SchedulePatch): Promise<ScheduledTask> =>
+    patch<ScheduledTask>(`/schedules/${encodeURIComponent(id)}`, p),
+
+  deleteSchedule: (id: string): Promise<void> => del(`/schedules/${encodeURIComponent(id)}`),
+
+  runSchedule: (id: string): Promise<{ run: ScheduleRun }> =>
+    post<{ run: ScheduleRun }>(`/schedules/${encodeURIComponent(id)}/run`, {}),
+
+  // Newest first, at most SCHEDULE_RUNS_KEEP.
+  scheduleRuns: (id: string): Promise<{ runs: ScheduleRun[] }> =>
+    get<{ runs: ScheduleRun[] }>(`/schedules/${encodeURIComponent(id)}/runs`),
+
+  // Newest first; a snoozed slip is left out until its time, then re-sent as `schedule_slip`.
+  scheduleSlips: (): Promise<{ slips: ScheduleSlip[] }> => get<{ slips: ScheduleSlip[] }>('/schedules/slips'),
+
+  // `ids` absent marks every slip seen.
+  markScheduleSlipsSeen: (ids?: readonly string[]): Promise<{ ok: true }> =>
+    post<{ ok: true }>('/schedules/slips/seen', ids ? { ids } : {}),
+
+  snoozeScheduleSlip: (id: string, minutes: 10 | 60): Promise<{ ok: true }> =>
+    post<{ ok: true }>(`/schedules/slips/${encodeURIComponent(id)}/snooze`, { minutes }),
 
   // Write release notes from the bound repo's git history — local-only for the same
   // reason as the chat above. Generation only: the document comes back to the browser,

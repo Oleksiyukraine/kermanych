@@ -7,6 +7,7 @@ import { RegistryService } from "./registry/registry.service";
 import { seedDemo } from "./preview/seed";
 import { setBrowserHost, type BrowserHost } from "./browser/browser-host";
 import { setKeepAwake, type KeepAwake } from "./minion/keep-awake";
+import { setScheduleTray, type ScheduleTrayListener } from "./schedules/schedule-tray";
 import { setUiProof, uiProofFor } from "./auth/ui-proof";
 
 export type {
@@ -20,20 +21,24 @@ export type {
   BrowserViewport,
 } from "./browser/browser-host";
 export type { KeepAwake } from "./minion/keep-awake";
+export type { ScheduleTrayListener } from "./schedules/schedule-tray";
 
 // Build + start the Kermanych API. Exported so the Electron main process can host
 // it in-process; still self-runs for standalone `node dist/main.js` / `pnpm dev:api`.
 // `browser` is the desktop app's session browser (browser/browser-host.ts); without it no
 // session gets the browser tools. `keepAwake` is its power-save blocker
-// (minion/keep-awake.ts), held while a «Посіпака» run is in progress; without it the machine
-// sleeps as usual. `uiKey` is the desktop app's per-launch secret, also handed to its renderer:
-// only a request carrying it (or the current bearer, or a trusted dev-ui Origin) may hand over a
-// session (auth/ui-proof.ts).
+// (minion/keep-awake.ts), held while a «Посіпака» run or a scheduled agent run is in progress;
+// without it the machine sleeps as usual. `schedules` hears whether any scheduled task is enabled
+// and the next firing (schedules/schedule-tray.ts) — at start and on every change — for the
+// desktop app's menu-bar icon and background mode. `uiKey` is the desktop app's per-launch
+// secret, also handed to its renderer: only a request carrying it (or the current bearer, or a
+// trusted dev-ui Origin) may hand over a session (auth/ui-proof.ts).
 export async function bootstrap(
-  opts: { port?: number; browser?: BrowserHost; keepAwake?: KeepAwake; uiKey?: string } = {},
+  opts: { port?: number; browser?: BrowserHost; keepAwake?: KeepAwake; schedules?: ScheduleTrayListener; uiKey?: string } = {},
 ): Promise<{ app: INestApplication; url: string }> {
   setBrowserHost(opts.browser);
   setKeepAwake(opts.keepAwake);
+  setScheduleTray(opts.schedules);
   setUiProof(uiProofFor(opts.uiKey, process.env.KERMANYCH_UI_ORIGINS));
   // Images ride message/create payloads as base64 (omp caps each at 20 MiB),
   // so lift the body limit well past Express's 100 KB default.

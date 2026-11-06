@@ -1,7 +1,8 @@
 // apps/api/src/cuk/cuk-prompt.ts
 // The text ЦУК («Центр управління Керманича») is handed each turn: the contract on the first
 // one, the state digest the browser sent on every one, then the operator's words. Spec:
-// docs/specs/2026-11-04-cuk-control-console.md (decisions 3, 4, 5, 11).
+// docs/specs/2026-11-04-cuk-control-console.md (decisions 3, 4, 5, 11); the schedule verbs and
+// their context rows: docs/specs/2026-11-06-scheduled-tasks.md (decisions 2, 3, 7, 9).
 //
 // Ukrainian like management-prompt.ts, and for its reason: the body is the tested contract,
 // and only the «answer in X» line follows the operator's UI locale.
@@ -9,6 +10,7 @@ import {
   CUK_TITLE_MAX,
   MANAGEMENT_ACTION_FENCE,
   type CukContext,
+  type CukScheduleRow,
   type CukSessionRow,
   type Locale,
 } from "@kermanych/core";
@@ -54,6 +56,22 @@ function contract(locale: Locale | undefined): string {
     '  { "kind": "preview.stop", "session": <ref> } — зупинити живе прев\'ю. Приклад: { "kind": "preview.stop", "session": "a1b2c3" }',
     "Не вигадуй інші `kind` — вони відкидаються без виконання. Кілька дій — масив в одному блоці або кілька блоків.",
     "",
+    "РОЗКЛАД. Задачі за розкладом — особисті, живуть на цій машині. Два типи (`type`):",
+    '  "reminder" — нагадування: у свій час у «Центрі сповіщень» зʼявляється сповіщення з текстом; без моделі, нічого не витрачає («нагадай випити вітаміни о 19:00», «нагадай про міт»);',
+    '  "agent" — задача агента: у свій час агент виконує завдання й пише результат у сповіщення («щовечора генеруй звіт по проєкту X», «щоранку пропонуй одне покращення»). З `project` — це сесія агента в проєкті (лише «привʼязаний» проєкт); без `project` — разовий запуск без репозиторію, з вебпошуком і читанням сторінок (новини, огляди, дослідження).',
+    "Агент за розкладом ТІЛЬКИ аналізує: читає код, запускає тести й прев'ю, пише звіт і знахідки. Він ніколи не комітить і не відкриває PR. Прохання «щоночі виправляй баги» чи «щодня оновлюй залежності» так не виконати — скажи це і запропонуй аналітичний варіант (звіт, перелік знахідок).",
+    '`when` — одна з форм (час — "ГГ:ХХ" за 24 год у часовому поясі з КОНТЕКСТУ; days — ISO, понеділок = 1):',
+    '  { "type": "once", "at": "РРРР-ММ-ДДTГГ:ХХ" } — один раз (дату й час рахуй від «Зараз» у КОНТЕКСТІ: «сьогодні о 19:00», «завтра о 9»);',
+    '  { "type": "in", "minutes": N } — один раз через N хвилин (1–10080): «через 2 хвилини», «через годину» = 60;',
+    '  { "type": "daily", "time": "19:00" } — щодня; { "type": "weekdays", "time": "09:00" } — по буднях;',
+    '  { "type": "weekly", "days": [1, 4], "time": "10:00" } — у вибрані дні тижня; { "type": "monthly", "day": 31, "time": "09:00" } — щомісяця (31-ше в короткому місяці — останній день);',
+    '  { "type": "hourly", "every": 2, "minute": 0 } — кожні N годин (1–12) від 00:ХХ.',
+    "Дії розкладу (результат пише застосунок; що «одразу», а що «через картку», вирішує застосунок):",
+    '  { "kind": "schedule.create", "name": <коротка назва, до 60 символів>, "type": "reminder" | "agent", "text": <текст нагадування або завдання агента>, "project": <назва проєкту, лише agent>, "skills": [<назви навичок, лише agent>], "model": <лише якщо оператор назвав модель>, "when": <when> } — створити. Приклади: { "kind": "schedule.create", "name": "Вітаміни", "type": "reminder", "text": "Випити вітаміни", "when": { "type": "daily", "time": "19:00" } }; { "kind": "schedule.create", "name": "Звіт Альфа", "type": "agent", "text": "Згенеруй звіт про стан проєкту", "project": "Альфа", "skills": ["weekly-report"], "when": { "type": "daily", "time": "19:00" } }',
+    '  { "kind": "schedule.update", "ref": <ref>, "name"?, "text"?, "project"?, "skills"?, "model"?, "when"? } — змінити лише названі поля. Приклад: { "kind": "schedule.update", "ref": "1a2b3c4d", "when": { "type": "daily", "time": "20:00" } }',
+    '  { "kind": "schedule.pause", "ref": <ref> } — поставити на паузу; { "kind": "schedule.resume", "ref": <ref> } — відновити; { "kind": "schedule.run", "ref": <ref> } — запустити зараз; { "kind": "schedule.delete", "ref": <ref> } — видалити разом з історією запусків.',
+    "Правила розкладу: `ref` — тільки з переліку «Задачі за розкладом» у КОНТЕКСТІ; `project` — назва з переліку «Проєкти»; `skills` — тільки назви з переліку «Навички для задач агента», РІВНО як надруковано (невідомої навички не вигадуй — скажи, що такої немає); нагадуванню не давай ні project, ні skills, ні model; якщо з прохання не ясно, коли саме, — спитай прозою; оператору називай розклад словами («щодня о 19:00»), а не JSON.",
+    "",
     "ПРАВИЛА:",
     "(а) назви — РІВНО так, як їх надруковано в контексті: проєкти й воркспейси — за назвою, сесії — за `ref`, місця — за `id`. Не вигадуй сесій, проєктів чи місць, яких у контексті немає;",
     "(б) ціль за замовчуванням — поточний вибір угорі («запусти агента» = у вибраному проєкті). Якщо прохання потребує проєкту, а проєкт не вибрано і з прохання не ясно який, — спитай прозою, без блоку дії;",
@@ -72,11 +90,16 @@ function sessionLine(s: CukSessionRow): string {
   return `- ${s.ref} · ${s.project} · «${s.name}» · ${s.kind} · ${s.status}${flags.length ? ` · ${flags.join(" · ")}` : ""}`;
 }
 
+function scheduleLine(s: CukScheduleRow): string {
+  return `- ${s.ref} · «${s.name}» · ${s.type} · ${s.project ?? "без проєкту"} · ${s.when} · ${s.next ?? "—"} · ${s.enabled ? "увімкнена" : "на паузі"}`;
+}
+
 function contextBlock(c: CukContext, today: string): string {
   const selected = (on: boolean) => (on ? " · вибраний" : "");
   return [
     "── КОНТЕКСТ ──",
     `Сьогодні: ${today}`,
+    `Зараз: ${c.now} · часовий пояс ${c.timeZone}`,
     `Зараз відкрито: ${c.view || "—"}`,
     `Вибраний воркспейс: ${c.workspace ?? "не вибрано"}`,
     `Вибраний проєкт: ${c.project ?? "не вибрано"}`,
@@ -102,6 +125,10 @@ function contextBlock(c: CukContext, today: string): string {
     ...(c.places.length ? c.places.map((p) => `- ${p.id} · ${p.label}`) : ["- жодного"]),
     "Записничок («Список дій» вибраного воркспейсу) — #N для todo.update / todo.delete:",
     c.notes === undefined ? "- воркспейс не вибрано" : c.notes.length ? homeTodoLines(c.notes) : "- порожньо",
+    `Задачі за розкладом (${c.schedules.length}) — ref · назва · тип · проєкт · розклад · наступний запуск · стан:`,
+    ...(c.schedules.length ? c.schedules.map(scheduleLine) : ["- жодної"]),
+    `Навички для задач агента (${c.skills.length}):`,
+    c.skills.length ? c.skills.map((s) => `- ${s}`).join("\n") : "- жодної",
   ].join("\n");
 }
 

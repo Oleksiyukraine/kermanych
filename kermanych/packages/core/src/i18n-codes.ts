@@ -349,6 +349,25 @@ export type ManagementRejectionCode =
   | "cuk_project_missing" // a task.create / agent.start without a project name (params: { kind })
   | "cuk_task_missing" // a task.create / agent.start without the task text (params: { kind })
   | "cuk_message_missing" // a session.message without the message text (params: none)
+  // validateCukAction's schedule.* blocks and ./schedules' validators — «Задачі за розкладом»
+  // (docs/specs/2026-11-06-scheduled-tasks.md):
+  | "schedule_ref_missing" // a schedule.update/pause/resume/run/delete without the task ref (params: { kind })
+  | "schedule_name_missing" // a scheduled task without a name (params: none)
+  | "schedule_name_too_long" // a name longer than SCHEDULE_NAME_MAX (params: { max })
+  | "schedule_text_missing" // a scheduled task without its reminder text / agent task (params: none)
+  | "schedule_type_invalid" // a task kind other than reminder|agent, or an unknown schedule type (params: { value })
+  | "schedule_when_invalid" // the schedule is absent or not an object (params: { value })
+  | "schedule_time_invalid" // a time that is not HH:MM, or an hourly minute outside 0–59 (params: { value })
+  | "schedule_days_invalid" // weekly days not a non-empty list of 1–7 (params: none)
+  | "schedule_day_invalid" // a monthly day outside 1–31 (params: none)
+  | "schedule_every_invalid" // an hourly interval outside 1–12 (params: none)
+  | "schedule_at_invalid" // a once date-time that is not YYYY-MM-DDTHH:MM or not a real date (params: { value })
+  | "schedule_in_invalid" // «через N хв» outside 1–10080 minutes (params: none)
+  | "schedule_agent_only" // a reminder carrying project/skills/model (params: { field })
+  | "schedule_timezone_invalid" // a time zone Intl does not know (params: { value })
+  | "schedule_project_unknown" // apps/api schedules — a projectId not in the local registry (params: { value })
+  | "schedule_skill_unknown" // apps/api schedules — skill names that resolve nowhere (params: { value } — comma-joined names)
+  | "schedule_at_past" // apps/api schedules — a «once» whose date and time has already passed, on create, reschedule or resume (params: { value })
   // parseManagementReply — the block never parsed as JSON:
   | "block_unreadable"; // the fenced block was not readable JSON (params: { message })
 
@@ -413,6 +432,23 @@ export const MANAGEMENT_REJECTION_CODES = [
   "cuk_project_missing",
   "cuk_task_missing",
   "cuk_message_missing",
+  "schedule_ref_missing",
+  "schedule_name_missing",
+  "schedule_name_too_long",
+  "schedule_text_missing",
+  "schedule_type_invalid",
+  "schedule_when_invalid",
+  "schedule_time_invalid",
+  "schedule_days_invalid",
+  "schedule_day_invalid",
+  "schedule_every_invalid",
+  "schedule_at_invalid",
+  "schedule_in_invalid",
+  "schedule_agent_only",
+  "schedule_timezone_invalid",
+  "schedule_project_unknown",
+  "schedule_skill_unknown",
+  "schedule_at_past",
   "block_unreadable",
 ] as const satisfies readonly ManagementRejectionCode[];
 
