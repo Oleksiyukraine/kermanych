@@ -45,6 +45,7 @@ export type KIconName =
   | 'fullscreenExit'
   | 'chevronDown'
   | 'chevronRight'
+  | 'copy'
   | 'coins'
   | 'mic'
   | 'micOff'
@@ -195,6 +196,9 @@ const ICONS: Record<KIconName, readonly string[]> = {
   // KCodeView's fold gutter: an open block points down, a folded one points at its summary.
   chevronDown: ['m6 9 6 6 6-6'],
   chevronRight: ['m9 18 6-6-6-6'],
+  // «Скопіювати шлях» beside a path in the session's «Документація» tab: Lucide's copy, two
+  // overlapping sheets.
+  copy: ['M10 8h10a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H10a2 2 0 0 1-2-2V10a2 2 0 0 1 2-2z', 'M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2'],
   // A session card's spend (KSessionCard): Lucide's coins. The model, tokens and cost live in
   // its tooltip; the mark has to say «what it cost is in here» before anyone hovers it.
   coins: ['M2 8a6 6 0 1 0 12 0a6 6 0 1 0-12 0', 'M18.09 10.37A6 6 0 1 1 10.34 18', 'M7 6h1v4', 'm16.71 13.88.7.71-2.82 2.82'],
