@@ -93,7 +93,10 @@ server is not a process on your machine.
 
 The biggest bursts come from test runners. Set a worker limit in the project you work on:
 
-- vitest: `test.maxWorkers` in `vitest.config.*`, for example `maxWorkers: 2`.
+- vitest: `test.maxWorkers` in `vitest.config.*`, for example `maxWorkers: 2`. On vitest 2 also set
+  `minWorkers: 1` (or pass `--minWorkers=1` next to `--maxWorkers`): its default minimum is the
+  CPU count minus one, and a smaller maximum fails with `options.minThreads and options.maxThreads
+  must not conflict` before any test runs.
 - jest: `maxWorkers` in the jest config, or `--maxWorkers=50%`.
 
 ## For the whole team
