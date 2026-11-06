@@ -24,6 +24,8 @@ export interface RuntimeLaunchOpts {
   fork?: string;
   noTools?: boolean;
   tools?: string[];
+  // `--no-lsp`: no LSP tools, formatting or diagnostics after an edit («Синергія»'s speed).
+  noLsp?: boolean;
   // Extra text appended to the system prompt (`--append-system-prompt`). Used to inject the
   // user's agent communication language directive.
   appendSystemPrompt?: string;

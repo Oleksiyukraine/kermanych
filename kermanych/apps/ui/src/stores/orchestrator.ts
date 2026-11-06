@@ -19,6 +19,7 @@ import type {
   DevicePlatform,
   QaRunScope,
   TesterSettings,
+  SynergyStepsView,
 } from '@kermanych/core';
 import { connectSocket } from '../lib/socket';
 import { api, type MessageMode } from '../lib/api';
@@ -31,6 +32,7 @@ import { PENDING_TIMEOUT_MS } from './pending';
 import { confirmAction } from '../lib/confirm';
 import { isYourTurnEvent } from '../lib/attention';
 import { bounceDock } from '../lib/dock';
+import { synergyOutgoing, type SynergyContext } from '../lib/synergy-outgoing';
 
 // The persisted selection (see `savedSelection` in the store). Guarded both ways: a missing
 // or unreadable value is simply «nothing selected».
@@ -114,6 +116,10 @@ export const useOrchestrator = defineStore('orchestrator', () => {
   // preview.md, decision 7): the snapshot carries it and `preview_update` keeps it fresh, so a
   // reloaded window shows what runs. No entry = not started since the api started.
   const previews = ref<Record<string, PreviewState>>({});
+  // «Синергія» (docs/specs/2026-11-06-synergy.md, decision 4): bumped per session on every
+  // `synergy_steps` (a checkpoint or a restore was committed), so the open strip re-reads the
+  // steps. The steps themselves are read on demand, never held here.
+  const synergyStepsRev = ref<Record<string, number>>({});
   const toasts = ref<Toast[]>([]);
   // The omp model catalog for THIS machine (see loadModels). Empty until it lands — and empty
   // for good if omp cannot be read — so every picker built on it degrades to «за замовчуванням».
@@ -276,6 +282,8 @@ export const useOrchestrator = defineStore('orchestrator', () => {
       onMachineAlert(e.alert);
     } else if (e.type === 'preview_update') {
       previews.value = e.state ? { ...previews.value, [e.sessionId]: e.state } : withoutKey(previews.value, e.sessionId);
+    } else if (e.type === 'synergy_steps') {
+      synergyStepsRev.value = { ...synergyStepsRev.value, [e.sessionId]: (synergyStepsRev.value[e.sessionId] ?? 0) + 1 };
     }
   }
 
@@ -411,11 +419,22 @@ export const useOrchestrator = defineStore('orchestrator', () => {
     if (left.length !== list.length) setOutgoing(id, left);
   }
 
+  // «Синергія», decision 8: the picks tray and the session browser's URL live in
+  // stores/browser.ts, which imports this store; it hands them in here instead (the
+  // `onServerEvent` direction), so the decoration stays in the one send every path uses.
+  let synergyContextOf: ((id: string) => SynergyContext & { clear: () => void }) | undefined;
+  function provideSynergyContext(fn: (id: string) => SynergyContext & { clear: () => void }): void {
+    synergyContextOf = fn;
+  }
+
   // The bubble shows at once; the real user entry replaces it when the transcript reports it.
   // A failed send removes the bubble and rethrows, so the caller can hand the text back to the
   // composer. A bubble the transcript never confirms (a native session pastes into its TUI and
-  // records nothing) is dropped after PENDING_TIMEOUT_MS.
+  // records nothing) is dropped after PENDING_TIMEOUT_MS. A Синергія session's message gets the
+  // current page and the picks tray (lib/synergy-outgoing.ts); the tray empties once it went.
   async function sendMessage(id: string, text: string, mode: MessageMode, images?: ImageInput[], opts: { voice?: boolean } = {}) {
+    const ctx = sessions.value.find((x) => x.id === id)?.synergy ? synergyContextOf?.(id) : undefined;
+    if (ctx) ({ text, images } = synergyOutgoing(text, images ?? [], ctx));
     const msg: OutgoingMessage = {
       id: `${Date.now()}-${Math.random().toString(36).slice(2)}`,
       text,
@@ -426,6 +445,7 @@ export const useOrchestrator = defineStore('orchestrator', () => {
     const drop = () => setOutgoing(id, (outgoing.value[id] ?? []).filter((m) => m.id !== msg.id));
     try {
       const res = await api.sendMessage(id, text, mode, images, opts.voice);
+      if (ctx?.picks.length) ctx.clear();
       settleOutgoing(id);
       if (outgoing.value[id]?.some((m) => m.id === msg.id)) setTimeout(drop, PENDING_TIMEOUT_MS);
       return res;
@@ -674,6 +694,28 @@ export const useOrchestrator = defineStore('orchestrator', () => {
     return api.saveDesign(id);
   }
 
+  // «Синергія» (docs/specs/2026-11-06-synergy.md).
+  function createSynergy(body: Parameters<typeof api.createSynergy>[0]) {
+    return api.createSynergy(body);
+  }
+
+  function synergySteps(id: string): Promise<SynergyStepsView> {
+    return api.synergySteps(id);
+  }
+
+  function restoreSynergy(id: string, sha: string): Promise<SynergyStepsView> {
+    return api.restoreSynergy(id, sha);
+  }
+
+  // The row comes back without `synergy`: applied at once, as its `session_update` will be, so
+  // selecting it on «Агенти» right after does not bounce back to «Синергія» (MainLayout's
+  // redirect reads the row).
+  async function implementSynergy(id: string, taskId: string): Promise<Session> {
+    const session = await api.implementSynergy(id, taskId);
+    reduce({ type: 'session_update', session });
+    return session;
+  }
+
   // Minimal transient notifications. notify() pushes a toast that auto-dismisses;
   // components read `toasts` and may dismiss one early.
   function notify(message: string, kind: Toast['kind'] = 'info', ms = 4000, action?: Toast['action']) {
@@ -728,6 +770,7 @@ export const useOrchestrator = defineStore('orchestrator', () => {
     createChat,
     promoteChat,
     sendMessage,
+    provideSynergyContext,
     setEffort,
     models,
     loadModels,
@@ -747,6 +790,7 @@ export const useOrchestrator = defineStore('orchestrator', () => {
     resumeSession,
     runSessionNow,
     previews,
+    synergyStepsRev,
     startPreview,
     stopPreview,
     previewInfo,
@@ -777,6 +821,10 @@ export const useOrchestrator = defineStore('orchestrator', () => {
     completeDocs,
     writeDoc,
     saveDesign,
+    createSynergy,
+    synergySteps,
+    restoreSynergy,
+    implementSynergy,
     archiveSession,
     unarchiveSession,
     renameSession,

@@ -51,6 +51,7 @@ import type {
   PrCheck,
   QaRunScope,
   TesterSettings,
+  SynergyStepsView,
   ScheduledTask,
   ScheduleDraft,
   SchedulePatch,
@@ -1041,6 +1042,29 @@ export const api = {
   // «Зберегти дизайн»: one Kermanych prompt asking the Дизайнер to screenshot every listed state,
   // bring the README in line and commit; 400 for a session that is not a design.
   saveDesign: (id: string): Promise<{ sent: true }> => post(`/sessions/${id}/design/save`, {}),
+
+  // «Синергія» (docs/specs/2026-11-06-synergy.md). A launch with no card (decision 5): the api
+  // creates the `synergy/<slug>` worktree, starts the preview on `page` and spawns the child idle.
+  createSynergy: (body: {
+    projectId: string;
+    topic?: string;
+    page?: string;
+    base?: string;
+    model?: string;
+    effort?: ThinkingLevel;
+  }): Promise<Session> => post<Session>('/sessions/synergy', body),
+
+  // The checkpoint strip, read from `git log <base>..HEAD` (decision 4).
+  synergySteps: (id: string): Promise<SynergyStepsView> => get<SynergyStepsView>(`/sessions/${id}/synergy/steps`),
+
+  // «Повернутися сюди»: a restore commit of `sha`'s tree; refused while a turn runs.
+  restoreSynergy: (id: string, sha: string): Promise<SynergyStepsView> =>
+    post<SynergyStepsView>(`/sessions/${id}/synergy/restore`, { sha }),
+
+  // «Імплементувати» (decision 6): the card the UI filed becomes the session's task and a fresh
+  // agent starts on the brief in the same worktree.
+  implementSynergy: (id: string, taskId: string): Promise<Session> =>
+    post<Session>(`/sessions/${id}/synergy/implement`, { taskId }),
 
   archiveSession: (id: string): Promise<{ ok: boolean }> =>
     post<{ ok: boolean }>(`/sessions/${id}/archive`, {}),

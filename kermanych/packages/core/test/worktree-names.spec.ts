@@ -29,7 +29,7 @@ test("branchName uses the given prefix", () => {
   expect(branchName("fix-login", "fix")).toBe("fix/fix-login");
 });
 test("BRANCH_PREFIXES lists the allowed prefixes", () => {
-  expect([...BRANCH_PREFIXES]).toEqual(["feature", "fix", "refactoring", "chore", "design"]);
+  expect([...BRANCH_PREFIXES]).toEqual(["feature", "fix", "refactoring", "chore", "design", "synergy"]);
 });
 test("uniqueSlug suffixes on collision", () => {
   expect(uniqueSlug("fix", new Set(["fix", "fix-2"]))).toBe("fix-3");

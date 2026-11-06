@@ -490,12 +490,16 @@ export class PreviewService implements OnModuleInit, OnModuleDestroy {
       }
 
       this.update(id, run, { phase: "running", url, services });
-      // The session page goes to the preview (decision 6). A standalone api has no host.
+      // The session page goes to the preview (decision 6). A standalone api has no host. A
+      // «Синергія» session started on «Змінити сторінку» opens on its start path instead
+      // (docs/specs/2026-11-06-synergy.md, decision 5); every other session on the root.
       const host = browserHost();
+      const page = this.registry.listSessions().find((x) => x.id === id)?.synergy?.page;
+      const open = page ? `${url.replace(/\/+$/, "")}${page}` : url;
       if (host)
         void Promise.resolve()
-          .then(() => host.openPreview({ sessionId: id, projectId: run.projectId }, url))
-          .catch((err: unknown) => console.warn(`[preview] could not open ${url} for session ${id}: ${(err as Error).message}`));
+          .then(() => host.openPreview({ sessionId: id, projectId: run.projectId }, open))
+          .catch((err: unknown) => console.warn(`[preview] could not open ${open} for session ${id}: ${(err as Error).message}`));
     } catch (err) {
       if (run.halted) return; // stopped mid-start: not a failure
       const failed = err instanceof StepFailure ? err.step : step;

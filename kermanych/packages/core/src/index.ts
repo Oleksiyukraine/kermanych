@@ -238,6 +238,8 @@ export {
   MINION_AGENT_ID,
   DESIGNER_AGENT_ID,
   DESIGN_SAVE_AGENT_ID,
+  SYNERGY_AGENT_ID,
+  SYNERGY_IMPLEMENT_AGENT_ID,
   TESTER_AGENT_ID,
   PR_CONVENTIONS_FALLBACK,
   KERMANYCH_COAUTHOR,
@@ -264,6 +266,22 @@ export {
   designReferenceLink,
   designBrief,
 } from "./design";
+export {
+  SYNERGY_DEFAULT_MODEL,
+  SYNERGY_DEFAULT_EFFORT,
+  SYNERGY_MOCK_MARK,
+  SYNERGY_CONTEXT_MARK,
+  synergyMessage,
+  synergyRequestOf,
+  synergyCheckpointMessage,
+  synergyRestoreMessage,
+  synergySteps,
+  synergyChronology,
+  synergyBrief,
+  type SynergyCommit,
+  type SynergyStep,
+  type SynergyStepsView,
+} from "./synergy";
 export {
   FINDING_KINDS,
   FINDING_STATUSES,

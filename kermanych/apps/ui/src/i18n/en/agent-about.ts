@@ -51,6 +51,27 @@ export const agentAbout: typeof uk = {
     adds: 'At the very end, a look back over the session for skill lessons (improve_skill), while «Improve skills» is not off.',
     ends: 'The turn ends as usual; the page waits for it up to 30 minutes.',
   },
+  synergy: {
+    tagline: 'Changes the running app with you, one request at a time, in seconds',
+    when: 'The “+ New feature” or “+ Change a page” button on the Synergy page: a topic or a start path, base branch, model and effort, then “Start”. The agent waits for your first request. A trigger cannot run it.',
+    steps:
+      'Opens a session on a synergy/… branch in its own worktree and starts the preview, on the start path if one was given.\nRuns a fast model (Sonnet, low effort by default) with only read, edit, write, grep, glob, the session browser and the preview tools: no shell, no subagents.\nMakes the smallest frontend change per request in the real app code; data it lacks is stubbed and marked synergy-mock.\nEvery request carries the page you look at and the elements you pointed at with ◎.\nAfter each turn Kermanych commits a step; “Go back here” restores any step with a new commit.',
+    adds: 'This instruction goes into the system prompt on every launch and resume. No skills, no triggers, no docs rule.',
+    ends: 'The session stays open. “Implement” hands the prototype to a regular agent; “Discard” deletes the session, worktree and branch.',
+  },
+  'synergy-implement': {
+    tagline: 'Builds a Synergy prototype properly: backend, tests, i18n, docs',
+    when: 'The “Implement” button on the Synergy page, once there is at least one change. A trigger cannot run it.',
+    steps:
+      'Files a card for you with the chronology of your requests.\nStops the prototyping agent and starts a fresh one in the same worktree and branch, on the project’s default model, without the prototyping conversation.\nThe agent reads the branch diff and every synergy-mock, keeps what you agreed on and replaces the stubs with real code.\nIt writes tests and docs, runs the checks and commits.',
+    inputs: {
+      branch: 'The session branch, synergy/….',
+      base: 'The base branch the prototype forked from.',
+      brief: 'The start page and your requests in order, without the rolled-back steps; the card’s description too.',
+    },
+    adds: 'The rules on commit co-authorship and keeping docs up to date, as for any agent.',
+    ends: 'The session leaves Synergy and works on the Agents page like any agent: PR and “Finish” as usual.',
+  },
   review: {
     tagline: 'Checks a session’s changes with fresh eyes and gives a verdict',
     when: 'The “⚖ Reviewer” item in the session menu on the Agents page (⌘D), when the agent is idle and there are changes. A trigger can also run it.',
