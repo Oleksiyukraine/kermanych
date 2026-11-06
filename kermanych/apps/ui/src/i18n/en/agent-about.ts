@@ -48,7 +48,7 @@ export const agentAbout: typeof uk = {
       branch: 'The session branch.',
       message: 'The commit message: design: and the session name.',
     },
-    adds: '',
+    adds: 'At the very end, a look back over the session for skill lessons (improve_skill), while «Improve skills» is not off.',
     ends: 'The turn ends as usual; the page waits for it up to 30 minutes.',
   },
   review: {
@@ -90,7 +90,7 @@ export const agentAbout: typeof uk = {
       conventions: 'The project’s PR conventions, or if none: Conventional Commits and a body with Summary and Testing sections.',
       baseLine: 'Which branch the PR targets: the session’s base or the default branch.',
     },
-    adds: 'The base-branch sync step; for the Minion, a [Minion] prefix in the PR title; for card sessions, a request to write a tester checklist.',
+    adds: 'The base-branch sync step; for the Minion, a [Minion] prefix in the PR title; for card sessions, a request to write a tester checklist. At the very end, a look back over the session for skill lessons (improve_skill), while «Improve skills» is not off.',
     ends: 'As soon as a PR link appears in the reply it is saved and the session moves to In review. The branch and worktree stay.',
   },
   commit: {
@@ -102,7 +102,7 @@ export const agentAbout: typeof uk = {
       branch: 'The session branch.',
       conventions: 'The project’s commit conventions, or Conventional Commits if none.',
     },
-    adds: 'The base-branch sync step.',
+    adds: 'The base-branch sync step. At the very end, a look back over the session for skill lessons (improve_skill), while «Improve skills» is not off.',
     ends: 'After the turn the session goes back to In review.',
   },
   'resolve-conflict': {

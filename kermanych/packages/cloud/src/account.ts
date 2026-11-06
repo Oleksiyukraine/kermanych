@@ -1,7 +1,14 @@
 // The signed-in user's per-account settings on the shared cloud. Same JWT-scoped,
 // RLS-guarded pattern as workspaces.ts; the snake_case<->camelCase boundary lives here.
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { isAgentProvider, isAgentLanguage, type AgentProvider, type AgentLanguage } from "@kermanych/core";
+import {
+  isAgentProvider,
+  isAgentLanguage,
+  isSkillImprovementLevel,
+  type AgentProvider,
+  type AgentLanguage,
+  type SkillImprovementLevel,
+} from "@kermanych/core";
 
 // The user's AI provider (docs/specs/2026-11-05-remove-managed-claude-code.md), stored in the
 // column the removed runtime preference used. `null` means the row holds none yet («not
@@ -55,24 +62,24 @@ export async function setMyAgentLanguage(client: SupabaseClient, lang: AgentLang
   if (error) throw new Error(error.message);
 }
 
-// «Вдосконалювати навички» (docs/specs/2026-11-04-skill-self-improvement.md): whether the
-// operator's sessions get the `improve_skill` tool. The column is `not null default true`, so
-// null here means only «unreadable» — the caller keeps what it had.
-export async function getMySkillImprovement(client: SupabaseClient): Promise<boolean | null> {
+// «Вдосконалювати навички» (docs/specs/2026-11-06-skill-improvement-reflection.md): how low the
+// operator sets the bar for skill improvements, `off` included. The column is `not null` with a
+// check, so null here means only «unreadable» — the caller keeps what it had.
+export async function getMySkillImprovementLevel(client: SupabaseClient): Promise<SkillImprovementLevel | null> {
   const { data: auth } = await client.auth.getUser();
   const uid = auth.user?.id;
   if (!uid) return null;
-  const { data, error } = await client.from("profiles").select("skill_improvement").eq("id", uid).single();
+  const { data, error } = await client.from("profiles").select("skill_improvement_level").eq("id", uid).single();
   if (error || !data) return null;
-  if (typeof data !== "object" || !("skill_improvement" in data)) return null;
-  const v = data.skill_improvement;
-  return typeof v === "boolean" ? v : null;
+  if (typeof data !== "object" || !("skill_improvement_level" in data)) return null;
+  const v = data.skill_improvement_level;
+  return isSkillImprovementLevel(v) ? v : null;
 }
 
-export async function setMySkillImprovement(client: SupabaseClient, on: boolean): Promise<void> {
+export async function setMySkillImprovementLevel(client: SupabaseClient, level: SkillImprovementLevel): Promise<void> {
   const { data: auth } = await client.auth.getUser();
   const uid = auth.user?.id;
   if (!uid) throw new Error("not signed in");
-  const { error } = await client.from("profiles").update({ skill_improvement: on }).eq("id", uid);
+  const { error } = await client.from("profiles").update({ skill_improvement_level: level }).eq("id", uid);
   if (error) throw new Error(error.message);
 }

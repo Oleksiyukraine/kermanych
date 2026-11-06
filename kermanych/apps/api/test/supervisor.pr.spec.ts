@@ -32,6 +32,13 @@ import { RegistryService } from "../src/registry/registry.service";
 import { offlineAuth } from "./offline-auth";
 import { stubSkills } from "./skills-stub";
 import type { SkillsService } from "../src/skills/skills.service";
+import type { HttpAdapterHost } from "@nestjs/core";
+import { skillReflectionBlock } from "@kermanych/core";
+import { BrowserMcpService } from "../src/browser/browser-mcp.service";
+import type { PreviewService } from "../src/preview/preview.service";
+import type { SkillImprovementService } from "../src/skills/skill-improvement.service";
+import type { ModelsService } from "../src/models/models.service";
+import { fakeDevice } from "./fake-device";
 
 function make(skills: SkillsService = stubSkills()) {
   const registry = new RegistryService(":memory:");
@@ -272,5 +279,56 @@ describe("commitChanges", () => {
     await sup.sendMessage(s.id, "ще одна правка", "prompt");
     for (const cb of eventCbs) cb({ type: "agent_end", isTerminal: true });
     expect(registry.listSessions().find((x) => x.id === s.id)!.status).toBe("done");
+  });
+});
+
+// docs/specs/2026-11-06-skill-improvement-reflection.md, decisions 1–3: Kermanych's own turns end
+// with the reflection step for a session that was handed improve_skill, whatever the instruction.
+describe("the reflection step in Kermanych's turns", () => {
+  const http = { httpAdapter: { getHttpServer: () => ({ address: () => ({ port: 4317 }) }) } } as unknown as HttpAdapterHost;
+
+  async function setup(skills: SkillsService = stubSkills()) {
+    const registry = new RegistryService(":memory:");
+    registry.setAuthSession({ userId: "u1", accessToken: "t" });
+    const worktree = {
+      currentBranch: vi.fn().mockResolvedValue("main"),
+      unmergedFiles: vi.fn().mockResolvedValue([]),
+      fetchBranch: vi.fn().mockResolvedValue("skipped"),
+      refExists: vi.fn().mockResolvedValue(false),
+      behindCount: vi.fn().mockResolvedValue(0),
+    };
+    const mcp = new BrowserMcpService(registry, {} as PreviewService, fakeDevice().device, http, undefined, {} as SkillImprovementService);
+    const sup = new SupervisorService(registry, worktree as unknown as WorktreeService, offlineAuth(), skills, {} as ModelsService, undefined, mcp);
+    registry.upsertProject({ id: "p1", name: "g", localRepoPath: "/tmp/proj" });
+    const s = registry.createSession({ projectId: "p1", name: "AAA", task: "t", worktreePath: "/tmp/wt", branch: "feature/aaa", baseBranch: "dev", designDir: "docs/design/x" });
+    registry.updateSession(s.id, { status: "done" });
+    // The session's launch: its tools/list holds improve_skill.
+    await mcp.handle(s.id, { jsonrpc: "2.0", id: 1, method: "tools/list" });
+    return { sup, registry, id: s.id };
+  }
+
+  it("ends «Створити ПР», «Закоміти» and «Зберегти дизайн» with the step at the operator's level", async () => {
+    const { sup, registry, id } = await setup();
+    await sup.createPullRequest(id);
+    expect(prompts.at(-1)!.endsWith(`\n\n${skillReflectionBlock("moderate")}`)).toBe(true);
+    registry.setAuthSession({ userId: "u1", accessToken: "t", skillImprovementLevel: "active" });
+    await sup.commitChanges(id);
+    expect(prompts.at(-1)!.endsWith(`\n\n${skillReflectionBlock("active")}`)).toBe(true);
+    await sup.saveDesign(id);
+    expect(prompts.at(-1)!.endsWith(`\n\n${skillReflectionBlock("active")}`)).toBe(true);
+  });
+
+  it("rides a project's own PR instruction, and is gone at level off", async () => {
+    const skills = {
+      ...stubSkills(),
+      assignedFor: async () => ({ block: "\n\nSKILL BLOCK", view: [], missing: [] }),
+      instructionFor: async () => "Відкрий ПР для {{branch}}. {{conventions}} {{baseLine}}",
+    } as unknown as SkillsService;
+    const { sup, registry, id } = await setup(skills);
+    await sup.createPullRequest(id);
+    expect(prompts.at(-1)!.endsWith(`SKILL BLOCK\n\n${skillReflectionBlock("moderate")}`)).toBe(true);
+    registry.setAuthSession({ userId: "u1", accessToken: "t", skillImprovementLevel: "off" });
+    await sup.createPullRequest(id);
+    expect(prompts.at(-1)!).not.toContain("improve_skill");
   });
 });

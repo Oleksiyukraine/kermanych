@@ -1619,10 +1619,23 @@ export const en: MessageSchema = {
       claudeFullScreen: 'Full-screen layout',
       claudeFullScreenNote: 'Full screen pins the input to the bottom, but keeps only the visible screen: find in the Лог reaches only what is on it. Off, the whole history stays in the terminal and can be searched. Applies when a session next starts or resumes.',
     },
-    // docs/specs/2026-11-04-skill-self-improvement.md, «Defaults»: the switch for the improve_skill tool.
+    // docs/specs/2026-11-06-skill-improvement-reflection.md, decision 3: the level of the
+    // improve_skill tool and of the reflection step in Kermanych's turns.
     skillImprovement: {
       label: 'Improve skills',
-      note: 'Agents of managed sessions write general lessons straight into your personal copies of library skills. Teammates are not affected. Every change shows in ЦУК → «Notification center», where you can roll it back. Applies to sessions launched after the change.',
+      level: {
+        off: 'Off',
+        conservative: 'Cautious',
+        moderate: 'Moderate',
+        active: 'Active',
+      },
+      hint: {
+        off: 'Agents do not change skills, and Kermanych does not ask them to look back at the session.',
+        conservative: 'Only when you corrected how the agent did a kind of task a skill describes, or a skill proved wrong or incomplete.',
+        moderate: 'Everything in «Cautious», plus repeated friction: the agent went wrong more than once on a step the skill should have foreseen, or you had to clarify something the skill could have said up front.',
+        active: 'The agent looks for at least one lesson in every skill it used. The most changes.',
+      },
+      note: 'Agents of managed sessions write general lessons straight into your personal copies of library skills; teammates are not affected. «Create PR», «Commit» and «Save design» end with a look back over the session for such lessons. Every change shows in ЦУК → «Notification center», where you can roll it back. The level applies to the look-back at once, and to the tool description in sessions launched after the change.',
     },
     language: {
       label: 'Agent communication language',
@@ -1870,6 +1883,7 @@ export const en: MessageSchema = {
       readOnly: 'Only the workspace owner can change instructions and skills — for you they are read-only.',
       headerCaption: 'The role receives its skills under this header, verbatim:',
       baseSyncCaption: 'Kermanych appends this after the instruction — it cannot be changed or switched off:',
+      reflectionCaption: 'Kermanych appends this at the very end while «Improve skills» (Settings → «AI provider») is not off; the text follows the level:',
     },
     skillSeq: {
       add: 'Add',

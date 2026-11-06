@@ -8,8 +8,8 @@
   the lesson rules, the reflection block), `packages/cloud` (`account.ts`), `apps/api` (the
   SQLite cache, `/account/skill-improvement`, the tool description and gates, the three
   Kermanych turns), `apps/ui` (the Settings select, i18n `uk` / `en`), `kermanych/README.md`.
-- **Status:** decisions agreed with the operator in the deep-analysis interview (2026-11-06);
-  waiting for the go-ahead.
+- **Status:** decisions agreed with the operator in the deep-analysis interview (2026-11-06),
+  approved the same day; implemented on this branch (see «Verification — results»).
 
 ## Problem
 
@@ -113,10 +113,12 @@ Why the agents do not call it:
 - **Who gets the block.** The same sessions that get the tool: managed omp sessions of kind
   `agent` (deep analysis, designer and minion runs included) and project chats, but not native
   sessions or tester runs, and only while the level is not `off`. A project chat has none of the
-  three turns, so it keeps only the tool. A session launched while the level was `off` has no tool
-  in its list. If the level is switched on later, that session gets no block either: the block is
-  appended only when the session was handed the tool.
-- **The migration** (`supabase/migrations/2026110612…_skill_improvement_level.sql`):
+  three turns, so it keeps only the tool. A session whose running agent was launched while the
+  level was `off` has no tool in its list. If the level is switched on later, that session gets
+  no block until its agent is relaunched and lists the tool again. The api remembers which
+  sessions were listed without the tool, not which were listed with it: a dormant session's turn is
+  built before the respawn that lists its tools, and it must still get the block.
+- **The migration** (`supabase/migrations/20261106120000_skill_improvement_level.sql`):
   - adds `profiles.skill_improvement_level text not null default 'moderate'` with a check over
     `off | conservative | moderate | active`;
   - carries the old switch over: `false` → `off`, `true` → `moderate`;
@@ -157,7 +159,7 @@ Why the agents do not call it:
 - **core unit tests:**
   - every level's rule contains its criteria and the shared exclusions;
   - `active` alone asks for at least one lesson;
-  - the block names `improve_skill` and «not yet recorded in this session».
+  - the block names `improve_skill` and «not yet made in this session».
 - **api unit tests:**
   - the three turns carry the block for a qualifying session at a non-`off` level, also with an
     overridden template;
@@ -174,3 +176,47 @@ Why the agents do not call it:
   - the same at `off` shows no block and no tool.
   If the preview cannot sign in to the cloud, the live check is reported as not exercised, as in
   the 2026-11-04 spec.
+
+## Verification — results
+
+- **Migration** on PGlite, over a `profiles` table with the old switch: `true` → `moderate`,
+  `false` → `off`, a new row gets `moderate`, `'eager'` is refused by
+  `profiles_skill_improvement_level_check`, and `skill_improvement` is gone. The hosted project
+  has not been migrated yet.
+- **SQLite cache:** a database left by the previous version with a cached «off» reopens at `off`,
+  and its `skill_improvement` column is dropped (`registry.auth.spec.ts`). A refreshed token of the
+  same user keeps the cached level until the cloud read replaces it (`AuthService.setToken`).
+- **Unit tests:**
+  - `@kermanych/core`: the level's rules and the block (`skill-improvements.spec.ts`);
+  - `@kermanych/cloud`: the level read and write (`account.spec.ts`);
+  - `@kermanych/api`: the gates, the description per level, and the step for dormant, launched-off,
+    native and chat sessions (`skill-improvement.spec.ts`); the three turns ending with the step,
+    an overridden PR instruction, and `off` (`supervisor.pr.spec.ts`); the route
+    (`account.controller.spec.ts`).
+- **Suites**, one at a time, at most 4 workers:
+  - `@kermanych/core`: 30 files, 365 tests;
+  - `@kermanych/cloud`: 13 files passed, 2 skipped, 204 tests;
+  - `@kermanych/api`: typecheck clean, 127 files passed, 1 skipped, 1333 tests;
+  - `@kermanych/ui`: `vue-tsc` clean, 87 files, 947 tests.
+- **Preview:**
+  - `GET /api/account/skill-improvement` answers `{"level":"moderate"}`, and `POST` with `eager`
+    answers 400.
+  - Settings → «ШІ-провайдер» shows the select with its four levels and the hint of the chosen one.
+  - «ШІ-команда → Провізор» lists the step under «Що Керманич додає сам».
+  - The step's preview under the instruction needs the cloud's agent rows, which the preview cannot
+    read, so it was not seen.
+- **Live agent**, a managed omp chat in the preview api, on a throwaway repository:
+  - The agent read `task-spec` and wrote a task document without rejected alternatives.
+  - The operator then corrected it («I ask for this every time»). With the new `moderate`
+    description, the agent called `improve_skill` on `task-spec` at once. The edit turned the
+    «Decisions» line into a general rule: every document names its rejected options.
+  - A later turn ended with `skillReflectionBlock("moderate")`, and the agent called the tool again
+    before it answered.
+  - Both calls got «Not applied: Kermanych is not signed in to the cloud», because the preview api
+    is not signed in.
+  - A chat has no «Створити ПР», so the block was sent as the tail of a message.
+- **Not exercised:**
+  - a successful write against the real cloud (record, toast, «Центр сповіщень»);
+  - the select's save, which needs the cloud;
+  - a real «Створити ПР» turn of a managed agent session. A preview agent session needs a cloud
+    card, so `supervisor.pr.spec.ts` covers this path with a fake RPC.

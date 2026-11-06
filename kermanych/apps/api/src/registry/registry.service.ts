@@ -6,8 +6,8 @@ import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { mkdirSync } from "node:fs";
 import { Subject } from "rxjs";
-import { isThinkingLevel, isNativeHarness, isAgentLanguage, isFindingKind, isPlatform, parseFindingTarget, docsPolicy, combineReportWrites, readMinionResult, isMinionPauseCode, clampMinionCap, MINION_CAP_DEFAULT, isDevicePlatform, ACTIVE_STATUSES } from "@kermanych/core";
-import type { AgentFinding, DeviceChoice, DocsPolicy, FindingReport, FindingTarget, MinionPause, MinionResult, NativeSettings, Platform, Project, ResourceDecision, Session, SessionDevice, SessionStatus, ThinkingLevel, Usage, AgentLanguage, TaskReportsWrite, TesterSettings } from "@kermanych/core";
+import { isThinkingLevel, isNativeHarness, isAgentLanguage, isSkillImprovementLevel, DEFAULT_SKILL_IMPROVEMENT_LEVEL, isFindingKind, isPlatform, parseFindingTarget, docsPolicy, combineReportWrites, readMinionResult, isMinionPauseCode, clampMinionCap, MINION_CAP_DEFAULT, isDevicePlatform, ACTIVE_STATUSES } from "@kermanych/core";
+import type { AgentFinding, DeviceChoice, DocsPolicy, FindingReport, FindingTarget, MinionPause, MinionResult, NativeSettings, Platform, Project, ResourceDecision, Session, SessionDevice, SessionStatus, ThinkingLevel, Usage, AgentLanguage, SkillImprovementLevel, TaskReportsWrite, TesterSettings } from "@kermanych/core";
 
 // The cached Supabase session. Lives in SQLite so a restarted api still knows who
 // its user is without a cloud round trip.
@@ -17,9 +17,10 @@ export type AuthSessionRow = {
   expiresAt?: string;
   githubUsername?: string;
   agentLanguage?: AgentLanguage;
-  // The operator's «skill self-improvement» switch (profiles.skill_improvement), cached so the
-  // improve_skill gate needs no cloud read. Unknown (never hydrated) = undefined, treated as on.
-  skillImprovement?: boolean;
+  // The operator's skill improvement level (profiles.skill_improvement_level), cached so the
+  // improve_skill gate and the reflection step need no cloud read. Unknown (never hydrated) =
+  // undefined, which counts as DEFAULT_SKILL_IMPROVEMENT_LEVEL.
+  skillImprovementLevel?: SkillImprovementLevel;
 };
 
 // This machine's resource-profile row. `overrides` stays JSON text here; the profile service
@@ -404,12 +405,19 @@ export class RegistryService {
     } catch {
       /* column already exists */
     }
-    // Additive migration: the cached skill self-improvement switch
-    // (docs/specs/2026-11-04-skill-self-improvement.md); 1/0, NULL = not yet known.
+    // Additive migration: the cached skill improvement level
+    // (docs/specs/2026-11-06-skill-improvement-reflection.md); NULL = not yet known. It replaced
+    // the on/off `skill_improvement` column: a cached «off» carries over, then the old column goes.
     try {
-      this.db.exec(`ALTER TABLE auth_session ADD COLUMN skill_improvement INTEGER`);
+      this.db.exec(`ALTER TABLE auth_session ADD COLUMN skill_improvement_level TEXT`);
     } catch {
       /* column already exists */
+    }
+    try {
+      this.db.exec(`UPDATE auth_session SET skill_improvement_level = 'off' WHERE skill_improvement = 0 AND skill_improvement_level IS NULL`);
+      this.db.exec(`ALTER TABLE auth_session DROP COLUMN skill_improvement`);
+    } catch {
+      /* the old column is already gone, or never existed */
     }
     // Additive migration: the runtime an agent session was launched with. Persisted so the
     // board can display it and resume knows which backend to use.
@@ -1248,14 +1256,14 @@ export class RegistryService {
   getAuthSession(): AuthSessionRow | undefined {
     const row = this.db
       .prepare(
-        `SELECT user_id as userId, access_token as accessToken, expires_at as expiresAt, github_username as githubUsername, agent_language as agentLanguage, skill_improvement as skillImprovement FROM auth_session WHERE id = 1`,
+        `SELECT user_id as userId, access_token as accessToken, expires_at as expiresAt, github_username as githubUsername, agent_language as agentLanguage, skill_improvement_level as skillImprovementLevel FROM auth_session WHERE id = 1`,
       )
-      .get() as (Omit<AuthSessionRow, "skillImprovement"> & { agentLanguage: string | null; skillImprovement: number | null }) | undefined;
+      .get() as (Omit<AuthSessionRow, "skillImprovementLevel"> & { agentLanguage: string | null; skillImprovementLevel: string | null }) | undefined;
     if (!row) return undefined;
-    const { skillImprovement, ...rest } = row;
+    const { skillImprovementLevel, ...rest } = row;
     return {
       ...rest,
-      ...(skillImprovement === null ? {} : { skillImprovement: skillImprovement !== 0 }),
+      ...(isSkillImprovementLevel(skillImprovementLevel) ? { skillImprovementLevel } : {}),
       expiresAt: row.expiresAt ?? undefined,
       githubUsername: row.githubUsername ?? undefined,
       agentLanguage: isAgentLanguage(row.agentLanguage) ? row.agentLanguage : undefined,
@@ -1265,9 +1273,14 @@ export class RegistryService {
   setAuthSession(row: AuthSessionRow): void {
     this.db
       .prepare(
-        `INSERT OR REPLACE INTO auth_session (id, user_id, access_token, expires_at, github_username, agent_language, skill_improvement) VALUES (1,?,?,?,?,?,?)`,
+        `INSERT OR REPLACE INTO auth_session (id, user_id, access_token, expires_at, github_username, agent_language, skill_improvement_level) VALUES (1,?,?,?,?,?,?)`,
       )
-      .run(row.userId, row.accessToken, row.expiresAt ?? null, row.githubUsername ?? null, row.agentLanguage ?? null, row.skillImprovement === undefined ? null : row.skillImprovement ? 1 : 0);
+      .run(row.userId, row.accessToken, row.expiresAt ?? null, row.githubUsername ?? null, row.agentLanguage ?? null, row.skillImprovementLevel ?? null);
+  }
+
+  /** The operator's skill improvement level as the gates read it: unknown counts as the cloud default. */
+  skillImprovementLevel(): SkillImprovementLevel {
+    return this.getAuthSession()?.skillImprovementLevel ?? DEFAULT_SKILL_IMPROVEMENT_LEVEL;
   }
 
   clearAuthSession(): void {

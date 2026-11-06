@@ -2778,6 +2778,9 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     // A «Посіпака» session's PR is told apart by its title (docs/specs/2026-10-23-minion-auto-run.md,
     // decision 10); appended like the sync, so neither an override nor the repo's conventions drop it.
     const title = s.minion ? `\n\n${MINION_PR_TITLE_RULE}` : "";
+    // The reflection step (docs/specs/2026-11-06-skill-improvement-reflection.md) goes last, after
+    // every other Kermanych block, so it still applies whatever the instruction says.
+    const reflect = this.browser?.skillReflection(id) ?? "";
     const prompt =
       renderInstruction(
         agentById("pull-request")!,
@@ -2787,7 +2790,7 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
           baseLine,
         },
         template,
-      ) + sync + title + block + artifacts;
+      ) + sync + title + block + artifacts + reflect;
 
     // A send parked for an agent slot replays this whole call later, so the flags below are armed
     // for the turn that call starts, not now on a child that is not running it.
@@ -2849,7 +2852,7 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
           conventions: (g.conventions || "").trim() || PR_CONVENTIONS_FALLBACK,
         },
         template,
-      ) + (base ? `\n\n${baseSyncBlock(base)}` : "") + block;
+      ) + (base ? `\n\n${baseSyncBlock(base)}` : "") + block + (this.browser?.skillReflection(id) ?? "");
 
     // Parked for an agent slot: replayed whole later, flags included (see createPullRequest).
     if (!(await this.sendAsKermanych(id, prompt, "prompt", () => this.commitChanges(id)))) return { ok: true };
@@ -2877,7 +2880,9 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     const dir = s.worktreePath || this.project(s.projectId).localRepoPath;
     const { template, block } = await this.agentPrompt(s.projectId, DESIGN_SAVE_AGENT_ID, dir);
     const prompt =
-      renderInstruction(agentById(DESIGN_SAVE_AGENT_ID)!, { designDir: s.designDir, branch: s.branch, message: designCommitMessage(s.name) }, template) + block;
+      renderInstruction(agentById(DESIGN_SAVE_AGENT_ID)!, { designDir: s.designDir, branch: s.branch, message: designCommitMessage(s.name) }, template) +
+      block +
+      (this.browser?.skillReflection(id) ?? "");
     // Parked for an agent slot: replayed whole later, like commitChanges.
     await this.sendAsKermanych(id, prompt, "prompt", () => this.saveDesign(id));
     return { sent: true };

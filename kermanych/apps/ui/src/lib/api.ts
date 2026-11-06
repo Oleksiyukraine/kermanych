@@ -31,6 +31,7 @@ import type {
   ApiErrorParams,
   NativeHarness,
   AgentLanguage,
+  SkillImprovementLevel,
   DocsWriteKind,
   DocsGate,
   DocsGateFailure,
@@ -1070,11 +1071,11 @@ export const api = {
   setAccountLanguage: (language: AgentLanguage): Promise<void> =>
     post<void>('/account/language', { language }),
 
-  // «Вдосконалювати навички» (docs/specs/2026-11-04-skill-self-improvement.md). Same pattern:
-  // the cloud profile is written first, then the api's cache, which decides whether sessions
-  // launched afterwards get the `improve_skill` tool.
-  setAccountSkillImprovement: (on: boolean): Promise<void> =>
-    post<void>('/account/skill-improvement', { on }),
+  // «Вдосконалювати навички» (docs/specs/2026-11-06-skill-improvement-reflection.md). Same
+  // pattern: the cloud profile is written first, then the api's cache, which decides whether
+  // sessions get the `improve_skill` tool and Kermanych's turns the reflection step.
+  setAccountSkillImprovementLevel: (level: SkillImprovementLevel): Promise<void> =>
+    post<void>('/account/skill-improvement', { level }),
 
   // ── Voice conversation (docs/specs/2026-11-02-voice-conversation.md) ──────────────────
   // The OpenAI key stays in the api: the window only learns where it comes from and its last

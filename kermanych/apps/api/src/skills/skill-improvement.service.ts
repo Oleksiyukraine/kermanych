@@ -92,7 +92,7 @@ export class SkillImprovementService {
     if (!session) return no("This session no longer exists.");
     if (session.native || (session.kind !== "agent" && session.kind !== "chat") || isTesterSession(session))
       return no("improve_skill is not available in this session.");
-    if (this.registry.getAuthSession()?.skillImprovement === false)
+    if (this.registry.skillImprovementLevel() === "off")
       return no("Not applied: the operator has turned skill improvement off. Mention the lesson in your reply instead.");
     const userId = this.auth.current()?.userId;
     if (!userId) return no("Not applied: Kermanych is not signed in to the cloud, where the skill library lives. Continue your task.");
