@@ -40,7 +40,7 @@ export function cukSessionRows(
       ref: sessionRef(s.id),
       project: projectName(s.projectId),
       name: s.name,
-      kind: s.designDir ? 'design' : s.kind,
+      kind: s.designDir ? 'design' : s.synergy ? 'synergy' : s.kind,
       status: s.status,
       waiting: waiting(s),
       archived: !!s.archived,

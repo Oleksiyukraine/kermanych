@@ -12,16 +12,18 @@ import {
 } from "../src/agents";
 import { SKILL_NAME_RE } from "../src/skills";
 
-test("the registry describes eleven agents, nine of them instruction-bearing", () => {
+test("the registry describes thirteen agents, eleven of them instruction-bearing", () => {
   expect(AGENTS.map((a) => a.id)).toEqual([
-    "review", "promote", "pull-request", "commit", "resolve-conflict", "minion", "designer", "design-save", "tester", "finish", "summary",
+    "review", "promote", "pull-request", "commit", "resolve-conflict", "minion", "designer", "design-save",
+    "synergy", "synergy-implement", "tester", "finish", "summary",
   ]);
   for (const a of AGENTS) {
     expect(SKILL_NAME_RE.test(a.id)).toBe(true);
     expect(a.labelKey).toBe(`agents.role.${a.id}`);
   }
   expect(AGENTS.filter((a) => a.instruction).map((a) => a.id)).toEqual([
-    "review", "promote", "pull-request", "commit", "resolve-conflict", "minion", "designer", "design-save", "tester",
+    "review", "promote", "pull-request", "commit", "resolve-conflict", "minion", "designer", "design-save",
+    "synergy", "synergy-implement", "tester",
   ]);
   // `automation` means no model is involved, so there is nothing to display.
   for (const a of AGENTS.filter((a) => a.kind === "automation")) {
@@ -35,7 +37,6 @@ test("every hole in an instruction is declared, and every declared hole is used"
     if (!a.instruction) continue;
     const used = [...a.instruction.matchAll(/\{\{(\w+)\}\}/g)].map((m) => m[1]!);
     expect(new Set(used)).toEqual(new Set(a.holes ?? []));
-    expect(used.length).toBeGreaterThan(0);
   }
 });
 

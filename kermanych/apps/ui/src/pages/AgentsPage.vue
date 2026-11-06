@@ -1569,15 +1569,17 @@ const scopedIds = computed(() =>
 );
 const inScope = computed(() => new Set(scopedIds.value));
 
-// Every non-chat, non-design session in scope, with the tab bucketOf files it under — the one
-// rule the counts and the list share, so a fork sits in its parent's tab here exactly as it is
-// counted there. Chats live on Чат and designs on Дизайн, each its only view; «Карта агентів»
-// still shows designs, because they are running agents (AgentMap reads the store itself).
+// Every non-chat, non-design, non-Синергія session in scope, with the tab bucketOf files it
+// under — the one rule the counts and the list share, so a fork sits in its parent's tab here
+// exactly as it is counted there. Chats live on Чат, designs on Дизайн and Синергія sessions on
+// Синергія, each its only view; «Карта агентів» still shows them, because they are running
+// agents (AgentMap reads the store itself). «Імплементувати» clears `synergy`, and the session
+// shows up here as an ordinary agent.
 const scopedBuckets = computed(() => {
   const byId = new Map(store.sessions.map((s) => [s.id, s]));
   const out: { session: Session; bucket: Bucket }[] = [];
   for (const s of store.sessions) {
-    if (s.kind === 'chat' || s.designDir || !inScope.value.has(s.projectId)) continue;
+    if (s.kind === 'chat' || s.designDir || s.synergy || !inScope.value.has(s.projectId)) continue;
     out.push({ session: s, bucket: bucketOf(s, (id) => byId.get(id)) });
   }
   return out;
@@ -2910,9 +2912,12 @@ const draftEffort = ref<ThinkingLevel | ''>('');
 // The segmented pickers offer core's vocabularies verbatim — the same constants openLauncher
 // validates a card's free-text launch params against, so a prefix added to core cannot show
 // up as accepted-but-unpickable here. Except `design`: a design card comes only from
-// «+ Новий дизайн», which also marks it `design`; a stored design card still shows its own.
+// «+ Новий дизайн», which also marks it `design`; a stored design card still shows its own. And
+// `synergy`, which only a Синергія launch takes (docs/specs/2026-11-06-synergy.md, decision 5).
 const draftPrefix = ref<BranchPrefix>('feature');
-const prefixOptions = computed(() => BRANCH_PREFIXES.filter((p) => p !== 'design' || draftPrefix.value === 'design'));
+const prefixOptions = computed(() =>
+  BRANCH_PREFIXES.filter((p) => p !== 'synergy' && (p !== 'design' || draftPrefix.value === 'design')),
+);
 const modelPickOptions = computed(() => modelOptions(store.models));
 // The effort ladder narrows to the chosen model's own (empty for a non-reasoning model);
 // «за замовчуванням» or an unknown alias keeps the full ladder. Labels stay ours (lib/effort).

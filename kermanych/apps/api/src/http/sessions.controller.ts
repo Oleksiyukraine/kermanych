@@ -56,12 +56,68 @@ export class SessionsController {
     }
   }
 
+  // «Синергія» (docs/specs/2026-11-06-synergy.md, decision 5): a prototyping session with no
+  // card. A literal segment, above the `:id` block for the same reason as `from-task`. Every
+  // field but the project is optional: the topic names it, `page` is the start path of
+  // «Змінити сторінку» (a full URL is accepted, its path kept), `base` the fork base.
+  @Post("synergy")
+  async createSynergy(@Body() b: { projectId?: unknown; topic?: unknown; page?: unknown; base?: unknown; model?: unknown; effort?: unknown }) {
+    if (typeof b?.projectId !== "string" || !b.projectId) throw new BadRequestException("projectId is required");
+    for (const key of ["topic", "page", "base", "model"] as const)
+      if (b[key] !== undefined && typeof b[key] !== "string") throw new BadRequestException(`${key} must be a string`);
+    if (b.effort !== undefined && !isThinkingLevel(b.effort)) throw new BadRequestException(`unknown effort level ${JSON.stringify(b.effort)}`);
+    try {
+      return await this.sup.createSynergy({
+        projectId: b.projectId,
+        ...(b.topic ? { topic: b.topic as string } : {}),
+        ...(b.page ? { page: b.page as string } : {}),
+        ...(b.base ? { base: b.base as string } : {}),
+        ...(b.model ? { model: b.model as string } : {}),
+        ...(b.effort ? { effort: b.effort as ThinkingLevel } : {}),
+      });
+    } catch (err) {
+      throw sessionFailure(err);
+    }
+  }
+
   // A chat carries everything else the promotion needs (its conversation, its opening ask);
   // the task id is the card the UI has just minted for it.
   @Post(":id/promote")
   async promote(@Param("id") id: string, @Body() b: { taskId: string }) {
     try {
       return await this.sup.promoteChatToAgent(id, b.taskId);
+    } catch (err) {
+      throw sessionFailure(err);
+    }
+  }
+
+  // The checkpoint strip: the base, the fork point (step 0) and the steps, read from git.
+  @Get(":id/synergy/steps")
+  async synergySteps(@Param("id") id: string) {
+    try {
+      return await this.sup.synergyStepsView(id);
+    } catch (err) {
+      throw sessionFailure(err);
+    }
+  }
+
+  // «Повернутися сюди»: `sha` is the fork point or a step's sha; refused while a turn runs.
+  @Post(":id/synergy/restore")
+  async restoreSynergy(@Param("id") id: string, @Body() b: { sha?: unknown }) {
+    if (typeof b?.sha !== "string" || !b.sha) throw new BadRequestException("sha is required");
+    try {
+      return await this.sup.restoreSynergy(id, b.sha);
+    } catch (err) {
+      throw sessionFailure(err);
+    }
+  }
+
+  // «Імплементувати»: the task id is the card the UI has just filed with the brief, like promote.
+  @Post(":id/synergy/implement")
+  async implementSynergy(@Param("id") id: string, @Body() b: { taskId?: unknown }) {
+    if (typeof b?.taskId !== "string" || !b.taskId) throw new BadRequestException("taskId is required");
+    try {
+      return await this.sup.implementSynergy(id, b.taskId);
     } catch (err) {
       throw sessionFailure(err);
     }

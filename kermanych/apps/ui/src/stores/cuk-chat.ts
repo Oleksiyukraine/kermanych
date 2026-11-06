@@ -121,6 +121,7 @@ export const useCukChat = defineStore('cuk-chat', () => {
       { id: 'board', label: t('common.nav.viewBoard'), to: { name: 'board' } },
       { id: 'chat', label: t('common.nav.viewChat'), to: { name: 'chat' } },
       { id: 'design', label: t('common.nav.viewDesign'), to: { name: 'design' } },
+      { id: 'synergy', label: t('common.nav.viewSynergy'), to: { name: 'synergy' } },
       { id: 'ai-team', label: t('common.nav.viewAiTeam'), to: { name: 'ai-team' } },
       { id: 'management', label: t('common.nav.viewManagement'), to: { name: MANAGEMENT_DEFAULT_SECTION } },
     ];
@@ -279,13 +280,18 @@ export const useCukChat = defineStore('cuk-chat', () => {
     if (action.kind === 'todo.create' || action.kind === 'todo.update' || action.kind === 'todo.delete') runTodo(action);
   }
 
-  // Show one session where it lives: a design in «Дизайн», every other one in «Агенти» on its
-  // own tab. Also what a result line's «Відкрити сесію» does.
+  // Show one session where it lives: a design in «Дизайн», a Синергія session in «Синергія»
+  // (opened by the page's `session` query), every other one in «Агенти» on its own tab. Also
+  // what a result line's «Відкрити сесію» does.
   async function openSession(id: string): Promise<void> {
     const s = store.sessions.find((x) => x.id === id);
     if (!s) return;
     if (s.designDir) {
       await go({ name: 'design' });
+      return;
+    }
+    if (s.synergy) {
+      await go({ name: 'synergy', query: { session: s.id } });
       return;
     }
     store.setBucket(bucketOf(s, (pid) => store.sessions.find((x) => x.id === pid)));

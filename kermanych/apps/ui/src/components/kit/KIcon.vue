@@ -37,6 +37,7 @@ export type KIconName =
   | 'decision'
   | 'notNeeded'
   | 'design'
+  | 'synergy'
   | 'viewSource'
   | 'viewSplit'
   | 'viewPreview'
@@ -51,6 +52,7 @@ export type KIconName =
   | 'micOff'
   | 'agentPromote'
   | 'agentDesignSave'
+  | 'agentSynergyImplement'
   | 'agentReview'
   | 'agentPullRequest'
   | 'agentCommit'
@@ -172,6 +174,11 @@ const ICONS: Record<KIconName, readonly string[]> = {
     'm2.3 2.3 7.286 7.286',
     'M9 11a2 2 0 1 0 4 0a2 2 0 1 0-4 0',
   ],
+  // «Синергія» — a lightning bolt (Lucide's zap): fast prototyping on the live app
+  // (docs/specs/2026-11-06-synergy.md), the «ШІ-команда» mark of its instruction.
+  synergy: [
+    'M4 14a1 1 0 0 1-.78-1.63l9.9-10.2a.5.5 0 0 1 .86.46l-1.92 6.02A1 1 0 0 0 13 10h7a1 1 0 0 1 .78 1.63l-9.9 10.2a.5.5 0 0 1-.86-.46l1.92-6.02A1 1 0 0 0 11 14z',
+  ],
 
   // The file viewer's three modes (KViewModeToggle): source lines, source beside a page, the
   // rendered page alone. The same trio an IDE's Markdown editor shows, so it reads at a glance.
@@ -222,6 +229,10 @@ const ICONS: Record<KIconName, readonly string[]> = {
     'M15.2 3a2 2 0 0 1 1.4.6l3.8 3.8a2 2 0 0 1 .6 1.4V19a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z',
     'M17 21v-7a1 1 0 0 0-1-1H8a1 1 0 0 0-1 1v7',
     'M7 3v4a1 1 0 0 0 1 1h7',
+  ],
+  // Імплементувати Синергію — a wrench (Lucide's): the prototype rebuilt properly.
+  agentSynergyImplement: [
+    'M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z',
   ],
   // Ревізор — a shield with a tick (Lucide's shield-check): an independent audit.
   agentReview: [

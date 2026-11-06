@@ -40,7 +40,7 @@ export class RpcSession implements AgentRuntime {
   // otherwise liveOrResume's fast path hands a caller the dying child and the write to its
   // already-ended stdin vanishes, the exact silent loss the resume-on-dead contract prevents.
   private stopping = false;
-  constructor(private opts: { cwd: string; model?: string; thinking?: ThinkingLevel; ompPath?: string; fork?: string; noTools?: boolean; tools?: string[]; appendSystemPrompt?: string; commandTimeoutMs?: number; configPaths?: string[]; extensionPath?: string; subagentSubscription?: SubagentSubscriptionLevel; mcp?: RuntimeLaunchOpts["mcp"]; env?: RuntimeLaunchOpts["env"]; onSpawn?: RuntimeLaunchOpts["onSpawn"] }) {}
+  constructor(private opts: { cwd: string; model?: string; thinking?: ThinkingLevel; ompPath?: string; fork?: string; noTools?: boolean; tools?: string[]; noLsp?: boolean; appendSystemPrompt?: string; commandTimeoutMs?: number; configPaths?: string[]; extensionPath?: string; subagentSubscription?: SubagentSubscriptionLevel; mcp?: RuntimeLaunchOpts["mcp"]; env?: RuntimeLaunchOpts["env"]; onSpawn?: RuntimeLaunchOpts["onSpawn"] }) {}
 
   onEvent(cb: (e: RpcEvent) => void) { this.eventCbs.push(cb); }
   onExit(cb: (code: number | null, reason: string, cause?: AuthFailureCode) => void) { this.exitCbs.push(cb); }
@@ -66,6 +66,7 @@ export class RpcSession implements AgentRuntime {
     if (this.opts.fork) argv.push("--fork", this.opts.fork);
     if (this.opts.noTools) argv.push("--no-tools");
     if (this.opts.tools?.length) argv.push("--tools", this.opts.tools.join(","));
+    if (this.opts.noLsp) argv.push("--no-lsp");
     if (this.opts.ompPath) argv[0] = this.opts.ompPath;
     // The MCP server rides a bridge extension (omp reads MCP only from config files); its
     // address and bearer go in the child's environment so the secret never touches disk.

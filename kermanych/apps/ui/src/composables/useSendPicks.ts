@@ -30,12 +30,16 @@ export function useSendPicks(opts: SendPicksOptions): { send: (s: Session) => Pr
     const native = !!s.native;
     sending.value = true;
     try {
-      await store.sendMessage(
-        s.id,
-        composePicksMessage(picks, { native, comment: browser.notes[s.id] }),
-        opts.mode(s),
-        picksImages(picks, { native }),
-      );
+      // A Синергія session: sendMessage itself attaches the tray and the page (decision 8 of
+      // docs/specs/2026-11-06-synergy.md, lib/synergy-outgoing.ts) and empties the tray.
+      if (s.synergy) await store.sendMessage(s.id, '', opts.mode(s));
+      else
+        await store.sendMessage(
+          s.id,
+          composePicksMessage(picks, { native, comment: browser.notes[s.id] }),
+          opts.mode(s),
+          picksImages(picks, { native }),
+        );
       browser.clearPicks(s.id);
       opts.onSent?.(s);
     } catch (e) {

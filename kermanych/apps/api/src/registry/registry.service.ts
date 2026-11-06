@@ -463,6 +463,16 @@ export class RegistryService {
     } catch {
       /* column already exists */
     }
+    // Additive migration: a «Синергія» session (docs/specs/2026-11-06-synergy.md) carries its
+    // marker and the start path of «Змінити сторінку». Unlike `design_dir` the marker is cleared
+    // again by «Імплементувати» (updateSession writes both columns).
+    for (const col of ["synergy INTEGER NOT NULL DEFAULT 0", "synergy_page TEXT"]) {
+      try {
+        this.db.exec(`ALTER TABLE sessions ADD COLUMN ${col}`);
+      } catch {
+        /* column already exists */
+      }
+    }
     // Additive migration: an agent waiting for a slot (docs/specs/2026-10-21-machine-resource-profile.md,
     // decision 5). `pending_prompt` is the message it will be sent (text only); `slot_queued_at`
     // the enqueue time in ms, so a restart re-enqueues in the original FIFO order.
@@ -922,12 +932,12 @@ export class RegistryService {
   }
 
   listSessions(projectId?: string): Session[] {
-    const sql = `SELECT id, project_id as projectId, task_id as taskId, name, task, worktree_path as worktreePath, branch, worktree, base_branch as baseBranch, omp_session_id as ompSessionId, omp_session_file as ompSessionFile, parent_session_id as parentSessionId, kind, model, prefix, runtime, native, deep_analysis, design_dir, minion, minion_result, finding_kind, tester, effort, status, pr_opened as prOpened, pr_url, archived, usage, pending_prompt, created_at as createdAt, last_activity_at as lastActivityAt, (SELECT COUNT(*) FROM session_findings f WHERE f.session_id = sessions.id AND f.status = 'open') as open_findings FROM sessions`;
+    const sql = `SELECT id, project_id as projectId, task_id as taskId, name, task, worktree_path as worktreePath, branch, worktree, base_branch as baseBranch, omp_session_id as ompSessionId, omp_session_file as ompSessionFile, parent_session_id as parentSessionId, kind, model, prefix, runtime, native, deep_analysis, design_dir, synergy, synergy_page, minion, minion_result, finding_kind, tester, effort, status, pr_opened as prOpened, pr_url, archived, usage, pending_prompt, created_at as createdAt, last_activity_at as lastActivityAt, (SELECT COUNT(*) FROM session_findings f WHERE f.session_id = sessions.id AND f.status = 'open') as open_findings FROM sessions`;
     const rows = (
       projectId
         ? this.db.prepare(sql + ` WHERE project_id = ? ORDER BY created_at`).all(projectId)
         : this.db.prepare(sql + ` ORDER BY created_at`).all()
-    ) as (Omit<Session, "archived" | "worktree" | "usage" | "effort" | "runtime" | "prOpened" | "prUrl" | "native" | "deepAnalysis" | "designDir" | "minion" | "minionResult" | "findingKind" | "tester" | "openFindings" | "pendingPrompt"> & { archived: number; worktree: number; usage: string | null; effort: string | null; runtime: string | null; prOpened: number; pr_url: string | null; native: number; deep_analysis: number; design_dir: string | null; minion: number; minion_result: string | null; finding_kind: string | null; tester: number; open_findings: number; pending_prompt: string | null })[];
+    ) as (Omit<Session, "archived" | "worktree" | "usage" | "effort" | "runtime" | "prOpened" | "prUrl" | "native" | "deepAnalysis" | "designDir" | "synergy" | "minion" | "minionResult" | "findingKind" | "tester" | "openFindings" | "pendingPrompt"> & { archived: number; worktree: number; usage: string | null; effort: string | null; runtime: string | null; prOpened: number; pr_url: string | null; native: number; deep_analysis: number; design_dir: string | null; synergy: number; synergy_page: string | null; minion: number; minion_result: string | null; finding_kind: string | null; tester: number; open_findings: number; pending_prompt: string | null })[];
     // SQLite stores the flag as 0/1; hand callers a real boolean. `effort` is validated rather
     // than cast: a row written by an older build (or by hand) must degrade to "not known" —
     // typing an unknown word as a ThinkingLevel would send it straight back into omp's argv.
@@ -939,10 +949,11 @@ export class RegistryService {
     // a PR URL was stored.
     // `minion` likewise; `minion_result` and `finding_kind` are validated like `effort`, so a
     // hand-edited row degrades.
-    // `design_dir` likewise appears only on a design session, `tester` only on a tester run.
-    return rows.map(({ native, deep_analysis, design_dir, minion, minion_result, finding_kind, tester, open_findings, pending_prompt, pr_url, ...r }) => {
+    // `design_dir` likewise appears only on a design session, `tester` only on a tester run,
+    // `synergy` (with its start path, when there is one) only on a «Синергія» session.
+    return rows.map(({ native, deep_analysis, design_dir, synergy, synergy_page, minion, minion_result, finding_kind, tester, open_findings, pending_prompt, pr_url, ...r }) => {
       const minionResult = readMinionColumn(minion_result);
-      return { ...r, ...(native ? { native: true } : {}), ...(deep_analysis ? { deepAnalysis: true } : {}), ...(design_dir ? { designDir: design_dir } : {}), ...(minion ? { minion: true } : {}), ...(minionResult ? { minionResult } : {}), ...(isFindingKind(finding_kind) ? { findingKind: finding_kind } : {}), ...(tester ? { tester: true } : {}), ...(open_findings ? { openFindings: open_findings } : {}), ...(pending_prompt !== null ? { pendingPrompt: pending_prompt } : {}), ...(pr_url ? { prUrl: pr_url } : {}), archived: r.archived !== 0, worktree: r.worktree !== 0, prOpened: r.prOpened !== 0, taskId: r.taskId ?? undefined, model: r.model ?? undefined, prefix: r.prefix ?? undefined, runtime: isNativeHarness(r.runtime) ? r.runtime : undefined, effort: isThinkingLevel(r.effort) ? r.effort : undefined, usage: readUsage(r.usage) };
+      return { ...r, ...(native ? { native: true } : {}), ...(deep_analysis ? { deepAnalysis: true } : {}), ...(design_dir ? { designDir: design_dir } : {}), ...(synergy ? { synergy: synergy_page ? { page: synergy_page } : {} } : {}), ...(minion ? { minion: true } : {}), ...(minionResult ? { minionResult } : {}), ...(isFindingKind(finding_kind) ? { findingKind: finding_kind } : {}), ...(tester ? { tester: true } : {}), ...(open_findings ? { openFindings: open_findings } : {}), ...(pending_prompt !== null ? { pendingPrompt: pending_prompt } : {}), ...(pr_url ? { prUrl: pr_url } : {}), archived: r.archived !== 0, worktree: r.worktree !== 0, prOpened: r.prOpened !== 0, taskId: r.taskId ?? undefined, model: r.model ?? undefined, prefix: r.prefix ?? undefined, runtime: isNativeHarness(r.runtime) ? r.runtime : undefined, effort: isThinkingLevel(r.effort) ? r.effort : undefined, usage: readUsage(r.usage) };
     });
   }
 
@@ -966,7 +977,7 @@ export class RegistryService {
     };
     this.db
       .prepare(
-        `INSERT INTO sessions (id, project_id, task_id, name, task, worktree_path, branch, worktree, base_branch, omp_session_id, omp_session_file, parent_session_id, kind, model, prefix, runtime, native, deep_analysis, design_dir, minion, finding_kind, tester, effort, status, created_at, last_activity_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+        `INSERT INTO sessions (id, project_id, task_id, name, task, worktree_path, branch, worktree, base_branch, omp_session_id, omp_session_file, parent_session_id, kind, model, prefix, runtime, native, deep_analysis, design_dir, synergy, synergy_page, minion, finding_kind, tester, effort, status, created_at, last_activity_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
       )
       .run(
         row.id,
@@ -988,6 +999,8 @@ export class RegistryService {
         row.native ? 1 : 0,
         row.deepAnalysis ? 1 : 0,
         row.designDir ?? null,
+        row.synergy ? 1 : 0,
+        row.synergy?.page ?? null,
         row.minion ? 1 : 0,
         row.findingKind ?? null,
         row.tester ? 1 : 0,
@@ -1007,7 +1020,7 @@ export class RegistryService {
     const next = { ...cur, ...patch };
     this.db
       .prepare(
-        `UPDATE sessions SET project_id=?, task_id=?, name=?, task=?, worktree_path=?, branch=?, worktree=?, base_branch=?, omp_session_id=?, omp_session_file=?, kind=?, model=?, prefix=?, runtime=?, effort=?, status=?, pr_opened=?, pr_url=?, archived=?, minion_result=? WHERE id=?`,
+        `UPDATE sessions SET project_id=?, task_id=?, name=?, task=?, worktree_path=?, branch=?, worktree=?, base_branch=?, omp_session_id=?, omp_session_file=?, kind=?, model=?, prefix=?, runtime=?, effort=?, status=?, pr_opened=?, pr_url=?, archived=?, minion_result=?, synergy=?, synergy_page=? WHERE id=?`,
       )
       .run(
         next.projectId,
@@ -1030,6 +1043,8 @@ export class RegistryService {
         next.prUrl || null,
         next.archived ? 1 : 0,
         next.minionResult ? JSON.stringify(next.minionResult) : null,
+        next.synergy ? 1 : 0,
+        next.synergy?.page ?? null,
         id,
       );
     return next;

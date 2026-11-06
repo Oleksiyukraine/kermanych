@@ -8,13 +8,23 @@ import type { RuntimeLaunchOpts } from "../runtime/agent-runtime";
 
 export const CHAT_TOOLS = ["read", "grep", "glob"];
 
-// The tool restriction a managed session kind runs with — on its first spawn AND on every
-// wake, so a woken child keeps the toolset it was created with. Chats and reviews read; a
-// discussion branch only talks (it sits in the parent's directory and must never touch it);
-// agents get the backend's full set.
-export function launchToolsFor(kind: Session["kind"]): Pick<RuntimeLaunchOpts, "tools" | "noTools"> {
-  if (kind === "chat" || kind === "review") return { tools: CHAT_TOOLS };
-  if (kind === "discussion") return { noTools: true };
+// A «Синергія» child edits the app and nothing else (docs/specs/2026-11-06-synergy.md, decision
+// 7): no bash (tests, type checks, commits are what made a change take minutes), no subagents.
+// The MCP browser tools and `preview_status` / `preview_logs` ride the bridge extension, which
+// `--tools` does not filter.
+export const SYNERGY_TOOLS = ["read", "edit", "write", "grep", "glob"];
+
+// The tool restriction a managed session runs with — on its first spawn AND on every wake, so a
+// woken child keeps the toolset it was created with. Decided by the session, not only its kind:
+// a «Синергія» agent is `kind: "agent"` with the narrow set and no LSP (diagnostics and
+// formatting after every edit cost seconds per change), until «Імплементувати» clears the
+// marker and the next spawn gets the full set. Chats and reviews read; a discussion branch only
+// talks (it sits in the parent's directory and must never touch it); agents get the backend's
+// full set.
+export function launchToolsFor(s: Pick<Session, "kind" | "synergy">): Pick<RuntimeLaunchOpts, "tools" | "noTools" | "noLsp"> {
+  if (s.kind === "chat" || s.kind === "review") return { tools: CHAT_TOOLS };
+  if (s.kind === "discussion") return { noTools: true };
+  if (s.synergy) return { tools: SYNERGY_TOOLS, noLsp: true };
   return {};
 }
 
