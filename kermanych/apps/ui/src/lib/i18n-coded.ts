@@ -40,9 +40,12 @@ export function localizeRejection(tr: Translator, rejection: ManagementRejection
 }
 
 // An HTTP error's localized message, falling back to the server's Ukrainian sentence when
-// the build does not know the code.
+// the build does not know the code. A validation refusal an endpoint passes through from core
+// (the schedules api's 400, docs/specs/2026-11-06-scheduled-tasks.md) carries a rejection code,
+// worded under `rejections.` like the ones a chat reply lists.
 export function localizeError(tr: Translator, code: string | undefined, params: NoticeParams | undefined, fallback: string): string {
-  const key = `errors.${code}`;
-  if (!code || !tr.te(key)) return fallback;
+  if (!code) return fallback;
+  const key = tr.te(`errors.${code}`) ? `errors.${code}` : `rejections.${code}`;
+  if (!tr.te(key)) return fallback;
   return tr.t(key, { ...params });
 }

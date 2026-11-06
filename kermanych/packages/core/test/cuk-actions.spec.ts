@@ -79,6 +79,79 @@ test("only navigation and the notepad run without a confirmation card", () => {
     { kind: "session.archive", session: "abc" },
     { kind: "preview.start", session: "abc" },
   ];
-  expect(atOnce.map(cukNeedsConfirm)).toEqual(atOnce.map(() => false));
-  expect(onCard.map(cukNeedsConfirm)).toEqual(onCard.map(() => true));
+  expect(atOnce.map((a) => cukNeedsConfirm(a))).toEqual(atOnce.map(() => false));
+  expect(onCard.map((a) => cukNeedsConfirm(a))).toEqual(onCard.map(() => true));
+});
+
+test("schedule.create: a reminder with «через», an agent task with skills", () => {
+  expect(
+    validateCukAction({ kind: "schedule.create", name: "Вода", type: "reminder", text: "випити воду", when: { type: "in", minutes: 2 } }),
+  ).toEqual({ kind: "schedule.create", name: "Вода", type: "reminder", text: "випити воду", when: { type: "in", minutes: 2 } });
+  expect(
+    validateCukAction({
+      kind: "schedule.create",
+      name: "Звіт",
+      type: "agent",
+      text: "згенеруй звіт",
+      project: "Альфа",
+      skills: ["report"],
+      when: { type: "daily", time: "19:00" },
+    }),
+  ).toEqual({
+    kind: "schedule.create",
+    name: "Звіт",
+    type: "agent",
+    text: "згенеруй звіт",
+    project: "Альфа",
+    skills: ["report"],
+    when: { type: "daily", time: "19:00" },
+  });
+});
+
+test.each<[Record<string, unknown>, string]>([
+  [{ name: undefined }, "schedule_name_missing"],
+  [{ type: "cron" }, "schedule_type_invalid"],
+  [{ text: " " }, "schedule_text_missing"],
+  [{ when: undefined }, "schedule_when_invalid"],
+  [{ when: { type: "in", minutes: 0 } }, "schedule_in_invalid"],
+  [{ when: { type: "daily", time: "7pm" } }, "schedule_time_invalid"],
+  [{ project: "Альфа" }, "schedule_agent_only"],
+  [{ skills: ["report"] }, "schedule_agent_only"],
+  [{ model: "opus" }, "schedule_agent_only"],
+  [{ skills: [""] }, "field_list_not_all_strings"],
+])("a reminder schedule.create with %j is refused with %s", (patch, code) => {
+  const base = { kind: "schedule.create", name: "Вода", type: "reminder", text: "випити воду", when: { type: "in", minutes: 2 } };
+  expect(validateCukAction({ ...base, ...patch })).toMatchObject({ error: { code } });
+});
+
+test("schedule verbs need the task ref", () => {
+  for (const kind of ["schedule.update", "schedule.pause", "schedule.resume", "schedule.run", "schedule.delete"]) {
+    expect(validateCukAction({ kind })).toMatchObject({ error: { code: "schedule_ref_missing", params: { kind } } });
+  }
+  expect(validateCukAction({ kind: "schedule.pause", ref: "ab12cd34" })).toEqual({ kind: "schedule.pause", ref: "ab12cd34" });
+  expect(validateCukAction({ kind: "schedule.update", ref: "ab12cd34", when: { type: "weekly", days: [4, 1], time: "9:00" } })).toEqual({
+    kind: "schedule.update",
+    ref: "ab12cd34",
+    when: { type: "weekly", days: [1, 4], time: "09:00" },
+  });
+});
+
+// Scheduled tasks, decision 7: a reminder at once, an agent task on a card, delete always a card.
+test("schedule actions are weighed by the task's kind", () => {
+  const kinds: Record<string, "reminder" | "agent"> = { rem00001: "reminder", agt00001: "agent" };
+  const kindOf = (ref: string) => kinds[ref];
+  const when = { type: "daily", time: "19:00" } as const;
+  const weigh = (a: CukAction) => cukNeedsConfirm(a, kindOf);
+  expect(weigh({ kind: "schedule.create", name: "Вода", type: "reminder", text: "x", when })).toBe(false);
+  expect(weigh({ kind: "schedule.create", name: "Звіт", type: "agent", text: "x", when })).toBe(true);
+  expect(weigh({ kind: "schedule.update", ref: "rem00001", when })).toBe(false);
+  expect(weigh({ kind: "schedule.update", ref: "agt00001", when })).toBe(true);
+  expect(weigh({ kind: "schedule.resume", ref: "rem00001" })).toBe(false);
+  expect(weigh({ kind: "schedule.resume", ref: "agt00001" })).toBe(true);
+  expect(weigh({ kind: "schedule.pause", ref: "agt00001" })).toBe(false);
+  expect(weigh({ kind: "schedule.run", ref: "rem00001" })).toBe(true);
+  expect(weigh({ kind: "schedule.delete", ref: "rem00001" })).toBe(true);
+  // A ref nobody knows — or no resolver at all — is the safe side: a card.
+  expect(weigh({ kind: "schedule.update", ref: "zzz00000" })).toBe(true);
+  expect(cukNeedsConfirm({ kind: "schedule.resume", ref: "rem00001" })).toBe(true);
 });

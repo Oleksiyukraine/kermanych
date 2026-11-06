@@ -10,7 +10,9 @@
 //      target — switching workspace does not switch the conversation;
 //   2. what spends the plan or touches an agent never runs on the model's word: such an action
 //      lands in the transcript as a CARD, and only the operator's «Виконати» runs it
-//      (decision 4, `cukNeedsConfirm` in core). Navigation and the notepad run at once;
+//      (decision 4, `cukNeedsConfirm` in core). Navigation and the notepad run at once; so do
+//      the light schedule actions (docs/specs/2026-11-06-scheduled-tasks.md, decision 7: a
+//      reminder created or edited, a pause, a reminder resumed), each with «Скасувати»;
 //   3. every line that says something HAPPENED is written here, after the store call answered —
 //      never by the model.
 import { defineStore } from 'pinia';
@@ -18,19 +20,28 @@ import { computed, ref } from 'vue';
 import type { RouteLocationRaw, Router } from 'vue-router';
 import {
   CUK_SESSION_VERBS,
+  DEFAULT_SKILLS,
   MANAGEMENT_DEFAULT_SECTION,
   MANAGEMENT_SECTIONS,
   cukNeedsConfirm,
+  describeSchedule,
+  formatZonedWall,
+  resolveWhen,
   taskNameFromText,
   type CukAction,
   type CukChatAsk,
   type CukPlace,
+  type CukScheduleAction,
   type CukSessionVerb,
   type CukTaskAction,
+  type ScheduleDraft,
+  type ScheduleKind,
+  type SchedulePatch,
+  type ScheduledTask,
   type Session,
   type Usage,
 } from '@kermanych/core';
-import type { Task } from '@kermanych/cloud';
+import { listAiSkills, type Task } from '@kermanych/cloud';
 import type { AttachedFile } from '../lib/files';
 import { globalTr } from '../boot/i18n';
 import { localizeNotice, localizeRejection } from '../lib/i18n-coded';
@@ -43,7 +54,9 @@ import { bucketOf } from '../lib/buckets';
 import { nextMode } from '../lib/message-mode';
 import { defaultLaunchMode, nativeRuntimeFor } from '../lib/native-session';
 import { taskInsertFromDraft } from '../lib/tasks-view';
-import { cukBoardRows, cukSessionRows, findSessionByRef } from '../lib/cuk-digest';
+import { IS_PREVIEW } from '../lib/preview';
+import { formatFiring, machineTimeZone, scheduleUndo } from '../lib/schedules';
+import { cukBoardRows, cukScheduleRows, cukSessionRows, findSessionByRef } from '../lib/cuk-digest';
 import { findProjectByName } from './management-actions';
 import { useAssistantOverlay } from './assistant-overlay';
 import { useAuth } from './auth';
@@ -51,6 +64,7 @@ import { useBoard } from './board';
 import { useHomeTodo } from './home-todo';
 import { useOrchestrator } from './orchestrator';
 import { useProjects } from './projects';
+import { useSchedules } from './schedules';
 
 export type CukCardState = 'pending' | 'running' | 'done' | 'cancelled';
 
@@ -58,7 +72,17 @@ export type CukEntry =
   | { kind: 'user'; id: string; at: number; text: string; files?: { name: string; url?: string }[] }
   | { kind: 'assistant'; id: string; at: number; text: string; model?: string; usage?: Usage; ms: number }
   // What the APP did. `session` makes the line carry «Відкрити сесію» — the launch's result.
-  | { kind: 'result'; id: string; at: number; level: 'info' | 'warn' | 'error'; text: string; session?: string }
+  // `undo` makes it carry «Скасувати» (an at-once schedule action, scheduled-tasks decision 7):
+  // `ready` until pressed, `done` once undone.
+  | {
+      kind: 'result';
+      id: string;
+      at: number;
+      level: 'info' | 'warn' | 'error';
+      text: string;
+      session?: string;
+      undo?: 'ready' | 'done';
+    }
   // An action that waits for «Виконати». The action is the card's own copy: the operator may
   // edit its text before running it.
   | { kind: 'card'; id: string; at: number; action: CukAction; state: CukCardState };
@@ -69,6 +93,14 @@ type SessionAction = Extract<CukAction, { kind: CukSessionVerb | 'session.messag
 function isSessionAction(a: CukAction): a is SessionAction {
   return a.kind === 'session.message' || (CUK_SESSION_VERBS as readonly string[]).includes(a.kind);
 }
+
+function isScheduleAction(a: CukAction): a is CukScheduleAction {
+  return a.kind.startsWith('schedule.');
+}
+
+// The skill names a turn carries are read from the cloud and the local api; a conversation of
+// several turns in one scope reads them once a few minutes.
+const SKILLS_TTL_MS = 5 * 60_000;
 
 // A place `navigate` may go to, with where it goes. The prompt is shown `id — label`; the
 // executor resolves the id against this same list, so the model cannot route anywhere else.
@@ -89,11 +121,15 @@ export const useCukChat = defineStore('cuk-chat', () => {
   const homeTodo = useHomeTodo();
   const auth = useAuth();
   const overlay = useAssistantOverlay();
+  const schedules = useSchedules();
 
   const entries = ref<CukEntry[]>([]);
   const busy = ref(false);
   const resetting = ref(false);
   const hasConversation = computed(() => entries.value.length > 0);
+  // «Обговорити в ЦУК»: text another view hands to the composer's draft. `n` makes the same text
+  // handed twice a change CukAssistant sees.
+  const draftRequest = ref<{ text: string; n: number } | undefined>(undefined);
 
   // The store has no router of its own: Quasar builds one per app in a factory, and a store
   // setup has no injection context to reach it. The shell's launcher hands it over once.
@@ -108,6 +144,15 @@ export const useCukChat = defineStore('cuk-chat', () => {
 
   function result(level: Level, text: string, session?: string): void {
     push({ kind: 'result', id: entryId(), at: Date.now(), level, text, ...(session ? { session } : {}) });
+  }
+
+  // What each «Скасувати» runs, by its result line's id. Answers the line written after it.
+  const undos = new Map<string, () => Promise<string>>();
+
+  function undoableResult(text: string, run: () => Promise<string>): void {
+    const id = entryId();
+    undos.set(id, run);
+    push({ kind: 'result', id, at: Date.now(), level: 'info', text, undo: 'ready' });
   }
 
   // ── Places ──────────────────────────────────────────────────────────────────
@@ -150,10 +195,47 @@ export const useCukChat = defineStore('cuk-chat', () => {
     return member ? handleOf(member) : '';
   }
 
+  // The skill names a scheduled agent task may name (scheduled-tasks spec, «Defaults → Skills»):
+  // Kermanych's defaults, the operator's personal library and the workspace's, and the selected
+  // project's library and repository skills. A source that cannot be read is left out — the api
+  // refuses an unknown name at creation anyway.
+  let skillsCache: { key: string; at: number; names: string[] } | undefined;
+  async function skillNames(): Promise<string[]> {
+    const uid = auth.user?.id;
+    const ws = store.selectedWorkspaceId;
+    const pid = store.selectedProjectId;
+    const key = `${uid ?? ''}|${ws ?? ''}|${pid ?? ''}`;
+    if (skillsCache && skillsCache.key === key && Date.now() - skillsCache.at < SKILLS_TTL_MS) return skillsCache.names;
+    const names = new Set(DEFAULT_SKILLS.map((s) => s.name));
+    const reads: Promise<void>[] = [];
+    if (!IS_PREVIEW) {
+      if (uid)
+        reads.push(listAiSkills(auth.client, { scope: 'user', id: uid }).then((rows) => rows.filter((s) => s.enabled).forEach((s) => names.add(s.name))));
+      if (ws)
+        reads.push(listAiSkills(auth.client, { scope: 'workspace', id: ws }).then((rows) => rows.filter((s) => s.enabled).forEach((s) => names.add(s.name))));
+    }
+    if (pid)
+      reads.push(
+        api.projectSkills(pid).then((p) => {
+          for (const v of p.view) names.add(v.name);
+          for (const n of Object.keys(p.repo)) names.add(n);
+        }),
+      );
+    await Promise.allSettled(reads);
+    const list = [...names].sort();
+    skillsCache = { key, at: Date.now(), names: list };
+    return list;
+  }
+
   async function context(list: Place[]): Promise<CukChatAsk['context']> {
     // The board is read once per app run by whoever opens it first; a console asked «що на
-    // дошці» before anybody did reads it here.
-    if (!board.loaded) await board.load();
+    // дошці» before anybody did reads it here. The schedule list likewise, if the socket's
+    // first read has not answered yet.
+    const [skills] = await Promise.all([
+      skillNames(),
+      board.loaded ? undefined : board.load(),
+      schedules.tasks ? undefined : schedules.load(),
+    ]);
     const ws = store.selectedWorkspaceId;
     const pid = store.selectedProjectId;
     const sessions = cukSessionRows(store.sessions, projectName, (id) => {
@@ -163,6 +245,7 @@ export const useCukChat = defineStore('cuk-chat', () => {
     const scoped = ws ? board.tasks.filter((t) => projects.byId.get(t.projectId)?.workspaceId === ws) : board.tasks;
     const cards = cukBoardRows(scoped, projectName, assigneeName);
     const local = new Map(store.projects.map((p) => [p.id, p]));
+    const timeZone = machineTimeZone();
     return {
       view: String(router?.currentRoute.value.name ?? ''),
       ...(ws ? { workspace: projects.workspaceById.get(ws)?.name ?? '' } : {}),
@@ -184,6 +267,10 @@ export const useCukChat = defineStore('cuk-chat', () => {
             notes: homeTodo.listFor(ws).map((i) => ({ text: todoPlainText(i.html), kind: i.kind, done: i.done })),
           }
         : {}),
+      now: formatZonedWall(new Date(), timeZone, true),
+      timeZone,
+      schedules: cukScheduleRows(schedules.tasks ?? [], projectName),
+      skills,
     };
   }
 
@@ -237,6 +324,132 @@ export const useCukChat = defineStore('cuk-chat', () => {
     );
   }
 
+  // ── Scheduled tasks (docs/specs/2026-11-06-scheduled-tasks.md) ──────────────
+  // How `cukNeedsConfirm` weighs an edit or a resume: by the kind of the task the ref names.
+  function scheduleKindOf(ref: string): ScheduleKind | undefined {
+    return schedules.findByRef(ref)?.kind;
+  }
+
+  function scheduleFor(ref: string): ScheduledTask | undefined {
+    const task = schedules.findByRef(ref);
+    if (!task) result('warn', globalTr.t('cuk.result.scheduleMissing', { ref }));
+    return task;
+  }
+
+  // A project NAME, as the digest prints it, to its id — resolved and refused as `agent.start`
+  // does: an unknown project, or one with no repository on this machine (no run could start).
+  function scheduleProject(name: string): string | undefined {
+    const project = findProjectByName(projects.projects, name);
+    if (!project) {
+      result('warn', globalTr.t('cuk.result.projectMissing', { project: name }));
+      return undefined;
+    }
+    if (!store.projects.find((p) => p.id === project.id)?.localRepoPath) {
+      result('warn', globalTr.t('cuk.result.projectUnbound', { project: project.name }));
+      return undefined;
+    }
+    return project.id;
+  }
+
+  // «щодня о 19:00 · наступне: чт, 6 лист., 19:00» — the schedule in words and, while one is
+  // ahead, the next firing.
+  function scheduleWords(task: ScheduledTask): string {
+    const when = describeSchedule(task.schedule, locale.value);
+    return task.enabled && task.nextAt
+      ? globalTr.t('cuk.result.scheduleWhenNext', { when, next: formatFiring(task.nextAt, task.timeZone, locale.value) })
+      : when;
+  }
+
+  // «Скасувати» on an at-once line: the inverse lib/schedules.ts computes, run through the store.
+  async function undoSchedule(before: ScheduledTask | undefined, after: ScheduledTask, sent?: SchedulePatch): Promise<string> {
+    const inverse = scheduleUndo(before, after, sent);
+    if (inverse.op === 'delete') {
+      await schedules.remove(inverse.id);
+      return globalTr.t('cuk.result.scheduleUndone.create', { name: after.name });
+    }
+    const task = await schedules.update(inverse.id, inverse.patch);
+    return globalTr.t('cuk.result.scheduleUndone.patch', { name: task.name, when: scheduleWords(task) });
+  }
+
+  // One schedule action, after the api answered. `atOnce`: it ran without a card (decision 7),
+  // so its line carries «Скасувати». A «через N хв» is resolved here, at execution, not when the
+  // model wrote it.
+  async function runSchedule(action: CukScheduleAction, atOnce: boolean): Promise<void> {
+    const t = globalTr.t.bind(globalTr);
+    const say = (text: string, before: ScheduledTask | undefined, after: ScheduledTask, sent?: SchedulePatch): void => {
+      if (atOnce) undoableResult(text, () => undoSchedule(before, after, sent));
+      else result('info', text);
+    };
+    if (action.kind === 'schedule.create') {
+      const projectId = action.project ? scheduleProject(action.project) : undefined;
+      if (action.project && !projectId) return;
+      const timeZone = machineTimeZone();
+      const draft: ScheduleDraft = {
+        name: action.name,
+        kind: action.type,
+        prompt: action.text,
+        ...(projectId ? { projectId } : {}),
+        ...(action.skills?.length ? { skills: action.skills } : {}),
+        ...(action.model ? { model: action.model } : {}),
+        schedule: resolveWhen(action.when, new Date(), timeZone),
+        timeZone,
+      };
+      const task = await schedules.create(draft);
+      say(t('cuk.result.scheduleCreated', { name: task.name, kind: t(`cuk.schedule.kind.${task.kind}`), when: scheduleWords(task) }), undefined, task);
+      return;
+    }
+    const before = scheduleFor(action.ref);
+    if (!before) return;
+    if (action.kind === 'schedule.update') {
+      const projectId = action.project ? scheduleProject(action.project) : undefined;
+      if (action.project && !projectId) return;
+      const patch: SchedulePatch = {
+        ...(action.name !== undefined ? { name: action.name } : {}),
+        ...(action.text !== undefined ? { prompt: action.text } : {}),
+        ...(projectId ? { projectId } : {}),
+        ...(action.skills !== undefined ? { skills: action.skills } : {}),
+        ...(action.model !== undefined ? { model: action.model } : {}),
+        // Re-armed from now by the api: an edit never fires the past (spec «Defaults»).
+        ...(action.when ? { schedule: resolveWhen(action.when, new Date(), before.timeZone) } : {}),
+      };
+      const task = await schedules.update(before.id, patch);
+      say(t('cuk.result.scheduleUpdated', { name: task.name, when: scheduleWords(task) }), before, task, patch);
+      return;
+    }
+    if (action.kind === 'schedule.pause' || action.kind === 'schedule.resume') {
+      const patch: SchedulePatch = { enabled: action.kind === 'schedule.resume' };
+      const task = await schedules.update(before.id, patch);
+      const key = patch.enabled ? 'cuk.result.scheduleResumed' : 'cuk.result.schedulePaused';
+      say(t(key, { name: task.name, when: scheduleWords(task) }), before, task, patch);
+      return;
+    }
+    if (action.kind === 'schedule.run') {
+      const run = await schedules.runNow(before.id);
+      result('info', t('cuk.result.scheduleStarted', { name: before.name }), run.sessionId);
+      return;
+    }
+    await schedules.remove(before.id);
+    result('info', t('cuk.result.scheduleDeleted', { name: before.name }));
+  }
+
+  /** «Скасувати» on an at-once schedule line. Throws when the api refuses; the line stays undoable. */
+  async function undo(id: string): Promise<void> {
+    const line = entries.value.find((e): e is Extract<CukEntry, { kind: 'result' }> => e.kind === 'result' && e.id === id);
+    const run = undos.get(id);
+    if (!line || line.undo !== 'ready' || !run) return;
+    const text = await run();
+    undos.delete(id);
+    line.undo = 'done';
+    result('info', text);
+  }
+
+  /** «Обговорити в ЦУК»: the text goes into the composer's draft, the window on ЦУК. */
+  function discuss(text: string): void {
+    draftRequest.value = { text, n: (draftRequest.value?.n ?? 0) + 1 };
+    overlay.panel = 'cuk';
+    overlay.show();
+  }
+
   // The actions that run at once (decision 4). Never throws.
   async function runNow(action: CukAction, list: Place[]): Promise<void> {
     if (action.kind === 'navigate') {
@@ -276,7 +489,18 @@ export const useCukChat = defineStore('cuk-chat', () => {
       result('info', globalTr.t('cuk.result.opened', { session: s.name }));
       return;
     }
-    if (action.kind === 'todo.create' || action.kind === 'todo.update' || action.kind === 'todo.delete') runTodo(action);
+    if (action.kind === 'todo.create' || action.kind === 'todo.update' || action.kind === 'todo.delete') {
+      runTodo(action);
+      return;
+    }
+    if (isScheduleAction(action)) {
+      // An api refusal is this action's line; the actions after it still run.
+      try {
+        await runSchedule(action, true);
+      } catch (e) {
+        result('error', errorText(e));
+      }
+    }
   }
 
   // Show one session where it lives: a design in «Дизайн», every other one in «Агенти» on its
@@ -377,6 +601,7 @@ export const useCukChat = defineStore('cuk-chat', () => {
       const a = card.action;
       if (a.kind === 'task.create' || a.kind === 'agent.start') await runTask(a);
       else if (isSessionAction(a)) await runSession(a);
+      else if (isScheduleAction(a)) await runSchedule(a, false);
       card.state = 'done';
     } catch (e) {
       // The store call refused: the reason, verbatim — and the card may be tried again.
@@ -426,7 +651,7 @@ export const useCukChat = defineStore('cuk-chat', () => {
       // In order: «відкрий проєкт X і запусти там агента» is two actions that only make sense
       // one after the other.
       for (const action of reply.actions) {
-        if (cukNeedsConfirm(action)) push({ kind: 'card', id: entryId(), at: Date.now(), action, state: 'pending' });
+        if (cukNeedsConfirm(action, scheduleKindOf)) push({ kind: 'card', id: entryId(), at: Date.now(), action, state: 'pending' });
         else await runNow(action, list);
       }
     } catch (e) {
@@ -440,6 +665,7 @@ export const useCukChat = defineStore('cuk-chat', () => {
   async function reset(): Promise<void> {
     if (busy.value || resetting.value) return;
     entries.value = [];
+    undos.clear();
     resetting.value = true;
     try {
       await api.resetCukChat();
@@ -450,5 +676,19 @@ export const useCukChat = defineStore('cuk-chat', () => {
     }
   }
 
-  return { entries, busy, resetting, hasConversation, bindRouter, send, reset, confirm, cancel, openSession };
+  return {
+    entries,
+    busy,
+    resetting,
+    hasConversation,
+    draftRequest,
+    bindRouter,
+    send,
+    reset,
+    confirm,
+    cancel,
+    undo,
+    discuss,
+    openSession,
+  };
 });

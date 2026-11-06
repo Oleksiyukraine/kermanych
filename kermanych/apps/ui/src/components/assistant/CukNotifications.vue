@@ -2,18 +2,39 @@
   <!-- ЦУК's «Центр сповіщень» (docs/specs/2026-11-04-skill-self-improvement.md, decision 6): the
        window's left column, built like the notepad on the right — a physical object drawn from
        theme tokens. A clipboard: a board with a clip at its head and the notifications as slips
-       held on it, newest on top. One kind of slip today, a skill an agent improved. -->
+       held on it, newest on top. Its head switches between «Сповіщення» — skill improvements and
+       this machine's schedule slips in one feed — and «Розклад», the scheduled tasks
+       (docs/specs/2026-11-06-scheduled-tasks.md, decision 6). -->
   <aside class="nc" :aria-label="t('cuk.notifications.title')">
     <div class="nc__clip" aria-hidden="true"><span class="nc__clip-ring"></span></div>
     <div class="nc__board">
       <header class="nc__head">
-        <span class="nc__title mono">{{ t('cuk.notifications.title') }}</span>
-        <span v-if="store.unread" class="nc__count mono" :aria-label="t('cuk.notifications.count', { n: store.unread })">
-          {{ store.unread }}
-        </span>
-        <!-- An icon, not the words: the column is 300 px and the title must stay readable. -->
+        <div class="nc__tabs" role="tablist" :aria-label="t('cuk.notifications.title')">
+          <button
+            class="nc__tab mono"
+            :class="{ 'nc__tab--on': store.tab === 'feed' }"
+            type="button"
+            role="tab"
+            :aria-selected="store.tab === 'feed'"
+            @click="store.tab = 'feed'"
+          >
+            {{ t('cuk.notifications.tabs.feed') }}
+            <span v-if="store.unread" class="nc__count mono" :aria-label="t('cuk.notifications.count', { n: store.unread })">
+              {{ store.unread }}
+            </span>
+          </button>
+          <button
+            class="nc__tab mono"
+            :class="{ 'nc__tab--on': store.tab === 'schedule' }"
+            type="button"
+            role="tab"
+            :aria-selected="store.tab === 'schedule'"
+            @click="store.tab = 'schedule'"
+          >{{ t('cuk.notifications.tabs.schedule') }}</button>
+        </div>
+        <!-- An icon, not the words: the column is 300 px and the tabs must stay readable. -->
         <button
-          v-if="store.unread"
+          v-if="store.tab === 'feed' && store.unread"
           class="nc__all"
           type="button"
           :aria-label="t('cuk.notifications.markAll')"
@@ -24,37 +45,56 @@
         >✓</button>
       </header>
 
-      <div class="nc__page">
-        <KSkeleton v-if="store.phase === 'loading' || store.phase === 'idle'" variant="rows" :rows="4" />
-        <div v-else-if="store.phase === 'error'" class="nc__blank" role="alert">
-          <p>{{ t('cuk.notifications.loadFailed', { error: store.error }) }}</p>
-          <KBtn variant="ghost" :loading="retry.busy.value" @click="retry.run()">{{ t('cuk.notifications.retry') }}</KBtn>
+      <div v-if="store.tab === 'feed'" class="nc__page" role="tabpanel">
+        <KSkeleton v-if="feedPhase === 'skeleton'" variant="rows" :rows="4" />
+        <template v-else-if="feedPhase === 'ready'">
+          <div v-if="store.phase === 'error'" class="nc__blank nc__blank--gap" role="alert">
+            <p>{{ t('cuk.notifications.loadFailed', { error: store.error }) }}</p>
+            <KBtn variant="ghost" :loading="retry.busy.value" @click="retry.run()">{{ t('cuk.notifications.retry') }}</KBtn>
+          </div>
+          <p v-if="schedules.loadError && !schedules.slips" class="nc__blank nc__blank--gap" role="alert">
+            {{ t('cuk.schedule.loadFailed', { error: schedules.loadError }) }}
+          </p>
+          <p v-if="!store.feed.length && store.phase !== 'error'" class="nc__blank">{{ t('cuk.notifications.empty') }}</p>
+          <ul v-else class="nc__list">
+            <li v-for="item in store.feed" :key="item.kind === 'skill-improvement' ? item.entry.id : `slip:${item.slip.id}`">
+              <button
+                v-if="item.kind === 'skill-improvement'"
+                class="nc__slip"
+                :class="{
+                  'nc__slip--new': !item.entry.seenAt,
+                  'nc__slip--open': store.openId === item.entry.id,
+                  'nc__slip--settled': item.entry.state !== 'applied',
+                }"
+                type="button"
+                :aria-current="store.openId === item.entry.id || undefined"
+                @click="store.open(item.entry.id)"
+              >
+                <span class="nc__slip-top">
+                  <span class="nc__skill mono">{{ item.entry.skillName }}</span>
+                  <span class="nc__when mono">{{ renderTime(t, relativeTime(item.entry.createdAt, now)) }}</span>
+                </span>
+                <span class="nc__summary">{{ item.entry.summary }}</span>
+                <span class="nc__meta mono">{{ origin(item.entry) }}</span>
+                <span v-if="item.entry.state !== 'applied'" class="nc__state mono">
+                  {{ t(`cuk.notifications.state.${item.entry.state}`) }}
+                </span>
+              </button>
+              <ScheduleSlipCard v-else :slip="item.slip" />
+            </li>
+          </ul>
+        </template>
+      </div>
+
+      <div v-else class="nc__page" role="tabpanel">
+        <KSkeleton v-if="schedulePhase === 'skeleton'" variant="rows" :rows="4" />
+        <div v-else-if="schedules.loadError && !schedules.tasks" class="nc__blank" role="alert">
+          <p>{{ t('cuk.schedule.loadFailed', { error: schedules.loadError }) }}</p>
+          <KBtn variant="ghost" :loading="reloadSchedules.busy.value" @click="reloadSchedules.run()">{{ t('cuk.notifications.retry') }}</KBtn>
         </div>
-        <p v-else-if="!store.items.length" class="nc__blank">{{ t('cuk.notifications.empty') }}</p>
-        <ul v-else class="nc__list">
-          <li v-for="item in store.items" :key="item.entry.id">
-            <button
-              class="nc__slip"
-              :class="{
-                'nc__slip--new': !item.entry.seenAt,
-                'nc__slip--open': store.openId === item.entry.id,
-                'nc__slip--settled': item.entry.state !== 'applied',
-              }"
-              type="button"
-              :aria-current="store.openId === item.entry.id || undefined"
-              @click="store.open(item.entry.id)"
-            >
-              <span class="nc__slip-top">
-                <span class="nc__skill mono">{{ item.entry.skillName }}</span>
-                <span class="nc__when mono">{{ renderTime(t, relativeTime(item.entry.createdAt, now)) }}</span>
-              </span>
-              <span class="nc__summary">{{ item.entry.summary }}</span>
-              <span class="nc__meta mono">{{ origin(item.entry) }}</span>
-              <span v-if="item.entry.state !== 'applied'" class="nc__state mono">
-                {{ t(`cuk.notifications.state.${item.entry.state}`) }}
-              </span>
-            </button>
-          </li>
+        <p v-else-if="schedules.tasks && !schedules.tasks.length" class="nc__blank">{{ t('cuk.schedule.empty') }}</p>
+        <ul v-else-if="schedules.tasks" class="nc__list">
+          <ScheduleRow v-for="task in sortedTasks" :key="task.id" :task="task" />
         </ul>
       </div>
     </div>
@@ -62,29 +102,52 @@
 </template>
 
 <script setup lang="ts">
-// Reads stores/notification-center.ts, which follows the signed-in user for the life of the app;
-// this component only paints it. A slip opens the entry view over the console (the launcher
-// renders SkillImprovementView for `store.openId`).
+// Reads stores/notification-center.ts, which follows the signed-in user for the life of the app,
+// and stores/schedules.ts; this component only paints them. An improvement's slip opens the entry
+// view over the console, a «Розклад» row the task's view (the launcher renders both).
+import { computed } from 'vue';
 import { useI18n } from 'vue-i18n';
 import type { SkillImprovementEntry } from '@kermanych/core';
 import { useNotificationCenter } from 'stores/notification-center';
+import { useSchedules } from 'stores/schedules';
 import { useProjects } from 'stores/projects';
 import { useOrchestrator } from 'stores/orchestrator';
 import { useAsyncAction } from '../../composables/useAsyncAction';
+import { useLoadPhase } from '../../composables/useLoadPhase';
 import { useNow } from '../../composables/useNow';
 import { relativeTime, renderTime } from '../../lib/time';
 import KBtn from 'components/kit/KBtn.vue';
 import KSkeleton from 'components/kit/KSkeleton.vue';
+import ScheduleRow from './ScheduleRow.vue';
+import ScheduleSlipCard from './ScheduleSlipCard.vue';
 
 const { t } = useI18n();
 const store = useNotificationCenter();
+const schedules = useSchedules();
 const projects = useProjects();
 const local = useOrchestrator();
 const now = useNow(60_000);
 
+// The feed waits for both sources: a cloud read in flight, or slips the local api has not
+// answered yet (unless that read failed — the cloud rows then show with the error above them).
+const feedPhase = useLoadPhase(
+  () => store.phase === 'loading' || store.phase === 'idle' || (!schedules.slips && !schedules.loadError),
+);
+const schedulePhase = useLoadPhase(() => !schedules.tasks && !schedules.loadError);
+
+// What fires soonest on top; paused and finished tasks after them, by name.
+const sortedTasks = computed(() =>
+  [...(schedules.tasks ?? [])].sort((a, b) => {
+    const an = a.enabled && a.nextAt ? Date.parse(a.nextAt) : Infinity;
+    const bn = b.enabled && b.nextAt ? Date.parse(b.nextAt) : Infinity;
+    return an - bn || a.name.localeCompare(b.name);
+  }),
+);
+
 // A failure is the default toast: the list itself stays as it was.
 const markAll = useAsyncAction(() => store.markAllSeen());
 const retry = useAsyncAction(() => store.reload());
+const reloadSchedules = useAsyncAction(() => schedules.load());
 
 // «сесія · проєкт». The project is named from the cloud list first, then this machine's own
 // registry (a local-only project); a project neither knows is left out rather than shown as an id.
@@ -162,14 +225,44 @@ function origin(e: SkillImprovementEntry): string {
   padding: var(--k-sp-2) var(--k-sp-2) var(--k-sp-3);
 }
 
-.nc__title {
+// «Сповіщення | Розклад»: two words in the head's uppercase mono, the active one in full ink
+// with the accent under it.
+.nc__tabs {
+  display: flex;
+  align-items: center;
+  gap: var(--k-sp-3);
   min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
+}
+
+.nc__tab {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--k-sp-2);
+  min-width: 0;
+  padding: 2px 0;
+  border: none;
+  border-bottom: 2px solid transparent;
+  background: transparent;
   white-space: nowrap;
   font-size: var(--k-fs-xs);
   letter-spacing: 0.14em;
   text-transform: uppercase;
+  color: var(--k-muted);
+  cursor: pointer;
+
+  &:hover,
+  &:focus-visible {
+    color: var(--k-text);
+  }
+
+  &:focus-visible {
+    outline: none;
+    box-shadow: var(--k-glow-focus);
+  }
+}
+
+.nc__tab--on {
+  border-bottom-color: var(--k-accent);
   color: var(--k-text);
 }
 
@@ -228,6 +321,10 @@ function origin(e: SkillImprovementEntry): string {
   p {
     margin: 0 0 var(--k-sp-2);
   }
+}
+
+.nc__blank--gap {
+  margin-bottom: var(--k-sp-2);
 }
 
 .nc__list {

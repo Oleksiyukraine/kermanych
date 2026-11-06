@@ -9,6 +9,7 @@ import type { MachineAlert } from "./machine-profile";
 import type { MinionResult, MinionState } from "./minion";
 import type { FindingKind } from "./findings";
 import type { QaChecklist } from "./task-actions";
+import type { ScheduledTask, ScheduleRun, ScheduleSlip } from "./schedules";
 
 // `in_review` is the PR hand-off state: the operator asked for a pull request, the agent
 // pushed it, and the work now waits on a HUMAN reviewer. It is settled (nothing moves on
@@ -89,6 +90,10 @@ export type Session = {
   // preview and records a verdict per item. Stamped at creation, never changed. Absent for
   // every other session, including an ordinary «Ревізор» fork.
   tester?: boolean;
+  // A scheduled agent task's project run (docs/specs/2026-11-06-scheduled-tasks.md, decision 5):
+  // the task it ran for, as it was named then — «Розклад · <назва>» on its row in «Агенти».
+  // Stamped at creation, never changed. Absent for every other session.
+  schedule?: { id: string; name: string };
   // How the minion's run ended so far: `needs_decision` keeps the «потрібне рішення» mark until
   // a later turn ends differently. Persisted; absent until the first turn of a minion run ends.
   minionResult?: MinionResult;
@@ -302,7 +307,13 @@ export type ServerEvent =
   // verdict, a checklist the tester or «Створити ПР» composed, or verdicts cleared at a run's
   // start. Carries the checklist as written, so an open QA tab updates without re-reading the
   // card (the board's Realtime binding leaves this column out).
-  | { type: "qa_checklist_update"; taskId: string; checklist: QaChecklist };
+  | { type: "qa_checklist_update"; taskId: string; checklist: QaChecklist }
+  // «Задачі за розкладом» (docs/specs/2026-11-06-scheduled-tasks.md): the whole task list after
+  // any change (with `nextAt` and `running` fresh), a «Центр сповіщень» slip written — or
+  // re-fired by a snooze — and one run's record as it starts and ends.
+  | { type: "schedules_update"; tasks: ScheduledTask[] }
+  | { type: "schedule_slip"; slip: ScheduleSlip }
+  | { type: "schedule_run_update"; run: ScheduleRun };
 
 // How much of omp's subagent activity a session subscribes to. "progress" streams lifecycle
 // + coalesced progress (enough for the agent map); "events" adds every subagent tool/message

@@ -245,7 +245,15 @@ function onKeydown(e: KeyboardEvent): void {
 function focus(): void {
   void nextTick(() => fieldEl.value?.focus());
 }
-defineExpose({ focus, send });
+
+// Put text into the field without sending it — «Обговорити в ЦУК» on a scheduled run's answer:
+// the operator adds the question and sends it himself.
+function setDraft(text: string): void {
+  draft.value = text;
+  void nextTick(autoGrow);
+  focus();
+}
+defineExpose({ focus, send, setDraft });
 
 // PLAN SPEND — the same figure the sidebar shows, folded to the single tightest window.
 // The composer has room for one number, and the number that matters before spending a turn
