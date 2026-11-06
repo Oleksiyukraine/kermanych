@@ -334,7 +334,7 @@ export const en: MessageSchema = {
     },
     docs: {
       usedTitle: 'Documentation used',
-      usedHint: 'Documentation files the agent read while working — collected from its read calls in the transcript and kept on the task card, so the list survives a restart. The path is shown for reference only and cannot be opened from here.',
+      usedHint: 'Documentation files the agent read while working — collected from its read calls in the transcript and kept on the task card, so the list survives a restart. The file cannot be opened from here; its path can be copied.',
       changedTitle: 'Created or updated',
       finishedHint: 'This session’s worktree was removed — the list is kept on the task card. To open a diff or create a task from a document, press ↻ “Reopen” at the top.',
       kind: {
@@ -355,6 +355,8 @@ export const en: MessageSchema = {
       toTask: 'Task →',
       toTaskHint: 'Create a task from this document in another project of the workspace — that side’s agent starts from it while this session keeps working.',
       toTaskHintDesign: 'Create a task that implements this design — in this same project by default, with the screenshots on the card.',
+      copyPath: 'Copy path',
+      pathCopied: 'Path copied ✓',
     },
     qa: {
       title: 'What to verify',
