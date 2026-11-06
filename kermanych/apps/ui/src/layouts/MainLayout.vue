@@ -617,6 +617,7 @@ import KIconButton from 'components/kit/KIconButton.vue';
 import { useResizablePanel } from '../composables/useResizablePanel';
 import KUserButton from 'components/kit/KUserButton.vue';
 import KFileManager from 'components/kit/KFileManager.vue';
+import { useFileSource } from '../composables/useFileSource';
 import KTerminalPanel from 'components/kit/KTerminalPanel.vue';
 import KIcon from 'components/kit/KIcon.vue';
 import KSkeleton from 'components/kit/KSkeleton.vue';
@@ -1366,9 +1367,13 @@ const BIND_HINT = computed(() => t('common.nav.bindHint'));
 // pages/SettingsPage.vue with the rest of the project's «Основне»: the footer
 // path below is a read-out that links there.
 
+// The folder is the one the file dock browses (useFileSource): an agent's worktree while one is
+// selected or at work, else the project's checkout.
+const fileSource = useFileSource();
 const contextLabel = computed(() => {
   if (!store.selectedProjectId) return t('common.nav.noProjectSelected');
-  return `${selectedName.value} · ${selectedProject.value?.localRepoPath || t('common.nav.notBound')}`;
+  const folder = fileSource.current.value?.path || selectedProject.value?.localRepoPath;
+  return `${selectedName.value} · ${folder || t('common.nav.notBound')}`;
 });
 
 // Two create modals, because the sidebar's two «+» buttons create different things. The

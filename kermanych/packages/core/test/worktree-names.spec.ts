@@ -1,5 +1,6 @@
 import { expect, test } from "vitest";
-import { slugify, branchName, uniqueSlug, taskNameFromText, isGitBranchName, BRANCH_PREFIXES } from "../src/worktree-names";
+import { join } from "path";
+import { slugify, branchName, uniqueSlug, taskNameFromText, isGitBranchName, worktreeDir, BRANCH_PREFIXES } from "../src/worktree-names";
 test("slugify lowercases and dashes", () => {
   expect(slugify("Fix Login Bug!")).toBe("fix-login-bug");
 });
@@ -63,4 +64,12 @@ test("isGitBranchName refuses options, refspecs and revision expressions", () =>
     "", "-x", "--upload-pack=touch /tmp/x", "a:b", "a b", "a~1", "a^", "@{-1}", "@", "HEAD", "a..b",
     "a?", "a*", "a[b", "a\\b", "a\tb", "x.lock", "a/x.lock/b", ".x", "a/.x", "/a", "a/", "a//b", "a.",
   ]) expect(isGitBranchName(name), JSON.stringify(name)).toBe(false);
+});
+test("worktreeDir names the folder after the branch, nesting its slashes", () => {
+  expect(worktreeDir("/repo", "feature/fix-login")).toBe(join("/repo", ".gitworktree", "feature", "fix-login"));
+  expect(worktreeDir("/repo", "main")).toBe(join("/repo", ".gitworktree", "main"));
+});
+test("worktreeDir refuses a name that is not a branch, so it cannot leave .gitworktree", () => {
+  expect(() => worktreeDir("/repo", "../outside")).toThrow();
+  expect(() => worktreeDir("/repo", "")).toThrow();
 });
