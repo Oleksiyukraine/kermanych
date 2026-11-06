@@ -68,6 +68,16 @@
             <button v-if="e.session" class="cuk__res-link" type="button" @click="chat.openSession(e.session)">
               {{ t('cuk.openSession') }}
             </button>
+            <!-- An at-once schedule action (scheduled-tasks decision 7): one step back. -->
+            <button
+              v-if="e.undo === 'ready'"
+              class="cuk__res-link"
+              type="button"
+              :disabled="undo.busyFor(e.id)"
+              :aria-busy="undo.busyFor(e.id) || undefined"
+              @click="undo.run(e.id)"
+            >{{ t('cuk.result.undo') }}</button>
+            <span v-else-if="e.undo === 'done'" class="cuk__res-undone">{{ t('cuk.result.undone') }}</span>
           </p>
         </template>
         <p v-if="chat.busy" class="cuk__think" aria-live="polite">{{ thinkingLabel }}</p>
@@ -100,7 +110,7 @@ import KSpinner from 'components/kit/KSpinner.vue';
 import AssistantComposer from './AssistantComposer.vue';
 import CukActionCard from './CukActionCard.vue';
 import { confirmAction } from '../../lib/confirm';
-import { useAsyncAction } from '../../composables/useAsyncAction';
+import { useAsyncAction, useKeyedAction } from '../../composables/useAsyncAction';
 import { renderMarkdown } from '../../lib/markdown';
 
 defineProps<{
@@ -125,6 +135,15 @@ function focus(): void {
 defineExpose({ focus });
 
 const resetChat = useAsyncAction(() => chat.reset());
+const undo = useKeyedAction((id: string) => chat.undo(id));
+
+// «Обговорити в ЦУК» from a scheduled run's answer: the text lands in the draft, not sent.
+watch(
+  () => chat.draftRequest,
+  (req) => {
+    if (req) composerEl.value?.setDraft(req.text);
+  },
+);
 async function newChat(): Promise<void> {
   if (resetChat.busy.value) return;
   if (chat.hasConversation) {
@@ -403,6 +422,16 @@ onUnmounted(() => clearInterval(thinkTimer));
   &:hover {
     text-decoration: underline;
   }
+
+  &:disabled {
+    cursor: progress;
+    opacity: 0.6;
+  }
+}
+
+.cuk__res-undone {
+  margin-left: var(--k-sp-2);
+  color: var(--k-muted);
 }
 
 .cuk__think {

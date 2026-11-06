@@ -1,14 +1,16 @@
 <template>
   <!-- One ЦУК action that waits for the operator (docs/specs/2026-11-04-cuk-control-console.md,
        decision 4): what will happen, the text editable before it does, «Виконати» / «Скасувати».
-       After either, the card stays in the transcript as the record of the decision. -->
+       After either, the card stays in the transcript as the record of the decision. A schedule
+       action (docs/specs/2026-11-06-scheduled-tasks.md, decision 7) also shows the project or
+       «без проєкту», the skills, the schedule in words and its next three firings. -->
   <article class="cukcard" :class="`cukcard--${state}`" :aria-label="kindLabel">
     <header class="cukcard__head">
       <span class="cukcard__kind mono">{{ kindLabel }}</span>
       <span v-if="state !== 'pending'" class="cukcard__state mono">{{ t(`cuk.card.state.${state}`) }}</span>
     </header>
 
-    <dl class="cukcard__facts">
+    <dl v-if="!sched" class="cukcard__facts">
       <template v-if="'project' in action">
         <dt>{{ t('cuk.card.project') }}</dt>
         <dd>{{ action.project }}</dd>
@@ -18,6 +20,51 @@
         <dd>{{ sessionName }}</dd>
       </template>
     </dl>
+
+    <template v-if="sched">
+      <dl class="cukcard__facts">
+        <template v-if="'ref' in action">
+          <dt>{{ t('cuk.card.scheduleTask') }}</dt>
+          <dd>{{ sched.task?.name ?? t('cuk.card.scheduleMissing', { ref: action.ref }) }}</dd>
+        </template>
+        <template v-if="newName">
+          <dt>{{ t('cuk.card.name') }}</dt>
+          <dd>{{ newName }}</dd>
+        </template>
+        <template v-if="sched.kind">
+          <dt>{{ t('cuk.card.type') }}</dt>
+          <dd>{{ t(`cuk.schedule.kind.${sched.kind}`) }}</dd>
+        </template>
+        <template v-if="sched.kind === 'agent'">
+          <dt>{{ t('cuk.card.project') }}</dt>
+          <dd>{{ sched.project || t('cuk.card.noProject') }}</dd>
+          <dt>{{ t('cuk.card.skills') }}</dt>
+          <dd>{{ sched.skills.length ? sched.skills.join(', ') : t('cuk.card.noSkills') }}</dd>
+          <template v-if="sched.model">
+            <dt>{{ t('cuk.card.model') }}</dt>
+            <dd>{{ sched.model }}</dd>
+          </template>
+        </template>
+        <template v-if="sched.words">
+          <dt>{{ t('cuk.card.when') }}</dt>
+          <dd>{{ sched.words }}</dd>
+        </template>
+        <template v-if="sched.next.length && action.kind !== 'schedule.delete' && action.kind !== 'schedule.run'">
+          <dt>{{ t('cuk.card.next') }}</dt>
+          <dd>
+            <ul class="cukcard__firings mono">
+              <li v-for="at in sched.next" :key="at">{{ at }}</li>
+            </ul>
+          </dd>
+        </template>
+      </dl>
+      <label v-if="promptEditable" class="cukcard__field">
+        <span class="cukcard__label mono">{{ t(sched.kind === 'reminder' ? 'cuk.card.reminderText' : 'cuk.card.prompt') }}</span>
+        <textarea v-model="text" class="cukcard__input cukcard__input--area" rows="4" :disabled="state !== 'pending'"></textarea>
+      </label>
+      <p v-else-if="sched.task" class="cukcard__prompt">{{ sched.task.prompt }}</p>
+      <p v-if="action.kind === 'schedule.delete'" class="cukcard__note" role="note">{{ t('cuk.card.deleteNote') }}</p>
+    </template>
 
     <template v-if="action.kind === 'task.create' || action.kind === 'agent.start'">
       <label class="cukcard__field">
@@ -52,27 +99,57 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
-import { CUK_TITLE_MAX, taskNameFromText, type CukAction } from '@kermanych/core';
+import {
+  CUK_TITLE_MAX,
+  describeSchedule,
+  nextOccurrences,
+  resolveWhen,
+  taskNameFromText,
+  type CukAction,
+  type CukScheduleAction,
+  type ScheduleKind,
+  type ScheduleSpec,
+  type ScheduledTask,
+} from '@kermanych/core';
 import KBtn from 'components/kit/KBtn.vue';
 import KCheckbox from 'components/kit/KCheckbox.vue';
 import { useOrchestrator } from 'stores/orchestrator';
+import { useProjects } from 'stores/projects';
+import { useSchedules } from 'stores/schedules';
 import type { CukCardState } from 'stores/cuk-chat';
 import { findSessionByRef } from '../../lib/cuk-digest';
+import { formatFiring, machineTimeZone } from '../../lib/schedules';
+import { locale } from '../../lib/locale';
+import { useNow } from '../../composables/useNow';
 
 const props = defineProps<{ action: CukAction; state: CukCardState }>();
 const emit = defineEmits<{ confirm: [action: CukAction]; cancel: [] }>();
 
 const { t } = useI18n();
 const store = useOrchestrator();
+const projects = useProjects();
+const schedules = useSchedules();
+const now = useNow(60_000);
+
+const scheduleAction = computed<CukScheduleAction | undefined>(() =>
+  props.action.kind.startsWith('schedule.') ? (props.action as CukScheduleAction) : undefined,
+);
+// The task a ref-based schedule action names, when this machine has it.
+const scheduleTask = computed<ScheduledTask | undefined>(() => {
+  const a = scheduleAction.value;
+  return a && 'ref' in a ? schedules.findByRef(a.ref) : undefined;
+});
 
 // The card's working copy: the operator edits these, «Виконати» hands the result back.
-const text = ref(
-  props.action.kind === 'session.message'
-    ? props.action.text
-    : props.action.kind === 'task.create' || props.action.kind === 'agent.start'
-      ? props.action.task
-      : '',
-);
+function initialText(): string {
+  const a = props.action;
+  if (a.kind === 'session.message') return a.text;
+  if (a.kind === 'task.create' || a.kind === 'agent.start') return a.task;
+  if (a.kind === 'schedule.create') return a.text;
+  if (a.kind === 'schedule.update') return a.text ?? scheduleTask.value?.prompt ?? '';
+  return '';
+}
+const text = ref(initialText());
 const title = ref(props.action.kind === 'task.create' || props.action.kind === 'agent.start' ? (props.action.title ?? '') : '');
 const deep = ref(props.action.kind === 'task.create' || props.action.kind === 'agent.start' ? !!props.action.deepAnalysis : false);
 
@@ -86,7 +163,42 @@ const sessionName = computed(() => {
   return findSessionByRef(store.sessions, props.action.session)?.name ?? props.action.session;
 });
 
-const needsText = computed(() => ['task.create', 'agent.start', 'session.message'].includes(props.action.kind));
+function projectName(id: string): string {
+  return projects.byId.get(id)?.name ?? store.projects.find((p) => p.id === id)?.name ?? '';
+}
+
+// What a schedule card shows: the action's own fields over the task's current ones. A «через N
+// хв» is previewed against now; the executor resolves it again when «Виконати» runs it.
+const sched = computed(() => {
+  const a = scheduleAction.value;
+  if (!a) return undefined;
+  const task = scheduleTask.value;
+  const edit = a.kind === 'schedule.create' || a.kind === 'schedule.update' ? a : undefined;
+  const kind: ScheduleKind | undefined = a.kind === 'schedule.create' ? a.type : task?.kind;
+  const timeZone = task?.timeZone ?? machineTimeZone();
+  const at = new Date(now.value);
+  let spec: ScheduleSpec | undefined = task?.schedule;
+  if (edit?.when) spec = resolveWhen(edit.when, at, timeZone);
+  return {
+    task,
+    kind,
+    project: edit?.project ?? (task?.projectId ? projectName(task.projectId) : ''),
+    skills: edit?.skills ?? task?.skills ?? [],
+    model: edit?.model ?? task?.model,
+    words: spec ? describeSchedule(spec, locale.value) : '',
+    next: spec ? nextOccurrences(spec, timeZone, at, 3).map((d) => formatFiring(d, timeZone, locale.value)) : [],
+  };
+});
+
+const newName = computed(() => {
+  const a = props.action;
+  return a.kind === 'schedule.create' || a.kind === 'schedule.update' ? (a.name ?? '') : '';
+});
+
+// Created or edited, the task's prompt is editable on the card; the other verbs show it as is.
+const promptEditable = computed(() => props.action.kind === 'schedule.create' || (props.action.kind === 'schedule.update' && !!(props.action.text !== undefined || scheduleTask.value)));
+
+const needsText = computed(() => ['task.create', 'agent.start', 'session.message'].includes(props.action.kind) || promptEditable.value);
 const canRun = computed(() => props.state === 'pending' && (!needsText.value || text.value.trim() !== ''));
 
 function run(): void {
@@ -102,8 +214,15 @@ function run(): void {
     });
     return;
   }
-  if (a.kind === 'session.message') {
+  if (a.kind === 'session.message' || a.kind === 'schedule.create') {
     emit('confirm', { ...a, text: text.value.trim() });
+    return;
+  }
+  if (a.kind === 'schedule.update') {
+    // The prompt goes into the edit only when the action named one or the operator changed it.
+    const next = text.value.trim();
+    const changed = a.text !== undefined || next !== (scheduleTask.value?.prompt ?? '').trim();
+    emit('confirm', changed ? { ...a, text: next } : a);
     return;
   }
   emit('confirm', a);
@@ -205,6 +324,28 @@ function run(): void {
 
 .cukcard__input--area {
   resize: vertical;
+}
+
+// The next three firings, one per line: the operator checks «щогодини» against real hours.
+.cukcard__firings {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: var(--k-fs-xs);
+}
+
+.cukcard__prompt {
+  margin: 0;
+  font-size: var(--k-fs-sm);
+  line-height: 1.5;
+  white-space: pre-line;
+  color: var(--k-muted);
+}
+
+.cukcard__note {
+  margin: 0;
+  font-size: var(--k-fs-xs);
+  color: var(--k-danger);
 }
 
 .cukcard__foot {

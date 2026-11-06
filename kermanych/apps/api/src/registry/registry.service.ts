@@ -6,8 +6,8 @@ import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { mkdirSync } from "node:fs";
 import { Subject } from "rxjs";
-import { isThinkingLevel, isNativeHarness, isAgentLanguage, isSkillImprovementLevel, DEFAULT_SKILL_IMPROVEMENT_LEVEL, isFindingKind, isPlatform, parseFindingTarget, docsPolicy, combineReportWrites, readMinionResult, isMinionPauseCode, clampMinionCap, MINION_CAP_DEFAULT, isDevicePlatform, ACTIVE_STATUSES } from "@kermanych/core";
-import type { AgentFinding, DeviceChoice, DocsPolicy, FindingReport, FindingTarget, MinionPause, MinionResult, NativeSettings, Platform, Project, ResourceDecision, Session, SessionDevice, SessionStatus, ThinkingLevel, Usage, AgentLanguage, SkillImprovementLevel, TaskReportsWrite, TesterSettings } from "@kermanych/core";
+import { isThinkingLevel, isNativeHarness, isAgentLanguage, isSkillImprovementLevel, DEFAULT_SKILL_IMPROVEMENT_LEVEL, isFindingKind, isPlatform, parseFindingTarget, docsPolicy, combineReportWrites, readMinionResult, isMinionPauseCode, clampMinionCap, MINION_CAP_DEFAULT, isDevicePlatform, ACTIVE_STATUSES, validateScheduleSpec, SCHEDULE_RUNS_KEEP, SCHEDULE_SLIPS_KEEP } from "@kermanych/core";
+import type { AgentFinding, DeviceChoice, DocsPolicy, FindingReport, FindingTarget, MinionPause, MinionResult, NativeSettings, Platform, Project, ResourceDecision, Session, SessionDevice, SessionStatus, ThinkingLevel, Usage, AgentLanguage, SkillImprovementLevel, TaskReportsWrite, TesterSettings, ScheduledTask, ScheduleRun, ScheduleRunReason, ScheduleRunStatus, ScheduleRunTrigger, ScheduleSlip } from "@kermanych/core";
 
 // The cached Supabase session. Lives in SQLite so a restarted api still knows who
 // its user is without a cloud round trip.
@@ -114,6 +114,127 @@ function readMinionPause(raw: string | null): MinionPause | undefined {
   } catch {
     return undefined;
   }
+}
+
+// A stored scheduled task: everything of ScheduledTask but what the service computes on each
+// read (`nextAt`, `running`).
+export type ScheduleRow = Omit<ScheduledTask, "nextAt" | "running">;
+
+type ScheduleDbRow = {
+  id: string;
+  name: string;
+  kind: string;
+  prompt: string;
+  project_id: string | null;
+  skills: string;
+  model: string | null;
+  spec: string;
+  time_zone: string;
+  enabled: number;
+  armed_at: string;
+  created_at: string;
+  updated_at: string;
+};
+
+function readScheduleRow(r: ScheduleDbRow): ScheduleRow | undefined {
+  if (r.kind !== "reminder" && r.kind !== "agent") return undefined;
+  let spec: unknown;
+  let skills: unknown;
+  try {
+    spec = JSON.parse(r.spec);
+    skills = JSON.parse(r.skills);
+  } catch {
+    return undefined;
+  }
+  const schedule = validateScheduleSpec(spec);
+  if ("error" in schedule) return undefined;
+  return {
+    id: r.id,
+    name: r.name,
+    kind: r.kind,
+    prompt: r.prompt,
+    ...(r.project_id ? { projectId: r.project_id } : {}),
+    skills: Array.isArray(skills) ? skills.filter((s): s is string => typeof s === "string") : [],
+    ...(r.model ? { model: r.model } : {}),
+    schedule,
+    timeZone: r.time_zone,
+    enabled: r.enabled !== 0,
+    armedAt: r.armed_at,
+    createdAt: r.created_at,
+    updatedAt: r.updated_at,
+  };
+}
+
+const RUN_COLUMNS = "id, schedule_id, scheduled_for, run_trigger, status, reason, detail, started_at, ended_at, session_id, summary";
+type RunDbRow = {
+  id: string;
+  schedule_id: string;
+  scheduled_for: string | null;
+  run_trigger: string;
+  status: string;
+  reason: string | null;
+  detail: string | null;
+  started_at: string;
+  ended_at: string | null;
+  session_id: string | null;
+  summary: string | null;
+};
+
+function readRunRow(r: RunDbRow): ScheduleRun {
+  return {
+    id: r.id,
+    scheduleId: r.schedule_id,
+    ...(r.scheduled_for ? { scheduledFor: r.scheduled_for } : {}),
+    trigger: r.run_trigger as ScheduleRunTrigger,
+    status: r.status as ScheduleRunStatus,
+    ...(r.reason ? { reason: r.reason as ScheduleRunReason } : {}),
+    ...(r.detail ? { detail: r.detail } : {}),
+    startedAt: r.started_at,
+    ...(r.ended_at ? { endedAt: r.ended_at } : {}),
+    ...(r.session_id ? { sessionId: r.session_id } : {}),
+    ...(r.summary !== null ? { summary: r.summary } : {}),
+  };
+}
+
+const SLIP_COLUMNS = "id, kind, schedule_id, schedule_name, at, scheduled_for, text, body, run_id, session_id, project_id, status, reason, late, seen, snoozed_until";
+type SlipDbRow = {
+  id: string;
+  kind: string;
+  schedule_id: string;
+  schedule_name: string;
+  at: string;
+  scheduled_for: string | null;
+  text: string;
+  body: string | null;
+  run_id: string | null;
+  session_id: string | null;
+  project_id: string | null;
+  status: string | null;
+  reason: string | null;
+  late: number;
+  seen: number;
+  snoozed_until: string | null;
+};
+
+function readSlipRow(r: SlipDbRow): ScheduleSlip {
+  return {
+    id: r.id,
+    kind: r.kind === "run" ? "run" : "reminder",
+    scheduleId: r.schedule_id,
+    scheduleName: r.schedule_name,
+    at: r.at,
+    ...(r.scheduled_for ? { scheduledFor: r.scheduled_for } : {}),
+    text: r.text,
+    ...(r.body !== null ? { body: r.body } : {}),
+    ...(r.run_id ? { runId: r.run_id } : {}),
+    ...(r.session_id ? { sessionId: r.session_id } : {}),
+    ...(r.project_id ? { projectId: r.project_id } : {}),
+    ...(r.status ? { status: r.status as ScheduleRunStatus } : {}),
+    ...(r.reason ? { reason: r.reason as ScheduleRunReason } : {}),
+    late: r.late !== 0,
+    seen: r.seen !== 0,
+    ...(r.snoozed_until ? { snoozedUntil: r.snoozed_until } : {}),
+  };
 }
 
 // The `projects.device_choice` column: only the keys of a DeviceChoice with the right types, so a
@@ -506,6 +627,16 @@ export class RegistryService {
     } catch {
       /* column already exists */
     }
+    // Additive migration: a scheduled run's session (docs/specs/2026-11-06-scheduled-tasks.md,
+    // decision 5) carries its task's id and name for the «Розклад · <назва>» badge, fixed at
+    // creation like `minion`. The name is a copy: the session outlives a renamed or deleted task.
+    for (const col of ["schedule_id TEXT", "schedule_name TEXT"]) {
+      try {
+        this.db.exec(`ALTER TABLE sessions ADD COLUMN ${col}`);
+      } catch {
+        /* column already exists */
+      }
+    }
     this.retireManagedClaude();
     // The first index in this schema: listSessions(projectId) filters on project_id on
     // every board render and every supervisor lookup.
@@ -607,6 +738,21 @@ export class RegistryService {
       `CREATE TABLE IF NOT EXISTS tester_accounts (id TEXT PRIMARY KEY, project_id TEXT NOT NULL, name TEXT NOT NULL, login TEXT NOT NULL, password TEXT NOT NULL, note TEXT NOT NULL DEFAULT '', position INTEGER NOT NULL)`,
     );
     this.db.exec(`CREATE INDEX IF NOT EXISTS tester_accounts_project_idx ON tester_accounts (project_id)`);
+    // Scheduled tasks (docs/specs/2026-11-06-scheduled-tasks.md, decision 1): personal and
+    // machine-local, never synced. `spec` is the JSON ScheduleSpec, `skills` a JSON name list.
+    // A run is claimed by its insert: UNIQUE (schedule_id, scheduled_for) is what makes an
+    // occurrence fire exactly once across ticks and restarts; a manual run has no
+    // `scheduled_for`, and SQLite lets NULLs repeat under a UNIQUE key. `run_trigger`, not
+    // `trigger`, which is an SQL keyword.
+    this.db.exec(
+      `CREATE TABLE IF NOT EXISTS schedules (id TEXT PRIMARY KEY, name TEXT NOT NULL, kind TEXT NOT NULL, prompt TEXT NOT NULL, project_id TEXT, skills TEXT NOT NULL DEFAULT '[]', model TEXT, spec TEXT NOT NULL, time_zone TEXT NOT NULL, enabled INTEGER NOT NULL DEFAULT 1, armed_at TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL)`,
+    );
+    this.db.exec(
+      `CREATE TABLE IF NOT EXISTS schedule_runs (id TEXT PRIMARY KEY, schedule_id TEXT NOT NULL, scheduled_for TEXT, run_trigger TEXT NOT NULL, status TEXT NOT NULL, reason TEXT, detail TEXT, started_at TEXT NOT NULL, ended_at TEXT, session_id TEXT, summary TEXT, UNIQUE (schedule_id, scheduled_for))`,
+    );
+    this.db.exec(
+      `CREATE TABLE IF NOT EXISTS schedule_slips (id TEXT PRIMARY KEY, kind TEXT NOT NULL, schedule_id TEXT NOT NULL, schedule_name TEXT NOT NULL, at TEXT NOT NULL, scheduled_for TEXT, text TEXT NOT NULL, body TEXT, run_id TEXT, session_id TEXT, project_id TEXT, status TEXT, reason TEXT, late INTEGER NOT NULL DEFAULT 0, seen INTEGER NOT NULL DEFAULT 0, snoozed_until TEXT)`,
+    );
   }
 
   // Managed claude-code sessions are gone (docs/specs/2026-11-05-remove-managed-claude-code.md,
@@ -922,12 +1068,12 @@ export class RegistryService {
   }
 
   listSessions(projectId?: string): Session[] {
-    const sql = `SELECT id, project_id as projectId, task_id as taskId, name, task, worktree_path as worktreePath, branch, worktree, base_branch as baseBranch, omp_session_id as ompSessionId, omp_session_file as ompSessionFile, parent_session_id as parentSessionId, kind, model, prefix, runtime, native, deep_analysis, design_dir, minion, minion_result, finding_kind, tester, effort, status, pr_opened as prOpened, pr_url, archived, usage, pending_prompt, created_at as createdAt, last_activity_at as lastActivityAt, (SELECT COUNT(*) FROM session_findings f WHERE f.session_id = sessions.id AND f.status = 'open') as open_findings FROM sessions`;
+    const sql = `SELECT id, project_id as projectId, task_id as taskId, name, task, worktree_path as worktreePath, branch, worktree, base_branch as baseBranch, omp_session_id as ompSessionId, omp_session_file as ompSessionFile, parent_session_id as parentSessionId, kind, model, prefix, runtime, native, deep_analysis, design_dir, minion, minion_result, finding_kind, tester, schedule_id, schedule_name, effort, status, pr_opened as prOpened, pr_url, archived, usage, pending_prompt, created_at as createdAt, last_activity_at as lastActivityAt, (SELECT COUNT(*) FROM session_findings f WHERE f.session_id = sessions.id AND f.status = 'open') as open_findings FROM sessions`;
     const rows = (
       projectId
         ? this.db.prepare(sql + ` WHERE project_id = ? ORDER BY created_at`).all(projectId)
         : this.db.prepare(sql + ` ORDER BY created_at`).all()
-    ) as (Omit<Session, "archived" | "worktree" | "usage" | "effort" | "runtime" | "prOpened" | "prUrl" | "native" | "deepAnalysis" | "designDir" | "minion" | "minionResult" | "findingKind" | "tester" | "openFindings" | "pendingPrompt"> & { archived: number; worktree: number; usage: string | null; effort: string | null; runtime: string | null; prOpened: number; pr_url: string | null; native: number; deep_analysis: number; design_dir: string | null; minion: number; minion_result: string | null; finding_kind: string | null; tester: number; open_findings: number; pending_prompt: string | null })[];
+    ) as (Omit<Session, "archived" | "worktree" | "usage" | "effort" | "runtime" | "prOpened" | "prUrl" | "native" | "deepAnalysis" | "designDir" | "minion" | "minionResult" | "findingKind" | "tester" | "schedule" | "openFindings" | "pendingPrompt"> & { archived: number; worktree: number; usage: string | null; effort: string | null; runtime: string | null; prOpened: number; pr_url: string | null; native: number; deep_analysis: number; design_dir: string | null; minion: number; minion_result: string | null; finding_kind: string | null; tester: number; schedule_id: string | null; schedule_name: string | null; open_findings: number; pending_prompt: string | null })[];
     // SQLite stores the flag as 0/1; hand callers a real boolean. `effort` is validated rather
     // than cast: a row written by an older build (or by hand) must degrade to "not known" —
     // typing an unknown word as a ThinkingLevel would send it straight back into omp's argv.
@@ -939,10 +1085,11 @@ export class RegistryService {
     // a PR URL was stored.
     // `minion` likewise; `minion_result` and `finding_kind` are validated like `effort`, so a
     // hand-edited row degrades.
-    // `design_dir` likewise appears only on a design session, `tester` only on a tester run.
-    return rows.map(({ native, deep_analysis, design_dir, minion, minion_result, finding_kind, tester, open_findings, pending_prompt, pr_url, ...r }) => {
+    // `design_dir` likewise appears only on a design session, `tester` only on a tester run, and
+    // `schedule` only on a scheduled run's session (docs/specs/2026-11-06-scheduled-tasks.md).
+    return rows.map(({ native, deep_analysis, design_dir, minion, minion_result, finding_kind, tester, schedule_id, schedule_name, open_findings, pending_prompt, pr_url, ...r }) => {
       const minionResult = readMinionColumn(minion_result);
-      return { ...r, ...(native ? { native: true } : {}), ...(deep_analysis ? { deepAnalysis: true } : {}), ...(design_dir ? { designDir: design_dir } : {}), ...(minion ? { minion: true } : {}), ...(minionResult ? { minionResult } : {}), ...(isFindingKind(finding_kind) ? { findingKind: finding_kind } : {}), ...(tester ? { tester: true } : {}), ...(open_findings ? { openFindings: open_findings } : {}), ...(pending_prompt !== null ? { pendingPrompt: pending_prompt } : {}), ...(pr_url ? { prUrl: pr_url } : {}), archived: r.archived !== 0, worktree: r.worktree !== 0, prOpened: r.prOpened !== 0, taskId: r.taskId ?? undefined, model: r.model ?? undefined, prefix: r.prefix ?? undefined, runtime: isNativeHarness(r.runtime) ? r.runtime : undefined, effort: isThinkingLevel(r.effort) ? r.effort : undefined, usage: readUsage(r.usage) };
+      return { ...r, ...(native ? { native: true } : {}), ...(deep_analysis ? { deepAnalysis: true } : {}), ...(design_dir ? { designDir: design_dir } : {}), ...(minion ? { minion: true } : {}), ...(minionResult ? { minionResult } : {}), ...(isFindingKind(finding_kind) ? { findingKind: finding_kind } : {}), ...(tester ? { tester: true } : {}), ...(schedule_id ? { schedule: { id: schedule_id, name: schedule_name ?? "" } } : {}), ...(open_findings ? { openFindings: open_findings } : {}), ...(pending_prompt !== null ? { pendingPrompt: pending_prompt } : {}), ...(pr_url ? { prUrl: pr_url } : {}), archived: r.archived !== 0, worktree: r.worktree !== 0, prOpened: r.prOpened !== 0, taskId: r.taskId ?? undefined, model: r.model ?? undefined, prefix: r.prefix ?? undefined, runtime: isNativeHarness(r.runtime) ? r.runtime : undefined, effort: isThinkingLevel(r.effort) ? r.effort : undefined, usage: readUsage(r.usage) };
     });
   }
 
@@ -966,7 +1113,7 @@ export class RegistryService {
     };
     this.db
       .prepare(
-        `INSERT INTO sessions (id, project_id, task_id, name, task, worktree_path, branch, worktree, base_branch, omp_session_id, omp_session_file, parent_session_id, kind, model, prefix, runtime, native, deep_analysis, design_dir, minion, finding_kind, tester, effort, status, created_at, last_activity_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+        `INSERT INTO sessions (id, project_id, task_id, name, task, worktree_path, branch, worktree, base_branch, omp_session_id, omp_session_file, parent_session_id, kind, model, prefix, runtime, native, deep_analysis, design_dir, minion, finding_kind, tester, schedule_id, schedule_name, effort, status, created_at, last_activity_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
       )
       .run(
         row.id,
@@ -991,6 +1138,8 @@ export class RegistryService {
         row.minion ? 1 : 0,
         row.findingKind ?? null,
         row.tester ? 1 : 0,
+        row.schedule?.id ?? null,
+        row.schedule?.name ?? null,
         row.effort ?? null,
         row.status,
         row.createdAt,
@@ -1389,5 +1538,172 @@ export class RegistryService {
       const insert = this.db.prepare(`INSERT INTO tester_accounts (id, project_id, name, login, password, note, position) VALUES (?,?,?,?,?,?,?)`);
       settings.accounts.forEach((a, i) => insert.run(a.id, projectId, a.name, a.login, a.password, a.note, i));
     })();
+  }
+
+  // ── Scheduled tasks (docs/specs/2026-11-06-scheduled-tasks.md) ──────────────────────────────
+
+  // Every stored task, oldest first. A row whose spec this build cannot read is left out rather
+  // than fired on a guess.
+  listSchedules(): ScheduleRow[] {
+    const rows = this.db
+      .prepare(`SELECT id, name, kind, prompt, project_id, skills, model, spec, time_zone, enabled, armed_at, created_at, updated_at FROM schedules ORDER BY created_at, id`)
+      .all() as ScheduleDbRow[];
+    return rows.map(readScheduleRow).filter((r): r is ScheduleRow => r !== undefined);
+  }
+
+  getSchedule(id: string): ScheduleRow | undefined {
+    const row = this.db
+      .prepare(`SELECT id, name, kind, prompt, project_id, skills, model, spec, time_zone, enabled, armed_at, created_at, updated_at FROM schedules WHERE id = ?`)
+      .get(id) as ScheduleDbRow | undefined;
+    return row ? readScheduleRow(row) : undefined;
+  }
+
+  // Insert or replace the whole row: the service always writes a task it has just built.
+  putSchedule(t: ScheduleRow): void {
+    this.db
+      .prepare(
+        `INSERT OR REPLACE INTO schedules (id, name, kind, prompt, project_id, skills, model, spec, time_zone, enabled, armed_at, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+      )
+      .run(t.id, t.name, t.kind, t.prompt, t.projectId ?? null, JSON.stringify(t.skills), t.model ?? null, JSON.stringify(t.schedule), t.timeZone, t.enabled ? 1 : 0, t.armedAt, t.createdAt, t.updatedAt);
+  }
+
+  // The task goes with its run history (decision 7: «its history goes with it»). Its slips stay:
+  // they are notifications already delivered, and each one carries the task's name.
+  deleteSchedule(id: string): void {
+    this.db.transaction(() => {
+      this.db.prepare(`DELETE FROM schedule_runs WHERE schedule_id = ?`).run(id);
+      this.db.prepare(`DELETE FROM schedules WHERE id = ?`).run(id);
+    })();
+  }
+
+  // The switch alone, for a «once» that has fired: the rest of the row may have been edited since
+  // the caller read it, and a deleted task must stay deleted.
+  disableSchedule(id: string, updatedAt: string): void {
+    this.db.prepare(`UPDATE schedules SET enabled = 0, updated_at = ? WHERE id = ?`).run(updatedAt, id);
+  }
+
+  // The claim: `false` when this (schedule_id, scheduled_for) is already taken — by an earlier
+  // tick, or by the same occurrence before a restart.
+  claimScheduleRun(run: ScheduleRun): boolean {
+    const r = this.db
+      .prepare(
+        `INSERT OR IGNORE INTO schedule_runs (id, schedule_id, scheduled_for, run_trigger, status, reason, detail, started_at, ended_at, session_id, summary) VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
+      )
+      .run(run.id, run.scheduleId, run.scheduledFor ?? null, run.trigger, run.status, run.reason ?? null, run.detail ?? null, run.startedAt, run.endedAt ?? null, run.sessionId ?? null, run.summary ?? null);
+    if (r.changes === 1) this.pruneScheduleRuns(run.scheduleId);
+    return r.changes === 1;
+  }
+
+  updateScheduleRun(id: string, patch: Partial<Omit<ScheduleRun, "id" | "scheduleId">>): ScheduleRun | undefined {
+    const cur = this.getScheduleRun(id);
+    if (!cur) return undefined;
+    const next: ScheduleRun = { ...cur, ...patch };
+    this.db
+      .prepare(`UPDATE schedule_runs SET status=?, reason=?, detail=?, ended_at=?, session_id=?, summary=? WHERE id=?`)
+      .run(next.status, next.reason ?? null, next.detail ?? null, next.endedAt ?? null, next.sessionId ?? null, next.summary ?? null, id);
+    return next;
+  }
+
+  getScheduleRun(id: string): ScheduleRun | undefined {
+    const row = this.db.prepare(`SELECT ${RUN_COLUMNS} FROM schedule_runs WHERE id = ?`).get(id) as RunDbRow | undefined;
+    return row ? readRunRow(row) : undefined;
+  }
+
+  // Newest first.
+  listScheduleRuns(scheduleId: string): ScheduleRun[] {
+    const rows = this.db.prepare(`SELECT ${RUN_COLUMNS} FROM schedule_runs WHERE schedule_id = ? ORDER BY started_at DESC, rowid DESC`).all(scheduleId) as RunDbRow[];
+    return rows.map(readRunRow);
+  }
+
+  // Every run still in flight, on any task.
+  listRunningScheduleRuns(): ScheduleRun[] {
+    const rows = this.db.prepare(`SELECT ${RUN_COLUMNS} FROM schedule_runs WHERE status = 'running' ORDER BY started_at`).all() as RunDbRow[];
+    return rows.map(readRunRow);
+  }
+
+  // The latest occurrence already claimed for the task, whatever became of it (decision 8's
+  // `lastFor`). ISO instants from toISOString sort as text.
+  lastScheduledFor(scheduleId: string): string | undefined {
+    const row = this.db.prepare(`SELECT MAX(scheduled_for) AS last FROM schedule_runs WHERE schedule_id = ?`).get(scheduleId) as { last: string | null } | undefined;
+    return row?.last ?? undefined;
+  }
+
+  // Retention: the newest SCHEDULE_RUNS_KEEP runs of a task. A run in flight is never dropped,
+  // nor the run holding the latest `scheduled_for`: it is the claim lastScheduledFor dedupes
+  // against, and manual runs alone can push it out of the newest by start time.
+  private pruneScheduleRuns(scheduleId: string): void {
+    this.db
+      .prepare(
+        `DELETE FROM schedule_runs WHERE schedule_id = ? AND status != 'running'
+           AND id NOT IN (SELECT id FROM schedule_runs WHERE schedule_id = ? ORDER BY started_at DESC, rowid DESC LIMIT ?)
+           AND (scheduled_for IS NULL OR scheduled_for != (SELECT MAX(scheduled_for) FROM schedule_runs WHERE schedule_id = ?))`,
+      )
+      .run(scheduleId, scheduleId, SCHEDULE_RUNS_KEEP, scheduleId);
+  }
+
+  // A new slip, then retention: the newest SCHEDULE_SLIPS_KEEP.
+  putScheduleSlip(s: ScheduleSlip): void {
+    this.db
+      .prepare(
+        `INSERT OR REPLACE INTO schedule_slips (id, kind, schedule_id, schedule_name, at, scheduled_for, text, body, run_id, session_id, project_id, status, reason, late, seen, snoozed_until) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+      )
+      .run(
+        s.id,
+        s.kind,
+        s.scheduleId,
+        s.scheduleName,
+        s.at,
+        s.scheduledFor ?? null,
+        s.text,
+        s.body ?? null,
+        s.runId ?? null,
+        s.sessionId ?? null,
+        s.projectId ?? null,
+        s.status ?? null,
+        s.reason ?? null,
+        s.late ? 1 : 0,
+        s.seen ? 1 : 0,
+        s.snoozedUntil ?? null,
+      );
+    this.db
+      .prepare(`DELETE FROM schedule_slips WHERE id NOT IN (SELECT id FROM schedule_slips ORDER BY at DESC, rowid DESC LIMIT ?)`)
+      .run(SCHEDULE_SLIPS_KEEP);
+  }
+
+  getScheduleSlip(id: string): ScheduleSlip | undefined {
+    const row = this.db.prepare(`SELECT ${SLIP_COLUMNS} FROM schedule_slips WHERE id = ?`).get(id) as SlipDbRow | undefined;
+    return row ? readSlipRow(row) : undefined;
+  }
+
+  // Newest first, snoozed ones included: the service decides what a reader sees.
+  listScheduleSlips(): ScheduleSlip[] {
+    const rows = this.db.prepare(`SELECT ${SLIP_COLUMNS} FROM schedule_slips ORDER BY at DESC, rowid DESC`).all() as SlipDbRow[];
+    return rows.map(readSlipRow);
+  }
+
+  // `ids` absent = every slip.
+  markScheduleSlipsSeen(ids?: readonly string[]): void {
+    if (!ids) {
+      this.db.prepare(`UPDATE schedule_slips SET seen = 1`).run();
+      return;
+    }
+    const mark = this.db.prepare(`UPDATE schedule_slips SET seen = 1 WHERE id = ?`);
+    this.db.transaction(() => ids.forEach((id) => mark.run(id)))();
+  }
+
+  // A snooze hides the slip until `until`; the re-fire clears it with a new `at`, unseen.
+  snoozeScheduleSlip(id: string, until: string): boolean {
+    return this.db.prepare(`UPDATE schedule_slips SET snoozed_until = ? WHERE id = ?`).run(until, id).changes === 1;
+  }
+
+  refireScheduleSlip(id: string, at: string): ScheduleSlip | undefined {
+    this.db.prepare(`UPDATE schedule_slips SET snoozed_until = NULL, at = ?, seen = 0 WHERE id = ?`).run(at, id);
+    return this.getScheduleSlip(id);
+  }
+
+  // Snoozed slips whose time has come.
+  dueSnoozedScheduleSlips(now: string): ScheduleSlip[] {
+    const rows = this.db.prepare(`SELECT ${SLIP_COLUMNS} FROM schedule_slips WHERE snoozed_until IS NOT NULL AND snoozed_until <= ? ORDER BY snoozed_until`).all(now) as SlipDbRow[];
+    return rows.map(readSlipRow);
   }
 }

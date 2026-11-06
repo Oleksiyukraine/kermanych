@@ -4,6 +4,7 @@
 // console spends the operator's own provider plan. One global conversation per user, so the
 // body names none: the key is the guard's user id (spec decision 5).
 import { Body, Controller, Post, Req } from "@nestjs/common";
+import { formatZonedWall, isTimeZone } from "@kermanych/core";
 import type {
   CukBoardRow,
   CukChatAsk,
@@ -11,6 +12,7 @@ import type {
   CukContext,
   CukPlace,
   CukProjectRow,
+  CukScheduleRow,
   CukSessionRow,
   CukWorkspaceRow,
   SessionStatus,
@@ -29,6 +31,11 @@ const MAX_BOARD = 60;
 const MAX_PROJECTS = 100;
 const MAX_WORKSPACES = 50;
 const MAX_PLACES = 80;
+// The operator's scheduled tasks and the skill names a scheduled agent may use
+// (docs/specs/2026-11-06-scheduled-tasks.md). Neither has an «omitted» count: a person with more
+// than fifty tasks names the one they mean, and an unknown skill is refused at creation anyway.
+const MAX_SCHEDULES = 50;
+const MAX_SKILLS = 100;
 const MAX_NAME = 200;
 const MAX_REF = 40;
 
@@ -109,12 +116,30 @@ function placeRow(x: Record<string, unknown>): CukPlace | undefined {
   return id ? { id, label: text(x.label) } : undefined;
 }
 
+function scheduleRow(x: Record<string, unknown>): CukScheduleRow | undefined {
+  const ref = text(x.ref, MAX_REF);
+  // A row the model cannot address, or of a kind this build does not know, is dropped.
+  if (!ref || (x.type !== "reminder" && x.type !== "agent")) return undefined;
+  const project = text(x.project);
+  const next = text(x.next, 40);
+  return {
+    ref,
+    name: text(x.name),
+    type: x.type,
+    ...(project ? { project } : {}),
+    when: text(x.when),
+    ...(next ? { next } : {}),
+    enabled: x.enabled === true,
+  };
+}
+
 function cukContext(v: unknown): CukContext {
   const x = v as Record<string, unknown>;
   const sessions = rows(x.sessions, MAX_SESSIONS, sessionRow);
   const board = rows(x.board, MAX_BOARD, boardRow);
   const workspace = text(x.workspace);
   const project = text(x.project);
+  const timeZone = isTimeZone(x.timeZone) ? x.timeZone : Intl.DateTimeFormat().resolvedOptions().timeZone;
   return {
     view: text(x.view, 80),
     ...(workspace ? { workspace } : {}),
@@ -129,6 +154,12 @@ function cukContext(v: unknown): CukContext {
     // Absent means «no workspace selected», which the prompt says in words; an empty list
     // is a selected workspace with an empty notepad.
     ...(Array.isArray(x.notes) ? { notes: todoRows(x.notes) } : {}),
+    // The browser's clock and zone resolve «сьогодні о 19:00»; a body without them (an older
+    // window) gets this machine's, which is the same machine.
+    timeZone,
+    now: text(x.now, 40) || formatZonedWall(new Date(), timeZone, true),
+    schedules: rows(x.schedules, MAX_SCHEDULES, scheduleRow).rows,
+    skills: Array.isArray(x.skills) ? [...new Set(x.skills.slice(0, MAX_SKILLS).map((s) => text(s)).filter(Boolean))] : [],
   };
 }
 

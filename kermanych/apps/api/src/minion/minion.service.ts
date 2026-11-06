@@ -16,7 +16,7 @@ import { RegistryService, type MinionSettingsRow } from "../registry/registry.se
 import { SupervisorService, type MinionRunResult } from "../supervisor/supervisor.service";
 import { AuthService } from "../auth/auth.service";
 import { RuntimeCheckService, type RuntimeCheck } from "../runtime/runtime-check.service";
-import { keepAwake } from "./keep-awake";
+import { holdAwake } from "./keep-awake";
 import { AuthFailure } from "../runtime/auth-failure";
 
 @Injectable()
@@ -51,7 +51,7 @@ export class MinionService implements OnModuleInit, OnModuleDestroy {
   // its agent gets no `kermanych` MCP server and so no `report_outcome`.
   onModuleInit(): void {
     this.running = this.supervisor.minionRunning();
-    if (this.running) keepAwake()?.(true);
+    if (this.running) holdAwake("minion", true);
     this.timer = setInterval(() => this.kick(), MINION_POLL_MS);
     this.timer.unref();
   }
@@ -259,7 +259,7 @@ export class MinionService implements OnModuleInit, OnModuleDestroy {
     if (running === this.running) return;
     const fewer = running < this.running;
     this.running = running;
-    keepAwake()?.(running > 0);
+    holdAwake("minion", running > 0);
     this.emit();
     if (fewer) this.kick();
   }

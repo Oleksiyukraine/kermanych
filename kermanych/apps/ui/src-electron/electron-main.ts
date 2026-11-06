@@ -7,12 +7,14 @@ import { createServer } from 'node:net';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { bootstrap } from '@kermanych/api';
+import type { ScheduleTrayState } from '@kermanych/core';
 import type { INestApplication } from '@nestjs/common';
 import { closeLoopback, startLoopbackOAuth } from './oauth-loopback';
 import { routeLinksToDefaultBrowser } from './external-links';
 import { htmlToPdf } from './print-pdf';
 import { readWindowState, trackWindowState } from './window-state';
 import { SessionBrowsers } from './session-browser';
+import { ScheduleTray } from './schedule-tray';
 
 const currentDir = fileURLToPath(new URL('.', import.meta.url));
 
@@ -28,6 +30,25 @@ const browsers = new SessionBrowsers();
 // a session (apps/api/src/auth/ui-proof.ts). The api learns it through bootstrap(), the
 // renderer through the preload; a web page in the operator's browser never sees it.
 const uiKey = randomBytes(32).toString('hex');
+
+// Background mode (docs/specs/2026-11-06-scheduled-tasks.md, decision 4): while the api reports
+// an enabled scheduled task, closing the window hides it (the renderer stays alive, so its auth
+// refresh keeps the api's token current) and a menu-bar icon stays. `quitting` is set by
+// `before-quit` — ⌘Q, the app menu's Quit, the tray's «Завершити» — and lets the close through.
+let quitting = false;
+const scheduleTray = new ScheduleTray({
+  // Packaged: Quasar copies src-electron/icons next to the compiled main. Dev: the source tree.
+  iconPaths: [
+    path.resolve(currentDir, 'icons/trayTemplate.png'),
+    path.resolve(currentDir, '../../src-electron/icons/trayTemplate.png'),
+  ],
+  open: () => bringBack(),
+  quit: () => app.quit(),
+  // The icon was the only way back to a hidden window off macOS (no Dock there): show it again.
+  onInactive: () => {
+    if (process.platform !== 'darwin' && mainWindow && windowShown && !mainWindow.isVisible()) bringBack();
+  },
+});
 
 // Prefer 4317; fall back to an OS-assigned free port if it is taken.
 function freePort(preferred: number): Promise<number> {
@@ -83,7 +104,11 @@ function keepAwake(hold: boolean): void {
 
 async function startBackend(port: number): Promise<void> {
   try {
-    const res = await bootstrap({ port, browser: browsers, keepAwake, uiKey });
+    // Reports that arrive while nest.close() runs after `before-quit` must not bring the icon back.
+    const schedules = (s: ScheduleTrayState) => {
+      if (!quitting) scheduleTray.update(s);
+    };
+    const res = await bootstrap({ port, browser: browsers, keepAwake, uiKey, schedules });
     nest = res.app;
     backend.resolve();
     setBootStatus('ready');
@@ -158,6 +183,21 @@ async function createWindow(apiBase: string) {
   mainWindow.webContents.on('dom-ready', () => mainWindow?.webContents.send('kermanych:boot-status', bootStatus));
   routeLinksToDefaultBrowser(mainWindow, (url) => shell.openExternal(url));
   browsers.attach(mainWindow);
+  // Decision 4 of the scheduled-tasks spec: hide rather than close while a scheduled task is
+  // enabled, unless the app is really quitting. A full-screen window leaves its own Space first,
+  // or macOS would keep an empty black Space behind.
+  mainWindow.on('close', (e) => {
+    const win = mainWindow;
+    if (!win || quitting || !scheduleTray.keepsRunning) return;
+    e.preventDefault();
+    if (win.isFullScreen()) {
+      win.once('leave-full-screen', () => win.hide());
+      win.setFullScreen(false);
+    } else {
+      win.hide();
+    }
+  });
+
   // The voice conversation's microphone (docs/specs/2026-11-02-voice-conversation.md): audio only,
   // and only for this window — not a hidden helper window of the same session. Every other
   // permission keeps Electron's default grant, which is what the window had before this handler.
@@ -289,9 +329,15 @@ void app.whenReady().then(async () => {
   }
 });
 
-app.on('window-all-closed', () => app.quit());
+// With background mode on (decision 4 of the scheduled-tasks spec) the window is hidden, not
+// closed, so this fires only when it is off or the app is quitting.
+app.on('window-all-closed', () => {
+  if (quitting || !scheduleTray.keepsRunning) app.quit();
+});
 
 app.on('before-quit', (e) => {
+  quitting = true;
+  scheduleTray.destroy();
   // A half-finished OAuth round trip would otherwise keep an HTTP handle open
   // and stop the app from quitting.
   closeLoopback();

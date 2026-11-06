@@ -57,7 +57,8 @@ export type KIconName =
   | 'agentResolveConflict'
   | 'agentFinish'
   | 'agentSummary'
-  | 'agentTester';
+  | 'agentTester'
+  | 'clock';
 </script>
 
 <script setup lang="ts">
@@ -258,6 +259,9 @@ const ICONS: Record<KIconName, readonly string[]> = {
     'M6.453 15h11.094',
     'M8.5 2h7',
   ],
+  // «Розклад» — a clock (Lucide's): a scheduled task's row and the mark on the session its run
+  // became (KScheduleMark, docs/specs/2026-11-06-scheduled-tasks.md, decision 5).
+  clock: ['M3 12a9 9 0 1 0 18 0a9 9 0 1 0-18 0', 'M12 6v6l4 2'],
 };
 
 const props = defineProps<{ name: KIconName }>();
