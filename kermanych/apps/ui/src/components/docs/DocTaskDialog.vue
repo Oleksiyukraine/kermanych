@@ -38,6 +38,13 @@
           @toggle="dictation.toggle"
         />
       </div>
+      <!-- «Глибокий аналіз» for an API request (ticked) or a handoff (clear), not for a design:
+           the other side checks the document against its own architecture before code
+           (docs/specs/2026-11-07-cross-agent-request-handoff-framing.md, decision 4). -->
+      <div v-if="deepOffered" class="doc-task__check">
+        <KCheckbox v-model="deepAnalysis" :label="t('agents.launcher.deepLabel')" />
+        <p class="doc-task__hint">{{ t('agents.launcher.deepDesc') }}</p>
+      </div>
       <!-- A design card carries the folder's screenshots, so the implementing agent sees the
            target as images and not only as text. -->
       <div v-if="screensDir" class="doc-task__screens">
@@ -88,7 +95,7 @@ import { useProjects } from 'stores/projects';
 import { useBoard } from 'stores/board';
 import { api } from '../../lib/api';
 import { handleOf } from '../../lib/members';
-import { docTaskScreensDir, docTaskTargets, docTaskTitle } from '../../lib/doc-task';
+import { docTaskDeepAnalysis, docTaskFraming, docTaskScreensDir, docTaskTargets, docTaskTitle } from '../../lib/doc-task';
 import { readDesignScreens } from '../../lib/design-screens';
 import { errorText } from '../../composables/useAsyncAction';
 import { useDictationField } from '../../composables/useDictationField';
@@ -98,6 +105,7 @@ import KSelect, { type KSelectOption } from 'components/kit/KSelect.vue';
 import KField from 'components/kit/KField.vue';
 import KDictation from 'components/kit/KDictation.vue';
 import KBtn from 'components/kit/KBtn.vue';
+import KCheckbox from 'components/kit/KCheckbox.vue';
 import KSkeleton from 'components/kit/KSkeleton.vue';
 
 const props = defineProps<{ modelValue: boolean; session: Session | null; path: string }>();
@@ -112,6 +120,7 @@ const project = ref('');
 const title = ref('');
 const assignee = ref('');
 const description = ref('');
+const deepAnalysis = ref(false);
 const error = ref<string | null>(null);
 const busy = ref(false);
 const descriptionField = ref<InstanceType<typeof KField> | null>(null);
@@ -137,6 +146,7 @@ const screensPhase = useLoadPhase(() => screensLoading.value);
 
 const home = computed(() => projects.byId.get(props.session?.projectId ?? ''));
 const screensDir = computed(() => docTaskScreensDir(props.path));
+const deepOffered = computed(() => docTaskDeepAnalysis(props.path) !== undefined);
 const projectOptions = computed<KSelectOption[]>(() =>
   home.value ? docTaskTargets(projects.projects, home.value, props.path).map((p) => ({ value: p.id, label: p.name })) : [],
 );
@@ -178,6 +188,7 @@ async function load(gen: number): Promise<void> {
   title.value = '';
   assignee.value = '';
   description.value = '';
+  deepAnalysis.value = docTaskDeepAnalysis(path) ?? false;
   error.value = null;
   busy.value = false;
   dropScreens();
@@ -202,7 +213,15 @@ async function load(gen: number): Promise<void> {
       return;
     }
     title.value = docTaskTitle(path, file.content);
-    description.value = `${t('agents.docTask.origin', { project: h.name, branch: s.branch, path })}\n\n${file.content.trim()}\n`;
+    // The other side's agent reads the description as its task: the framing says what in the
+    // document binds it and what is only a proposal
+    // (docs/specs/2026-11-07-cross-agent-request-handoff-framing.md, decision 3).
+    const framing = docTaskFraming(path);
+    const head = [
+      t('agents.docTask.origin', { project: h.name, branch: s.branch, path }),
+      ...(framing ? [t(`agents.docTask.framing.${framing}`)] : []),
+    ].join('\n\n');
+    description.value = `${head}\n\n${file.content.trim()}\n`;
   } catch (e) {
     if (gen === generation) error.value = errorText(e);
   } finally {
@@ -255,6 +274,7 @@ async function submit(): Promise<void> {
         ...(target.defaultModel ? { model: target.defaultModel } : {}),
         ...(target.defaultEffort ? { effort: target.defaultEffort } : {}),
         ...(assignee.value ? { assigneeId: assignee.value } : {}),
+        ...(deepOffered.value && deepAnalysis.value ? { deepAnalysis: true } : {}),
       },
       (screens.value ?? []).map((s) => s.file),
     );
@@ -275,6 +295,12 @@ async function submit(): Promise<void> {
 }
 .doc-task__dictate {
   margin-top: 6px;
+}
+
+.doc-task__check {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
 }
 
 .doc-task__hint {

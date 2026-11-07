@@ -43,6 +43,26 @@ export function docTaskTargets<P extends { id: string; workspaceId: string }>(
   return own ? [own, ...others] : others;
 }
 
+// The paragraph the card's description gets for the agent on the other side
+// (docs/specs/2026-11-07-cross-agent-request-handoff-framing.md): an API request binds by its
+// requirements and only proposes its contract; a handoff's contract is built, its client advice is
+// not binding. A design README gets none — its prototype and screenshots are the specification.
+export type DocTaskFraming = 'apiRequest' | 'handoff';
+export function docTaskFraming(path: string): DocTaskFraming | undefined {
+  const kind = docsLayoutKind(path);
+  if (kind === 'api-request') return 'apiRequest';
+  if (kind === 'handoff') return 'handoff';
+  return undefined;
+}
+
+// Whether the dialog offers «Глибокий аналіз», and ticked or not: on for an API request, so the
+// backend checks the proposal against its architecture before building; off for a handoff, whose
+// contract is already fact; not offered for a design README. Undefined means no checkbox.
+export function docTaskDeepAnalysis(path: string): boolean | undefined {
+  const framing = docTaskFraming(path);
+  return framing === undefined ? undefined : framing === 'apiRequest';
+}
+
 // Where a design README's screenshots sit: `<designDir>/screens`. Undefined for any other
 // document — only a design card carries images.
 export function docTaskScreensDir(path: string): string | undefined {

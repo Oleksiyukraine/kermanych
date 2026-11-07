@@ -352,9 +352,9 @@ export const en: MessageSchema = {
       empty: 'This session neither read nor changed any documentation.',
       write: {
         apiRequest: 'Write an API request',
-        apiRequestHint: 'The agent writes docs/api-requests/… now — what the API lacks, why, the proposed contract and what the client does until it ships. No code changes in that turn; the task goes on.',
+        apiRequestHint: 'The agent writes docs/api-requests/… now — what the API lacks and why, the client’s requirements, a proposed contract with its assumptions about the backend, and what the client does until it ships. No code changes in that turn; the task goes on.',
         handoff: 'Write a handoff',
-        handoffHint: 'The agent writes a frontend handoff in docs/handoffs/… now, from what the branch has done so far. No code changes in that turn; the task goes on.',
+        handoffHint: 'The agent writes a frontend handoff in docs/handoffs/… now, from what the branch has done so far: the contract as built, what is not on the branch yet, and client suggestions marked as not binding. No code changes in that turn; the task goes on.',
       },
       toTask: 'Task →',
       toTaskHint: 'Create a task from this document in another project of the workspace — that side’s agent starts from it while this session keeps working.',
@@ -700,6 +700,10 @@ export const en: MessageSchema = {
       unassigned: 'unassigned',
       description: 'Description — the agent starts from it',
       origin: 'A document from project “{project}” (branch {branch}, file {path}). Work on that branch is still in progress.',
+      framing: {
+        apiRequest: 'This is a request from the client side, not a finished design. What binds here is the client’s requirements: the flow, the data and events it needs, the constraints, and what the client code already relies on. The proposed contract and the assumptions about the backend are only a proposal by an author who has not seen this repository: check them against the backend’s architecture and change them if there is a better design. In the handoff for the frontend, say where the contract departs from the proposal, and why.',
+        handoff: 'This is a handoff from the backend. The contract it describes is already built (except the parts marked as not ready yet), so the client adapts to it; if it gets in the way, raise it as a question instead of working around it. The suggestions for the client are not binding: how to build the UI and the client logic is your call, by this repository’s architecture.',
+      },
       copy: 'Copy text',
       copied: 'Text copied',
       create: 'Create task',
