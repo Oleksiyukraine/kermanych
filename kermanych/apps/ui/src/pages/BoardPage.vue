@@ -1242,7 +1242,8 @@ const effortPickOptions = computed(() => {
 });
 // Core's prefixes, less `design`: a design card comes only from «+ Новий дизайн», which also marks
 // it `design`. A stored design card still shows its prefix — KSelect lists a held value it lacks.
-const PREFIX_OPTIONS = BRANCH_PREFIXES.filter((p) => p !== 'design');
+// Less `synergy` too: only a Синергія launch takes it (docs/specs/2026-11-06-synergy.md).
+const PREFIX_OPTIONS = BRANCH_PREFIXES.filter((p) => p !== 'design' && p !== 'synergy');
 
 const editorOpen = ref(false);
 const editingId = ref<string | null>(null);

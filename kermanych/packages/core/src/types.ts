@@ -81,6 +81,11 @@ export type Session = {
   // at launch (designDirFor) and never changed; its presence is what makes the session a design.
   // Absent for every other session.
   designDir?: string;
+  // A «Синергія» session (docs/specs/2026-11-06-synergy.md): fast prototyping on a
+  // `synergy/<slug>` branch with a narrow toolset and a checkpoint after every turn. `page` is
+  // the start path of «Змінити сторінку». Stamped at launch; «Імплементувати» clears it, turning
+  // the row into an ordinary agent. Absent for every other session.
+  synergy?: { page?: string };
   // A minion run of a card filed from a «Знахідка»: the finding's kind, stamped from the card
   // when the run is created, so its opening prompt — a relaunch's too — carries the per-kind rules
   // (docs/specs/2026-10-23-minion-auto-run.md, decision 14). Absent for every other session.
@@ -303,6 +308,9 @@ export type ServerEvent =
   | { type: "minion_update"; state: MinionState }
   // A session's live preview changed state; `state: null` = it has none any more (session gone).
   | { type: "preview_update"; sessionId: string; state: PreviewState | null }
+  // A «Синергія» session's steps changed (docs/specs/2026-11-06-synergy.md): a checkpoint or a
+  // restore was committed. The UI re-reads `GET /sessions/:id/synergy/steps`.
+  | { type: "synergy_steps"; sessionId: string }
   // The api wrote a card's QA checklist (docs/specs/2026-11-04-qa-tester-agent.md): a tester
   // verdict, a checklist the tester or «Створити ПР» composed, or verdicts cleared at a run's
   // start. Carries the checklist as written, so an open QA tab updates without re-reading the

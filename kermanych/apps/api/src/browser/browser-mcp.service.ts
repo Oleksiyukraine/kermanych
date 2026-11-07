@@ -802,7 +802,8 @@ export class BrowserMcpService {
   // Only a managed agent or chat session improves skills: a native TUI or a review fork never read
   // the library's skills through Kermanych.
   private improvesSkills(session: Session | undefined): boolean {
-    return !!this.improvements && !!session && !session.native && (session.kind === "agent" || session.kind === "chat") && !isTesterSession(session);
+    // A «Синергія» child runs no skills (docs/specs/2026-11-06-synergy.md, decision 7).
+    return !!this.improvements && !!session && !session.native && !session.synergy && (session.kind === "agent" || session.kind === "chat") && !isTesterSession(session);
   }
 
   /**
@@ -898,7 +899,9 @@ export class BrowserMcpService {
           ...((agent || tester) && platformHasPreview(platform) ? previewTools(device, tester) : []),
           ...((agent || tester) && device ? DEVICE_TOOLS : []),
           ...(tester && device ? [DEVICE_CREDENTIAL_TOOL_DEF] : []),
-          ...findings,
+          // A «Синергія» prototype gets the browser and the preview only (decision 7): findings
+          // belong to the agent that implements it.
+          ...(session?.synergy ? [] : findings),
           ...(session?.minion === true ? [OUTCOME_TOOL] : []),
           ...(tester ? [QA_RESULT_TOOL_DEF, QA_CHECKLIST_TOOL_DEF] : []),
           ...(improve ? [improveSkillTool(language, improve)] : []),

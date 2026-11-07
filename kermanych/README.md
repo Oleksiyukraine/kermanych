@@ -1349,6 +1349,47 @@ repository is a folder that people and implementing agents read.
   README and screenshots, reuse the prototype, build every state, compare its own screenshots,
   delete the prototype.
 
+## Prototyping («Синергія»)
+
+The «Синергія» tab, right after «Дизайн», is for building a feature by talking to the running
+app: «прибери кнопку», «перемісти ліворуч», «перенеси пункт меню в іншу секцію», «додай сторінку
+зі списком замовлень», by text, by voice and with «◎ Вказати». Each change should land in seconds;
+when the result is right, «Імплементувати» hands it to a regular agent (spec:
+`docs/specs/2026-11-06-synergy.md`).
+
+- **Starting.** «+ Нова фіча» asks for an optional topic; «+ Змінити сторінку» for the start
+  path (e.g. `/users/42`). Both take the base branch, the model and the effort; the model defaults
+  to `claude-sonnet-5-5` with effort `low` (the project default when this machine's catalogue
+  lacks it), and the form remembers your last choice. No card is filed. The session runs on a
+  `synergy/<slug>` branch in its own worktree; its [live preview](#live-preview) starts at once
+  and opens on the start path. The agent sits idle until your first request.
+- **Why it is fast.** The agent edits the real app code and the dev server's hot reload shows it.
+  It runs with `read`, `edit`, `write`, `grep`, `glob` and the session browser / preview tools
+  only (no shell, no subagents, no LSP), with no skills and no documentation policy, under the
+  editable `synergy` instruction in «ШІ-команда → Агенти»: one change per request, frontend only
+  (missing data is hardcoded and marked `synergy-mock`), no tests, checks, docs or commits, no
+  questions. Synergy sessions never wait for an agent slot.
+- **Requests.** Every request carries the preview's current address and the picks in the tray
+  (then the tray empties), whether typed, sent with «Надіслати агенту» or said in a
+  [voice conversation](#voice-conversation-голосова-розмова), so «оце перемісти ліворуч» after a ◎ pick reaches the
+  agent with the element.
+- **Steps.** After every turn that changed files, Kermanych commits the worktree itself
+  (`synergy: <request>`, `--no-verify`, no model call). The strip under the browser lists the
+  steps from «Початок»; «Повернутися сюди» brings a step's files back as a new commit
+  (`synergy: повернуто до кроку N`), so nothing is lost and you can go back and forth.
+- **«Імплементувати»** files a card on the board with the brief (the start page and your
+  requests in order, without rolled-back steps) and turns the session into an ordinary agent in
+  the same worktree: a fresh conversation on the project's default model, opened by the editable
+  `synergy-implement` instruction: read `git diff <base>...HEAD` and every `synergy-mock`, keep
+  what you saw, build the backend, tests, i18n and docs. The session moves to «Агенти»; PR and
+  «Завершити» work as for any agent.
+- **«Відкинути»** deletes the session: the agent, the preview, the worktree and the local branch.
+- **Limits.** Desktop app only (the session browser), and only for projects whose platform has a
+  browser.
+- **API.** `POST /api/sessions/synergy`, `GET /api/sessions/:id/synergy/steps`,
+  `POST /api/sessions/:id/synergy/restore`, `POST /api/sessions/:id/synergy/implement`, and the
+  `synergy_steps` socket event.
+
 ## Monorepo layout
 
 pnpm workspaces (`packages/*`, `apps/*`):

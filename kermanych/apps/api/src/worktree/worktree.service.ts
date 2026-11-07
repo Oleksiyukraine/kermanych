@@ -252,6 +252,52 @@ export class WorktreeService {
     if (!r.ok) throw new Error(`git commit failed: ${r.out}`);
   }
 
+  // «Синергія» (docs/specs/2026-11-06-synergy.md, decision 4): a checkpoint commits everything,
+  // untracked files included. `--no-verify`: a target project's hooks would cost the seconds
+  // this mode exists for. Throws with git's own words, so the caller can put them in a notice.
+  async checkpointAll(dir: string, message: string): Promise<void> {
+    const add = await git(dir, ["add", "-A"]);
+    if (!add.ok) throw new Error(`git add failed: ${add.out}`);
+    const r = await git(dir, ["commit", "--no-verify", "-m", message]);
+    if (!r.ok) throw new Error(`git commit failed: ${r.out}`);
+  }
+
+  // «Повернутися сюди»: the tree of `sha` becomes the working tree and the index — files added
+  // since are deleted too, which a plain `checkout <sha> -- .` would keep — and lands as a NEW
+  // commit, so history is never rewritten. The caller checkpoints first, so nothing uncommitted
+  // is lost. `--allow-empty`: going back to the step the tree is already at is still the
+  // operator's step on the strip.
+  async restoreTreeCommit(dir: string, sha: string, message: string): Promise<void> {
+    const read = await git(dir, ["read-tree", "-u", "--reset", sha]);
+    if (!read.ok) throw new Error(`git read-tree failed: ${read.out}`);
+    const r = await git(dir, ["commit", "--no-verify", "--allow-empty", "-m", message]);
+    if (!r.ok) throw new Error(`git commit failed: ${r.out}`);
+  }
+
+  // The commits after `from` up to HEAD, oldest first, with their full messages: the steps
+  // strip parses them (core synergySteps). NUL-framed records with unit-separator fields, like
+  // logRange, because a message is free text; stdout only, for the same reason.
+  async commitsSince(dir: string, from: string): Promise<{ sha: string; at: string; message: string }[]> {
+    const r = await gitStdout(dir, ["log", "--reverse", "--format=%x00%H%x1f%cI%x1f%B", `${from}..HEAD`]);
+    if (!r.ok) return [];
+    return r.out
+      .split("\0")
+      .filter((rec) => rec.length > 0)
+      .map((rec) => {
+        const [sha = "", at = "", ...message] = rec.split("\x1f");
+        return { sha, at, message: message.join("\x1f").trim() };
+      });
+  }
+
+  // The parent of the oldest commit on HEAD with a line starting with `prefix` (plain text, no
+  // regex characters): the fork point of a branch whose base is unknown or gone. "" when there is
+  // no such commit (or it is a root commit).
+  async parentOfOldest(dir: string, prefix: string): Promise<string> {
+    const r = await gitStdout(dir, ["log", "--format=%H", `--grep=^${prefix}`, "HEAD"]);
+    const oldest = r.ok ? r.out.trim().split("\n").filter(Boolean).at(-1) : undefined;
+    return oldest ? this.revParse(dir, `${oldest}^`) : "";
+  }
+
   // The session's own commits: on the branch, in neither `<base>` nor `origin/<base>`. A merge
   // that brought origin's newer base in must not count the teammates' commits it carries.
   async aheadCount(repoDir: string, base: string, branch: string): Promise<number> {

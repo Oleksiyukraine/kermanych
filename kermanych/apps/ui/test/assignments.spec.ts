@@ -35,6 +35,8 @@ test('only instruction-bearing agents can be assigned to', () => {
     'minion',
     'designer',
     'design-save',
+    'synergy',
+    'synergy-implement',
     'tester',
   ]);
 });

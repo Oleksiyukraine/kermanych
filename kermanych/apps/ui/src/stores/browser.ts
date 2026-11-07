@@ -206,6 +206,15 @@ export const useSessionBrowser = defineStore('sessionBrowser', () => {
     persistPicks();
   }
 
+  // «Синергія», decision 8: what a Синергія request carries — the page shown and the tray —
+  // handed to the orchestrator's sendMessage, which cannot import this store back.
+  orchestrator.provideSynergyContext((sessionId) => ({
+    page: states.value[sessionId]?.url,
+    picks: picks.value[sessionId] ?? [],
+    note: notes.value[sessionId],
+    clear: () => clearPicks(sessionId),
+  }));
+
   return {
     available: !!bridge,
     states,

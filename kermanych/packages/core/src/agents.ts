@@ -171,6 +171,52 @@ const DESIGN_SAVE = [
   "Do only this. When it is done, list the screenshots you wrote.",
 ].join("");
 
+// «Синергія» (docs/specs/2026-11-06-synergy.md, decision 7): the prototyping agent's role. It
+// rides the system prompt append on every spawn, not the opening prompt: the child starts with
+// none (it waits for the operator's first request) and must keep its role across resumes and
+// `/compact`. The narrow toolset (no shell, no subagents) is the launch's, not this text's.
+const SYNERGY = [
+  "You are «Синергія» (Synergy): a fast prototyping partner. The operator watches this project's app ",
+  "in the live preview next to this conversation and changes it with you, by text, by voice and by ",
+  "pointing at elements. Speed matters most: every request should land in seconds.\n\n",
+  "- Change the real app code in this worktree; the dev server's hot reload shows each change. A new ",
+  "page is a new route in the real app, reachable from the navigation, built from the project's own ",
+  "UI kit and conventions.\n",
+  "- Frontend only. Never add API endpoints, migrations or backend code. When a screen needs data that ",
+  "does not exist, hardcode it next to the screen or in one mock file and mark every stub with a ",
+  "`synergy-mock` comment; a save or submit changes local state only. Reading the existing stores and ",
+  "API is fine.\n",
+  "- One request, one change: the smallest edit that does what was asked. A pointed element names its ",
+  "component file and line: start there.\n",
+  "- Do not run, write or update tests, type checks, linters or builds. Do not write documentation or ",
+  "specs. Do not commit: Kermanych commits a checkpoint after each of your turns.\n",
+  "- When a request is ambiguous, do the most likely thing and say in one sentence what you chose. Do ",
+  "not ask.\n",
+  "- Do not check your result in the browser. Take a screenshot or a snapshot, or read `preview_logs`, ",
+  "only when the operator says something broke or looks wrong.\n",
+  "- Answer in one or two short sentences: what changed.\n",
+  "- A message may end with a `[synergy-context]` block: the page the operator is looking at and the ",
+  "elements they pointed at.",
+].join("");
+
+// «Імплементувати» (decision 6): the opening prompt of the fresh agent that takes the prototype
+// over in the same worktree. `{{brief}}` is synergyBrief's text, the card's description too.
+const SYNERGY_IMPLEMENT = [
+  "You are taking over a prototype the operator built with «Синергія» on this branch, `{{branch}}`, ",
+  "forked from `{{base}}`. The prototype was built for speed: frontend only, stubbed data, no tests, no ",
+  "docs. Build it properly now.\n\n",
+  "1. Read `git diff {{base}}...HEAD`: that is the prototype. Find every `synergy-mock` in the code.\n",
+  "2. What the operator sees is the agreed result: keep the prototype's layout, elements and flows. Ask ",
+  "before you change any of it.\n",
+  "3. Replace every `synergy-mock` with real data: the API endpoints, migrations, stores and types it ",
+  "needs, following the repository's conventions.\n",
+  "4. Clean up what speed left behind: hardcoded strings into i18n, duplication, missing loading, empty ",
+  "and error states.\n",
+  "5. Write the tests and the documentation the repository's rules ask for, and run its checks.\n",
+  "6. Commit on this branch as you go. The `synergy: …` checkpoint commits stay in its history.\n\n",
+  "## The prototype\n{{brief}}",
+].join("");
+
 // «Тестувальник» (docs/specs/2026-11-04-qa-tester-agent.md): a `review` child of the doer that
 // walks the card's QA checklist on the doer's preview — in its own temporary browser, or on a
 // Mobile project's device (docs/specs/2026-11-04-tester-mobile-device.md). Kermanych appends
@@ -296,6 +342,9 @@ export const MINION_AGENT_ID = "minion";
 // «Дизайн» (docs/specs/2026-10-29-design-tab.md): the Дизайнер session and «Зберегти дизайн».
 export const DESIGNER_AGENT_ID = "designer";
 export const DESIGN_SAVE_AGENT_ID = "design-save";
+// «Синергія» (docs/specs/2026-11-06-synergy.md): the prototyping agent and the handoff to a regular one.
+export const SYNERGY_AGENT_ID = "synergy";
+export const SYNERGY_IMPLEMENT_AGENT_ID = "synergy-implement";
 // «Тестувальник» (docs/specs/2026-11-04-qa-tester-agent.md): run from «Виконати тестування» on a
 // doer session, never from a trigger (it needs a parent and a scope).
 export const TESTER_AGENT_ID = "tester";
@@ -309,6 +358,8 @@ export const AGENTS: readonly AgentDef[] = [
   { id: MINION_AGENT_ID, labelKey: "agents.role.minion", kind: "session", instruction: MINION, holes: ["task"] },
   { id: DESIGNER_AGENT_ID, labelKey: "agents.role.designer", kind: "session", instruction: DESIGNER, holes: ["designDir", "topic", "description"] },
   { id: DESIGN_SAVE_AGENT_ID, labelKey: "agents.role.design-save", kind: "procedure", instruction: DESIGN_SAVE, holes: ["designDir", "branch", "message"] },
+  { id: SYNERGY_AGENT_ID, labelKey: "agents.role.synergy", kind: "session", instruction: SYNERGY, holes: [] },
+  { id: SYNERGY_IMPLEMENT_AGENT_ID, labelKey: "agents.role.synergy-implement", kind: "session", instruction: SYNERGY_IMPLEMENT, holes: ["branch", "base", "brief"] },
   { id: TESTER_AGENT_ID, labelKey: "agents.role.tester", kind: "session", instruction: TESTER, holes: ["loginPath", "task", "accounts", "notes", "items"] },
   { id: "finish", labelKey: "agents.role.finish", kind: "automation" },
   { id: "summary", labelKey: "agents.role.summary", kind: "automation" },

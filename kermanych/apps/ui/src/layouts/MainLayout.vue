@@ -831,17 +831,19 @@ watch(
   },
 );
 
-// A design's one view is «Дизайн» (docs/specs/2026-10-29-design-tab.md): «Агенти» has no row
-// for it. Whatever selects one — a desktop notification, a machine alert, a card on «Карта
-// агентів» — lands on that page with the design open, and «Агенти» keeps no selection it cannot
-// draw. The page itself switches to the design's project (its `session` query watcher).
+// A design's one view is «Дизайн» (docs/specs/2026-10-29-design-tab.md), a Синергія session's
+// is «Синергія» (docs/specs/2026-11-06-synergy.md): «Агенти» has no row for either. Whatever
+// selects one — a desktop notification, a machine alert, a card on «Карта агентів» — lands on
+// that page with the session open, and «Агенти» keeps no selection it cannot draw. The page
+// itself switches to the session's project (its `session` query watcher).
 watch(
   () => store.selectedSessionId,
   (id) => {
     const s = id ? store.sessions.find((x) => x.id === id) : undefined;
-    if (!s?.designDir) return;
+    const page = s?.designDir ? 'design' : s?.synergy ? 'synergy' : undefined;
+    if (!s || !page) return;
     store.selectSession(undefined);
-    void router.push({ name: 'design', query: { session: s.id } });
+    void router.push({ name: page, query: { session: s.id } });
   },
 );
 
@@ -1051,6 +1053,7 @@ const VIEWS = [
   { value: 'board', label: 'common.nav.viewBoard', route: 'board', section: 'board' },
   { value: 'chat', label: 'common.nav.viewChat', route: 'chat', section: 'chat' },
   { value: 'design', label: 'common.nav.viewDesign', route: 'design', section: 'design' },
+  { value: 'synergy', label: 'common.nav.viewSynergy', route: 'synergy', section: 'synergy' },
   {
     value: 'management',
     label: 'common.nav.viewManagement',
