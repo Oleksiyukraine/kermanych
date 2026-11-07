@@ -8,8 +8,9 @@
 - **Scope:** `packages/core` (the lesson rules, five default skills, the PR and base-sync
   prompts), `apps/api` (a staleness check in `SkillImprovementService`), `apps/ui` (the level
   hint), `kermanych/README.md`, and a one-time clean-up of the operator's own cloud rows.
-- **Status:** decisions agreed with the operator in the deep-analysis interview (2026-11-07);
-  waiting for approval.
+- **Status:** decisions agreed with the operator in the deep-analysis interview (2026-11-07),
+  approved the same day; implemented on this branch (see «Verification — results»). The cloud
+  clean-up waits for the build to run (decision 7).
 
 ## Problem
 
@@ -174,3 +175,27 @@ Kept: 8 of the 12 records, wholly or in part. Dropped as noise: 4, 5, 8, 9.
 - **Live** (if the preview can sign in to the cloud): a session at `active` that used a skill
   without any correction ends «Створити ПР» with no `improve_skill` call. Otherwise it is reported
   as not exercised.
+
+## Verification — results
+
+- **Suites**, one at a time, at most 4 workers:
+  - `@kermanych/core`: `tsc --noEmit` clean; 32 files, 444 tests;
+  - `@kermanych/api`: typecheck clean; 130 files passed, 1 skipped, 1376 tests;
+  - `@kermanych/ui`: `vue-tsc` clean; 89 files, 965 tests (the harness-skills byte test included).
+- **Smoke**, the built `@kermanych/core`:
+  - `skillLessonRule("active")` holds neither «at least one» nor «Most sessions», and carries the
+    event requirement and the Kermanych-instruction exclusion;
+  - `baseSyncBlock("dev")` step 1 reads `GH_TOKEN="$TOKEN" git fetch origin dev` with the
+    `gh auth setup-git` step;
+  - default sizes in bytes: `deep-analysis` 1513 (was 928), `task-spec` 1338 (790), `qa-tester`
+    1197 (993), `minion-findings` 1828 (1184), `kermanych-pull-request` 1521 (unchanged).
+- **api unit tests:** the refusal after another session's change, with its summary and without an
+  older one, then the second call applying; no refusal after the session's own change, or without
+  a recorded launch (`skill-improvement.spec.ts`). Both turns carry `gh auth setup-git` and the
+  fetch command (`supervisor.pr.spec.ts`).
+- **Not exercised:**
+  - a live agent at `active` ending «Створити ПР» without a lesson. The preview is not signed in
+    to the cloud, so the tool always refuses there;
+  - the staleness refusal with a real launch: `HandedSkills` is filled by `ompSkills` on launch,
+    and that path is covered only through the unit seam;
+  - the clean-up, which runs after the build ships.

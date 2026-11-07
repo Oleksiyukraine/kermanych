@@ -9,7 +9,8 @@
   SQLite cache, `/account/skill-improvement`, the tool description and gates, the three
   Kermanych turns), `apps/ui` (the Settings select, i18n `uk` / `en`), `kermanych/README.md`.
 - **Status:** decisions agreed with the operator in the deep-analysis interview (2026-11-06),
-  approved the same day; implemented on this branch (see «Verification — results»).
+  approved the same day; implemented on this branch (see «Verification — results»). Decision 3's
+  `active` rule and the shared exclusions are amended by `docs/specs/2026-11-07-skill-improvement-review.md`.
 
 ## Problem
 

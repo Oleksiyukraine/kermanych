@@ -22,7 +22,7 @@ import { AuthService } from "./auth/auth.service";
 import { SupabaseAuthGuard } from "./auth/auth.guard";
 import { CloudController } from "./cloud/cloud.controller";
 import { CloudSyncService } from "./cloud/cloud-sync.service";
-import { SkillsService } from "./skills/skills.service";
+import { HandedSkills, SkillsService } from "./skills/skills.service";
 import { SkillImprovementService } from "./skills/skill-improvement.service";
 import { ManagementChatService } from "./management/management-chat.service";
 import { ReleaseNotesService } from "./management/release-notes.service";
@@ -73,8 +73,11 @@ import { ScheduleService } from "./schedules/schedule.service";
     UsageService,
     AuthService,
     SkillsService,
-    // The improve_skill tool's work (docs/specs/2026-11-04-skill-self-improvement.md).
+    // The improve_skill tool's work (docs/specs/2026-11-04-skill-self-improvement.md), and what
+    // each launch handed the agent of the library, for its staleness check
+    // (docs/specs/2026-11-07-skill-improvement-review.md, decision 3).
     SkillImprovementService,
+    HandedSkills,
     // The local omp model catalog (`omp models --json`), read by GET /models and by the
     // supervisor when a running session's model is changed by provider + id.
     ModelsService,

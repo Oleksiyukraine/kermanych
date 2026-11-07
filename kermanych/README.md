@@ -1871,10 +1871,15 @@ change applies at once, and you can roll it back.
   - «Помірно» (`moderate`, the default): the same, plus repeated friction — the agent went wrong
     more than once on a step the skill should have foreseen, or you had to clarify something it
     could have said up front;
-  - «Активно» (`active`): the agent looks for at least one lesson in every skill it used.
+  - «Активно» (`active`): the agent reviews every skill it used and records each lesson an event
+    in the session showed; a skill that served it well is left alone.
 
-  Every level excludes one-offs, environment failures, attempts that never worked, claims that a
-  tool does not work, facts about one repository and secrets. The step follows a new level at
+  At every level a lesson rests on something that happened in the session (a correction, a
+  command that failed or was redone, a wrong step undone), and its reason names it; a risk that
+  could have happened is not a lesson. Every level excludes one-offs, environment failures,
+  attempts that never worked, claims that a tool does not work, facts about one repository,
+  secrets, and flaws in Kermanych's own turn instructions (those go to a «Знахідка»; spec
+  `docs/specs/2026-11-07-skill-improvement-review.md`). The step follows a new level at
   once; the tool's description follows it in sessions launched afterwards. Routes:
   `GET /api/account/skill-improvement` → `{ level }`, `POST /api/account/skill-improvement`
   (`{ level }`). «ШІ-команда» shows the step under the PR, commit and design-save agents.
@@ -1888,6 +1893,11 @@ change applies at once, and you can roll it back.
   workspace's and Kermanych's defaults — by exact replacements: each `find` must occur exactly once
   in the skill's current text. It creates no skills. Repository skills (they outrank the library,
   so a copy would never be used) and skills from home folders are refused.
+- **A skill that changed under the session.** When the skill's text changed after the session was
+  launched (another session's improvement, an edit in «Навички», a rollback), the session's first
+  call for it is refused with the current text and the summaries of those changes, so two sessions
+  do not record the same lesson; a second call goes through. The api keeps what each launch was
+  handed in memory: after a restart no call is refused for this.
 - **Limits.** At most 5 improvements per session; a skill may grow to 64 000 bytes. Each change is
   recorded in the cloud table `skill_improvements` (only you read it; the newest 100 are kept).
 - **Who gets the tool and the step.** Managed agent sessions (deep analysis, designer and

@@ -95,6 +95,10 @@ describe("createPullRequest", () => {
     expect(p).toContain("GIT_TOKEN"); // reads the project's configured token from .env first
     expect(p).toMatch(/prefer it over any/i); // GIT_TOKEN preferred over ambient creds
     expect(p).toMatch(/fall back/i); // ambient gh/git credentials only as the fallback
+    // git reads no GH_TOKEN: the push and the base fetch get it through gh's credential helper
+    // (docs/specs/2026-11-07-skill-improvement-review.md, decision 5).
+    expect(p).toContain('GH_TOKEN="$TOKEN" gh auth setup-git');
+    expect(p).toContain('GH_TOKEN="$TOKEN" git fetch origin dev');
     expect(p).toMatch(/Co-Authored-By: Kermanych </); // credits Kermanych as a commit co-author
     // Only a «Посіпака» session's PR title carries the minion prefix.
     expect(p).not.toContain("[Minion]");
@@ -258,6 +262,8 @@ describe("commitChanges", () => {
     expect(p).toMatch(/do NOT open a new one/i); // explicit about the existing PR
     expect(p).toMatch(/Conventional Commits/); // built-in commit conventions fallback
     expect(p).toContain("GIT_TOKEN"); // reads the project's configured token from .env
+    expect(p).toContain('GH_TOKEN="$TOKEN" gh auth setup-git'); // the same way the token reaches git as for a PR
+    expect(p).toContain('GH_TOKEN="$TOKEN" git fetch origin dev');
     expect(p).toMatch(/Co-Authored-By: Kermanych </); // credits Kermanych as a commit co-author
     expect(p).toContain("git merge --no-commit origin/dev"); // the one-click update for a PR whose base moved
   });

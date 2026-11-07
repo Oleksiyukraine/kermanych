@@ -1638,7 +1638,7 @@ export const en: MessageSchema = {
         off: 'Agents do not change skills, and Kermanych does not ask them to look back at the session.',
         conservative: 'Only when you corrected how the agent did a kind of task a skill describes, or a skill proved wrong or incomplete.',
         moderate: 'Everything in «Cautious», plus repeated friction: the agent went wrong more than once on a step the skill should have foreseen, or you had to clarify something the skill could have said up front.',
-        active: 'The agent looks for at least one lesson in every skill it used. The most changes.',
+        active: 'The agent reviews every skill it used and records each lesson that something in the session showed. The most changes.',
       },
       note: 'Agents of managed sessions write general lessons straight into your personal copies of library skills; teammates are not affected. «Create PR», «Commit» and «Save design» end with a look back over the session for such lessons. Every change shows in ЦУК → «Notification center», where you can roll it back. The level applies to the look-back at once, and to the tool description in sessions launched after the change.',
     },
