@@ -137,13 +137,19 @@ const LESSON_WHEN: Record<SkillImprovementOnLevel, string> = {
     `${CONSERVATIVE_WHEN} Repeated friction counts too: you went wrong more than once on a step the skill should have foreseen, ` +
     "or the operator had to clarify something the skill could have said up front.",
   active:
-    "Look for at least one improvement in every library skill you used: a missing step, an unclear rule, a correction by the operator, " +
-    "friction that repeated, or a working method found after failed attempts. Most sessions that used a skill show something it could say better.",
+    "Review every library skill you used for a missing step, an unclear rule, a correction by the operator, friction that repeated, " +
+    "or a working method found after failed attempts. A skill that served you well needs no change.",
 };
 
+// Shared by every level (docs/specs/2026-11-07-skill-improvement-review.md, decisions 2 and 4):
+// a lesson needs an event, and Kermanych's own instruction is a finding, never a skill patch.
 const LESSON_NEVER =
+  "A lesson rests on something that happened in this session (the operator corrected you, a command failed or had to be redone, " +
+  "a wrong step had to be undone), and `reason` names it; a risk that could have happened is not a lesson. " +
   "Never for: a one-off task; an environment or setup failure the operator can fix; an attempt that never worked; claims that some tool does not work; " +
   "facts about this one repository (commands, paths, conventions) — hand those to report_finding as a proposal for the repository's AGENTS.md or docs; " +
+  "an error or gap in Kermanych's own turn instruction (the pull request, commit or design-save text, the base-sync step, the skill review step) — report it with " +
+  "report_finding and leave the skills alone, even one that describes the same action; " +
   "secrets, tokens or personal data.";
 
 /** When an agent improves a skill at `level`: the same words in the tool's description and the reflection step. */

@@ -19,12 +19,13 @@ import {
   deleteAiSkill,
   getAiSkill,
   insertSkillImprovement,
+  listAppliedSkillImprovements,
   upsertAiSkill,
 } from "@kermanych/cloud";
 import { RegistryService } from "../registry/registry.service";
 import { AuthService } from "../auth/auth.service";
 import { isTesterSession } from "../tester/tester-tools";
-import { SkillsService, repoSkillNames, resolveSkills, type AiScopeSet } from "./skills.service";
+import { HandedSkills, SkillsService, repoSkillNames, resolveSkills, type AiScopeSet } from "./skills.service";
 
 /** The cloud calls the service makes; a seam so specs pass fakes. */
 export type SkillImprovementCloud = {
@@ -33,6 +34,7 @@ export type SkillImprovementCloud = {
   deleteAiSkill: typeof deleteAiSkill;
   insertSkillImprovement: typeof insertSkillImprovement;
   countSessionSkillImprovements: typeof countSessionSkillImprovements;
+  listAppliedSkillImprovements: typeof listAppliedSkillImprovements;
 };
 
 // A token nothing in the app provides: production gets the real calls, specs pass fakes.
@@ -44,6 +46,7 @@ const DEFAULT_CLOUD: SkillImprovementCloud = {
   deleteAiSkill,
   insertSkillImprovement,
   countSessionSkillImprovements,
+  listAppliedSkillImprovements,
 };
 
 export type ImproveResult = { ok: boolean; text: string };
@@ -80,6 +83,10 @@ export class SkillImprovementService {
     private skills: SkillsService,
     private auth: AuthService,
     @Optional() @Inject(SKILL_IMPROVEMENT_CLOUD) cloud?: SkillImprovementCloud,
+    // What each launch handed the agent (docs/specs/2026-11-07-skill-improvement-review.md,
+    // decision 3). Optional and last so specs construct the service without it — then no call is
+    // refused as stale.
+    @Optional() private handed?: HandedSkills,
   ) {
     this.cloud = cloud ?? DEFAULT_CLOUD;
   }
@@ -152,6 +159,25 @@ export class SkillImprovementService {
     const entry = resolveSkills(rows).find((r) => r.def.name === name);
     if (!entry)
       return no(`Not applied: "${name}" is not a skill of the Kermanych library. Skills from home folders or harness plugins are not Kermanych's to change.`);
+
+    // The skill changed after this session's launch handed it (another session, an edit in
+    // «Навички», a rollback): the agent's lesson may be there already. Refused once, with what is
+    // there now; the next call goes through.
+    const held = this.handed?.get(sessionId, name);
+    if (held && held.body !== entry.def.body) {
+      this.handed?.set(sessionId, name, entry.def.body);
+      let since: string[] = [];
+      try {
+        since = (await this.cloud.listAppliedSkillImprovements(this.auth.cloudClient(), name))
+          .filter((r) => r.sessionId !== sessionId && Date.parse(r.createdAt) > held.at)
+          .map((r) => `«${r.summary}»`);
+      } catch { /* the current text below says enough */ }
+      return no(
+        `Not applied: "${name}" changed after this session was launched${since.length ? ` (${since.join("; ")})` : ""}. ` +
+          "Check whether the text below already covers your lesson. Call again only if it does not, with `find` copied from this text." +
+          `\n\n--- current text of ${name} ---\n${entry.def.body}`,
+      );
+    }
 
     // What the operator's teammates see: the skill with the personal layer removed. Recorded so
     // the browser can offer to share the change back to the right owner.
@@ -238,6 +264,8 @@ export class SkillImprovementService {
       this.skills.forgetLibrary(owner);
       return no(`Not applied: the change could not be recorded (${msg(err)}); the skill was left as it was.`);
     }
+    // This session's own change is not a change «under» it.
+    this.handed?.set(sessionId, name, out.body);
     return {
       ok: true,
       text: `Improved skill "${name}" in the operator's personal layer (change ${id}). Their sessions launched from now on use it; they were notified and can roll it back. Continue your task.`,

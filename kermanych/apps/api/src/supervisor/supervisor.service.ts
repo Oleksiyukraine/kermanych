@@ -15,7 +15,7 @@ import { languageAppendFor } from "../runtime/resolve-language";
 import { messagesToTranscript } from "./messages-to-transcript";
 import { reduceRpcEvents, toolRowMatches, type SkillLabel, type SkillSource } from "./transcript-reducer";
 import { ToolDetailCache } from "./tool-detail-cache";
-import { SkillsService, skillsRoot, type AiScopeSet } from "../skills/skills.service";
+import { HandedSkills, SkillsService, skillsRoot, type AiScopeSet } from "../skills/skills.service";
 import { copyCarryFiles } from "../env/carry-files";
 import {
   PR_CONVENTIONS_FALLBACK,
@@ -448,6 +448,10 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     // rides the snapshot and `events$`, and the session lifecycle stops it. Optional so specs
     // construct the supervisor without it — then no session has a preview.
     @Optional() private preview?: PreviewService,
+    // What each launch handed the agent of the library, for improve_skill's staleness check
+    // (docs/specs/2026-11-07-skill-improvement-review.md, decision 3). Optional so specs construct
+    // the supervisor without it — then nothing is remembered and no call is refused as stale.
+    @Optional() private handedSkills?: HandedSkills,
   ) {
     this.native?.events$.subscribe((e) => {
       if (e.type === "changed") {
@@ -498,7 +502,8 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
   // Never throws: a library failure must degrade to "no library", never to a failed launch.
   private async ompSkills(projectId: string, cwd: string, sessionId: string): Promise<string | undefined> {
     try {
-      const { configPath, view, stale } = await this.skills.materialize(this.aiScope(projectId), cwd);
+      const { configPath, view, stale, handed } = await this.skills.materialize(this.aiScope(projectId), cwd);
+      this.handedSkills?.launched(sessionId, handed);
       const labels = new Map<string, SkillLabel>();
       for (const v of view) {
         // A shadowed name means the agent will read the REPOSITORY's file, so the badge
@@ -519,6 +524,7 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
       // programming error (a missing dependency) as readily as an expected degradation
       // (offline cloud, invalid project id, EACCES on the skills root).
       console.warn(`[supervisor] no skill library for session ${sessionId}: ${(err as Error).message}`);
+      this.handedSkills?.launched(sessionId, undefined);
       return undefined;
     }
   }

@@ -18,7 +18,7 @@ import {
 } from "@kermanych/core";
 import type { AiOwner, AiSkill, AiSkillInsert } from "@kermanych/cloud";
 import { RegistryService } from "../src/registry/registry.service";
-import type { SkillsService } from "../src/skills/skills.service";
+import { HandedSkills, type SkillsService } from "../src/skills/skills.service";
 import type { AuthService } from "../src/auth/auth.service";
 import type { PreviewService } from "../src/preview/preview.service";
 import { SkillImprovementService, type SkillImprovementCloud } from "../src/skills/skill-improvement.service";
@@ -40,7 +40,8 @@ const U: AiOwner = { scope: "user", id: "u1" };
 const P: AiOwner = { scope: "project", id: "p1" };
 const W: AiOwner = { scope: "workspace", id: "w1" };
 
-function make(opts: { rows?: AiSkill[]; kind?: Session["kind"]; native?: boolean; worktreePath?: string; signedIn?: boolean; count?: number } = {}) {
+type Applied = { sessionId: string; summary: string; createdAt: string };
+function make(opts: { rows?: AiSkill[]; kind?: Session["kind"]; native?: boolean; worktreePath?: string; signedIn?: boolean; count?: number; handed?: Record<string, string>; applied?: Applied[] } = {}) {
   const registry = new RegistryService(":memory:");
   registry.upsertProject({ id: "p1", name: "p", localRepoPath: "", workspaceId: "w1" });
   const s = registry.createSession({
@@ -52,7 +53,8 @@ function make(opts: { rows?: AiSkill[]; kind?: Session["kind"]; native?: boolean
   // The cloud's user rows, mutated by the fake upsert/delete so the re-read sees writes.
   const store = new Map<string, AiSkill>((opts.rows ?? []).filter((r) => r.owner.scope === "user").map((r) => [r.name, r]));
   const rows = opts.rows ?? [];
-  const skills = { readSkills: vi.fn(async () => rows), forgetLibrary: vi.fn() } as unknown as SkillsService;
+  const readSkills = vi.fn(async () => rows);
+  const skills = { readSkills, forgetLibrary: vi.fn() } as unknown as SkillsService;
   const auth = {
     current: () => (opts.signedIn === false ? undefined : { userId: "u1" }),
     cloudClient: () => ({}),
@@ -73,10 +75,14 @@ function make(opts: { rows?: AiSkill[]; kind?: Session["kind"]; native?: boolean
       return "rec-1";
     }),
     countSessionSkillImprovements: vi.fn(async () => opts.count ?? 0),
+    listAppliedSkillImprovements: vi.fn(async () => opts.applied ?? []),
   };
-  const service = new SkillImprovementService(registry, skills, auth, cloud as unknown as SkillImprovementCloud);
+  // What the session's launch materialised; none = an api that never launched it (a restart).
+  const handed = new HandedSkills();
+  if (opts.handed) handed.launched(s.id, new Map(Object.entries(opts.handed)));
+  const service = new SkillImprovementService(registry, skills, auth, cloud as unknown as SkillImprovementCloud, handed);
   const improve = (args: Record<string, unknown>) => service.improve(s.id, args);
-  return { registry, session: s, store, records, cloud, improve };
+  return { registry, session: s, store, records, cloud, readSkills, improve };
 }
 
 const edit = (skill: string, find = "Run the build.", replace = "Run the build with --frozen-lockfile.") => ({
@@ -220,6 +226,39 @@ describe("improve_skill", () => {
     const r = await stale.improve(edit("deploy"));
     expect(r.text).toContain("--- current text of deploy ---\n# Deploy\n\nRewritten.\n");
     expect(stale.cloud.upsertAiSkill).not.toHaveBeenCalled();
+  });
+
+  // docs/specs/2026-11-07-skill-improvement-review.md, decision 3: two sessions launched together
+  // must not both write the same lesson.
+  it("refuses once when the skill changed after the session's launch, naming the other change", async () => {
+    const now = "# Deploy\n\nRun the build.\nThen ship it.\nCheck the remote first.\n";
+    const t = make({
+      rows: [row(P, "deploy"), row(U, "deploy", now)],
+      handed: { deploy: BODY },
+      applied: [
+        { sessionId: "other", summary: "check the remote", createdAt: new Date(Date.now() + 1000).toISOString() },
+        { sessionId: "other", summary: "older than this launch", createdAt: "2020-01-01T00:00:00.000000+00:00" },
+      ],
+    });
+    const first = await t.improve(edit("deploy"));
+    expect(first.ok).toBe(false);
+    expect(first.text).toContain('"deploy" changed after this session was launched («check the remote»)');
+    expect(first.text).not.toContain("older than this launch");
+    expect(first.text).toContain(`--- current text of deploy ---\n${now}`);
+    expect(t.cloud.upsertAiSkill).not.toHaveBeenCalled();
+
+    expect((await t.improve(edit("deploy"))).ok).toBe(true);
+  });
+
+  it("does not count the session's own change, nor refuse without a known launch", async () => {
+    const own = make({ rows: [row(P, "deploy")], handed: { deploy: BODY } });
+    // The library read sees this session's write, as the cloud would.
+    own.readSkills.mockImplementation(async () => [row(P, "deploy"), ...own.store.values()]);
+    expect((await own.improve(edit("deploy"))).ok).toBe(true);
+    expect((await own.improve(edit("deploy", "Then ship it.", "Then ship it to staging."))).ok).toBe(true);
+
+    const restarted = make({ rows: [row(P, "deploy"), row(U, "deploy", "# Deploy\n\nRun the build.\nMoved.\n")] });
+    expect((await restarted.improve(edit("deploy"))).ok).toBe(true);
   });
 });
 
