@@ -400,11 +400,15 @@ describe("the tick", () => {
   it("reads each task again before firing it, so a pause or delete during a slow fire holds", async () => {
     const { svc, registry, bindProject, assignedForNames } = make();
     bindProject("p1");
+    // First in the list: a project run whose skill check the test holds open. The list is ordered
+    // by `created_at`, then the random id: each task gets its own second so the order is fixed.
     at("2026-11-06T18:00:00Z");
-    // First in the list: a project run whose skill check the test holds open.
     const slow = await svc.create(draft({ kind: "agent", name: "Звіт", prompt: "x", projectId: "p1", skills: ["weekly-report"] }));
+    at("2026-11-06T18:00:01Z");
     const paused = await svc.create(draft({ name: "Пауза" }));
+    at("2026-11-06T18:00:02Z");
     const gone = await svc.create(draft({ name: "Разове", schedule: { type: "once", at: "2026-11-06T19:00" } }));
+    expect(registry.listSchedules().map((t) => t.id)).toEqual([slow.id, paused.id, gone.id]);
     const gate = Promise.withResolvers<void>();
     assignedForNames.mockImplementationOnce(async () => {
       await gate.promise;
