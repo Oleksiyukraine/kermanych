@@ -1,6 +1,8 @@
 // apps/ui/src/lib/api.ts
 // Typed REST helpers against the Kermanych API (NestJS, global prefix "api").
 import type {
+  AnalyticsPeriod,
+  AnalyticsReport,
   CukChatAsk,
   CukChatReply,
   DirListing,
@@ -809,6 +811,16 @@ export const api = {
 
   snoozeScheduleSlip: (id: string, minutes: 10 | 60): Promise<{ ok: true }> =>
     post<{ ok: true }>(`/schedules/slips/${encodeURIComponent(id)}/snooze`, { minutes }),
+
+  // «Аналітика» (docs/specs/2026-11-07-developer-analytics.md): personal and machine-local
+  // (decision 1), aggregated in the api from this machine's ledger (decision 9). `projectIds`
+  // absent = every project on this machine; `tz` sets the day boundaries and the heat map's
+  // weekday/hour, so the browser's zone is the one the operator reads in.
+  analytics: (params: { period: AnalyticsPeriod; projectIds?: readonly string[] | undefined; tz: string }): Promise<AnalyticsReport> => {
+    const q = new URLSearchParams({ period: params.period, tz: params.tz });
+    if (params.projectIds) q.set('projectIds', params.projectIds.join(','));
+    return get<AnalyticsReport>(`/analytics?${q.toString()}`);
+  },
 
   // Write release notes from the bound repo's git history — local-only for the same
   // reason as the chat above. Generation only: the document comes back to the browser,

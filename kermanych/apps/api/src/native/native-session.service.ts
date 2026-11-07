@@ -14,7 +14,7 @@ import { join } from "node:path";
 import { Subject, type Subscription } from "rxjs";
 import { getSessionMessages, type SessionMessage, type GetSessionMessagesOptions } from "@anthropic-ai/claude-agent-sdk";
 import { ACTIVE_STATUSES, type NativeHarness, type Session, type SessionStatus, type Usage } from "@kermanych/core";
-import { RegistryService } from "../registry/registry.service";
+import { RegistryService, type LedgerSource, type UsageHourEntry } from "../registry/registry.service";
 import { TerminalService } from "../terminal/terminal.service";
 import { CodedError } from "../management/coded-error";
 import { claudeHistoryToOmp } from "../runtime/claude-history";
@@ -169,6 +169,182 @@ export function codexFileUsage(text: string): FileUsage {
     usage: { input: Math.max(0, num(total.input_tokens) - cached), output: num(total.output_tokens), cacheRead: cached, cacheWrite: num(total.cache_write_input_tokens), cost: 0 },
     model,
   };
+}
+
+// «Аналітика» (docs/specs/2026-11-07-developer-analytics.md, decisions 5-6): the same files read
+// per API call with its time, for the hourly ledger. `at` is epoch ms; a call the file does not
+// date is left out — the ledger cannot place it in an hour, and a guess would be a claim.
+export type UsageEvent = { at: number; model?: string; ms: number; usage: Usage };
+
+// A line's own ISO `timestamp` (every harness writes one) as epoch ms, NaN without.
+function lineTime(line: Record<string, unknown>): number {
+  return typeof line.timestamp === "string" ? Date.parse(line.timestamp) : NaN;
+}
+
+// claude: one call per `message.id` (its lines repeat the usage, see claudeFileUsage), dated by
+// the first line of it. No cost and no duration in the file.
+export function claudeFileUsageEvents(text: string): UsageEvent[] {
+  const byId = new Map<string, UsageEvent>();
+  for (const line of jsonLines(text)) {
+    if (line.type !== "assistant") continue;
+    const m = line.message as Record<string, unknown> | undefined;
+    const u = m?.usage as Record<string, unknown> | undefined;
+    if (!m || !u || typeof m.id !== "string") continue;
+    const usage: Usage = {
+      input: num(u.input_tokens),
+      output: num(u.output_tokens),
+      cacheRead: num(u.cache_read_input_tokens),
+      cacheWrite: num(u.cache_creation_input_tokens),
+      cost: 0,
+    };
+    const cur = byId.get(m.id);
+    if (cur) cur.usage = usage;
+    else {
+      const at = lineTime(line);
+      if (!Number.isFinite(at)) continue;
+      byId.set(m.id, { at, ...(typeof m.model === "string" && m.model !== "<synthetic>" ? { model: m.model } : {}), ms: 0, usage });
+    }
+  }
+  return [...byId.values()];
+}
+
+// omp: every assistant message is one call, with its own time (`message.timestamp`, ms — the
+// line's ISO `timestamp` as a fallback), model, `duration` and cost.
+export function ompFileUsageEvents(text: string): UsageEvent[] {
+  const out: UsageEvent[] = [];
+  for (const line of jsonLines(text)) {
+    if (line.type !== "message" || !line.message || typeof line.message !== "object") continue;
+    const m = line.message as Record<string, unknown>;
+    if (m.role !== "assistant") continue;
+    const u = m.usage as Record<string, unknown> | undefined;
+    if (!u) continue;
+    const at = typeof m.timestamp === "number" && Number.isFinite(m.timestamp) ? m.timestamp : lineTime(line);
+    if (!Number.isFinite(at)) continue;
+    out.push({
+      at,
+      ...(typeof m.model === "string" ? { model: m.model } : {}),
+      ms: num(m.duration),
+      usage: {
+        input: num(u.input),
+        output: num(u.output),
+        cacheRead: num(u.cacheRead),
+        cacheWrite: num(u.cacheWrite),
+        cost: num((u.cost as Record<string, unknown> | undefined)?.total),
+      },
+    });
+  }
+  return out;
+}
+
+// codex: `token_count` totals are CUMULATIVE (see codexFileUsage), so each event's call is its
+// difference from the previous total, dated by its line. codex repeats an unchanged total — no
+// call then; a total that shrinks (a fresh rollout appended) counts from zero again.
+export function codexFileUsageEvents(text: string): UsageEvent[] {
+  const out: UsageEvent[] = [];
+  let model: string | undefined;
+  let prev = { input: 0, cached: 0, output: 0, cacheWrite: 0 };
+  for (const line of jsonLines(text)) {
+    const p = line.payload as Record<string, unknown> | undefined;
+    if (!p) continue;
+    if (line.type === "turn_context" && typeof p.model === "string") model = p.model;
+    if (line.type !== "event_msg" || p.type !== "token_count") continue;
+    const total = (p.info as Record<string, unknown> | null | undefined)?.total_token_usage as Record<string, unknown> | undefined;
+    if (!total || typeof total !== "object") continue;
+    const cur = { input: num(total.input_tokens), cached: num(total.cached_input_tokens), output: num(total.output_tokens), cacheWrite: num(total.cache_write_input_tokens) };
+    const reset = cur.input < prev.input || cur.cached < prev.cached || cur.output < prev.output || cur.cacheWrite < prev.cacheWrite;
+    const base = reset ? { input: 0, cached: 0, output: 0, cacheWrite: 0 } : prev;
+    prev = cur;
+    const d = { input: cur.input - base.input, cached: cur.cached - base.cached, output: cur.output - base.output, cacheWrite: cur.cacheWrite - base.cacheWrite };
+    if (!d.input && !d.cached && !d.output && !d.cacheWrite) continue;
+    const at = lineTime(line);
+    if (!Number.isFinite(at)) continue;
+    out.push({
+      at,
+      ...(model ? { model } : {}),
+      ms: 0,
+      usage: { input: Math.max(0, d.input - d.cached), output: d.output, cacheRead: d.cached, cacheWrite: d.cacheWrite, cost: 0 },
+    });
+  }
+  return out;
+}
+
+// Each harness's per-call reader, the ledger's twin of FILE_USAGE.
+export const FILE_USAGE_EVENTS: Record<NativeHarness, (text: string) => UsageEvent[]> = {
+  "claude-code": claudeFileUsageEvents,
+  omp: ompFileUsageEvents,
+  codex: codexFileUsageEvents,
+};
+
+const HOUR_MS = 3_600_000;
+
+// Calls → `usage_hours` entries, one per (UTC hour, model), keeping only the calls `keep` accepts
+// (the live/import line at ledger_started_at, a fork's own part). `model` falls back to the
+// session's, then to "unknown", like the managed live write.
+export function usageHourEntries(events: UsageEvent[], keep: (at: number) => boolean, fallbackModel?: string): UsageHourEntry[] {
+  const rows = new Map<string, UsageHourEntry>();
+  for (const e of events) {
+    if (!keep(e.at)) continue;
+    const hour = new Date(Math.floor(e.at / HOUR_MS) * HOUR_MS).toISOString();
+    const model = e.model ?? fallbackModel ?? "unknown";
+    const key = `${hour}\u0000${model}`;
+    const row = rows.get(key) ?? { hour, model, calls: 0, modelMs: 0, input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0 };
+    row.calls += 1;
+    row.modelMs += e.ms;
+    row.input += e.usage.input;
+    row.output += e.usage.output;
+    row.cacheRead += e.usage.cacheRead;
+    row.cacheWrite += e.usage.cacheWrite;
+    row.cost += e.usage.cost;
+    rows.set(key, row);
+  }
+  return [...rows.values()];
+}
+
+// omp's `working` time rebuilt from the file (decision 6): a span runs from a user message to the
+// last assistant or tool-result message before the next user message. Epoch ms; a user message
+// nothing answered makes no span.
+export function ompWorkingSpans(text: string): { start: number; end: number }[] {
+  const out: { start: number; end: number }[] = [];
+  let open: { start: number; end: number } | undefined;
+  for (const line of jsonLines(text)) {
+    if (line.type !== "message" || !line.message || typeof line.message !== "object") continue;
+    const m = line.message as Record<string, unknown>;
+    const at = typeof m.timestamp === "number" && Number.isFinite(m.timestamp) ? m.timestamp : lineTime(line);
+    if (!Number.isFinite(at)) continue;
+    if (m.role === "user") {
+      if (open && open.end > open.start) out.push(open);
+      open = { start: at, end: at };
+    } else if ((m.role === "assistant" || m.role === "toolResult") && open && at > open.end) open.end = at;
+  }
+  if (open && open.end > open.start) out.push(open);
+  return out;
+}
+
+// The time of the first file line that contains `needle` (a PR URL), as ISO — the moment the PR
+// surfaced, for a session that opened it before `pr_opened_at` was kept (decision 6).
+export function firstLineTimeWith(text: string, needle: string): string | undefined {
+  for (const raw of text.split("\n")) {
+    if (!raw.includes(needle)) continue;
+    let line: Record<string, unknown>;
+    try {
+      line = JSON.parse(raw) as Record<string, unknown>;
+    } catch {
+      continue;
+    }
+    const m = line.message as Record<string, unknown> | undefined;
+    const at = typeof m?.timestamp === "number" ? m.timestamp : lineTime(line);
+    if (Number.isFinite(at)) return new Date(at).toISOString();
+  }
+  return undefined;
+}
+
+// Which calls of a session's file belong to which ledger writer (decision 6): live recording owns
+// everything from `ledger_started_at` on, the history import everything before. A fork's file
+// repeats its parent's history, so only what came after the fork's own creation is the fork's.
+export function ledgerKeep(session: Pick<Session, "parentSessionId" | "createdAt">, ledgerStartedAt: string, source: LedgerSource): (at: number) => boolean {
+  const line = Date.parse(ledgerStartedAt);
+  const own = session.parentSessionId ? Date.parse(session.createdAt) : -Infinity;
+  return source === "live" ? (at) => at >= line && at >= own : (at) => at < line && at >= own;
 }
 
 // A codex tool output: a string, or `[{type, text}]` parts.
@@ -654,7 +830,9 @@ export class NativeSessionService implements OnModuleInit, OnModuleDestroy {
     return session.worktreePath || this.registry.listProjects().find((p) => p.id === session.projectId)?.localRepoPath || undefined;
   }
 
-  private sessionFilePath(session: Session, run?: Run): string | undefined {
+  // The harness's own session file of a row — managed or native (a managed row is omp, its file is
+  // `ompSessionFile`). Public for the «Аналітика» history import, which reads the same files.
+  sessionFilePath(session: Session, run?: { transcriptPath?: string }): string | undefined {
     if (session.runtime !== "claude-code") return session.ompSessionFile;
     if (run?.transcriptPath) return run.transcriptPath;
     const cwd = this.cwd(session);
@@ -676,9 +854,16 @@ export class NativeSessionService implements OnModuleInit, OnModuleDestroy {
     const path = this.sessionFilePath(session, run);
     if (path) {
       const text = await readFile(path, "utf8").catch(() => "");
-      const { usage, model } = FILE_USAGE[session.runtime ?? "omp"](text);
+      const harness = session.runtime ?? "omp";
+      const { usage, model } = FILE_USAGE[harness](text);
       if (usage) this.registry.setUsage(id, usage);
       if (model && model !== session.model) this.registry.updateSession(id, { model });
+      // The «Аналітика» ledger: this session's live hours rebuilt from the same text, absolute
+      // like setUsage. Only an unreadable file is skipped — it must not wipe the rows.
+      if (text) {
+        const keep = ledgerKeep(session, this.registry.analyticsMeta().ledgerStartedAt, "live");
+        this.registry.replaceUsageHours(id, "live", usageHourEntries(FILE_USAGE_EVENTS[harness](text), keep, model ?? session.model), harness === "omp");
+      }
     }
     const messages = await this.history(session).catch(() => [] as OmpMessage[]);
     const transcript = messagesToTranscript(messages);
@@ -692,7 +877,7 @@ export class NativeSessionService implements OnModuleInit, OnModuleDestroy {
     const prUrl = run?.prRequested && !session.prOpened ? this.prUrlIn(messages.slice(run.prFrom ?? 0)) : undefined;
     if (run && prUrl) {
       run.prRequested = false;
-      this.registry.updateSession(id, { prOpened: true, prUrl });
+      this.registry.updateSession(id, { prOpened: true, prUrl, prOpenedAt: new Date().toISOString() });
       if (run.status === "done") this.setStatus(id, run, "in_review");
     }
     this.events$.next({ type: "transcript", sessionId: id, transcript });

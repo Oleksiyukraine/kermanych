@@ -169,6 +169,7 @@ export const useCukChat = defineStore('cuk-chat', () => {
       { id: 'synergy', label: t('common.nav.viewSynergy'), to: { name: 'synergy' } },
       { id: 'ai-team', label: t('common.nav.viewAiTeam'), to: { name: 'ai-team' } },
       { id: 'management', label: t('common.nav.viewManagement'), to: { name: MANAGEMENT_DEFAULT_SECTION } },
+      { id: 'analytics', label: t('common.nav.viewAnalytics'), to: { name: 'analytics' } },
     ];
     const sections: Place[] = MANAGEMENT_SECTIONS.filter((s) => !s.managersOnly || manager).map((s) => ({
       id: s.name,
@@ -510,6 +511,13 @@ export const useCukChat = defineStore('cuk-chat', () => {
   async function openSession(id: string): Promise<void> {
     const s = store.sessions.find((x) => x.id === id);
     if (!s) return;
+    // The pages show the scope picked at the top, and with none picked «Агенти» shows no agents
+    // at all: a session outside that scope moves the scope to its project first — «Аналітика»
+    // opens sessions from every project. A workspace that already holds the project stays.
+    const inScope =
+      store.selectedProjectId === s.projectId ||
+      (!store.selectedProjectId && !!store.selectedWorkspaceId && store.projectWorkspace[s.projectId] === store.selectedWorkspaceId);
+    if (!inScope) store.selectProject(s.projectId);
     if (s.designDir) {
       await go({ name: 'design' });
       return;

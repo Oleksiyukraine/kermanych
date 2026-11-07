@@ -6,8 +6,57 @@ import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { mkdirSync } from "node:fs";
 import { Subject } from "rxjs";
-import { isThinkingLevel, isNativeHarness, isAgentLanguage, isSkillImprovementLevel, DEFAULT_SKILL_IMPROVEMENT_LEVEL, isFindingKind, isPlatform, parseFindingTarget, docsPolicy, combineReportWrites, readMinionResult, isMinionPauseCode, clampMinionCap, MINION_CAP_DEFAULT, isDevicePlatform, ACTIVE_STATUSES, validateScheduleSpec, SCHEDULE_RUNS_KEEP, SCHEDULE_SLIPS_KEEP } from "@kermanych/core";
-import type { AgentFinding, DeviceChoice, DocsPolicy, FindingReport, FindingTarget, MinionPause, MinionResult, NativeSettings, Platform, Project, ResourceDecision, Session, SessionDevice, SessionStatus, ThinkingLevel, Usage, AgentLanguage, SkillImprovementLevel, TaskReportsWrite, TesterSettings, ScheduledTask, ScheduleRun, ScheduleRunReason, ScheduleRunStatus, ScheduleRunTrigger, ScheduleSlip } from "@kermanych/core";
+import { isThinkingLevel, isNativeHarness, isAgentLanguage, isSkillImprovementLevel, DEFAULT_SKILL_IMPROVEMENT_LEVEL, isFindingKind, isPlatform, parseFindingTarget, docsPolicy, combineReportWrites, readMinionResult, isMinionPauseCode, clampMinionCap, MINION_CAP_DEFAULT, isDevicePlatform, ACTIVE_STATUSES, validateScheduleSpec, SCHEDULE_RUNS_KEEP, SCHEDULE_SLIPS_KEEP, ACTIVITY_SPAN_KINDS, analyticsSessionClass } from "@kermanych/core";
+import type { AgentFinding, DeviceChoice, DocsPolicy, FindingReport, FindingTarget, MinionPause, MinionResult, NativeSettings, Platform, Project, ResourceDecision, Session, SessionDevice, SessionStatus, ThinkingLevel, Usage, AgentLanguage, SkillImprovementLevel, TaskReportsWrite, TesterSettings, ScheduledTask, ScheduleRun, ScheduleRunReason, ScheduleRunStatus, ScheduleRunTrigger, ScheduleSlip, ActivitySpanKind, ActivitySpanRow, AnalyticsFindingRow, AnalyticsImportState, AnalyticsInput, AnalyticsSessionClass, AnalyticsSessionRow, UsageHourRow } from "@kermanych/core";
+
+// «Аналітика» (docs/specs/2026-11-07-developer-analytics.md): one UTC hour of one session's spend
+// on one model, as a writer hands it over — the registry stamps the session's project and class.
+export type UsageHourEntry = Pick<UsageHourRow, "hour" | "model" | "calls" | "modelMs" | "input" | "output" | "cacheRead" | "cacheWrite" | "cost">;
+// Who wrote a ledger row: live recording, or the one-time history import (decision 6).
+export type LedgerSource = "live" | "import";
+export type AnalyticsMeta = {
+  ledgerStartedAt: string;
+  import: AnalyticsImportState;
+  // What the finished import read, for the measurement decision 6 asks for.
+  importStats?: { ms: number; files: number; bytes: number };
+};
+type AnalyticsMetaDbRow = {
+  ledger_started_at: string;
+  import_state: string;
+  import_done: number;
+  import_total: number;
+  import_ms: number | null;
+  import_files: number | null;
+  import_bytes: number | null;
+};
+type UsageHourDbRow = {
+  hour: string;
+  session_id: string;
+  model: string;
+  project_id: string;
+  session_class: string;
+  cost_known: number;
+  calls: number;
+  model_ms: number;
+  input: number;
+  output: number;
+  cache_read: number;
+  cache_write: number;
+  cost: number;
+};
+type LedgerOwnerDbRow = { project_id: string; kind: string; tester: number; minion: number; design_dir: string | null; synergy: number; schedule_id: string | null };
+
+// The flags of a `sessions` row → core's «тип сесії».
+function ledgerClass(r: LedgerOwnerDbRow): AnalyticsSessionClass {
+  return analyticsSessionClass({
+    kind: r.kind as Session["kind"],
+    ...(r.tester ? { tester: true } : {}),
+    ...(r.minion ? { minion: true } : {}),
+    ...(r.design_dir ? { designDir: r.design_dir } : {}),
+    ...(r.synergy ? { synergy: {} } : {}),
+    ...(r.schedule_id ? { schedule: { id: r.schedule_id, name: "" } } : {}),
+  });
+}
 
 // The cached Supabase session. Lives in SQLite so a restarted api still knows who
 // its user is without a cloud round trip.
@@ -563,6 +612,14 @@ export class RegistryService {
     } catch {
       /* column already exists */
     }
+    // Additive migration: when `pr_opened` was first set, for «Аналітика»'s «PR відкрито»
+    // (docs/specs/2026-11-07-developer-analytics.md, decision 5). NULL on older rows until the
+    // history import dates them from the harness file (decision 6).
+    try {
+      this.db.exec(`ALTER TABLE sessions ADD COLUMN pr_opened_at TEXT`);
+    } catch {
+      /* column already exists */
+    }
     // Additive migration: a native session (docs/specs/2026-10-05-native-sessions.md) runs its
     // harness as its own TUI in a pty and Kermanych only observes it. Fixed at creation.
     try {
@@ -763,6 +820,33 @@ export class RegistryService {
     this.db.exec(
       `CREATE TABLE IF NOT EXISTS schedule_slips (id TEXT PRIMARY KEY, kind TEXT NOT NULL, schedule_id TEXT NOT NULL, schedule_name TEXT NOT NULL, at TEXT NOT NULL, scheduled_for TEXT, text TEXT NOT NULL, body TEXT, run_id TEXT, session_id TEXT, project_id TEXT, status TEXT, reason TEXT, late INTEGER NOT NULL DEFAULT 0, seen INTEGER NOT NULL DEFAULT 0, snoozed_until TEXT)`,
     );
+    // «Аналітика»'s local ledger (docs/specs/2026-11-07-developer-analytics.md, decision 5):
+    // personal, machine-local, never synced. No FK to `sessions` on purpose — the money was spent,
+    // so the rows outlive a deleted session (removeSession leaves them); removeProject takes them.
+    // `usage_hours` is spend per UTC hour; the session's project and class are copied in at write
+    // time for the same reason. `source` keeps the live rows apart from the history import's: the
+    // import replaces its own rows per session (a crash mid-import then re-runs without double
+    // counting), a native session's live rows are rebuilt from its file after every turn, and the
+    // two never overlap in time (live ≥ ledger_started_at > import).
+    this.db.exec(
+      `CREATE TABLE IF NOT EXISTS usage_hours (hour TEXT NOT NULL, session_id TEXT NOT NULL, model TEXT NOT NULL, source TEXT NOT NULL DEFAULT 'live', project_id TEXT NOT NULL, session_class TEXT NOT NULL, cost_known INTEGER NOT NULL, calls INTEGER NOT NULL DEFAULT 0, model_ms INTEGER NOT NULL DEFAULT 0, input INTEGER NOT NULL DEFAULT 0, output INTEGER NOT NULL DEFAULT 0, cache_read INTEGER NOT NULL DEFAULT 0, cache_write INTEGER NOT NULL DEFAULT 0, cost REAL NOT NULL DEFAULT 0, PRIMARY KEY (hour, session_id, model, source))`,
+    );
+    this.db.exec(`CREATE INDEX IF NOT EXISTS usage_hours_hour_idx ON usage_hours (hour)`);
+    this.db.exec(`CREATE INDEX IF NOT EXISTS usage_hours_session_idx ON usage_hours (session_id)`);
+    // A span opens when a session's coarse status enters its kind and closes when it leaves;
+    // `ended_at` NULL = still open (closed at start after a crash, see closeDanglingSpans).
+    this.db.exec(
+      `CREATE TABLE IF NOT EXISTS activity_spans (id TEXT PRIMARY KEY, session_id TEXT NOT NULL, project_id TEXT NOT NULL, kind TEXT NOT NULL, started_at TEXT NOT NULL, ended_at TEXT, source TEXT NOT NULL DEFAULT 'live')`,
+    );
+    this.db.exec(`CREATE INDEX IF NOT EXISTS activity_spans_started_idx ON activity_spans (started_at)`);
+    this.db.exec(`CREATE INDEX IF NOT EXISTS activity_spans_session_idx ON activity_spans (session_id)`);
+    // Single-row like machine_resources. `ledger_started_at` is written once, by the first start
+    // with this schema — before any live write can happen — and never moved: it is the line
+    // between what the history import may count and what live recording already does.
+    this.db.exec(
+      `CREATE TABLE IF NOT EXISTS analytics_meta (id INTEGER PRIMARY KEY CHECK (id = 1), ledger_started_at TEXT NOT NULL, import_state TEXT NOT NULL DEFAULT 'pending', import_done INTEGER NOT NULL DEFAULT 0, import_total INTEGER NOT NULL DEFAULT 0, import_ms INTEGER, import_files INTEGER, import_bytes INTEGER)`,
+    );
+    this.db.prepare(`INSERT OR IGNORE INTO analytics_meta (id, ledger_started_at) VALUES (1, ?)`).run(new Date().toISOString());
   }
 
   // Managed claude-code sessions are gone (docs/specs/2026-11-05-remove-managed-claude-code.md,
@@ -1070,6 +1154,9 @@ export class RegistryService {
 
   removeProject(id: string): void {
     this.db.prepare(`DELETE FROM session_findings WHERE session_id IN (SELECT id FROM sessions WHERE project_id = ?)`).run(id);
+    // The «Аналітика» ledger goes with a removed project (decision 5), unlike a deleted session.
+    this.db.prepare(`DELETE FROM usage_hours WHERE project_id = ?`).run(id);
+    this.db.prepare(`DELETE FROM activity_spans WHERE project_id = ?`).run(id);
     this.db.prepare(`DELETE FROM sessions WHERE project_id = ?`).run(id);
     this.db.prepare(`DELETE FROM minion_projects WHERE project_id = ?`).run(id);
     this.db.prepare(`DELETE FROM tester_settings WHERE project_id = ?`).run(id);
@@ -1078,12 +1165,12 @@ export class RegistryService {
   }
 
   listSessions(projectId?: string): Session[] {
-    const sql = `SELECT id, project_id as projectId, task_id as taskId, name, task, worktree_path as worktreePath, branch, worktree, base_branch as baseBranch, omp_session_id as ompSessionId, omp_session_file as ompSessionFile, parent_session_id as parentSessionId, kind, model, prefix, runtime, native, deep_analysis, design_dir, synergy, synergy_page, minion, minion_result, finding_kind, tester, schedule_id, schedule_name, effort, status, pr_opened as prOpened, pr_url, archived, usage, pending_prompt, created_at as createdAt, last_activity_at as lastActivityAt, (SELECT COUNT(*) FROM session_findings f WHERE f.session_id = sessions.id AND f.status = 'open') as open_findings FROM sessions`;
+    const sql = `SELECT id, project_id as projectId, task_id as taskId, name, task, worktree_path as worktreePath, branch, worktree, base_branch as baseBranch, omp_session_id as ompSessionId, omp_session_file as ompSessionFile, parent_session_id as parentSessionId, kind, model, prefix, runtime, native, deep_analysis, design_dir, synergy, synergy_page, minion, minion_result, finding_kind, tester, schedule_id, schedule_name, effort, status, pr_opened as prOpened, pr_url, pr_opened_at, archived, usage, pending_prompt, created_at as createdAt, last_activity_at as lastActivityAt, (SELECT COUNT(*) FROM session_findings f WHERE f.session_id = sessions.id AND f.status = 'open') as open_findings FROM sessions`;
     const rows = (
       projectId
         ? this.db.prepare(sql + ` WHERE project_id = ? ORDER BY created_at`).all(projectId)
         : this.db.prepare(sql + ` ORDER BY created_at`).all()
-    ) as (Omit<Session, "archived" | "worktree" | "usage" | "effort" | "runtime" | "prOpened" | "prUrl" | "native" | "deepAnalysis" | "designDir" | "synergy" | "minion" | "minionResult" | "findingKind" | "tester" | "schedule" | "openFindings" | "pendingPrompt"> & { archived: number; worktree: number; usage: string | null; effort: string | null; runtime: string | null; prOpened: number; pr_url: string | null; native: number; deep_analysis: number; design_dir: string | null; synergy: number; synergy_page: string | null; minion: number; minion_result: string | null; finding_kind: string | null; tester: number; schedule_id: string | null; schedule_name: string | null; open_findings: number; pending_prompt: string | null })[];
+    ) as (Omit<Session, "archived" | "worktree" | "usage" | "effort" | "runtime" | "prOpened" | "prUrl" | "prOpenedAt" | "native" | "deepAnalysis" | "designDir" | "synergy" | "minion" | "minionResult" | "findingKind" | "tester" | "schedule" | "openFindings" | "pendingPrompt"> & { archived: number; worktree: number; usage: string | null; effort: string | null; runtime: string | null; prOpened: number; pr_url: string | null; pr_opened_at: string | null; native: number; deep_analysis: number; design_dir: string | null; synergy: number; synergy_page: string | null; minion: number; minion_result: string | null; finding_kind: string | null; tester: number; schedule_id: string | null; schedule_name: string | null; open_findings: number; pending_prompt: string | null })[];
     // SQLite stores the flag as 0/1; hand callers a real boolean. `effort` is validated rather
     // than cast: a row written by an older build (or by hand) must degrade to "not known" —
     // typing an unknown word as a ThinkingLevel would send it straight back into omp's argv.
@@ -1098,9 +1185,9 @@ export class RegistryService {
     // `design_dir` likewise appears only on a design session, `tester` only on a tester run,
     // `synergy` (with its start path, when there is one) only on a «Синергія» session, and
     // `schedule` only on a scheduled run's session (docs/specs/2026-11-06-scheduled-tasks.md).
-    return rows.map(({ native, deep_analysis, design_dir, synergy, synergy_page, minion, minion_result, finding_kind, tester, schedule_id, schedule_name, open_findings, pending_prompt, pr_url, ...r }) => {
+    return rows.map(({ native, deep_analysis, design_dir, synergy, synergy_page, minion, minion_result, finding_kind, tester, schedule_id, schedule_name, open_findings, pending_prompt, pr_url, pr_opened_at, ...r }) => {
       const minionResult = readMinionColumn(minion_result);
-      return { ...r, ...(native ? { native: true } : {}), ...(deep_analysis ? { deepAnalysis: true } : {}), ...(design_dir ? { designDir: design_dir } : {}), ...(synergy ? { synergy: synergy_page ? { page: synergy_page } : {} } : {}), ...(minion ? { minion: true } : {}), ...(minionResult ? { minionResult } : {}), ...(isFindingKind(finding_kind) ? { findingKind: finding_kind } : {}), ...(tester ? { tester: true } : {}), ...(schedule_id ? { schedule: { id: schedule_id, name: schedule_name ?? "" } } : {}), ...(open_findings ? { openFindings: open_findings } : {}), ...(pending_prompt !== null ? { pendingPrompt: pending_prompt } : {}), ...(pr_url ? { prUrl: pr_url } : {}), archived: r.archived !== 0, worktree: r.worktree !== 0, prOpened: r.prOpened !== 0, taskId: r.taskId ?? undefined, model: r.model ?? undefined, prefix: r.prefix ?? undefined, runtime: isNativeHarness(r.runtime) ? r.runtime : undefined, effort: isThinkingLevel(r.effort) ? r.effort : undefined, usage: readUsage(r.usage) };
+      return { ...r, ...(native ? { native: true } : {}), ...(deep_analysis ? { deepAnalysis: true } : {}), ...(design_dir ? { designDir: design_dir } : {}), ...(synergy ? { synergy: synergy_page ? { page: synergy_page } : {} } : {}), ...(minion ? { minion: true } : {}), ...(minionResult ? { minionResult } : {}), ...(isFindingKind(finding_kind) ? { findingKind: finding_kind } : {}), ...(tester ? { tester: true } : {}), ...(schedule_id ? { schedule: { id: schedule_id, name: schedule_name ?? "" } } : {}), ...(open_findings ? { openFindings: open_findings } : {}), ...(pending_prompt !== null ? { pendingPrompt: pending_prompt } : {}), ...(pr_url ? { prUrl: pr_url } : {}), ...(pr_opened_at ? { prOpenedAt: pr_opened_at } : {}), archived: r.archived !== 0, worktree: r.worktree !== 0, prOpened: r.prOpened !== 0, taskId: r.taskId ?? undefined, model: r.model ?? undefined, prefix: r.prefix ?? undefined, runtime: isNativeHarness(r.runtime) ? r.runtime : undefined, effort: isThinkingLevel(r.effort) ? r.effort : undefined, usage: readUsage(r.usage) };
     });
   }
 
@@ -1169,7 +1256,7 @@ export class RegistryService {
     const next = { ...cur, ...patch };
     this.db
       .prepare(
-        `UPDATE sessions SET project_id=?, task_id=?, name=?, task=?, worktree_path=?, branch=?, worktree=?, base_branch=?, omp_session_id=?, omp_session_file=?, kind=?, model=?, prefix=?, runtime=?, effort=?, status=?, pr_opened=?, pr_url=?, archived=?, minion_result=?, synergy=?, synergy_page=? WHERE id=?`,
+        `UPDATE sessions SET project_id=?, task_id=?, name=?, task=?, worktree_path=?, branch=?, worktree=?, base_branch=?, omp_session_id=?, omp_session_file=?, kind=?, model=?, prefix=?, runtime=?, effort=?, status=?, pr_opened=?, pr_url=?, pr_opened_at=?, archived=?, minion_result=?, synergy=?, synergy_page=? WHERE id=?`,
       )
       .run(
         next.projectId,
@@ -1190,6 +1277,7 @@ export class RegistryService {
         next.status,
         next.prOpened ? 1 : 0,
         next.prUrl || null,
+        next.prOpenedAt ?? null,
         next.archived ? 1 : 0,
         next.minionResult ? JSON.stringify(next.minionResult) : null,
         next.synergy ? 1 : 0,
@@ -1249,9 +1337,210 @@ export class RegistryService {
     return u;
   }
 
+  // The «Аналітика» ledger (usage_hours, activity_spans) stays: the money was spent
+  // (docs/specs/2026-11-07-developer-analytics.md, decision 5).
   removeSession(id: string): void {
     this.db.prepare(`DELETE FROM session_findings WHERE session_id = ?`).run(id);
     this.db.prepare(`DELETE FROM sessions WHERE id = ?`).run(id);
+  }
+
+  // ── «Аналітика» ledger (docs/specs/2026-11-07-developer-analytics.md, decision 5) ──────
+
+  // The session's project and «тип сесії», copied onto each ledger row at write time so the
+  // row still reads right after the session is deleted. Undefined for a row already gone.
+  private ledgerOwner(sessionId: string): { projectId: string; sessionClass: AnalyticsSessionClass } | undefined {
+    const r = this.db
+      .prepare(`SELECT project_id, kind, tester, minion, design_dir, synergy, schedule_id FROM sessions WHERE id = ?`)
+      .get(sessionId) as LedgerOwnerDbRow | undefined;
+    return r ? { projectId: r.project_id, sessionClass: ledgerClass(r) } : undefined;
+  }
+
+  // One live turn of a managed session, folded into its UTC hour (upsert +=). Like addUsage a
+  // targeted write on the agent-event path.
+  addUsageHour(sessionId: string, e: UsageHourEntry, costKnown: boolean): void {
+    const owner = this.ledgerOwner(sessionId);
+    if (!owner) return;
+    this.db
+      .prepare(
+        `INSERT INTO usage_hours (hour, session_id, model, source, project_id, session_class, cost_known, calls, model_ms, input, output, cache_read, cache_write, cost)
+         VALUES (?, ?, ?, 'live', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT (hour, session_id, model, source) DO UPDATE SET calls = calls + excluded.calls, model_ms = model_ms + excluded.model_ms,
+           input = input + excluded.input, output = output + excluded.output, cache_read = cache_read + excluded.cache_read,
+           cache_write = cache_write + excluded.cache_write, cost = cost + excluded.cost`,
+      )
+      .run(e.hour, sessionId, e.model, owner.projectId, owner.sessionClass, costKnown ? 1 : 0, e.calls, e.modelMs, e.input, e.output, e.cacheRead, e.cacheWrite, e.cost);
+  }
+
+  // Every `source` row of one session, replaced whole: a native session's live rows rebuilt from
+  // its file after a turn (absolute, like setUsage, so a re-read never double counts).
+  replaceUsageHours(sessionId: string, source: LedgerSource, entries: UsageHourEntry[], costKnown: boolean): void {
+    const owner = this.ledgerOwner(sessionId);
+    if (!owner) return;
+    this.db.transaction(() => this.writeUsageHours(sessionId, owner, source, entries, costKnown))();
+  }
+
+  private writeUsageHours(
+    sessionId: string,
+    owner: { projectId: string; sessionClass: AnalyticsSessionClass },
+    source: LedgerSource,
+    entries: UsageHourEntry[],
+    costKnown: boolean,
+  ): void {
+    this.db.prepare(`DELETE FROM usage_hours WHERE session_id = ? AND source = ?`).run(sessionId, source);
+    const insert = this.db.prepare(
+      `INSERT INTO usage_hours (hour, session_id, model, source, project_id, session_class, cost_known, calls, model_ms, input, output, cache_read, cache_write, cost) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    );
+    for (const e of entries)
+      insert.run(e.hour, sessionId, e.model, source, owner.projectId, owner.sessionClass, costKnown ? 1 : 0, e.calls, e.modelMs, e.input, e.output, e.cacheRead, e.cacheWrite, e.cost);
+  }
+
+  openSpan(sessionId: string, projectId: string, kind: ActivitySpanKind, startedAt: string): string {
+    const id = randomUUID();
+    this.db
+      .prepare(`INSERT INTO activity_spans (id, session_id, project_id, kind, started_at, ended_at, source) VALUES (?, ?, ?, ?, ?, NULL, 'live')`)
+      .run(id, sessionId, projectId, kind, startedAt);
+    return id;
+  }
+
+  closeSpan(id: string, endedAt: string): void {
+    this.db.prepare(`UPDATE activity_spans SET ended_at = ? WHERE id = ? AND ended_at IS NULL`).run(endedAt, id);
+  }
+
+  // At start, after a crash: a span still open was left by the previous process. It closes at its
+  // session's last activity — the last moment anything was known to happen — or at `now` when the
+  // row is gone; never before it began. Returns how many were closed.
+  closeDanglingSpans(now: string): number {
+    return this.db
+      .prepare(
+        `UPDATE activity_spans SET ended_at = MAX(started_at, COALESCE((SELECT last_activity_at FROM sessions s WHERE s.id = activity_spans.session_id), ?)) WHERE ended_at IS NULL`,
+      )
+      .run(now).changes;
+  }
+
+  // Decision 5: ledger rows older than `before` (400 days, the caller's clock) go at start.
+  pruneAnalytics(before: string): void {
+    this.db.prepare(`DELETE FROM usage_hours WHERE hour < ?`).run(before);
+    this.db.prepare(`DELETE FROM activity_spans WHERE COALESCE(ended_at, started_at) < ?`).run(before);
+  }
+
+  analyticsMeta(): AnalyticsMeta {
+    const r = this.db
+      .prepare(`SELECT ledger_started_at, import_state, import_done, import_total, import_ms, import_files, import_bytes FROM analytics_meta WHERE id = 1`)
+      .get() as AnalyticsMetaDbRow;
+    const state = r.import_state === "running" || r.import_state === "done" ? r.import_state : "pending";
+    return {
+      ledgerStartedAt: r.ledger_started_at,
+      import: { state, done: r.import_done, total: r.import_total },
+      ...(r.import_ms !== null ? { importStats: { ms: r.import_ms, files: r.import_files ?? 0, bytes: r.import_bytes ?? 0 } } : {}),
+    };
+  }
+
+  setAnalyticsImport(state: AnalyticsImportState, stats?: { ms: number; files: number; bytes: number }): void {
+    this.db
+      .prepare(`UPDATE analytics_meta SET import_state = ?, import_done = ?, import_total = ?, import_ms = COALESCE(?, import_ms), import_files = COALESCE(?, import_files), import_bytes = COALESCE(?, import_bytes) WHERE id = 1`)
+      .run(state.state, state.done, state.total, stats?.ms ?? null, stats?.files ?? null, stats?.bytes ?? null);
+  }
+
+  // One session of the history import (decision 6), atomically: its imported usage and spans
+  // replace whatever an interrupted earlier run wrote, `pr_opened_at` is filled only where still
+  // unknown, and the progress counter moves in the same transaction — a crash leaves either all
+  // of it or none, so the re-run never double counts.
+  applyImport(sessionId: string, data: { usage: UsageHourEntry[]; working: { startedAt: string; endedAt: string }[]; prOpenedAt?: string }, costKnown: boolean, progress: AnalyticsImportState): void {
+    const owner = this.ledgerOwner(sessionId);
+    this.db.transaction(() => {
+      if (owner) {
+        this.writeUsageHours(sessionId, owner, "import", data.usage, costKnown);
+        this.db.prepare(`DELETE FROM activity_spans WHERE session_id = ? AND source = 'import'`).run(sessionId);
+        const insert = this.db.prepare(
+          `INSERT INTO activity_spans (id, session_id, project_id, kind, started_at, ended_at, source) VALUES (?, ?, ?, 'working', ?, ?, 'import')`,
+        );
+        for (const s of data.working) insert.run(randomUUID(), sessionId, owner.projectId, s.startedAt, s.endedAt);
+        if (data.prOpenedAt) this.db.prepare(`UPDATE sessions SET pr_opened_at = ? WHERE id = ? AND pr_opened_at IS NULL`).run(data.prOpenedAt, sessionId);
+      }
+      this.setAnalyticsImport(progress);
+    })();
+  }
+
+  // What `analyticsReport` aggregates, for the projects in scope (undefined = every project on
+  // this machine). Usage and spans from `since` on (the caller passes a bound safely before the
+  // previous period's start; the aggregation clips); a span still open reads as ending `now`.
+  // Sessions and findings of the scope whole: the session figures look at any age, and
+  // `lifetimeCost` sums every known-cost row of the session for «вартість PR».
+  analyticsRows(projectIds: string[] | undefined, since: string, now: string): Pick<AnalyticsInput, "usage" | "spans" | "sessions" | "findings"> {
+    const scope = (col: string) => (projectIds ? ` AND ${col} IN (SELECT value FROM json_each(?))` : "");
+    const args = projectIds ? [JSON.stringify(projectIds)] : [];
+    const usage = (
+      this.db
+        .prepare(
+          `SELECT hour, session_id, model, MAX(project_id) AS project_id, MAX(session_class) AS session_class, MAX(cost_known) AS cost_known, SUM(calls) AS calls, SUM(model_ms) AS model_ms, SUM(input) AS input, SUM(output) AS output, SUM(cache_read) AS cache_read, SUM(cache_write) AS cache_write, SUM(cost) AS cost
+           FROM usage_hours WHERE hour >= ?${scope("project_id")} GROUP BY hour, session_id, model`,
+        )
+        .all(since, ...args) as UsageHourDbRow[]
+    ).map(
+      (r): UsageHourRow => ({
+        hour: r.hour,
+        sessionId: r.session_id,
+        projectId: r.project_id,
+        model: r.model,
+        sessionClass: r.session_class as AnalyticsSessionClass,
+        costKnown: r.cost_known !== 0,
+        calls: r.calls,
+        modelMs: r.model_ms,
+        input: r.input,
+        output: r.output,
+        cacheRead: r.cache_read,
+        cacheWrite: r.cache_write,
+        cost: r.cost,
+      }),
+    );
+    const spans = (
+      this.db
+        .prepare(
+          `SELECT session_id, project_id, kind, started_at, COALESCE(ended_at, ?) AS ended_at FROM activity_spans
+           WHERE started_at < ? AND (ended_at IS NULL OR ended_at > ?)${scope("project_id")}`,
+        )
+        .all(now, now, since, ...args) as { session_id: string; project_id: string; kind: string; started_at: string; ended_at: string }[]
+    )
+      .filter((r) => (ACTIVITY_SPAN_KINDS as readonly string[]).includes(r.kind))
+      .map((r): ActivitySpanRow => ({ sessionId: r.session_id, projectId: r.project_id, kind: r.kind as ActivitySpanKind, startedAt: r.started_at, endedAt: r.ended_at }));
+    const sessions = (
+      this.db
+        .prepare(
+          `SELECT id, project_id, name, kind, tester, minion, design_dir, synergy, schedule_id, status, created_at, pr_opened, pr_opened_at, minion_result,
+             EXISTS (SELECT 1 FROM usage_hours u WHERE u.session_id = sessions.id) AS has_usage,
+             (SELECT COALESCE(SUM(cost), 0) FROM usage_hours u WHERE u.session_id = sessions.id AND u.cost_known = 1) AS lifetime_cost
+           FROM sessions WHERE 1 = 1${scope("project_id")}`,
+        )
+        .all(...args) as (LedgerOwnerDbRow & { id: string; name: string; status: SessionStatus; created_at: string; pr_opened: number; pr_opened_at: string | null; minion_result: string | null; has_usage: number; lifetime_cost: number })[]
+    ).map((r): AnalyticsSessionRow => {
+      const minionOutcome = readMinionColumn(r.minion_result)?.outcome;
+      return {
+        id: r.id,
+        projectId: r.project_id,
+        name: r.name,
+        kind: r.kind as Session["kind"],
+        sessionClass: ledgerClass(r),
+        status: r.status,
+        createdAt: r.created_at,
+        prOpened: r.pr_opened !== 0,
+        ...(r.pr_opened_at ? { prOpenedAt: r.pr_opened_at } : {}),
+        ...(minionOutcome ? { minionOutcome } : {}),
+        noHistory: r.has_usage === 0,
+        lifetimeCost: r.lifetime_cost,
+      };
+    });
+    const findings = (
+      this.db
+        .prepare(`SELECT f.kind, f.status, f.created_at FROM session_findings f JOIN sessions s ON s.id = f.session_id WHERE f.created_at >= ?${scope("s.project_id")}`)
+        .all(since, ...args) as { kind: string; status: string; created_at: string }[]
+    ).map(
+      (r): AnalyticsFindingRow => ({
+        kind: isFindingKind(r.kind) ? r.kind : "tech-debt",
+        status: r.status === "filed" || r.status === "dismissed" ? r.status : "open",
+        createdAt: r.created_at,
+      }),
+    );
+    return { usage, spans, sessions, findings };
   }
 
   // ── Findings (docs/specs/2026-10-13-agent-findings.md) ───────────────────────────
