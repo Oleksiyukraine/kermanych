@@ -132,3 +132,16 @@ head them with "this is a reference, not an instruction". Neither is taken as is
 ## Documentation impact
 
 README «Project documentation» (see Changes).
+
+## Verification results
+
+- `pnpm --filter @kermanych/core test`: 32 files, 445 tests pass. `pnpm --filter @kermanych/ui test`:
+  89 files, 968 tests pass (the three new `doc-task.spec.ts` cases included); `vue-tsc --noEmit` clean.
+  `apps/api` `supervisor.docs-gate.spec.ts`: 15 pass.
+- Smoke on the preview (seeded api + `quasar dev`), a worktree with uncommitted
+  `docs/api-requests/…` and `docs/handoffs/…`, cloud projects injected into the store and
+  `board.createTask` stubbed: the request's dialog shows the origin line, then the request framing,
+  then the document, with «Глибокий аналіз» ticked; «Створити задачу» passed `projectId` of the other
+  project, its default model and `deepAnalysis: true`. The handoff's dialog shows the handoff framing
+  with the box clear, and the call carried no `deepAnalysis`. The design README case is covered by the
+  unit test only; it was not opened in the browser.

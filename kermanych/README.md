@@ -1943,9 +1943,15 @@ from the session's «Документація» tab (see below), whatever the ru
 
 **API extension requests** are the answer to "the frontend needs something the API does not
 have yet". With the kind on, the agent does not invent the backend side or fake it silently:
-it writes `docs/api-requests/…` — what is needed and why, the proposed contract, what the
-client does until it ships — and names it in the handoff or PR. A backend task that answers
-a request links it from its handoff.
+it writes `docs/api-requests/…` and names it in the handoff or PR. The request keeps what
+binds apart from what is a guess: the client's **requirements** (the flow, the data and
+events, the constraints, what the client code already relies on) bind; the **proposed
+contract** is a sketch, and the **assumptions about the backend** it rests on are listed so
+the backend can confirm or reject each. It also says what the client does until it ships.
+A backend task that answers a request links it from its handoff and says where the built
+contract departs from the proposal, and why. The handoff itself states that its contract binds
+the client, marks what is not on the branch yet, and keeps its **suggestions for the client**
+in a section of their own, as not binding.
 
 «Створити ПР», «Закоміти» and «Завершити» are refused (by the API, not just the UI) until
 every required document is on the branch:
@@ -1991,10 +1997,16 @@ changes no code in that turn, and the task goes on. Every changed `docs/api-requ
 another project of the same workspace: by default the first one, and you pick the backend for
 a request or the frontend for a handoff. The card's title is the document's first heading. Its
 description is the document text, read from the worktree so an uncommitted document works too,
-headed by the project, branch and path it came from. The assignee is optional, as on the
-board, and model and effort are the target project's defaults. That side's agent starts from
-the card while this session keeps working.
+headed by the project, branch and path it came from, then a paragraph for the agent on the
+other side: for a request, that the requirements bind and the contract and its assumptions are
+a proposal to check against the backend's architecture; for a handoff, that the contract is
+built and the client suggestions are not binding. The paragraph is in the description field,
+so you can edit it before creating the card. «Глибокий аналіз» in the same dialog is ticked
+for a request (the backend agent interviews you and writes the decisions before code) and clear
+for a handoff. The assignee is optional, as on the board, and model and effort are the target
+project's defaults. That side's agent starts from the card while this session keeps working.
 «Копіювати текст» copies the same text for pasting into a session that is already running.
+A design README's card gets neither the paragraph nor the checkbox.
 
 The instructions for each document are the default skills `task-spec`, `task-plan`,
 `frontend-handoff` and `api-request`. Like any default skill, a project, workspace or

@@ -265,8 +265,8 @@ const FAILURE_ASKS: Record<DocsGateFailure, string> = {
   "task-spec": `- Write the task document in \`${DOCS_LAYOUT.specs}/${DATED}\` for this branch's work, including a \`${IMPACT_HEADING}\` section.`,
   plan: `- Write the implementation plan in \`${DOCS_LAYOUT.plans}/${DATED}\` for this branch's work.`,
   "docs-impact": `- The code changed but no living documentation did. Update \`${DOCS_LAYOUT.schemas}/\` (or the project's other existing docs) to match the new behaviour — or, if behaviour did not change, make the task document's \`${IMPACT_HEADING}\` section begin with \`None\` followed by the reason.`,
-  handoff: `- Write a frontend handoff in \`${DOCS_LAYOUT.handoffs}/${DATED}\` for a frontend developer who did not see this work.`,
-  "api-request": `- Write the API request in \`${DOCS_LAYOUT.apiRequests}/${DATED}\`: what this work needs from the API that it does not provide yet, the proposed contract, and what the client does until it ships.`,
+  handoff: `- Write a frontend handoff in \`${DOCS_LAYOUT.handoffs}/${DATED}\` for a frontend developer who did not see this work: the contract as built, what is not on the branch yet, and any suggestions for the client marked as not binding.`,
+  "api-request": `- Write the API request in \`${DOCS_LAYOUT.apiRequests}/${DATED}\`: what this work needs from the API that it does not provide yet, the client's requirements, a proposed contract with the assumptions about the backend it rests on, and what the client does until it ships.`,
   "design-readme": `- Write this design's \`${DESIGN_README}\` in the design folder your instruction names: purpose, screens, states, decisions, open questions, acceptance criteria, the prototype's files and routes, and kit gaps.`,
 };
 
