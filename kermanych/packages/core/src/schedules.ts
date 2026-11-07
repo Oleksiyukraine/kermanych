@@ -191,8 +191,8 @@ function formatter(timeZone: string): Intl.DateTimeFormat {
   return f;
 }
 
-/** The instant's wall clock in `timeZone`, to the second, as if it were UTC. */
-function wallMs(ms: number, timeZone: string): number {
+/** The instant's wall clock in `timeZone`, to the second, as if it were UTC. Shared with analytics.ts (not in the barrel). */
+export function wallMs(ms: number, timeZone: string): number {
   const p: Record<string, number> = {};
   for (const part of formatter(timeZone).formatToParts(new Date(ms))) {
     if (part.type !== "literal") p[part.type] = Number(part.value);

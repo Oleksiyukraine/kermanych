@@ -65,9 +65,11 @@ import { DeviceController } from "./http/device.controller";
 import { DeviceGateway } from "./ws/device.gateway";
 import { SchedulesController } from "./http/schedules.controller";
 import { ScheduleService } from "./schedules/schedule.service";
+import { AnalyticsController } from "./analytics/analytics.controller";
+import { AnalyticsService } from "./analytics/analytics.service";
 
 @Module({
-  controllers: [AuthController, ProjectsController, SessionsController, FsController, UsageController, CloudController, SkillsController, SkillImportController, ManagementController, ManagementMcpController, CukController, ModelsController, JiraController, LinearController, PlaneController, SlackController, AccountController, DocsController, NativeController, BrowserMcpController, MachineController, MinionController, TesterController, VoiceController, DeviceController, SchedulesController],
+  controllers: [AuthController, ProjectsController, SessionsController, FsController, UsageController, CloudController, SkillsController, SkillImportController, ManagementController, ManagementMcpController, CukController, ModelsController, JiraController, LinearController, PlaneController, SlackController, AccountController, DocsController, NativeController, BrowserMcpController, MachineController, MinionController, TesterController, VoiceController, DeviceController, SchedulesController, AnalyticsController],
   providers: [
     RegistryService, WorktreeService, SupervisorService, PreviewService, EnvFileService, EventsGateway,
     UsageService,
@@ -172,6 +174,10 @@ import { ScheduleService } from "./schedules/schedule.service";
     // (launchScheduled, scheduleRunEnd$), a run without a project on its own chat pool. The
     // supervisor never knows it; its events ride the supervisor's `events$` to the socket.
     ScheduleService,
+    // «Аналітика» (docs/specs/2026-11-07-developer-analytics.md): the activity spans off the
+    // supervisor's `events$` and the one-time history import through NativeSessionService's file
+    // resolver and parsers. A pure subscriber like CloudSyncService; nothing depends back.
+    AnalyticsService,
     // The session's virtual device (docs/specs/2026-11-03-mobile-device-preview.md): clones of the
     // machine's iOS simulators / AVDs, booted for the preview's `device` step. PreviewService,
     // BrowserMcpService and the supervisor depend on the DeviceApi interface under DEVICE_API, so

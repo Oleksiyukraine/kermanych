@@ -2286,6 +2286,15 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
         } catch {
           /* never let a bookkeeping write break the event stream */
         }
+        // The same turn into «Аналітика»'s hourly ledger (docs/specs/2026-11-07-developer-analytics.md,
+        // decision 5), by the hour it ended in. Managed omp prices every turn.
+        try {
+          const hour = new Date(Math.floor(Date.now() / 3_600_000) * 3_600_000).toISOString();
+          const model = entry.model ?? l.live.model ?? this.registry.listSessions().find((x) => x.id === id)?.model ?? "unknown";
+          this.registry.addUsageHour(id, { hour, model, calls: 1, modelMs: entry.ms ?? 0, ...entry.usage }, true);
+        } catch {
+          /* same rule as above */
+        }
       }
     }
     // A PR-requested session records the moment its branch actually gets a pull request: a
@@ -2302,7 +2311,7 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
         l.prOpened = true;
         l.live.prOpened = true;
         l.live.prUrl = prUrl;
-        this.registry.updateSession(id, { prOpened: true, prUrl });
+        this.registry.updateSession(id, { prOpened: true, prUrl, prOpenedAt: new Date().toISOString() });
       }
     }
     // Task artifacts an agent attaches to its card via the shared kermanych-action mechanism —

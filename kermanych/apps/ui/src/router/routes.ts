@@ -82,6 +82,9 @@ const routes: RouteRecordRaw[] = [
         component: () => import('pages/AiTeamPage.vue'),
         meta: { public: false },
       },
+      // «Аналітика» (docs/specs/2026-11-07-developer-analytics.md, decision 2): one
+      // scrollable page with no rail, so one record and no params.
+      { path: 'analytics', name: 'analytics', component: () => import('pages/AnalyticsPage.vue'), meta: { public: false } },
       // Менеджмент is a nested shell: ManagementPage owns the section strip and
       // the «pick a project» gate, one child route per section. The named parent
       // is what the top nav matches on (route.matched in MainLayout), and the

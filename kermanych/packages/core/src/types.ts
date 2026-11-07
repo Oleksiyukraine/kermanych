@@ -142,6 +142,10 @@ export type Session = {
   // sessions that opened their PR before it was stored; the merged-PR check then looks the PR up
   // by branch (docs/specs/2026-10-26-pr-merged-close-prompt.md, decision 4).
   prUrl?: string;
+  // When `prOpened` was first set (ISO), for «Аналітика»'s «PR відкрито» (docs/specs/2026-11-07-developer-analytics.md,
+  // decision 5). Absent on sessions that opened their PR before it was stored and whose harness
+  // file the history import could not date it from.
+  prOpenedAt?: string;
   todoPhases?: TodoPhase[]; contextPercent?: number; lastEventAt?: number;
   // Lifetime accounting: every assistant turn this session ran, summed. Persisted by the
   // api, so a dormant or finished agent still states what it spent. Absent means "never
