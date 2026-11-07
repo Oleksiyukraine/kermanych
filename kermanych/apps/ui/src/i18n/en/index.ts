@@ -520,6 +520,16 @@ export const en: MessageSchema = {
         submit: 'Sign in',
         cancel: 'Cancel',
       },
+      signIn: {
+        open: 'Sign in as',
+        openTip: 'Sign in to the app with one of the «Тестувальник» accounts',
+        label: 'Sign in as',
+        empty: 'The project has no sign-in accounts.',
+        emptyLink: 'Add them in «Тестувальник»',
+        close: 'Hide',
+        noForm: 'The page has no sign-in form. Set the sign-in page in the «Тестувальник» settings, or sign out in the app.',
+        noPage: 'No page is open in the session browser.',
+      },
       failure: {
         title: 'The page did not open',
         crashedTitle: 'The page crashed',

@@ -47,6 +47,15 @@
         v-tip="t('agents.browser.pickTitle')"
         @click="togglePick"
       >◎ <span class="k-browser__label">{{ t('agents.browser.pick') }}</span></button>
+      <button
+        type="button"
+        class="k-browser__btn"
+        :class="{ 'k-browser__btn--on': signInOpen }"
+        :disabled="!state"
+        :aria-pressed="signInOpen"
+        v-tip="t('agents.browser.signIn.openTip')"
+        @click="signInOpen = !signInOpen"
+      ><KIcon class="k-browser__icon" name="agentTester" /> <span class="k-browser__label">{{ t('agents.browser.signIn.open') }}</span></button>
       <!-- Who drives the page. The agent's browser tools refuse while paused (main enforces it),
            so the operator can take the page without the agent clicking under the cursor. -->
       <button
@@ -100,6 +109,8 @@
       @step="findStep"
       @close="closeFind"
     />
+
+    <KSignInBar v-model:open="signInOpen" :session="session" :url="state?.url ?? null" />
 
     <!-- The page is blocked on alert/confirm until someone answers: the operator here, or the
          agent through its tools (the bar goes away when main reports it answered). -->
@@ -233,6 +244,7 @@ import KFullscreenButton from './KFullscreenButton.vue';
 import KIcon from './KIcon.vue';
 import KIconButton from './KIconButton.vue';
 import KModal from './KModal.vue';
+import KSignInBar from './KSignInBar.vue';
 import { useSessionBrowser } from 'stores/browser';
 import { useOrchestrator } from 'stores/orchestrator';
 import { useOverlayOpen } from '../../composables/useOverlayOpen';
@@ -398,6 +410,10 @@ async function togglePick(): Promise<void> {
     picking.value = false;
   }
 }
+
+// ── «Увійти як» ──────────────────────────────────────────────────────────
+// The bar with the «Тестувальник» accounts; it also opens by itself on the login page.
+const signInOpen = ref(false);
 
 // ── Find in page ─────────────────────────────────────────────────────────
 const findOpen = ref(false);

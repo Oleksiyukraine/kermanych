@@ -25,6 +25,7 @@ import {
   elementBoxScript,
   fileInputScript,
   focusFieldScript,
+  loginFieldScript,
   PAGE_HINT_SCRIPT,
   selectScript,
   SNAPSHOT_SCRIPT,
@@ -124,6 +125,26 @@ export async function type(v: SessionView, ref: string, text: string, opts: { cl
     if (opts.submit) await key(v, parseKey('Enter'));
   });
   return actionResult(v, since);
+}
+
+// «Увійти як»: a «Тестувальник» account typed into the page's sign-in form as browser_type
+// types (real input events, so the page's own handlers and masks run), the password with Enter.
+// False when the page shows no password field. A form with a password field only gets the
+// password.
+export async function signIn(v: SessionView, login: string, password: string): Promise<boolean> {
+  assertNoDialog(v);
+  const form = await run<{ user: boolean; password: boolean }>(v, loginFieldScript(null));
+  if (!form.password) return false;
+  const fields: [field: 'user' | 'password', text: string][] = form.user ? [['user', login], ['password', password]] : [['password', password]];
+  for (const [field, text] of fields) {
+    if (!(await run<{ user: boolean; password: boolean }>(v, loginFieldScript(field)))[field]) throw new Error('The sign-in form changed while it was being filled');
+    await settle(v, async () => {
+      // insertText replaces the selection the script made; an empty value clears it.
+      await (text ? cdp(v, 'Input.insertText', { text }) : key(v, parseKey('Backspace')));
+      if (field === 'password') await key(v, parseKey('Enter'));
+    });
+  }
+  return true;
 }
 
 export async function press(v: SessionView, combo: string): Promise<BrowserActionResult> {
