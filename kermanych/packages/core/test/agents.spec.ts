@@ -9,6 +9,7 @@ import {
   PR_CONVENTIONS_FALLBACK,
   KERMANYCH_COAUTHOR,
   COAUTHOR_DIRECTIVE,
+  baseSyncBlock,
 } from "../src/agents";
 import { SKILL_NAME_RE } from "../src/skills";
 
@@ -118,4 +119,24 @@ test("Kermanych credits itself as a commit co-author on every path that commits"
   expect(agentById("pull-request")!.instruction).toContain(trailer);
   // The merge commit is made with --no-edit, so it takes the trailer through git's own flag.
   expect(agentById("resolve-conflict")!.instruction).toContain(`--trailer "${trailer}"`);
+});
+
+test("the PR, commit and base-sync steps hand GIT_TOKEN to git the same way", () => {
+  // git does not read GH_TOKEN itself: a bare `GH_TOKEN=… git push` sends no credential over HTTPS.
+  // Each text must route the token through gh as the credential helper, in one identical form.
+  const texts = {
+    pr: agentById("pull-request")!.instruction!,
+    commit: agentById("commit")!.instruction!,
+    sync: baseSyncBlock("dev"),
+  };
+  const forms = new Set<string>();
+  for (const [name, text] of Object.entries(texts)) {
+    const found = [...text.matchAll(/GH_TOKEN="\$TOKEN" git( .*?)? (push|fetch)\b/g)].map((m) => m[1] ?? "");
+    expect(found.length, name).toBeGreaterThan(0);
+    for (const f of found) forms.add(f);
+    // SSH remotes authenticate with the key; the token there is for gh only.
+    expect(text, name).toMatch(/not an `https:\/\/` URL[^]*SSH key[^]*`GH_TOKEN="\$TOKEN"` on every `gh`/);
+  }
+  expect([...forms]).toEqual([" -c credential.helper= -c 'credential.helper=!gh auth git-credential'"]);
+  expect(texts.sync).toContain("credential.helper=!gh auth git-credential' fetch origin dev");
 });
