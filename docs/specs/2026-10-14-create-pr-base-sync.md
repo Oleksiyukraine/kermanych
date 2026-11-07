@@ -157,8 +157,14 @@ the trailer is `KERMANYCH_COAUTHOR`):
 
 > Before you push, bring the base branch `<base>` in. This step is Kermanych's own and applies
 > whatever the instruction above says:
-> 1. `git fetch origin <base>`, applying `GIT_TOKEN` to it exactly as you apply it to the push.
->    If `origin` has no `<base>`, skip this step and say so.
+> 1. Fetch it with the project's Git token, read from `.env` into `TOKEN` as for the push:
+>    `GH_TOKEN="$TOKEN" git -c credential.helper= -c 'credential.helper=!gh auth git-credential' fetch origin <base>`.
+>    git does not read `GH_TOKEN` by itself: those two `-c` flags make `gh` git's credential
+>    helper for that one command — do not run `gh auth setup-git`, it rewrites the global git
+>    config. If `git remote get-url origin` is not an `https://` URL (`git@…`, `ssh://…` or an SSH
+>    host alias), git authenticates with the SSH key: run `git fetch`/`git push` without the
+>    token, but still put `GH_TOKEN="$TOKEN"` on every `gh`. With no `GIT_TOKEN`, run a bare
+>    `git fetch origin <base>`. If `origin` has no `<base>`, skip this step and say so.
 > 2. `git merge --no-commit origin/<base>` — merge, never rebase, never force-push. A
 >    fast-forward or "Already up to date" needs nothing more; otherwise finish the merge with
 >    `git commit --no-edit --trailer "Co-Authored-By: …"`.
@@ -170,6 +176,9 @@ the trailer is `KERMANYCH_COAUTHOR`):
 >    touched. Fix a failure caused by the two sides meeting in a separate commit. Report a
 >    failure that is already on `origin/<base>` — in the PR's `## Testing` when you write one —
 >    without fixing it.
+
+The same `GH_TOKEN="$TOKEN" git -c …` form and SSH rule are in the «Створити ПР» and «Закоміти»
+authentication steps (`GIT_WITH_TOKEN`/`GIT_TOKEN_HOWTO` in `agents.ts`), so the three never drift.
 
 ## Changes
 

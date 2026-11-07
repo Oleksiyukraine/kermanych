@@ -5,8 +5,8 @@
 - **Builds on:** `docs/specs/2026-11-04-skill-self-improvement.md`,
   `docs/specs/2026-11-06-skill-improvement-reflection.md`. This document amends decision 3 of the
   latter (what «Активно» asks for, and the exclusions shared by every level).
-- **Scope:** `packages/core` (the lesson rules, five default skills, the PR and base-sync
-  prompts), `apps/api` (a staleness check in `SkillImprovementService`), `apps/ui` (the level
+- **Scope:** `packages/core` (the lesson rules, five default skills), `apps/api` (a staleness
+  check in `SkillImprovementService`), `apps/ui` (the level
   hint), `kermanych/README.md`, and a one-time clean-up of the operator's own cloud rows.
 - **Status:** decisions agreed with the operator in the deep-analysis interview (2026-11-07),
   approved the same day; implemented on this branch (see «Verification — results»). The cloud
@@ -38,7 +38,7 @@ What the cloud and the transcripts show (`skill_improvements`, `~/.omp/agent/ses
   step (`agents.ts:296`). `baseSyncBlock` says only «apply `GIT_TOKEN` to [the fetch] exactly as
   you apply it to the push» (`agents.ts:324`), and the three sessions each invented a different
   way to do it. The lessons landed in the operator's personal copy, and the instruction stayed wrong
-  for everyone. Filed as finding `fa490f82` and fixed here (decision 5).
+  for everyone. Filed as finding `fa490f82`; `dev` fixed it before this branch's PR (decision 5).
 - **Growth.** In one evening `kermanych-pull-request` grew from 1521 to 2849 bytes, `deep-analysis`
   from 928 to 1757, and `minion-findings` from 1184 to 1973.
 
@@ -98,12 +98,13 @@ Kept: 8 of the 12 records, wholly or in part. Dropped as noise: 4, 5, 8, 9.
      finding).
 
 5. **The PR prompt bug is fixed** (finding `fa490f82`), in place of records 4 and 5.
-   - `PULL_REQUEST` gets the step that `COMMIT` already has: `GH_TOKEN="$TOKEN" gh auth setup-git`
-     before the push, so git over HTTPS takes the token through `gh`.
-   - `baseSyncBlock` step 1 spells the fetch out: the same `GH_TOKEN="$TOKEN"` prefix after that
-     setup, instead of «exactly as you apply it to the push».
-   - Both auth blocks gain one sentence: an SSH remote (`git@…` or a host alias) authenticates
-     `git` with its key and needs no token, while every `gh` call still does.
+   - This branch first added `gh auth setup-git` to `PULL_REQUEST`. Before the PR, `dev` brought
+     its own fix of the same finding: every `git fetch` / `git push` gets
+     `GH_TOKEN="$TOKEN" git -c credential.helper= -c 'credential.helper=!gh auth git-credential'`
+     (`GIT_WITH_TOKEN`), with an explicit rule not to run `gh auth setup-git`, because it rewrites the
+     global git config, and with the SSH-remote case spelled out (`GIT_TOKEN_HOWTO`). The merge
+     takes `dev`'s text in all three places (`PULL_REQUEST`, `COMMIT`, `baseSyncBlock`); its tests
+     are `packages/core/test/agents.spec.ts`.
 
 6. **«Посіпака» stays like every session.** It follows the operator's level with the new rules.
    - Assumption (measured, not argued): the volume came from the quota, and minion runs do find
@@ -143,7 +144,7 @@ Kept: 8 of the 12 records, wholly or in part. Dropped as noise: 4, 5, 8, 9.
 - **core, `skills.ts`:** `deep-analysis` (records 1, 3), `task-spec` (2, 10), `qa-tester` (6),
   `minion-findings` (7 counts, 11, 12). The harness-skills byte test stays green
   (`apps/ui/test/assignments.spec.ts`, under `ASSIGNED_BYTES_WARN`).
-- **core, `agents.ts`:** `PULL_REQUEST`, `COMMIT`, `baseSyncBlock` (decision 5).
+- **core, `agents.ts`:** nothing of this branch's own after the merge with `dev` (decision 5).
 - **api, `skills/`:**
   - The handed texts: the latest launch's resolved body per session and skill, kept in memory,
     recorded where the supervisor materialises the library (`ompSkills`) and updated by the
@@ -161,8 +162,7 @@ Kept: 8 of the 12 records, wholly or in part. Dropped as noise: 4, 5, 8, 9.
   - no level's rule asks for «at least one»;
   - every level's rule carries the event requirement and the Kermanych-instruction exclusion.
   The existing test that pinned «`active` alone asks for at least one lesson» is replaced.
-- **core, the prompts:** `PULL_REQUEST` and `COMMIT` both carry `gh auth setup-git`, and
-  `baseSyncBlock` names the fetch command.
+- **core, the prompts:** covered by `dev`'s `agents.spec.ts` (decision 5).
 - **api unit tests (`skill-improvement.spec.ts`):**
   - the text changed by another session after launch: the first call is refused with the current
     text and the other change's summary, and the second call applies;
@@ -185,14 +185,12 @@ Kept: 8 of the 12 records, wholly or in part. Dropped as noise: 4, 5, 8, 9.
 - **Smoke**, the built `@kermanych/core`:
   - `skillLessonRule("active")` holds neither «at least one» nor «Most sessions», and carries the
     event requirement and the Kermanych-instruction exclusion;
-  - `baseSyncBlock("dev")` step 1 reads `GH_TOKEN="$TOKEN" git fetch origin dev` with the
-    `gh auth setup-git` step;
+  - `baseSyncBlock` and the PR / commit prompts: `dev`'s text after the merge (decision 5);
   - default sizes in bytes: `deep-analysis` 1513 (was 928), `task-spec` 1338 (790), `qa-tester`
     1197 (993), `minion-findings` 1828 (1184), `kermanych-pull-request` 1521 (unchanged).
 - **api unit tests:** the refusal after another session's change, with its summary and without an
   older one, then the second call applying; no refusal after the session's own change, or without
-  a recorded launch (`skill-improvement.spec.ts`). Both turns carry `gh auth setup-git` and the
-  fetch command (`supervisor.pr.spec.ts`).
+  a recorded launch (`skill-improvement.spec.ts`).
 - **Not exercised:**
   - a live agent at `active` ending «Створити ПР» without a lesson. The preview is not signed in
     to the cloud, so the tool always refuses there;

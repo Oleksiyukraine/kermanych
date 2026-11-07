@@ -238,6 +238,18 @@ const TESTER = [
   "## QA checklist\n{{items}}",
 ].join("");
 
+// How GIT_TOKEN reaches `git push`/`git fetch` over HTTPS — ONE form for PULL_REQUEST, COMMIT and
+// baseSyncBlock, so agents never improvise their own. git does not read GH_TOKEN itself; the two
+// `-c` flags make `gh` its credential helper for that one command (the empty one clears any stored
+// helper first), without `gh auth setup-git` rewriting the operator's global git config. Over SSH
+// the key authenticates git and the token is not used there, but `gh` still needs it.
+const GIT_WITH_TOKEN = "GH_TOKEN=\"$TOKEN\" git -c credential.helper= -c 'credential.helper=!gh auth git-credential'";
+const GIT_TOKEN_HOWTO =
+  "git does not read `GH_TOKEN` by itself: those two `-c` flags make `gh` git's credential helper for that " +
+  "one command — do not run `gh auth setup-git`, it rewrites the global git config. If `git remote get-url " +
+  "origin` is not an `https://` URL (`git@…`, `ssh://…` or an SSH host alias), git authenticates with the " +
+  "SSH key: run `git fetch`/`git push` without the token, but still put `GH_TOKEN=\"$TOKEN\"` on every `gh`.";
+
 // The auth block is the load-bearing part: `gh pr create` and `git push` otherwise pick up
 // whatever ambient credential the machine has (a stored `gh` login, an ssh key, a credential
 // helper), which is often the wrong account. Kermanych copies the project's configured Git
@@ -255,13 +267,11 @@ const PULL_REQUEST = [
   "project's configured Git token there for exactly this. Load it into a shell variable WITHOUT ",
   "printing it, e.g. `TOKEN=\"$(grep -E '^GIT_TOKEN=' .env | head -n1 | cut -d= -f2-)\"`; never echo ",
   "the token or paste it into a command whose output is shown.\n",
-  "2. When it is non-empty, apply it INLINE on the SAME command as every `gh` and every `git push` you ",
-  "run — e.g. `GH_TOKEN=\"$TOKEN\" gh pr create …` and `GH_TOKEN=\"$TOKEN\" git push …` (run ",
-  "`GH_TOKEN=\"$TOKEN\" gh auth setup-git` first: git reads no `GH_TOKEN` itself, it gets the token over HTTPS ",
-  "through `gh`). Do NOT `export` it once and then run a bare `gh`/`git` in a later step: each command may run in ",
-  "a fresh shell, and a bare `gh` then silently falls back to the ambient account. An SSH `origin` (`git@…` or a ",
-  "host alias) authenticates `git` with its key and needs no token; every `gh` call still does. If `.env` has no ",
-  "`GIT_TOKEN`, or it is empty, fall back to the environment's existing `gh`/git credentials.\n",
+  "2. When it is non-empty, apply it INLINE on the SAME command as every `gh` and every `git push`/`git fetch` ",
+  `you run — e.g. \`GH_TOKEN="$TOKEN" gh pr create …\` and \`${GIT_WITH_TOKEN} push …\`. ${GIT_TOKEN_HOWTO} `,
+  "Do NOT `export` it once and then run a bare `gh`/`git` in a later step: each command may run in a fresh ",
+  "shell, and a bare `gh` then silently falls back to the ambient account. If `.env` has no `GIT_TOKEN`, or ",
+  "it is empty, fall back to the environment's existing `gh`/git credentials.\n",
   "3. If `gh` reports `must be a collaborator`, a `403`, or a `404` while `GIT_TOKEN` is set, `gh` is acting ",
   "as the WRONG account — the token was not applied — NOT that the token lacks the rights. Confirm the acting ",
   "login with `GH_TOKEN=\"$TOKEN\" gh api user --jq .login`, re-run the failing command with `GH_TOKEN=\"$TOKEN\"` ",
@@ -294,14 +304,12 @@ const COMMIT = [
   "project's configured Git token there for exactly this. Load it into a shell variable WITHOUT ",
   "printing it, e.g. `TOKEN=\"$(grep -E '^GIT_TOKEN=' .env | head -n1 | cut -d= -f2-)\"`; never echo ",
   "the token or paste it into a command whose output is shown.\n",
-  "2. When it is non-empty, apply it INLINE on the SAME command as every `git push` you run — e.g. ",
-  "`GH_TOKEN=\"$TOKEN\" git push …` (run `GH_TOKEN=\"$TOKEN\" gh auth setup-git` first: git reads no `GH_TOKEN` ",
-  "itself, it gets the token over HTTPS through `gh`). Do NOT `export` it once and push in a later step: each ",
-  "command may run in a fresh shell, and a bare push then silently uses the ambient account. An SSH `origin` ",
-  "(`git@…` or a host alias) authenticates `git` with its key and needs no token. If `.env` has no `GIT_TOKEN`, ",
-  "or it is empty, fall back to the environment's existing `gh`/git credentials.\n",
+  "2. When it is non-empty, apply it INLINE on the SAME command as every `git push`/`git fetch` you run — ",
+  `e.g. \`${GIT_WITH_TOKEN} push …\`. ${GIT_TOKEN_HOWTO} Do NOT \`export\` it once and push in a later `,
+  "step: each command may run in a fresh shell, and a bare push then silently uses the ambient account. ",
+  "If `.env` has no `GIT_TOKEN`, or it is empty, fall back to the environment's existing `gh`/git credentials.\n",
   "3. A `403`/`404` on push while `GIT_TOKEN` is set means the token was not applied, NOT that it lacks ",
-  "rights: re-run the push with `GH_TOKEN=\"$TOKEN\"` inline before reporting a permissions block.\n\n",
+  "rights: re-run the push in the token form above before reporting a permissions block.\n\n",
   "Steps:\n",
   "1. Commit any uncommitted work, following the commit conventions. End every commit message ",
   `you write with a blank line and the trailer \`Co-Authored-By: ${KERMANYCH_COAUTHOR}\`, so `,
@@ -324,8 +332,9 @@ export function baseSyncBlock(base: string): string {
   return [
     `Before you push, bring the base branch \`${base}\` in. This step is Kermanych's own and applies `,
     "whatever the instruction above says:\n",
-    `1. \`GH_TOKEN="$TOKEN" git fetch origin ${base}\`, with \`GIT_TOKEN\` read and \`GH_TOKEN="$TOKEN" gh auth setup-git\` run as for the push; an SSH \`origin\` needs no token. `,
-    `If \`origin\` has no \`${base}\`, skip this step and say so.\n`,
+    `1. Fetch it with the project's Git token, read from \`.env\` into \`TOKEN\` as for the push: `,
+    `\`${GIT_WITH_TOKEN} fetch origin ${base}\`. ${GIT_TOKEN_HOWTO} With no \`GIT_TOKEN\`, run a bare `,
+    `\`git fetch origin ${base}\`. If \`origin\` has no \`${base}\`, skip this step and say so.\n`,
     `2. \`git merge --no-commit origin/${base}\` — merge, never rebase, never force-push. A fast-forward `,
     `or "Already up to date" needs nothing more; otherwise finish the merge with \`git commit --no-edit `,
     `--trailer "Co-Authored-By: ${KERMANYCH_COAUTHOR}"\`.\n`,
