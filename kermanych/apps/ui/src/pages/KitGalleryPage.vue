@@ -620,11 +620,31 @@
       </div>
       <div class="kit__caption mono">{{ t('kit.gallery.cap.asyncBar') }}</div>
     </section>
+
+    <!-- ═══ 13 · АНАЛІТИКА ═══ -->
+    <section class="kit__section">
+      <div class="kit__label">{{ t('kit.gallery.sec.analytics') }}</div>
+      <AnalyticsBars
+        :buckets="analyticsBuckets"
+        granularity="day"
+        time-zone="UTC"
+        :series="analyticsSeries"
+        metric="cost"
+        :format="money"
+        @toggle="toggleAnalyticsSeries"
+      />
+      <div class="kit__caption mono">{{ t('kit.gallery.cap.analyticsBars') }}</div>
+
+      <div style="margin-top: var(--k-sp-3); max-width: 640px">
+        <AnalyticsHeatmap :rhythm="analyticsRhythm" />
+      </div>
+      <div class="kit__caption mono">{{ t('kit.gallery.cap.analyticsHeatmap') }}</div>
+    </section>
   </main>
 </template>
 
 <script setup lang="ts">
-import { ref } from 'vue';
+import { computed, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
 import type {
   SessionStatus, Session, TranscriptEntry, RpcExtensionUIResponse, ThinkingLevel, Usage, ModelOption,
@@ -674,6 +694,9 @@ import KSplitPanes from 'components/kit/KSplitPanes.vue';
 import type { ViewMode } from '../lib/doc-preview';
 import type { FileDiff } from '../lib/api';
 import type { LaunchMode } from '../lib/native-session';
+import AnalyticsBars from 'components/analytics/AnalyticsBars.vue';
+import AnalyticsHeatmap from 'components/analytics/AnalyticsHeatmap.vue';
+import { ANALYTICS_OTHERS, money, seriesColor, type AnalyticsBarSeries } from '../lib/analytics';
 
 const { t } = useI18n();
 
@@ -1014,6 +1037,37 @@ function onRestart() { lastAction.value = 'restart'; }
 // here: these sample sessions are plain objects, and a chip that swallowed the choice would
 // be showing a control that does nothing.
 function onPanelEffort(level: ThinkingLevel) { lastAction.value = `effort: ${level}`; }
+
+// The «Аналітика» samples (docs/specs/2026-11-07-developer-analytics.md, decision 10): two
+// weeks of spend on four models, and a working week that starts late and runs into the
+// evening. Deterministic, so the gallery reads the same on every open; the legend toggles live.
+const analyticsBuckets = Array.from({ length: 14 }, (_, i) => new Date(Date.UTC(2026, 9, 25 + i)).toISOString());
+const ANALYTICS_SAMPLE = [
+  { key: 'claude-opus-4', base: 6.2 },
+  { key: 'gpt-5-codex', base: 3.1 },
+  { key: 'claude-sonnet-4', base: 1.8 },
+  { key: ANALYTICS_OTHERS, base: 0.6 },
+];
+const analyticsHidden = ref<ReadonlySet<string>>(new Set());
+const analyticsSeries = computed<AnalyticsBarSeries[]>(() =>
+  ANALYTICS_SAMPLE.map((s, i) => ({
+    key: s.key,
+    label: s.key === ANALYTICS_OTHERS ? t('analytics.others') : s.key,
+    color: seriesColor(s.key, i),
+    // Weekends (the 6th and 7th day of each week) stay light, as a real fortnight does.
+    values: analyticsBuckets.map((_, d) => (d % 7 >= 5 ? 0.15 : 1) * s.base * (1 + ((d * 7 + i * 3) % 5) / 4)),
+    off: analyticsHidden.value.has(s.key),
+  })),
+);
+function toggleAnalyticsSeries(key: string): void {
+  const next = new Set(analyticsHidden.value);
+  if (next.has(key)) next.delete(key);
+  else next.add(key);
+  analyticsHidden.value = next;
+}
+const analyticsRhythm = Array.from({ length: 7 }, (_, d) =>
+  Array.from({ length: 24 }, (_, h) => (d < 5 && h >= 10 && h <= 21 ? ((h * 13 + d * 7) % 9) * 600_000 : d === 5 && h >= 12 && h <= 15 ? 900_000 : 0)),
+);
 </script>
 
 <style scoped lang="scss">

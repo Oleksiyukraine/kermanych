@@ -1069,6 +1069,14 @@ const VIEWS = [
     route: 'ai-team',
     section: 'ai-team',
   },
+  // Last, after «ШІ-команда» (docs/specs/2026-11-07-developer-analytics.md, decision 2): one
+  // record with no children, so `route` and `section` are both its own name.
+  {
+    value: 'analytics',
+    label: 'common.nav.viewAnalytics',
+    route: 'analytics',
+    section: 'analytics',
+  },
 ] as const;
 const topOptions = computed(() => VIEWS.map((v) => ({ value: v.value, label: t(v.label) })));
 // Anything outside the table — /kit, /settings — selects NO segment. It used to

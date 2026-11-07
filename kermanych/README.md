@@ -2068,6 +2068,38 @@ corrects the board — it
 cannot stop a session on a machine you do not control, and if that machine is still alive
 it will simply push its real status again.
 
+## Analytics («Аналітика»)
+
+The last tab of the top nav is the developer's own analytics of the agent work run on THIS machine
+(spec: `docs/specs/2026-11-07-developer-analytics.md`). It is personal and local: it reads the
+local SQLite only, nothing is sent to the cloud, and every signed-in user sees their own figures.
+
+- **Scope** follows the switcher at the top: a project, a workspace's projects on this machine, or,
+  with nothing picked, every project here. **Periods:** 7 / 30 / 90 days and 12 months, each ending
+  now and compared with the previous period of the same length (▲/▼). Bars are by day up to 31 days,
+  by week above.
+- **What it shows:** spend, tokens and the cache share; agent working time and parallelism (the
+  agents' summed working time ÷ the wall time with at least one of them working); how long agents
+  waited for your answer (total and median); sessions launched; PRs opened and the cost of one;
+  «Динаміка» bars by model, project or session type; a weekday × hour heat map; where the period's
+  agent sessions are now; per-model and per-project tables; the ten dearest sessions (a row opens
+  the session); Посіпака outcomes and findings.
+- **Where the figures come from.** A local ledger (`usage_hours`, `activity_spans`,
+  `analytics_meta`, `sessions.pr_opened_at`) recorded from the first start of this version: a
+  managed session's turns where the «Сесія» total is counted, a native session's harness file
+  after each turn, and the coarse status of every session (working, waiting for input, waiting for
+  a slot). The ledger outlives a deleted session, goes with a removed project, and rows older than
+  400 days are pruned at start. `GET /api/analytics?period=7d|30d|90d|12m&projectIds=…&tz=…`
+  returns the aggregated report.
+- **History import.** On the first start the api reads, in the background, every session file still
+  on disk (omp, claude, codex) into the ledger for the time before recording began; a fork's
+  inherited messages are skipped. omp files also give back the agents' working time and the moment
+  each stored PR was opened. Waiting times cannot be rebuilt: they count from the day recording
+  began, and the page says so. The import runs once; the page shows its progress.
+- **Not counted:** cost of native claude and codex sessions (their files carry none — their tokens
+  are named separately), and spend with no session behind it: ЦУК, the Менеджмент chat, release
+  notes, branch naming.
+
 ## ЦУК — the avatar's control console
 
 A small character — the logo's `›_` as a face — peeks out of the window's left edge on every tab.

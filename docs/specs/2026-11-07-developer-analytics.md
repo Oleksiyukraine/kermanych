@@ -7,8 +7,8 @@
   «Аналітика» tab, its page and charts, the ЦУК place, i18n `uk` / `en`), `kermanych/README.md`.
   No cloud migration, no new dependency.
 - **Status:** proposed by the agent without an interview — the operator asked for a creative
-  proposal («Коли зробиш аналіз одразу пропонуй рішення, не розпитуй у мене»). Waiting for the
-  operator's go-ahead.
+  proposal («Коли зробиш аналіз одразу пропонуй рішення, не розпитуй у мене»); approved by the
+  operator on 2026-11-07.
 
 ## Goal
 
@@ -193,6 +193,11 @@ outcomes (PRs), models, projects, and the rhythm of the week.
   - `pages/AnalyticsPage.vue`, `components/analytics/*` (bars, heat map, tiles), `lib/analytics.ts`
     (scope → project ids, formatting, series colours), `lib/api.ts` (`analytics()`).
   - i18n: `common.nav.viewAnalytics` and an `analytics` namespace in `uk` and `en`.
+- **Deviations settled during implementation:** `usage_hours` is keyed by
+  `(hour, session_id, model, source)` — `source` (`live` / `import`) lets the import and a native
+  rebuild replace their own rows; the reader sums across it. `AnalyticsSessionRow.lifetimeCost`
+  carries a session's whole known spend for «вартість PR». In «Динаміка» by model a session's agent
+  time goes to the model it made the most calls with.
 - **Tests:** core `analytics.spec.ts` — bucket boundaries across the Kyiv DST change, a span
   crossing midnight and the period edge, union of overlapping spans, the median of an even count,
   the previous-period delta with an empty previous period, unknown cost kept out of the dollars;
@@ -201,13 +206,25 @@ outcomes (PRs), models, projects, and the rhythm of the week.
 
 ## Verification
 
-- `pnpm --filter @kermanych/core test`, `pnpm --filter @kermanych/api test`,
-  `pnpm --filter @kermanych/ui test` (at most 4 workers), and the type checks.
-- The live preview: the tab is in the nav and lit on `/analytics`; skeleton, then figures; switching
-  project clears and reloads; an empty period shows the empty text; a top session opens in «Агенти».
-- A run of a real agent turn moves the spend, the working time and, after a question from the
-  agent, the waiting time.
-- The history import on this machine's registry copy: duration, files, bytes (decision 6).
+Run on 2026-11-07:
+
+- `@kermanych/core`: 455 tests passed (`test/analytics.spec.ts`: 10). `@kermanych/ui`: 984 passed,
+  `vue-tsc --noEmit` clean. `@kermanych/api`: `tsc --noEmit` clean, `test/analytics.spec.ts` 5
+  passed; the full suite has one failure, `schedules.spec.ts` «reads each task again before firing
+  it…», which fails 3 times out of 6 on the base branch too (a flaky test, reported as a finding).
+- **History import, measured** (decision 6) on a copy of this machine's registry: 446 files,
+  499.5 MB, **3.2 s**; the longest event-loop stall 98 ms (the largest single file). It filled 1054
+  hour rows and 2063 `working` spans, set `pr_opened_at` on all 96 sessions with a stored PR URL;
+  the imported spend is $3945.76 against $3427.12 in `sessions.usage` (the lifetime counter misses
+  turns from before it existed). Reading every ledger row for two years took 3 ms.
+- **Live preview** with synthetic ledger rows: the tab is last in the nav and lit on `/analytics`;
+  the skeleton, then the figures; 7 days → 12 months re-reads and switches to weekly bars; picking a
+  project narrows the figures and hides «Проєкти»; empty blocks show their empty text; a row of
+  «Найдорожчі сесії» opens the session in «Агенти» — with no project picked it first moves the
+  scope to the session's project (`stores/cuk-chat.ts` `openSession`, which ЦУК shares).
+- Not exercised end to end: a real agent turn moving the live figures — the preview has no `omp`.
+  The live paths are covered by the api tests (status → span transitions, native rebuild cut at
+  `ledger_started_at`).
 
 ## Documentation
 
