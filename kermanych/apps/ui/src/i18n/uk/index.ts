@@ -3487,6 +3487,7 @@ export const uk = {
       sessions: 'Сесій запущено',
       prs: 'PR відкрито',
       costPerPr: '{cost} за PR',
+      prLead: 'медіана {time} до PR',
     },
     dynamics: {
       title: 'Динаміка',

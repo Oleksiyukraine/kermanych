@@ -254,3 +254,32 @@ describe("analyticsReport — outcomes", () => {
     expect(r.tiles.costPerPr).toBe(4);
   });
 });
+
+describe("analyticsReport — time to PR", () => {
+  test("the median from start to PR over the period's PRs, negative pairs and older PRs left out", () => {
+    const r = analyticsReport(
+      input({
+        sessions: [
+          session("fast", "2026-11-03T09:00:00.000Z", { prOpened: true, prOpenedAt: "2026-11-03T10:00:00.000Z" }),
+          // Started before the period, PR inside it: its whole way counts.
+          session("long", "2026-10-28T09:00:00.000Z", { prOpened: true, prOpenedAt: "2026-11-04T09:00:00.000Z" }),
+          session("mid", "2026-11-05T09:00:00.000Z", { prOpened: true, prOpenedAt: "2026-11-05T13:00:00.000Z" }),
+          session("slow", "2026-11-05T09:00:00.000Z", { prOpened: true, prOpenedAt: "2026-11-05T15:00:00.000Z" }),
+          // An imported PR time before the session's own start is not a duration.
+          session("negative", "2026-11-06T09:00:00.000Z", { prOpened: true, prOpenedAt: "2026-11-06T08:00:00.000Z" }),
+          // PR in the previous period: compared on the tile, not in the median.
+          session("older", "2026-10-29T09:00:00.000Z", { prOpened: true, prOpenedAt: "2026-10-29T09:30:00.000Z" }),
+          session("nopr", "2026-11-05T09:00:00.000Z"),
+        ],
+      }),
+    );
+    expect(r.tiles.prs.value).toBe(5);
+    // 1 h, 4 h, 6 h, 7 days → (4 h + 6 h) / 2.
+    expect(r.tiles.prLeadMedianMs).toBe(5 * HOUR);
+  });
+
+  test("null when the period opened no PR", () => {
+    const r = analyticsReport(input({ sessions: [session("nopr", "2026-11-05T09:00:00.000Z")] }));
+    expect(r.tiles.prLeadMedianMs).toBeNull();
+  });
+});

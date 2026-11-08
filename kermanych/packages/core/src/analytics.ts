@@ -225,6 +225,11 @@ export type AnalyticsReport = {
     prs: AnalyticsMetric;
     /** Lifetime known cost of the period's PR sessions ÷ their count; null without PRs. */
     costPerPr: number | null;
+    /**
+     * Median of `prOpenedAt − createdAt` over the period's PR sessions (the same ones `prs`
+     * counts); a negative pair is left out. Null without any.
+     */
+    prLeadMedianMs: number | null;
   };
   dynamics: {
     /** ISO instant each bucket starts at (local midnight, or local Monday midnight by week). */
@@ -608,6 +613,9 @@ export function analyticsReport(input: AnalyticsInput): AnalyticsReport {
       sessions: metric(created.length, prevCreated, () => prevCreated.length),
       prs: metric(prs.length, prevPrs, () => prevPrs.length),
       costPerPr: prs.length > 0 ? sum(prs, (s) => s.lifetimeCost) / prs.length : null,
+      prLeadMedianMs: median(
+        prs.map((s) => Date.parse(s.prOpenedAt as string) - Date.parse(s.createdAt)).filter((ms) => ms >= 0),
+      ),
     },
     dynamics: {
       buckets: starts.map((t) => new Date(t).toISOString()),

@@ -2109,8 +2109,9 @@ local SQLite only, nothing is sent to the cloud, and every signed-in user sees t
   by week above.
 - **What it shows:** spend, tokens and the cache share; agent working time and parallelism (the
   agents' summed working time ÷ the wall time with at least one of them working); how long agents
-  waited for your answer (total and median); sessions launched; PRs opened and the cost of one;
-  «Динаміка» bars by model, project or session type; a weekday × hour heat map; where the period's
+  waited for your answer (total and median); sessions launched; PRs opened, the cost of one and the
+  median time from a session's start to its PR; «Динаміка» bars by model, project or session
+  type; a weekday × hour heat map; where the period's
   agent sessions are now; per-model and per-project tables; the ten dearest sessions (a row opens
   the session); Посіпака outcomes and findings.
 - **Where the figures come from.** A local ledger (`usage_hours`, `activity_spans`,

@@ -84,7 +84,7 @@
             <AnalyticsTile
               :label="t('analytics.tile.prs')"
               :value="String(shown.tiles.prs.value)"
-              :note="shown.tiles.costPerPr === null ? undefined : t('analytics.tile.costPerPr', { cost: money(shown.tiles.costPerPr) })"
+              :note="prNote"
               :metric="shown.tiles.prs"
             />
           </div>
@@ -461,6 +461,18 @@ function costText(cost: number, known: boolean): string {
   if (known) return money(cost);
   return cost > 0 ? `${money(cost)} + ${t('analytics.unpriced')}` : t('analytics.unpriced');
 }
+
+// «PR відкрито»: the cost of one PR and the median time from a session's start to its PR, each
+// only when the report holds it.
+const prNote = computed(() => {
+  const tiles = shown.value?.tiles;
+  if (!tiles) return undefined;
+  const parts = [
+    tiles.costPerPr === null ? undefined : t('analytics.tile.costPerPr', { cost: money(tiles.costPerPr) }),
+    tiles.prLeadMedianMs === null ? undefined : t('analytics.tile.prLead', { time: time(tiles.prLeadMedianMs) }),
+  ].filter((p) => p !== undefined);
+  return parts.length ? parts.join(' · ') : undefined;
+});
 
 // ── «Динаміка» ───────────────────────────────────────────────────────────────────
 const metric = ref<AnalyticsMetricKey>('cost');

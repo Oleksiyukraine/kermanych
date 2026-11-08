@@ -3473,6 +3473,7 @@ export const en: MessageSchema = {
       sessions: 'Sessions started',
       prs: 'PRs opened',
       costPerPr: '{cost} per PR',
+      prLead: 'median {time} to PR',
     },
     dynamics: {
       title: 'Trend',
