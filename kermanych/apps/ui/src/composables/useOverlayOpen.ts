@@ -12,7 +12,7 @@ import { onMounted, onUnmounted, ref, type Ref } from 'vue';
 // composer's emoji grid) has no client rects. Toasts do not count: KToast moves its stack
 // beside the shown view (stores/browser.ts `shownRect`), so an error stays readable without
 // parking the page. Neither do v-tip bubbles: parking the view for every hover would make it
-// flicker.
+// flicker, so lib/tip.ts places them around the shown view instead.
 const OVERLAY = '[role="dialog"], [aria-modal="true"], [role="menu"], [role="listbox"]';
 
 export function overlayOnScreen(root: ParentNode = document): boolean {
