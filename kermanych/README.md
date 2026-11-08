@@ -2135,6 +2135,11 @@ its left and a notepad on its right. (Specs: `docs/specs/2026-11-04-cuk-control-
   tools — it answers from the app's state, and the agent it
   launches reads the code — and runs on `claude-sonnet-5` for speed. It sees attached images, not
   documents.
+- **«Шаблони» in an empty console.** Under the greeting, ready-made requests in five groups —
+  Стан, Агенти й дошка, Навігація, Розклад, Записничок. A complete question («Хто чекає на мою
+  відповідь?», «Що в мене в розкладі?») is sent on click; a template whose chip ends in «…» and is
+  drawn dashed («Запусти агента в цьому проєкті: …», «Нагадай через 20 хвилин …») only goes into the
+  field, for you to finish and send.
 - **What waits for you.** Navigation, selection and the notepad happen at once (opening a screen
   also steps the window aside). Everything that spends the subscription or touches an agent — a
   launch, a card, a message, stop, resume, restart, archive, unarchive, preview — appears as a card
