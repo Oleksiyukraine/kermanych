@@ -938,7 +938,7 @@
                 ref="taskInput"
                 v-model="draftTask"
                 class="agents-launcher__task"
-                rows="9"
+                rows="6"
                 :placeholder="t('agents.launcher.taskPlaceholder')"
                 @keydown="onTaskKeydown"
                 @paste="onLaunchPasteEvent"
@@ -1126,7 +1126,7 @@
 
           <div>
             <div class="agents-launcher__label">{{ t('agents.launcher.typeLabel') }}</div>
-            <div class="agents-launcher__seg agents-launcher__seg--grid2">
+            <div class="agents-launcher__seg agents-launcher__seg--fit">
               <button
                 v-for="opt in prefixOptions"
                 :key="opt"
@@ -4785,20 +4785,22 @@ function openDocTask(path: string): void {
   display: grid;
   grid-template-columns: 1fr 320px;
 }
+// Tight gutters: both columns stack a growing set of blocks, and every pixel here decides
+// whether the form fits a laptop window without scrolling its body.
 .agents-launcher__main {
   min-width: 0;
   display: flex;
   flex-direction: column;
-  gap: 18px;
-  padding: 22px 24px;
+  gap: 14px;
+  padding: 18px 24px;
   border-right: 1px solid var(--k-line);
 }
 .agents-launcher__side {
   display: flex;
   min-width: 0;
   flex-direction: column;
-  gap: 20px;
-  padding: 22px 24px;
+  gap: 16px;
+  padding: 18px 24px;
   background: var(--k-surface);
 }
 
@@ -5004,14 +5006,12 @@ function openDocTask(path: string): void {
   border-radius: var(--k-r);
   overflow: hidden;
 }
-.agents-launcher__seg--grid2 {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-}
-/* Labels of uneven length (`Керманич` beside `omp`): each button starts at its own width, so
-   the long one is not cut to a quarter of the row. */
+/* Labels of uneven length (`Керманич` beside `omp`, `refactoring` beside `fix`): each button
+   starts at its own width, so the long one is not cut to a quarter of the row, and the set
+   stays one row — a row that runs out of room (a design card adds `design` to «Тип») wraps
+   rather than truncating a label. */
 .agents-launcher__seg--fit .agents-launcher__seg-btn {
-  flex: 1 1 auto;
+  flex: 1 0 auto;
 }
 .agents-launcher__seg-btn {
   flex: 1;
