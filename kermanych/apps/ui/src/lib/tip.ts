@@ -26,6 +26,10 @@ const GAP_PX = 8;
 
 let bubble: HTMLElement | null = null;
 let host: HTMLElement | null = null;
+// Where the session browser's native view is painted (stores/browser.ts `shownRect`), null
+// while it is parked. Electron draws that view above the whole DOM, so a bubble under it is
+// invisible however high its z-index: place() keeps the bubble out of this rect.
+let keepOut: TipRect | null = null;
 // `window.setTimeout` (not the bare global) so the handle is a DOM `number`
 // rather than picking up Node's `Timeout` from ambient types.
 let timer: number | undefined;
@@ -54,26 +58,77 @@ function onKeydown(e: KeyboardEvent): void {
   if (e.key === 'Escape') hide();
 }
 
+export interface TipRect {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+export function setTipKeepOut(rect: TipRect | null): void {
+  keepOut = rect;
+}
+
+type Side = 'top' | 'bottom';
+interface Spot {
+  left: number;
+  top: number;
+  side: Side;
+}
+
+// Narrowest a bubble squeezed beside the view may get before squeezing is worse than the
+// overlap: below this the text breaks every word or two.
+const MIN_SQUEEZE_PX = 120;
+
 // Right-aligned to the control: every tooltipped cluster in the app sits against
 // a right edge (panel header, table actions column), so growing leftwards keeps
-// the bubble on screen. Flips above the control when the bottom would overflow.
+// the bubble on screen; `lo`/`hi` bound it horizontally. Below the control unless
+// `side` says otherwise or the bottom would overflow.
+function spot(r: DOMRect, w: number, h: number, lo: number, hi: number, side?: Side): Spot {
+  const left = Math.min(Math.max(r.right - w, lo), Math.max(hi - w, lo));
+  const s = side ?? (r.bottom + GAP_PX + h > window.innerHeight - GAP_PX ? 'top' : 'bottom');
+  return { left, top: s === 'top' ? r.top - h - GAP_PX : r.bottom + GAP_PX, side: s };
+}
+
+function hits(p: Spot, w: number, h: number, k: TipRect): boolean {
+  return p.left < k.x + k.width && p.left + w > k.x && p.top < k.y + k.height && p.top + h > k.y;
+}
+
+// Where the bubble would land under the session browser's view, it moves out of it: first to
+// the control's other side (a toolbar button above the view gets its bubble above), then — for
+// a control beside the view — onto the control's side of it, narrowed so its text wraps there.
+function placeAround(r: DOMRect, tip: HTMLElement, k: TipRect, first: Spot): Spot {
+  const w = tip.offsetWidth;
+  const h = tip.offsetHeight;
+  const vw = window.innerWidth;
+  const flipped = spot(r, w, h, GAP_PX, vw - GAP_PX, first.side === 'top' ? 'bottom' : 'top');
+  const fits = flipped.top >= GAP_PX && flipped.top + h <= window.innerHeight - GAP_PX;
+  if (fits && !hits(flipped, w, h, k)) return flipped;
+
+  let lo = GAP_PX;
+  let hi = vw - GAP_PX;
+  if (r.right <= k.x) hi = k.x - GAP_PX;
+  else if (r.left >= k.x + k.width) lo = k.x + k.width + GAP_PX;
+  else return first;
+  if (hi - lo < MIN_SQUEEZE_PX) return first;
+  if (w > hi - lo) tip.style.maxWidth = `${hi - lo}px`;
+  return spot(r, tip.offsetWidth, tip.offsetHeight, lo, hi);
+}
+
 function place(el: HTMLElement, tip: HTMLElement): void {
+  // A squeeze from the previous show must not narrow this one.
+  tip.style.maxWidth = '';
   const r = el.getBoundingClientRect();
   const w = tip.offsetWidth;
   const h = tip.offsetHeight;
-
-  const maxLeft = window.innerWidth - w - GAP_PX;
-  const left = Math.min(Math.max(r.right - w, GAP_PX), Math.max(maxLeft, GAP_PX));
-
-  const below = r.bottom + GAP_PX;
-  const flip = below + h > window.innerHeight - GAP_PX;
-  const top = flip ? r.top - h - GAP_PX : below;
+  let p = spot(r, w, h, GAP_PX, window.innerWidth - GAP_PX);
+  if (keepOut && hits(p, w, h, keepOut)) p = placeAround(r, tip, keepOut, p);
 
   // The entrance slide has to travel TOWARDS the control, so the stylesheet
   // needs to know which way the bubble ended up facing (src/css/app.scss).
-  tip.dataset.side = flip ? 'top' : 'bottom';
-  tip.style.left = `${Math.round(left)}px`;
-  tip.style.top = `${Math.round(top)}px`;
+  tip.dataset.side = p.side;
+  tip.style.left = `${Math.round(p.left)}px`;
+  tip.style.top = `${Math.round(p.top)}px`;
 }
 
 // `v-tip.overflow`: the bubble repeats a label the layout cut short (a file name ending in
