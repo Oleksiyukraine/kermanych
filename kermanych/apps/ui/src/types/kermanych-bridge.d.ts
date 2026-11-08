@@ -70,6 +70,9 @@ declare global {
   // A key press in the page that belongs to the app (the address bar, find, the assistant's
   // ⌘K — docs/specs/2026-11-03-assistant-overlay.md): main forwards it.
   type KermanychBrowserShortcut = 'focus-address' | 'find' | 'assistant';
+  // «Увійти як»: 'ok' — the account was typed and the form submitted; 'no-form' — the page (and
+  // the login path, when one was given) shows no password field; 'no-page' — nothing is open.
+  type KermanychSignInResult = 'ok' | 'no-form' | 'no-page';
   interface KermanychBrowserBridge {
     // Attach the session's view at `bounds` (creating it on first use) and park any other.
     // `ephemeral` (here and below, on calls that may create the view): a «Тестувальник» run's
@@ -92,6 +95,9 @@ declare global {
     // Resolves with the clicked element, or null when cancelled (Esc / cancelPick / navigation).
     pick: (sessionId: string) => Promise<KermanychBrowserPick | null>;
     cancelPick: (sessionId: string) => void;
+    // Type a «Тестувальник» account into the page's sign-in form and submit it; a page with no
+    // form opens `loginUrl` first when it is given (docs/specs/2026-11-08-synergy-login-and-session-env.md).
+    signIn: (sessionId: string, account: { login: string; password: string }, loginUrl: string | null) => Promise<KermanychSignInResult>;
     answerDialog: (sessionId: string, accept: boolean) => Promise<void>;
     // null cancels the sign-in.
     answerAuth: (sessionId: string, id: string, credentials: { username: string; password: string } | null) => void;

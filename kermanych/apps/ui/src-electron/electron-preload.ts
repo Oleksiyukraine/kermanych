@@ -70,6 +70,7 @@ contextBridge.exposeInMainWorld('kermanych', {
     openDevTools: (sessionId) => ipcRenderer.send('kermanych:browser:devtools', sessionId),
     pick: (sessionId) => ipcRenderer.invoke('kermanych:browser:pick', sessionId),
     cancelPick: (sessionId) => ipcRenderer.send('kermanych:browser:cancel-pick', sessionId),
+    signIn: (sessionId, account, loginUrl) => ipcRenderer.invoke('kermanych:browser:sign-in', sessionId, { login: account.login, password: account.password }, loginUrl),
     answerDialog: (sessionId, accept) => ipcRenderer.invoke('kermanych:browser:answer-dialog', sessionId, accept),
     answerAuth: (sessionId, id, credentials) => ipcRenderer.send('kermanych:browser:answer-auth', sessionId, id, credentials),
     setAgentPaused: (sessionId, paused) => ipcRenderer.send('kermanych:browser:set-agent-paused', sessionId, paused),

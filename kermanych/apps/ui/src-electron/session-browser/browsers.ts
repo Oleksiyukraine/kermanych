@@ -71,6 +71,10 @@ const VIEWPORT_LIMITS = { width: [320, 3840], height: [240, 2400] } as const;
 // A popup window whose window.open features name no size (OAuth sign-ins mostly do).
 const POPUP_SIZE = { width: 520, height: 680 };
 const LOCAL_HOST = /^(localhost|.+\.localhost|127\.\d+\.\d+\.\d+|\[::1\])$/i;
+// «Увійти як» on a page with no sign-in form opens the login path and waits this long for the
+// form to render (an SPA draws it after the load), trying every LOGIN_POLL_MS.
+const LOGIN_FORM_MS = 10_000;
+const LOGIN_POLL_MS = 200;
 
 const PAUSED_MESSAGE =
   "The operator has taken over this session's browser (agent control is paused). Do not retry; tell the operator what you need and wait for them to hand control back.";
@@ -400,6 +404,26 @@ export class SessionBrowsers implements BrowserHost {
     await v.wc.executeJavaScript('window.__kermanychPick && window.__kermanychPick.cancel()', true).catch(() => {});
   }
 
+  // «Увійти як» (docs/specs/2026-11-08-synergy-login-and-session-env.md, decision 2): the
+  // operator's own action, so none of agent()'s bookkeeping (pause, touch, agentBusy). The keyboard
+  // goes to the page, as on ◎: the operator asked for it. A page with no sign-in form goes to
+  // `loginUrl` (the «Тестувальник» login path on the page's origin) first, when there is one.
+  private async signIn(sessionId: string, account: { login: string; password: string }, loginUrl: string | null): Promise<KermanychSignInResult> {
+    const v = this.views.get(sessionId);
+    if (!v || v.wc.isDestroyed() || !v.wc.getURL()) return 'no-page';
+    v.suppressFocusUntil = 0;
+    v.wc.focus();
+    if (await actions.signIn(v, account.login, account.password)) return 'ok';
+    if (!loginUrl) return 'no-form';
+    await this.load(v, normalizeUrl(loginUrl), false);
+    for (const deadline = Date.now() + LOGIN_FORM_MS; Date.now() < deadline; await sleep(LOGIN_POLL_MS)) {
+      if (v.wc.isDestroyed()) return 'no-page';
+      // The page may still be swapping documents under the script; the next try sees the new one.
+      if (await actions.signIn(v, account.login, account.password).catch(() => false)) return 'ok';
+    }
+    return 'no-form';
+  }
+
   private async crop(v: SessionView, clip: NonNullable<PickResult['clip']>): Promise<KermanychBrowserPick['screenshot']> {
     try {
       const { data } = await cdp<{ data: string }>(v, 'Page.captureScreenshot', { format: 'png', clip: { ...clip, scale: 1 } });
@@ -501,6 +525,9 @@ export class SessionBrowsers implements BrowserHost {
     ipcMain.on('kermanych:browser:stop', (_e, sessionId: string) => withView(sessionId, (v) => v.wc.stop()));
     ipcMain.on('kermanych:browser:devtools', (_e, sessionId: string) => withView(sessionId, (v) => v.wc.openDevTools({ mode: 'detach' })));
     ipcMain.handle('kermanych:browser:pick', (_e, sessionId: string) => this.pick(sessionId));
+    ipcMain.handle('kermanych:browser:sign-in', (_e, sessionId: string, account: { login: string; password: string }, loginUrl: string | null) =>
+      this.signIn(sessionId, account, loginUrl),
+    );
     ipcMain.on('kermanych:browser:cancel-pick', (_e, sessionId: string) => void this.cancelPick(sessionId));
     // The operator's ✕ on the Браузер tab: the page goes, its last URL stays for «Відкрити знову».
     ipcMain.on('kermanych:browser:close', (_e, sessionId: string) => this.teardown(sessionId));

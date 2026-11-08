@@ -202,6 +202,36 @@ export function focusFieldScript(ref: string, clear: boolean): string {
 })(${PAGE_LIB}, ${JSON.stringify(ref)}, ${clear})`;
 }
 
+// «Увійти як» (docs/specs/2026-11-08-synergy-login-and-session-env.md, decision 2): the page's
+// sign-in form, found fresh on every call — its first shown, enabled password field, and the
+// login field that goes with it: the last shown text field before it in its form (outside a
+// form, in its document or shadow root), else one marked autocomplete="username". Returns which
+// of the two exist; with `focus`, also focuses that one and selects its content, so CDP
+// Input.insertText replaces it. "Shown" is laid out and not visibility:hidden, wherever it is
+// scrolled: a long page keeps its form below the fold.
+export function loginFieldScript(focus: 'user' | 'password' | null): string {
+  return String.raw`((k, focus) => {
+  const NOT_TEXT = ['button', 'submit', 'reset', 'image', 'checkbox', 'radio', 'file', 'range', 'color', 'hidden', 'password'];
+  const usable = (e) => {
+    const r = e.getBoundingClientRect();
+    return !e.disabled && !e.readOnly && r.width > 0 && r.height > 0 && e.ownerDocument.defaultView.getComputedStyle(e).visibility !== 'hidden';
+  };
+  const password = k.docs().flatMap((d) => k.deepAll(d, 'input[type="password"]')).find(usable);
+  if (!password) return { user: false, password: false };
+  const scope = password.form || password.getRootNode();
+  const texts = k.deepAll(scope, 'input').filter((e) => !NOT_TEXT.includes(e.type) && usable(e));
+  // compareDocumentPosition: 4 is DOCUMENT_POSITION_FOLLOWING (the password comes after it).
+  const user = texts.filter((e) => e.compareDocumentPosition(password) & 4).pop() || texts.find((e) => e.autocomplete === 'username') || null;
+  const el = focus === 'password' ? password : focus === 'user' ? user : null;
+  if (el) {
+    el.scrollIntoView({ block: 'center', inline: 'center', behavior: 'instant' });
+    el.focus();
+    el.select();
+  }
+  return { user: !!user, password: true };
+})(${PAGE_LIB}, ${JSON.stringify(focus)})`;
+}
+
 // Chooses options of a native <select> the way a user's pick ends up: each value matches an
 // option's value, else its visible label (whitespace-collapsed, case-insensitive); the options
 // become selected and `input` + `change` bubble from the select, which is what Vue's v-model,

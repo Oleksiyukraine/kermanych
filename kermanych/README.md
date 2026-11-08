@@ -1090,7 +1090,7 @@ instead. Switching a project away from Web stops its web previews and closes its
 - **Toolbar.** ← → ↻ (✕ while loading), the address (a URL, `localhost:5173`, or words to
   search), the viewport (**За розміром панелі**, or a fixed width — 390 / 768 / 1280 / 1440;
   wider than the pane, the page is laid out at that width and drawn scaled, with the
-  percentage shown), **◎ Вказати**, **Агент** (pause the agent's control), ⤤ open in the
+  percentage shown), **◎ Вказати**, **Увійти як**, **Агент** (pause the agent's control), ⤤ open in the
   system browser, `</>` devtools, the magnifier for find in page. A narrow pane wraps it into
   two rows and drops the labels.
   Keys: <kbd>⌘L</kbd> address, <kbd>⌘F</kbd> find in page, <kbd>⌘R</kbd> reload (the page,
@@ -1106,6 +1106,15 @@ instead. Switching a project away from Web stops its web previews and closes its
   HTML and computed styles. A managed session gets the crops as images; a native session gets
   their file paths (under `$TMPDIR/kermanych-browser/`) and, like any helper, accepts the
   message only while idle — a refusal keeps the tray. The tray survives an app reload.
+- **Sign in as a test account.** The session browser keeps no saved passwords, so **Увійти як**
+  offers the project's «Тестувальник» accounts (ШІ-команда → Агенти → «Тестувальник», the same
+  list the QA runs use) as a bar of buttons above the page (spec:
+  `docs/specs/2026-11-08-synergy-login-and-session-env.md`). The bar opens by itself when the page
+  reaches the «Тестувальник» login path, and from the toolbar anywhere. A click types the account's
+  login and password into the page's sign-in form (its first visible password field and the text
+  field before it), with real key input so the app's masks and handlers run, and presses Enter. A
+  page with no such form first goes to the login path on the same origin; with no login path set
+  it says so. A tester run's own browser does not open the bar by itself: its agent signs in.
 - **Who drives.** Click **Агент** to pause the agent: its browser tools, `preview_start` and
   `preview_stop` refuse until you click **Повернути**. The agent's page loads never take the
   keyboard from whatever you are typing in.
@@ -1191,6 +1200,8 @@ their ports, ▶ / ◼, ↻ (restart), **Змінні**, **Логи** and, while
     `PREVIEW_DIR`, a temp directory of the session (`$TMPDIR/kermanych-preview/<sessionId>/`,
     deleted when the session is finished or deleted); each service also gets its own `PORT`.
     `${VAR}` in `env` expands only these names, and they cannot be overridden.
+  - Every step also gets the session directory's `.env` as environment variables, below the
+    names above and a service's `env` (see **Змінні**).
   - A missing or invalid file shows in the row with the exact field. **Доручити агенту** sends
     the session's agent a Kermanych prompt with the default skill `preview-config` (override it
     like any skill): it writes the file, tries it and commits it with its work.
@@ -1203,10 +1214,14 @@ their ports, ▶ / ◼, ↻ (restart), **Змінні**, **Логи** and, while
   This is how a session picks its back end: the front end's own variable (`NEXT_PUBLIC_API_URL`,
   `VITE_API_BASE`, …) set for this worktree only. A new session starts from the project's `.env`,
   which Kermanych copies into its worktree; an in-place session edits the project's `.env` itself.
-  Dev servers read `.env` when they start, so a save under a running preview offers ↻ to apply
-  it; nothing restarts by itself. A key also set in `.env.local` keeps that value (Next.js and Vite
-  prefer `.env.local`). A «Тестувальник» run uses the preview of the session it tests, values
-  included.
+  Kermanych reads `.env` on every start and passes it to every step as environment variables, so a
+  dev server that reads only `process.env` sees it too (Quasar app-vite 1's `build.env`, a plain
+  Node server). A save under a running preview offers ↻ to apply it; nothing restarts by itself.
+  A key is not passed when `.env.local`, `.env.development(.local)` or `.env.dev(.local)` also sets
+  it, when its value refers to another variable (`$`), or when it is `NODE_ENV`: Next.js, Vite and
+  Quasar read those files and expand those values themselves, and a passed variable would override
+  them. So a key also set in `.env.local` keeps that value. A «Тестувальник» run uses the preview of
+  the session it tests, values included.
 - **Stopping.** ◼, the agent's `preview_stop`, or by itself on «Завершити», closing a merged
   session, deleting or archiving the session, a switch of the project to a platform the preview
   does not fit (a web preview on Back-end or Mobile, a device preview off Mobile), and
@@ -1786,6 +1801,8 @@ project, on the session's device — item by item, and records a verdict for eac
   sees account names, logins and notes, never a password: the `browser_type_credential` tool types it
   into the page on the api side, and neither the transcript nor the tool result carries it. The
   instruction and skills are the «Тестувальник» agent's on the workspace scope, as for every agent.
+  The same accounts and sign-in page serve your own **Увійти як** in every session browser of the
+  project (see [Session browser](#session-browser)).
 - **The checklist is kept.** «Створити ПР» asks for a QA checklist only when the card has none, so a
   second PR run no longer wipes ticks and verdicts. Ticks and verdicts are written per item in the
   database (`qa_checklist_patch_items`, `qa_checklist_set_if_empty`, migration

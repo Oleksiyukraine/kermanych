@@ -49,6 +49,7 @@ import {
 import { RegistryService } from "../registry/registry.service";
 import { browserHost } from "../browser/browser-host";
 import { DEVICE_API, type DeviceApi } from "../device/device.contract";
+import { previewDotenv } from "./preview-dotenv";
 
 // The waits of decision 3 and the stop of decision 7. Mutable so specs can shorten them; the
 // api never changes them.
@@ -409,6 +410,10 @@ export class PreviewService implements OnModuleInit, OnModuleDestroy {
       if (run.halted) return;
       const vars: Record<string, string> = { [PREVIEW_DIR_VAR]: previewDir };
       for (const p of services) vars[previewPortVar(p.name)] = String(p.port);
+      // Read on every start, so ↻ applies a «Змінні» save. Not part of `vars`: a service's `env`
+      // may refer to Kermanych's variables only (parsePreviewConfig refuses other names).
+      const dotenv = await previewDotenv(dir);
+      if (run.halted) return;
 
       if (config.device) {
         starting(PREVIEW_DEVICE_STEP, services);
@@ -450,7 +455,7 @@ export class PreviewService implements OnModuleInit, OnModuleDestroy {
 
       if (config.setup) {
         starting(PREVIEW_SETUP_STEP, services);
-        const proc = this.spawnStep(run, step, config.setup, dir, vars, false);
+        const proc = this.spawnStep(run, step, config.setup, dir, { ...dotenv, ...vars }, false);
         await this.waitSetup(run, proc);
       }
       let url = "";
@@ -458,7 +463,7 @@ export class PreviewService implements OnModuleInit, OnModuleDestroy {
         if (run.halted) return;
         starting(svc.name, services);
         const own: Record<string, string> = { ...vars, PORT: String(ports[i]) };
-        const env: Record<string, string> = { ...own };
+        const env: Record<string, string> = { ...dotenv, ...own };
         for (const [k, v] of Object.entries(svc.env)) env[k] = expandPreviewEnv(v, own);
         const proc = this.spawnStep(run, step, svc.command, dir, env, svc.open, id);
         // A `"device": true` service installs and launches the app itself (mobile decision 5).
@@ -474,7 +479,7 @@ export class PreviewService implements OnModuleInit, OnModuleDestroy {
         const target = config.device[run.platform!]!;
         if (target.install) {
           starting(PREVIEW_INSTALL_STEP, services);
-          const proc = this.spawnStep(run, step, target.install, dir, vars, false);
+          const proc = this.spawnStep(run, step, target.install, dir, { ...dotenv, ...vars }, false);
           await this.waitSetup(run, proc);
         }
         starting(PREVIEW_DEVICE_STEP, services);
