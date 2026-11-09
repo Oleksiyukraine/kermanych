@@ -61,7 +61,7 @@
         <!-- Optional steps before finishing, in the order they are usually taken. -->
         <section class="finish__steps">
           <span class="finish__label">{{ t('agents.finish.before') }}</span>
-          <!-- «Виконати тестування»: the tester walks the card's QA checklist in the browser
+          <!-- «Тестування» → «Виконати»: the tester walks the card's QA checklist in the browser
                (docs/specs/2026-11-04-qa-tester-agent.md). Its session opens. -->
           <div v-if="liveSession" class="finish__step">
             <KIcon class="finish__step-icon" name="agentTester" />
@@ -69,7 +69,7 @@
               <span class="finish__step-title">{{ t('agents.finish.testTitle') }}</span>
               <span class="finish__hint">{{ t('agents.finish.testHint') }}</span>
             </div>
-            <QaRunButton class="finish__step-control" :session="liveSession" @select="onTester" />
+            <QaRunButton class="finish__step-control" :session="liveSession" :label="t('agents.finish.testRun')" @select="onTester" />
           </div>
           <div class="finish__step">
             <KIcon class="finish__step-icon" :name="hasPr ? 'agentCommit' : 'agentPullRequest'" />
@@ -343,9 +343,10 @@ function run(action: { run: (s: Session) => Promise<unknown> }): void {
 }
 
 // The testing control wraps its scope chip and refusal reason inside this width, so the
-// description beside it keeps room.
+// description beside it keeps room. It does not shrink below that: squeezed by the description,
+// the control wrapped the scope chip onto a row of its own the moment the chip appeared.
 .finish__step-control {
-  flex: 0 1 auto;
+  flex: none;
   max-width: 240px;
 }
 

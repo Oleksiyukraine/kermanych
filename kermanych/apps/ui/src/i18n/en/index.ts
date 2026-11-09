@@ -668,6 +668,7 @@ export const en: MessageSchema = {
       before: 'Before you finish',
       testTitle: 'Testing',
       testHint: 'The tester walks the card’s QA checklist and gives each item a verdict.',
+      testRun: 'Run',
       prTitle: 'Pull request',
       prHint: 'The agent commits the work, pushes the branch and opens a PR.',
       commitHint: 'The agent commits what is new and pushes it to the open PR.',
