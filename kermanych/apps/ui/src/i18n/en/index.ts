@@ -3626,7 +3626,7 @@ export const en: MessageSchema = {
       'Managed claude-code was removed from Kermanych, so this session cannot continue in Kermanych mode. Open its conversation in a terminal: claude --resume <the id on its Session tab>.',
     // /minion (2026-11-09-minion-takeover spec).
     minion_takeover_unsupported:
-      'Only an open agent session with a branch can be handed to Minion — not a chat, discussion, review, design, Synergy or scheduled run.',
+      'Only an open agent session with a branch can be handed to Minion — not a chat, discussion, review, Synergy or scheduled run.',
     minion_takeover_running: 'Minion is already running this session on its own.',
     // An in-place agent works in the project checkout itself — the refusals name what blocks
     // it and the two ways out: clean the checkout, or keep the worktree isolation on.

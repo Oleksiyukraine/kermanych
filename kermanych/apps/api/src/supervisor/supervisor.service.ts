@@ -2649,7 +2649,7 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     if (!minionTakeoverAllowed(row))
       throw new CodedError(
         "minion_takeover_unsupported",
-        "Посіпаці можна передати лише відкриту сесію агента з гілкою — не чат, обговорення, ревізію, дизайн, «Синергію» чи запуск за розкладом.",
+        "Посіпаці можна передати лише відкриту сесію агента з гілкою — не чат, обговорення, ревізію, «Синергію» чи запуск за розкладом.",
       );
     const current = this.minionRuns.get(id);
     if (row.minion && current && !current.attended && current.phase !== "idle")
