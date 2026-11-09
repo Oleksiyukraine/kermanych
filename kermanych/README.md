@@ -1756,8 +1756,8 @@ request with nobody watching.
 project, on the session's device — item by item, and records a verdict for each (specs:
 `docs/specs/2026-11-04-qa-tester-agent.md`, `docs/specs/2026-11-04-tester-mobile-device.md`).
 
-- **Where it starts.** «Виконати тестування» on the «Завершити» sheet and in the header of the
-  session's **QA** tab. It is a separate child session `тестування: <name>` next to the doer, like
+- **Where it starts.** «Виконати» in the «Тестування» step of the «Завершити» sheet and «Виконати
+  тестування» in the header of the session's **QA** tab. It is a separate child session `тестування: <name>` next to the doer, like
   a review: it reads the code but never edits or commits it. It needs a project with a browser (and
   then the desktop app) or a Mobile project (either build; a back-end project cannot be tested), a
   session started from a card, a valid `.kermanych/preview.json` in the doer's directory (the preview
