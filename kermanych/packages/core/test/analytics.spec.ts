@@ -254,3 +254,118 @@ describe("analyticsReport — outcomes", () => {
     expect(r.tiles.costPerPr).toBe(4);
   });
 });
+
+describe("analyticsReport — time to PR", () => {
+  const pr = (id: string, createdAt: string, prOpenedAt: string): AnalyticsSessionRow =>
+    session(id, createdAt, { prOpened: true, prOpenedAt });
+  const sessions = [
+    pr("fast", "2026-11-03T09:00:00.000Z", "2026-11-03T10:00:00.000Z"),
+    // Started before the period, PR inside it: its whole way counts.
+    pr("long", "2026-10-28T09:00:00.000Z", "2026-11-04T09:00:00.000Z"),
+    pr("mid", "2026-11-05T09:00:00.000Z", "2026-11-05T13:00:00.000Z"),
+    pr("slow", "2026-11-05T09:00:00.000Z", "2026-11-05T15:00:00.000Z"),
+    // An imported PR time before the session's own start is not a duration.
+    pr("negative", "2026-11-06T09:00:00.000Z", "2026-11-06T08:00:00.000Z"),
+    // PR before the 7-day period: compared on the tile, not in its median.
+    pr("older", "2026-10-29T09:00:00.000Z", "2026-10-29T09:30:00.000Z"),
+    session("nopr", "2026-11-05T09:00:00.000Z"),
+  ];
+
+  test("the median from start to PR over the period's PRs, negative pairs and older PRs left out", () => {
+    const r = analyticsReport(input({ sessions }));
+    expect(r.tiles.prs.value).toBe(5);
+    // 1 h, 4 h, 6 h, 7 days → (4 h + 6 h) / 2.
+    expect(r.tiles.prLeadMedianMs).toBe(5 * HOUR);
+  });
+
+  test("over 7 days the trend is by day, each day the median of the PRs opened on it", () => {
+    const { prLead } = analyticsReport(input({ sessions })).dynamics;
+    expect(prLead.granularity).toBe("day");
+    expect(prLead.buckets).toHaveLength(7);
+    // 1–7 November: «fast» on the 3rd, «long» on the 4th, «mid» and «slow» on the 5th.
+    expect(prLead.medianMs).toEqual([null, null, HOUR, 7 * 24 * HOUR, 5 * HOUR, null, null]);
+    expect(prLead.counts).toEqual([0, 0, 1, 1, 2, 0, 0]);
+  });
+
+  test("over 30 days the trend is by week, cut at local Monday midnight", () => {
+    const { prLead } = analyticsReport(input({ period: "30d", sessions })).dynamics;
+    expect(prLead.granularity).toBe("week");
+    // From Friday 9 October, then the Mondays 12, 19, 26 October (EEST) and 2 November (EET).
+    expect(prLead.buckets).toEqual([
+      "2026-10-08T21:00:00.000Z",
+      "2026-10-11T21:00:00.000Z",
+      "2026-10-18T21:00:00.000Z",
+      "2026-10-25T22:00:00.000Z",
+      "2026-11-01T22:00:00.000Z",
+    ]);
+    // «older» alone in the week of 26 October; 1 h, 4 h, 6 h, 7 days in the week of 2 November.
+    expect(prLead.medianMs).toEqual([null, null, null, 30 * MIN, 5 * HOUR]);
+    expect(prLead.counts).toEqual([0, 0, 0, 1, 4]);
+  });
+
+  test("null when the period opened no PR", () => {
+    const r = analyticsReport(input({ sessions: [session("nopr", "2026-11-05T09:00:00.000Z")] }));
+    expect(r.tiles.prLeadMedianMs).toBeNull();
+  });
+});
+
+describe("analyticsReport — Тестувальник", () => {
+  test("runs of the period, and the tasks they tested counted once each", () => {
+    const run = (id: string, createdAt: string, parentSessionId: string): AnalyticsSessionRow =>
+      session(id, createdAt, { kind: "review", sessionClass: "tester", parentSessionId });
+    const r = analyticsReport(
+      input({
+        sessions: [
+          run("t1", "2026-11-03T09:00:00.000Z", "doer-a"),
+          // The same task tested again after a fix: one more run, not one more task.
+          run("t2", "2026-11-04T09:00:00.000Z", "doer-a"),
+          run("t3", "2026-11-05T09:00:00.000Z", "doer-b"),
+          // Before the period.
+          run("t0", "2026-10-20T09:00:00.000Z", "doer-c"),
+          // An ordinary «Ревізор» fork is not a Тестувальник run.
+          session("rev", "2026-11-05T09:00:00.000Z", { kind: "review", sessionClass: "review", parentSessionId: "doer-d" }),
+        ],
+      }),
+    );
+    expect(r.tester).toEqual({ runs: 3, tasks: 2 });
+  });
+});
+
+describe("analyticsReport — оцінка vs факт", () => {
+  test("over the period's PRs with an estimate: coverage, both medians, and the median ratio", () => {
+    const pr = (id: string, createdAt: string, prOpenedAt: string, estimateMinutes?: number): AnalyticsSessionRow =>
+      session(id, createdAt, { prOpened: true, prOpenedAt, ...(estimateMinutes === undefined ? {} : { estimateMinutes }) });
+    const r = analyticsReport(
+      input({
+        sessions: [
+          // 8 h estimated, 2 h taken → ×4.
+          pr("a", "2026-11-03T08:00:00.000Z", "2026-11-03T10:00:00.000Z", 480),
+          // 1 h estimated, 2 h taken → ×0.5.
+          pr("b", "2026-11-04T08:00:00.000Z", "2026-11-04T10:00:00.000Z", 60),
+          // 6 h estimated, 3 h taken → ×2.
+          pr("c", "2026-11-05T08:00:00.000Z", "2026-11-05T11:00:00.000Z", 360),
+          // No estimate: counted among the PRs, not in the medians.
+          pr("d", "2026-11-05T08:00:00.000Z", "2026-11-05T09:00:00.000Z"),
+          // A negative pair is no PR of «Час до PR», so none here either.
+          pr("e", "2026-11-06T08:00:00.000Z", "2026-11-06T07:00:00.000Z", 60),
+          // Before the period.
+          pr("f", "2026-10-20T08:00:00.000Z", "2026-10-20T09:00:00.000Z", 60),
+        ],
+      }),
+    );
+    expect(r.estimate).toEqual({
+      prs: 4,
+      estimated: 3,
+      estimateMedianMs: 6 * HOUR,
+      leadMedianMs: 2 * HOUR,
+      ratioMedian: 2,
+    });
+  });
+
+  test("no estimated PR leaves the medians null", () => {
+    const r = analyticsReport(
+      input({ sessions: [session("d", "2026-11-05T08:00:00.000Z", { prOpened: true, prOpenedAt: "2026-11-05T09:00:00.000Z" })] }),
+    );
+    expect(r.estimate).toEqual({ prs: 1, estimated: 0, estimateMedianMs: null, leadMedianMs: null, ratioMedian: null });
+  });
+});

@@ -2,11 +2,12 @@
 import { GoneException, Injectable, Optional, type OnModuleDestroy, type OnModuleInit } from "@nestjs/common";
 import { HttpAdapterHost } from "@nestjs/core";
 import { spawn } from "node:child_process";
-import { rm } from "node:fs/promises";
-import { join, posix } from "node:path";
+import { rm, rmdir, unlink } from "node:fs/promises";
+import { dirname, join, posix } from "node:path";
 import { Observable, Subject } from "rxjs";
 import { RegistryService } from "../registry/registry.service";
 import { WorktreeService, type ChangedFile } from "../worktree/worktree.service";
+import { StartupGcService } from "../gc/startup-gc.service";
 import type { SplitDiff } from "../worktree/split-diff";
 import { createRuntime, type AgentRuntime, type RuntimeLaunchOpts } from "../runtime/agent-runtime";
 import { BrowserMcpService } from "../browser/browser-mcp.service";
@@ -99,6 +100,8 @@ import {
   MINION_PR_TITLE_RULE,
   MINION_FINDINGS_SKILL,
   minionFindingLine,
+  minionTakeoverAllowed,
+  minionTakeoverPrompt,
   MINION_TIME_CAP_MS,
   MINION_GRACE_MS,
   type MinionResult,
@@ -129,6 +132,8 @@ import { AuthService } from "../auth/auth.service";
 import { ModelsService } from "../models/models.service";
 import { NativeSessionService, nativeUnsupported } from "../native/native-session.service";
 import { CodedError } from "../management/coded-error";
+import { limit } from "../runtime/limit";
+import { removeMcpConfig } from "../native/native-hooks";
 import { todayIso } from "../management/management-prompt";
 import { firstPrUrl } from "./pr-url";
 import { launchAppendFor, launchToolsFor } from "./chat-tools";
@@ -166,6 +171,17 @@ function prCheckFailure(err: unknown): PrCheck {
   const name = (err as { name?: unknown } | null)?.name;
   if (err instanceof TypeError || name === "TimeoutError" || name === "AbortError") return { state: "offline" };
   return { state: "error" };
+}
+
+// A session's omp conversation: the `<stamp>_<id>.jsonl` file, and beside it the folder of the
+// same name that holds its subagents' conversations. omp keeps one folder per working
+// directory, so the folder goes too once this was its last conversation (a retired worktree's
+// folder has nothing else). Best effort: a file already gone is the goal, not an error — and then
+// nothing beside it is touched, since a path no omp wrote says nothing about its neighbours.
+async function removeOmpSessionFiles(file: string): Promise<void> {
+  if (!(await unlink(file).then(() => true, () => false))) return;
+  if (file.endsWith(".jsonl")) await rm(file.slice(0, -".jsonl".length), { recursive: true, force: true }).catch(() => {});
+  await rmdir(dirname(file)).catch(() => {});
 }
 
 type Live = {
@@ -274,6 +290,9 @@ type MinionRun = {
   // The launch has not returned yet: a child that dies now is the launch's failure, which
   // launchTask undoes and MinionService counts — not a run to fail a second time.
   starting?: boolean;
+  // The operator handed the session over with `/minion` (docs/specs/2026-11-09-minion-takeover.md):
+  // the poll did not start this run, so its result counts toward neither the failures nor the pause.
+  takeover?: boolean;
   capTimer?: NodeJS.Timeout;
   graceTimer?: NodeJS.Timeout;
 };
@@ -410,6 +429,15 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
   // omp already persisted, so nothing is lost. Same tradeoff as ManagementChatService.IDLE_TTL_MS.
   private static readonly CHILD_IDLE_TTL_MS = 15 * 60_000;
   private reaper?: NodeJS.Timeout;
+  // How long a managed child may take to greet (`ready`). omp loads its config, skill library,
+  // triggers and provider client first — seconds on a laptop. Past a minute it is wedged or
+  // missing, and without a bound it held its agent slot and its `resuming` entry forever. The
+  // chat pool's bound is half this: an agent's launch carries more overlays than a chat's.
+  private static readonly START_TIMEOUT_MS = 60_000;
+  // Set by onModuleDestroy. From then on a child's exit is the app quitting, not the run failing,
+  // and nothing new starts: a slot freed by a stopping child would otherwise launch the next
+  // waiting session into an api that is going away, and that child would outlive it.
+  private destroyed = false;
 
   constructor(
     private registry: RegistryService,
@@ -448,6 +476,9 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     // (docs/specs/2026-11-07-skill-improvement-review.md, decision 3). Optional so specs construct
     // the supervisor without it — then nothing is remembered and no call is refused as stale.
     @Optional() private handedSkills?: HandedSkills,
+    // The startup GC gives an interrupted launch its worktree back before the slot queue is
+    // restored from the rows. Optional so specs construct the supervisor without it.
+    @Optional() private gc?: StartupGcService,
   ) {
     this.native?.events$.subscribe((e) => {
       if (e.type === "changed") {
@@ -580,7 +611,7 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
 
   private skillSource = (sessionId: string): SkillSource => (name) => this.skillLabels.get(sessionId)?.get(name);
 
-  onModuleInit(): void {
+  async onModuleInit(): Promise<void> {
     // A minute is far finer than the 15-minute TTL, so a child is reaped within a minute of
     // crossing it. Unref'd: the janitor must never hold the app open — a clean quit runs
     // onModuleDestroy, which stops the children anyway. ManagementChatService sweeps on-use
@@ -588,17 +619,27 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     // on-use sweep never reaches, so this one rides a timer.
     this.reaper = setInterval(() => this.reapIdleChildren(), 60_000);
     this.reaper.unref();
+    // From rows the GC has repaired: a `queued` launch is replayed only once its row names its
+    // worktree again (restoreSlotQueue skips one without), so restoring first would leave it
+    // waiting until the next start.
+    if (this.gc) await this.gc.ready();
     this.restoreSlotQueue();
   }
 
-  onModuleDestroy(): void {
+  // Waits for every child: Electron quits as soon as this resolves, and a stop() still waiting on
+  // its SIGTERM/SIGKILL timers would die with the process, leaving a child that ignored the EOF
+  // (mid-way through a long command, say) running with nobody to stop it.
+  async onModuleDestroy(): Promise<void> {
+    this.destroyed = true;
     clearInterval(this.reaper);
     for (const run of this.minionRuns.values()) this.clearMinionClock(run);
     for (const run of this.scheduleRuns.values()) clearTimeout(run.capTimer);
-    for (const live of this.map.values()) {
-      this.stopPoll(live);
-      void live.rpc.stop();
-    }
+    await Promise.allSettled(
+      [...this.map.values()].map((live) => {
+        this.stopPoll(live);
+        return live.rpc.stop();
+      }),
+    );
   }
 
   // Stop the resident omp child of every SETTLED session ("done" or "in_review") that has been
@@ -821,7 +862,7 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
   // up — a settled turn, a dead child or TUI, a stop, a delete, a finish, a start that ran no
   // turn — and when the limit changes.
   private drainSlots(): void {
-    if (!this.waiting.size) return;
+    if (this.destroyed || !this.waiting.size) return;
     const limit = this.resources?.active()?.agents;
     let { running } = this.slotCounts();
     for (const [id] of [...this.waiting].sort(([, a], [, b]) => a.at - b.at)) {
@@ -935,9 +976,17 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
   }
 
   // start() plus the watchdog's baseline: what the child runs once it is ready (MCP servers,
-  // workers, the Python kernel) is never a victim; what it starts later is a candidate.
+  // workers, the Python kernel) is never a victim; what it starts later is a candidate. Bounded
+  // like the chat pool's start: `limit` only abandons the promise, so every caller's catch stops
+  // the child — the same catch that handles a failed start.
   private async startChild(id: string, rpc: AgentRuntime): Promise<void> {
-    await rpc.start();
+    if (this.destroyed) throw new Error("Kermanych is quitting");
+    const seconds = SupervisorService.START_TIMEOUT_MS / 1000;
+    await limit(
+      rpc.start(),
+      SupervisorService.START_TIMEOUT_MS,
+      new CodedError("omp_launch_timeout", `не вдалося запустити omp за ${seconds} с — перевірте, що команда omp доступна в PATH`, { seconds }),
+    );
     const pid = this.map.get(id)?.pid;
     if (pid !== undefined) this.trackChild(id, pid);
   }
@@ -1332,6 +1381,9 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
       // A minion run of a finding card carries the kind for its opening prompt (decision 14).
       ...(minion && task.findingKind ? { findingKind: task.findingKind } : {}),
       ...(schedule ? { schedule } : {}),
+      // «Оцінка vs факт» compares the estimate that stood before the agent started
+      // (docs/specs/2026-11-09-task-estimate.md, decision 3), so it is taken from the card now.
+      ...(task.estimateMinutes ? { estimateMinutes: task.estimateMinutes } : {}),
     });
     if (minion) this.minionRuns.set(session.id, { phase: "work", starting: true });
     if (schedule) this.scheduleRuns.set(session.id, { scheduleId: schedule.id, starting: true });
@@ -1753,7 +1805,9 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
       await spawn();
     } catch (err) {
       console.warn(`[supervisor] launch of session ${id} failed after waiting for a slot: ${(err as Error).message}`);
-      if (!this.registry.listSessions().some((x) => x.id === id)) return;
+      // A launch cut short by the app quitting is not a failure: the row still waits, and the
+      // next start replays it.
+      if (this.destroyed || !this.registry.listSessions().some((x) => x.id === id)) return;
       this.registry.updateSession(id, { status: "error" });
       this.pushUpdate(id);
       this.endScheduleRun(id, { outcome: "failed", detail: (err as Error).message });
@@ -2572,9 +2626,73 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
   // `sendAsKermanych`, which is the same delivery with the operator's own affordances off.
   // `voice`: said in a voice conversation (docs/specs/2026-11-02-voice-conversation.md, decision 6).
   async sendMessage(id: string, text: string, mode: "prompt" | "follow_up" | "steer", images?: ImageInput[], opts: { voice?: boolean } = {}) {
+    // `/minion` hands the session to «Посіпака» instead of taking it back: it must not attend the
+    // run first. A voice transcript is never a command (deliverNow).
+    const cmd = opts.voice ? null : parseCommand(text);
+    if (cmd?.name === "minion") return this.handToMinion(id, text, cmd.args);
     // The operator took over a «Посіпака» run: it works again, with no clock from here on.
     this.attendMinionRun(id);
     await this.deliver(id, text, mode, images, true, undefined, opts);
+  }
+
+  // `/minion` (docs/specs/2026-11-09-minion-takeover.md): the operator hands a session to
+  // «Посіпака» and leaves. From here it is a minion run at `work`, like one the poll started: no
+  // ask tool, a `report_outcome` verdict, then the docs and PR turns (onMinionTurnEnd). omp reads
+  // the ask overlay (spawnOpts) and the MCP tool list only when it starts, so a live child is
+  // stopped — a turn in progress is cut, like ■ — and woken on the same conversation before the
+  // hand-over prompt goes in. A refusal is thrown, so the composer gets the text back.
+  private async handToMinion(id: string, text: string, note: string): Promise<void> {
+    const row = this.registry.listSessions().find((x) => x.id === id);
+    if (!row) throw new Error("session not found");
+    if (row.native) throw nativeUnsupported();
+    this.refuseManagedClaude(row);
+    if (!minionTakeoverAllowed(row))
+      throw new CodedError(
+        "minion_takeover_unsupported",
+        "Посіпаці можна передати лише відкриту сесію агента з гілкою — не чат, обговорення, ревізію, дизайн, «Синергію» чи запуск за розкладом.",
+      );
+    const current = this.minionRuns.get(id);
+    if (row.minion && current && !current.attended && current.phase !== "idle")
+      throw new CodedError("minion_takeover_running", "Посіпака вже веде цю сесію сам.");
+
+    this.forgetMinionRun(id);
+    const l = this.map.get(id);
+    if (l) {
+      // Stopped on purpose: its exit is neither an `error` nor a failed run.
+      l.live.status = "stopped";
+      this.stopPoll(l);
+      await l.rpc.stop().catch(() => {});
+      this.map.delete(id);
+      this.toolDetails.dropSession(id);
+      this.skillLabels.delete(id);
+    }
+    // A result of an earlier run (its «потрібне рішення») is over: this run has none yet.
+    this.registry.updateSession(id, { minion: true, minionResult: undefined });
+    const run: MinionRun = { phase: "work", takeover: true };
+    this.minionRuns.set(id, run);
+    try {
+      await this.liveOrResume(id);
+      this.appendEntry(id, this.userEntry(text));
+      this.appendEntry(id, this.noticeEntry({ text: "сесію передано Посіпаці: агент сам ухвалить рішення, що лишились, і відкриє ПР", code: "minion_takeover_started" }));
+      this.pushUpdate(id);
+      await this.sendAsKermanych(id, `${minionTakeoverPrompt(note)}\n\n${MINION_OUTCOME_CONTRACT}`, "prompt");
+    } catch (err) {
+      // Nothing went in: the session goes back to what it was, and a child woken in the minion's
+      // mode is dropped, so the operator's next message respawns it as before.
+      this.registry.updateSession(id, { minion: row.minion, minionResult: row.minionResult });
+      if (row.minion) Object.assign(run, { phase: "idle", attended: true });
+      else this.forgetMinionRun(id);
+      const woken = this.map.get(id);
+      if (woken) {
+        woken.live.status = "stopped";
+        this.stopPoll(woken);
+        await woken.rpc.stop().catch(() => {});
+        this.map.delete(id);
+      }
+      this.pushUpdate(id);
+      throw err;
+    }
+    this.startMinionClock(id);
   }
 
   // Kermanych's own prompt into a session: a fired trigger's agent, a PR request, a merged
@@ -3402,10 +3520,15 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
       this.toolDetails.dropSession(id);
       this.skillLabels.delete(id);
     }
-    if (s && s.kind !== "agent") {
-      // No git: the child owns no branch/worktree; its cwd is the parent's.
-      if (s.ompSessionFile) await rm(s.ompSessionFile, { force: true }).catch(() => {});
-    } else if (s) {
+    // The conversation file goes with the row: nothing reads it once the row is gone, and a big
+    // run's file (with its subagents' beside it) is tens of megabytes. Not a native agent's: its
+    // file is the harness's own transcript (claude's, codex's), which the operator can still
+    // resume outside Kermanych. A native chat's has always gone with it.
+    if (s?.ompSessionFile && !(s.native && s.kind === "agent")) await removeOmpSessionFiles(s.ompSessionFile);
+    // A native session's MCP config holds its bearer, which dies with the session.
+    if (s?.native) await removeMcpConfig(id);
+    // Only an agent has git to undo: any other kind owns no branch/worktree (its cwd is the parent's).
+    if (s?.kind === "agent") {
       const g = this.registry.listProjects().find((x) => x.id === s.projectId);
       if (g?.localRepoPath) {
         if (s.worktree) {
@@ -3430,10 +3553,12 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     this.drainSlots();
   }
 
-  // Archive/unarchive is a pure hide flag: it never touches the worktree or the omp
-  // process. Archiving an active agent is refused (the UI also pre-checks and toasts). The one
-  // exception is a native chat's harness: an archived thread leaves the «Чат» page, so its TUI
-  // would keep running with no terminal anywhere — it is stopped (and resumed on demand later).
+  // Archive/unarchive is a pure hide flag: it never touches the worktree. Archiving an active
+  // agent is refused (the UI also pre-checks and toasts). The process does go: an archived thread
+  // leaves the board, so a native chat's TUI would keep running with no terminal anywhere, and a
+  // managed session's Live — its whole rendered transcript and tool output, kept in memory for
+  // the life of the api — would be held for a session nobody looks at. Opening it again wakes it
+  // like any dormant session after a restart: the history is re-read from omp's own file.
   async setArchived(id: string, archived: boolean): Promise<void> {
     const s = this.registry.listSessions().find((x) => x.id === id);
     if (!s) throw new Error("session not found");
@@ -3441,6 +3566,16 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
       throw new Error("cannot archive an active agent");
     }
     if (archived && s.native && s.kind === "chat") await this.native?.stop(id);
+    const l = archived ? this.map.get(id) : undefined;
+    if (l) {
+      // Off the map first, so nothing hands this child out while it stops; its exit reads as a
+      // clean end because the row is not active (checked above).
+      this.map.delete(id);
+      this.stopPoll(l);
+      await l.rpc.stop().catch(() => {});
+      this.toolDetails.dropSession(id);
+      this.skillLabels.delete(id);
+    }
     // An archived session leaves the board, and its preview with it (decision 7): the device
     // shuts down and keeps its clone (mobile decision 11).
     if (archived) await this.preview?.stop(id);
@@ -4377,7 +4512,8 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     this.drainSlots();
   }
 
-  // Persist a run's result, show it, send it to the card, and tell MinionService how it counts.
+  // Persist a run's result, show it, send it to the card, and tell MinionService how it counts —
+  // a run the operator handed over with `/minion` counts neither way: the pause guards the poll.
   private async recordMinionResult(id: string, result: MinionResult, effect: MinionRunResult["effect"], signedOut = false): Promise<void> {
     const row = this.registry.listSessions().find((x) => x.id === id);
     if (!row?.minion) return;
@@ -4385,7 +4521,8 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     if (run) this.clearMinionClock(run);
     this.registry.updateSession(id, { minionResult: result });
     this.pushUpdate(id);
-    this.minionResults.next({ sessionId: id, title: row.name, result, effect, ...(signedOut ? { signedOut } : {}) });
+    const counted = run?.takeover ? { effect: "neutral" as const } : { effect, ...(signedOut ? { signedOut } : {}) };
+    this.minionResults.next({ sessionId: id, title: row.name, result, ...counted });
     await this.queueTaskReport(id, this.map.get(id)?.transcript);
   }
 
@@ -4424,6 +4561,13 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     this.map.set(sessionId, live);
     rpc.onExit((_code, reason, cause) => {
       this.stopPoll(live);
+      // The app is quitting and stopped this child itself: not a failure, and the row keeps the
+      // status it had — the next start wakes a session caught mid-turn the way it wakes one after
+      // a crash (doResume settles it). No slot is handed on either: nothing may start now.
+      if (this.destroyed) {
+        this.untrackChild(sessionId, live.pid);
+        return;
+      }
       // A sign-out is never a clean end, whatever the row said a moment ago: a chat sits at
       // `done` between turns, so its first turn on a signed-out CLI died «done» and the operator
       // saw nothing. Only `stopped` (the operator's own stop) outranks it.
@@ -4521,8 +4665,11 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
       this.map.delete(id);
       this.toolDetails.dropSession(id);
       this.skillLabels.delete(id);
-      this.registry.updateSession(id, { status: "error" });
-      this.pushUpdate(id);
+      // A wake cut short by the app quitting leaves the row as it was, for the next start.
+      if (!this.destroyed) {
+        this.registry.updateSession(id, { status: "error" });
+        this.pushUpdate(id);
+      }
       throw err;
     }
     // A wake settles transient in-flight states (a run that crashed mid-turn must not stay

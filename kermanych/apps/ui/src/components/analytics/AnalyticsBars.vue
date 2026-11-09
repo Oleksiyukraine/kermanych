@@ -69,7 +69,7 @@
 // and the tooltips speak the same unit as the tiles above.
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
 import { useI18n } from 'vue-i18n';
-import { axisMax, bucketLabel, zoneDate, type AnalyticsBarSeries, type AnalyticsMetricKey } from '../../lib/analytics';
+import { axisMax, bucketLabel, zoneDate, type AnalyticsBarSeries, type AnalyticsChartMetric } from '../../lib/analytics';
 
 const props = defineProps<{
   /** ISO instant each bucket starts at, in order. */
@@ -78,7 +78,7 @@ const props = defineProps<{
   /** The zone the buckets were cut in; the labels are read back in it. */
   timeZone: string;
   series: AnalyticsBarSeries[];
-  metric: AnalyticsMetricKey;
+  metric: AnalyticsChartMetric;
   format: (value: number) => string;
 }>();
 const emit = defineEmits<{ toggle: [key: string] }>();
@@ -88,7 +88,8 @@ const HEIGHT = 240;
 // Rendered smaller than its coordinate space, as CapacityChart: the block stays one screen
 // row tall and the width follows the aspect ratio, so nothing stretches.
 const DISPLAY_HEIGHT = 200;
-const PAD_L = 56;
+// Wide enough for the longest half-way tick a time axis gets, «2 год 30 хв» (the top at 5 h).
+const PAD_L = 76;
 const PAD_R = 12;
 const PAD_T = 14;
 const PAD_B = 22;
@@ -166,7 +167,7 @@ const bars = computed<Segment[][]>(() =>
         y: top,
         h: Math.max(bottom - top, 1),
         color: s.color,
-        tip: t('analytics.barTip', { name: s.label, value: props.format(v), period }),
+        tip: [t('analytics.barTip', { name: s.label, value: props.format(v), period }), s.notes?.[i]].filter(Boolean).join(' · '),
       });
       stack += v;
     }

@@ -27,7 +27,28 @@ export type LauncherDraft = {
   // The agent's own branch after the prefix, typed in the launcher's «Гілка». Blank or absent:
   // the launch names it from the task.
   branchSlug?: string | undefined;
+  // «Оцінка, год» as typed (docs/specs/2026-11-09-task-estimate.md). Blank or absent: «не
+  // оцінено». The forms refuse a value estimateMinutesFromText calls invalid before they save.
+  estimate?: string | undefined;
 };
+
+/**
+ * «Оцінка, год» → minutes. Blank is `null` («не оцінено»); `1,5` and `1.5` are both 90; anything
+ * that is not a positive number of hours, or rounds to less than a minute, is `'invalid'`.
+ */
+export function estimateMinutesFromText(text: string | undefined): number | null | 'invalid' {
+  const typed = (text ?? '').trim().replace(',', '.');
+  if (!typed) return null;
+  if (!/^\d+(\.\d+)?$/.test(typed)) return 'invalid';
+  const minutes = Math.round(Number(typed) * 60);
+  return minutes >= 1 ? minutes : 'invalid';
+}
+
+/** A card's minutes back into the field: hours, at most two decimals, `1,5` style. */
+export function estimateTextFromMinutes(minutes: number | undefined): string {
+  if (!minutes) return '';
+  return String(Math.round((minutes / 60) * 100) / 100).replace('.', ',');
+}
 
 // The two card modes that exclude each other, as one pair so every form flips them the same way.
 export type CardModes = { deepAnalysis: boolean; autoRun: boolean };
@@ -69,6 +90,7 @@ export function taskInsertFromDraft(
   assigneeId: string,
 ): TaskInsert & { assigneeId: string } {
   const base = draft.worktree ? draft.baseBranch?.trim() : undefined;
+  const estimate = estimateMinutesFromText(draft.estimate);
   return {
     projectId,
     title: draft.name.trim(),
@@ -81,6 +103,7 @@ export function taskInsertFromDraft(
     deepAnalysis: draft.deepAnalysis,
     autoRun: draft.autoRun && !draft.deepAnalysis,
     ...(draft.branchSlug?.trim() ? { branchSlug: draft.branchSlug.trim() } : {}),
+    ...(typeof estimate === 'number' ? { estimateMinutes: estimate } : {}),
     ...(base ? { branch: base } : {}),
     assigneeId,
   };
@@ -94,6 +117,7 @@ export function taskInsertFromDraft(
 // `true` by a non-author — make tasks_guard() refuse the whole save.
 export function taskPatchFromDraft(draft: LauncherDraft, openedAutoRun: boolean): TaskPatch {
   const autoRun = draft.autoRun && !draft.deepAnalysis;
+  const estimate = estimateMinutesFromText(draft.estimate);
   return {
     title: draft.name.trim(),
     description: draft.task.trim(),
@@ -106,6 +130,8 @@ export function taskPatchFromDraft(draft: LauncherDraft, openedAutoRun: boolean)
     ...(autoRun !== openedAutoRun ? { autoRun } : {}),
     branch: (draft.worktree ? draft.baseBranch?.trim() : '') ?? '',
     branchSlug: draft.branchSlug?.trim() ?? '',
+    // A blank field clears the estimate; a refused one (the form should not have saved) leaves it.
+    ...(estimate === 'invalid' ? {} : { estimateMinutes: estimate }),
   };
 }
 

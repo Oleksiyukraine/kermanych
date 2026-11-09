@@ -159,11 +159,11 @@ export class ScheduleService implements OnModuleInit, OnModuleDestroy {
     this.tray();
   }
 
-  onModuleDestroy(): void {
+  async onModuleDestroy(): Promise<void> {
     this.destroyed = true;
     clearInterval(this.timer);
     clearTimeout(this.startTimer);
-    this.pool.dropAll();
+    await this.pool.dropAll();
   }
 
   // ── Reads ──────────────────────────────────────────────────────────────────────────────────

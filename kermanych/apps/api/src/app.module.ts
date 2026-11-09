@@ -67,6 +67,7 @@ import { SchedulesController } from "./http/schedules.controller";
 import { ScheduleService } from "./schedules/schedule.service";
 import { AnalyticsController } from "./analytics/analytics.controller";
 import { AnalyticsService } from "./analytics/analytics.service";
+import { StartupGcService } from "./gc/startup-gc.service";
 
 @Module({
   controllers: [AuthController, ProjectsController, SessionsController, FsController, UsageController, CloudController, SkillsController, SkillImportController, ManagementController, ManagementMcpController, CukController, ModelsController, JiraController, LinearController, PlaneController, SlackController, AccountController, DocsController, NativeController, BrowserMcpController, MachineController, MinionController, TesterController, VoiceController, DeviceController, SchedulesController, AnalyticsController],
@@ -186,6 +187,11 @@ import { AnalyticsService } from "./analytics/analytics.service";
     DeviceService,
     { provide: DEVICE_API, useExisting: DeviceService },
     DeviceGateway,
+    // The startup sweep of what a long uptime leaves on disk: orphaned and interrupted-launch
+    // worktrees (RegistryService rows against WorktreeService's git), the older
+    // `~/.kermanych/worktrees/` leftovers and native sessions' MCP configs. Runs once, awaited in
+    // its onModuleInit, so it ends before the api listens; nothing depends on it.
+    StartupGcService,
     // Global by design: the api binds 127.0.0.1 but was previously drivable by
     // anything on the machine, including GET /fs/list (arbitrary local directory
     // enumeration). Opt out per route with @Public(), never per module.

@@ -576,6 +576,8 @@ export {
   validateOutcomeReport,
   readMinionResult,
   minionFindingLine,
+  minionTakeoverAllowed,
+  minionTakeoverPrompt,
   MINION_FINDINGS_SKILL,
   type MinionVerdict,
   type MinionVerdictReport,

@@ -8,7 +8,7 @@
 // Written once per api process to a fixed temp path, like runtime/omp-mcp-bridge.ts. The one
 // per-session, secret-holding file — claude's session-browser `--mcp-config` — is at the bottom.
 import { createHash } from "node:crypto";
-import { chmod, mkdir, writeFile } from "node:fs/promises";
+import { chmod, mkdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { MCP_TOKEN_ENV } from "../runtime/omp-mcp-bridge";
@@ -195,4 +195,10 @@ export function codexConfigArgs(root: string, hook: string, mcp?: { name: string
 export function claudeMcpConfigPath(sessionId: string, server: { name: string; url: string; token: string }): Promise<string> {
   const config = { mcpServers: { [server.name]: { type: "http", url: server.url, headers: { Authorization: `Bearer ${server.token}` } } } };
   return writeHookFile(`mcp-${sessionId}.json`, JSON.stringify(config, null, 2), 0o600);
+}
+
+// The bearer dies with the session, and so does the file that carries it: deleteSession calls
+// this, and the startup GC removes the files of sessions deleted while the api was down.
+export async function removeMcpConfig(sessionId: string): Promise<void> {
+  await rm(join(tmpdir(), "kermanych-native", `mcp-${sessionId}.json`), { force: true }).catch(() => {});
 }

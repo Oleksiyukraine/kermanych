@@ -38,11 +38,19 @@ export function analyticsProjectIds(
 
 // ── «Динаміка» (decision 8.3) ──────────────────────────────────────────────────
 
+/** What a series of `AnalyticsReport.dynamics.series` carries per bucket — what `foldSeries` folds. */
 export const ANALYTICS_METRICS = ['cost', 'tokens', 'workingMs'] as const;
 export type AnalyticsMetricKey = (typeof ANALYTICS_METRICS)[number];
 
-export function isAnalyticsMetricKey(v: string): v is AnalyticsMetricKey {
-  return (ANALYTICS_METRICS as readonly string[]).includes(v);
+/**
+ * The «Динаміка» tabs: the series metrics, then «Час до PR» — a median per bucket
+ * (`dynamics.prLead`), one series with no split, since medians do not stack.
+ */
+export const ANALYTICS_CHART_METRICS = [...ANALYTICS_METRICS, 'prLeadMs'] as const;
+export type AnalyticsChartMetric = (typeof ANALYTICS_CHART_METRICS)[number];
+
+export function isAnalyticsChartMetric(v: string): v is AnalyticsChartMetric {
+  return (ANALYTICS_CHART_METRICS as readonly string[]).includes(v);
 }
 
 /** Up to this many series keep their own colour; the rest fold into «інші». */
@@ -64,8 +72,11 @@ function total(values: readonly number[]): number {
   return sum;
 }
 
-/** One series as the bars draw it: a folded series, named, coloured, and on or off in the legend. */
-export type AnalyticsBarSeries = { key: string; label: string; color: string; values: number[]; off: boolean };
+/**
+ * One series as the bars draw it: a folded series, named, coloured, and on or off in the legend.
+ * `notes`, one per bucket, add to that bucket's tooltip (how many PRs a median is over).
+ */
+export type AnalyticsBarSeries = { key: string; label: string; color: string; values: number[]; off: boolean; notes?: string[] };
 
 /**
  * The series one metric draws: ranked by that metric's total over the period, the top
@@ -114,17 +125,18 @@ export function seriesColor(key: string, index: number): string {
 
 /**
  * The top of the Y axis: the tallest bar rounded up to 1, 2 or 5 × 10ⁿ in the metric's own
- * unit — dollars, tokens, and for agent time hours (minutes below an hour), so the half-way
+ * unit — dollars, tokens, and for a time hours (minutes below an hour), so the half-way
  * tick reads «1 год», not «1 год 23 хв». Never 0: an empty plot still needs a scale.
  */
-export function axisMax(max: number, metric: AnalyticsMetricKey): number {
-  const unit = metric === 'workingMs' ? (max >= 3_600_000 ? 3_600_000 : 60_000) : 1;
+export function axisMax(max: number, metric: AnalyticsChartMetric): number {
+  const isTime = metric === 'workingMs' || metric === 'prLeadMs';
+  const unit = isTime ? (max >= 3_600_000 ? 3_600_000 : 60_000) : 1;
   const v = max / unit;
   if (!(v > 0)) return unit;
   const mag = 10 ** Math.floor(Math.log10(v));
   const step = [1, 2, 5, 10].find((m) => m * mag >= v - 1e-9)!;
   // Dollar and token axes below one unit keep their fraction; time does not go below a minute.
-  return Math.max(step * mag * unit, metric === 'workingMs' ? unit : 0);
+  return Math.max(step * mag * unit, isTime ? unit : 0);
 }
 
 // ── Headline tiles (decision 8.2) ──────────────────────────────────────────────

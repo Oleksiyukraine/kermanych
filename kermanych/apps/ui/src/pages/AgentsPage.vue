@@ -325,6 +325,27 @@
                   @click="onUnarchive(selectedSession)"
                 >⤒</KIconButton>
               </template>
+              <!-- «Посіпака» (docs/specs/2026-11-09-minion-takeover.md): the composer's `/minion`
+                   one click away, beside ⋯ — the agent decides what is left and opens the PR. A
+                   native agent shows it blocked with the reason, like 🎤. -->
+              <template v-if="minionTakeoverAllowed(selectedSession)">
+                <KIconButton
+                  v-if="selectedSession.native"
+                  class="agents__blocked-btn"
+                  aria-disabled="true"
+                  :title="t('agents.native.managedOnly')"
+                  :aria-label="`${t('agents.actions.minion')} — ${t('agents.native.managedOnly')}`"
+                  @click="explainBlocked(t('agents.native.managedOnly'))"
+                ><KIcon name="minion" /></KIconButton>
+                <KIconButton
+                  v-else
+                  :loading="minionAction.busy.value"
+                  :disabled="selectedBlocked"
+                  :title="t('agents.actions.minion')"
+                  :aria-label="t('agents.actions.minion')"
+                  @click="onMinion(selectedSession)"
+                ><KIcon name="minion" /></KIconButton>
+              </template>
             </div>
 
             <!-- Overflow — the actions that don't earn a permanent glyph, plus the two
@@ -1101,6 +1122,29 @@
             <div class="agents-launcher__hint mono">{{ branchHint }}</div>
           </div>
 
+          <!-- «Оцінка, год»: the card's estimate (`tasks.estimate_minutes`), optional. The launch
+               stamps it on the session and «Аналітика» compares it with the time to PR
+               (docs/specs/2026-11-09-task-estimate.md). A refused value says so here and stops
+               the save (submitLauncher). -->
+          <div>
+            <div class="agents-launcher__label">{{ t('agents.launcher.estimateLabel') }}</div>
+            <label class="agents-launcher__branch agents-launcher__branch--edit mono">
+              <input
+                v-model="draftEstimate"
+                class="agents-launcher__branch-input"
+                inputmode="decimal"
+                :placeholder="t('agents.launcher.estimatePlaceholder')"
+                :aria-invalid="estimateInvalid || undefined"
+                autocomplete="off"
+              />
+            </label>
+            <div
+              class="agents-launcher__hint mono"
+              :class="{ 'agents-launcher__hint--error': estimateInvalid }"
+              :role="estimateInvalid ? 'alert' : undefined"
+            >{{ estimateInvalid ? t('agents.launcher.estimateInvalid') : t('agents.launcher.estimateHint') }}</div>
+          </div>
+
           <!-- «Режим» — Kermanych's managed session, or the harness's own TUI in a terminal.
                Opens on the provider's default; a design card runs only in «Керманич», so its
                native modes are blocked with the reason (aria-disabled, as above). -->
@@ -1346,6 +1390,8 @@ import {
   autoRunSwitchLocked,
   cardModesFromCard,
   myBacklogTasks,
+  estimateMinutesFromText,
+  estimateTextFromMinutes,
   taskInsertFromDraft,
   taskPatchFromDraft,
   withAutoRun,
@@ -1395,7 +1441,7 @@ import KDictation from 'components/kit/KDictation.vue';
 import KCheckbox from 'components/kit/KCheckbox.vue';
 import KField from 'components/kit/KField.vue';
 import KSelect from 'components/kit/KSelect.vue';
-import { BRANCH_PREFIXES, platformHasBrowser, platformHasDevice, prependHelper, type BranchPrefix } from '@kermanych/core';
+import { BRANCH_PREFIXES, minionTakeoverAllowed, platformHasBrowser, platformHasDevice, prependHelper, type BranchPrefix } from '@kermanych/core';
 import { useImageAttach } from '../composables/useImageAttach';
 import { useFileMention } from '../composables/useFileMention';
 import { useDictationField } from '../composables/useDictationField';
@@ -1429,6 +1475,7 @@ import { useVoicePanel } from '../composables/useVoicePanel';
 import { nextMode as modeFor } from '../lib/message-mode';
 import { useOptimisticValue } from '../composables/useOptimisticValue';
 import { useLoadPhase } from '../composables/useLoadPhase';
+import { useHeldTranscript } from '../composables/useHeldTranscript';
 import { useTaskDetails } from '../composables/useTaskDetails';
 import { usePending } from 'stores/pending';
 import { needsSignIn } from '../lib/session-auth';
@@ -1903,6 +1950,10 @@ const transcriptLoaded = computed(() => {
   return !id || store.transcripts[id] !== undefined || transcriptFailed.value === id;
 });
 const logPhase = useLoadPhase(() => !transcriptLoaded.value);
+// The selected session's log stays resident while it is on screen (the store evicts past its
+// cap); one evicted after the operator moved on reads `undefined` again, and the watcher that
+// loads history on selection brings it back.
+useHeldTranscript(() => store.selectedSessionId);
 const entries = computed<TranscriptEntry[]>(() =>
   store.selectedSessionId
     ? store.transcripts[store.selectedSessionId] ?? []
@@ -2422,6 +2473,9 @@ const answering = computed(
   () => answerAction.busy.value || (!!selectedSession.value && pending.isPending(answerKey(selectedSession.value.id))),
 );
 const summaryAction = useAsyncAction((s: Session) => store.sendMessage(s.id, t('agents.prompt.summary'), nextMode(s)));
+// The header's «Посіпака» button sends the composer's own command, so both reach the one api
+// path (docs/specs/2026-11-09-minion-takeover.md); a refusal comes back as the toast.
+const minionAction = useAsyncAction((s: Session) => store.sendMessage(s.id, '/minion', nextMode(s)));
 
 // Any session action in flight (the actions are page-wide, like the one header they serve).
 const actionInFlight = computed(
@@ -2434,7 +2488,8 @@ const actionInFlight = computed(
     archiveAction.busy.value ||
     unarchiveAction.busy.value ||
     resumeNativeAction.busy.value ||
-    restartAction.busy.value,
+    restartAction.busy.value ||
+    minionAction.busy.value,
 );
 function isSessionPending(id: string): boolean {
   return pending.isPending(sessionKey(id));
@@ -2974,6 +3029,9 @@ let openedAutoRun = false;
 // (docs/specs/2026-11-04-custom-branch-name.md), so the hint names the branch that lands whenever
 // slugify changes what was typed — a ref must not differ from the box without saying so.
 const draftBranchSlug = ref('');
+// «Оцінка, год» as typed; lib/tasks-view turns it into minutes for the card.
+const draftEstimate = ref('');
+const estimateInvalid = computed(() => estimateMinutesFromText(draftEstimate.value) === 'invalid');
 const branchNameHint = computed(() => {
   const typed = draftBranchSlug.value.trim();
   if (!typed) return t('agents.launcher.branchNameGenerated');
@@ -3186,6 +3244,7 @@ function openLauncher(card?: Task, deepAnalysis = false): void {
     : 'feature';
   draftWorktree.value = card?.worktree ?? true;
   draftBranchSlug.value = card?.branchSlug ?? '';
+  draftEstimate.value = estimateTextFromMinutes(card?.estimateMinutes);
   draftHidden.value = card?.hidden ?? false;
   const modes = cardModesFromCard(card, deepAnalysis);
   draftDeep.value = modes.deepAnalysis;
@@ -3219,6 +3278,7 @@ function openTaskFromText(text: string): void {
   draftWorktree.value = true;
   draftHidden.value = false;
   draftBranchSlug.value = '';
+  draftEstimate.value = '';
   draftDeep.value = false;
   draftAutoRun.value = false;
   void loadLaunchBranches(undefined);
@@ -3266,6 +3326,10 @@ async function submitLauncher(asTask: boolean): Promise<void> {
     launcherError.value = t('agents.hints.publishFirst');
     return;
   }
+  if (estimateInvalid.value) {
+    launcherError.value = t('agents.launcher.estimateInvalid');
+    return;
+  }
   const draft = {
     name: draftName.value.trim(),
     task: draftTask.value.trim(),
@@ -3278,6 +3342,7 @@ async function submitLauncher(asTask: boolean): Promise<void> {
     autoRun: draftAutoRun.value,
     baseBranch: draftBaseBranch.value || undefined,
     branchSlug: draftBranchSlug.value,
+    estimate: draftEstimate.value,
   };
   const images = launchImages.value.map((i) => ({ data: i.data, mimeType: i.mimeType }));
   launcherError.value = null;
@@ -3546,6 +3611,10 @@ async function onStop(): Promise<void> {
 async function onRestart(): Promise<void> {
   const s = selectedSession.value;
   if (s && !sessionBlocked(s)) await restartAction.run(s);
+}
+
+async function onMinion(s: Session): Promise<void> {
+  if (!sessionBlocked(s)) await minionAction.run(s);
 }
 
 // The composer's effort chip and model picker, save-on-change: the chip shows the pick (and a
@@ -4949,6 +5018,9 @@ function openDocTask(path: string): void {
   font-size: 11.5px;
   line-height: 1.6;
   color: var(--k-muted);
+}
+.agents-launcher__hint--error {
+  color: var(--k-danger);
 }
 
 .agents-launcher__branch {

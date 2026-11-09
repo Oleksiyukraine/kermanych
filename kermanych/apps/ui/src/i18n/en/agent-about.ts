@@ -62,7 +62,7 @@ export const agentAbout: typeof uk = {
   },
   tester: {
     tagline: 'Walks the card’s QA checklist in the live browser or on the device and gives each item a verdict',
-    when: 'The “Run testing” button in the finish sheet or on the session’s QA tab, while the agent is idle. Needs a session started from a card and a set-up preview; a web project also needs the desktop app, a Mobile project can be tested in the web build too. A back-end project cannot be tested. A trigger cannot run it.',
+    when: 'The “Run” button in the “Testing” step of the finish sheet, or “Run testing” on the session’s QA tab, while the agent is idle. Needs a session started from a card and a set-up preview; a web project also needs the desktop app, a Mobile project can be tested in the web build too. A back-end project cannot be tested. A trigger cannot run it.',
     steps:
       'Opens a separate “тестування: …” session in the same worktree, with read-only tools, the browser (the doer’s device in a Mobile project) and the doer’s preview.\nClears the old verdicts of the items it will check; when there is no checklist yet, composes one first and saves it to the card.\nStarts or opens the preview in a clean browser of its own and signs in with a test account. In a Mobile project it restarts the doer’s preview with the app’s data cleared, and the doer cannot drive the device meanwhile.\nWalks the items in order, as a user would, and records a verdict after each; takes a screenshot of every failure.\nChanges no code and commits nothing.',
     inputs: {

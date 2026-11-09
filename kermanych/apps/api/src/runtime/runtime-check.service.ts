@@ -26,13 +26,16 @@ export class RuntimeCheckService {
   private readonly log = new Logger(RuntimeCheckService.name);
 
   // A seam, so the tests never spawn a real child. It must REJECT on failure — the rejection
-  // carries the cause this service classifies: an AuthFailure's code, or its message.
-  ompProbe: () => Promise<ModelOption[]> = async () => mapOmpModels(await readOmpCatalog());
+  // carries the cause this service classifies: an AuthFailure's code, or its message. `signal`
+  // aborts when the probe runs out of time, and the real probe kills its child on it: the UI
+  // asks every few minutes, so a wedged `omp models` left running would add one process a call.
+  ompProbe: (signal: AbortSignal) => Promise<ModelOption[]> = async (signal) => mapOmpModels(await readOmpCatalog(signal));
   probeTimeoutMs = PROBE_TIMEOUT_MS;
 
   async check(): Promise<RuntimeCheck> {
+    const abort = new AbortController();
     try {
-      const models = await this.withTimeout(this.ompProbe());
+      const models = await this.withTimeout(this.ompProbe(abort.signal), abort);
       // An empty catalog means no provider credentials at all — signed out.
       if (models.length === 0) return { ok: false, code: "omp_not_authenticated" };
       return { ok: true };
@@ -46,13 +49,13 @@ export class RuntimeCheckService {
     }
   }
 
-  private withTimeout<T>(work: Promise<T>): Promise<T> {
+  private withTimeout<T>(work: Promise<T>, abort: AbortController): Promise<T> {
     let timer: ReturnType<typeof setTimeout> | undefined;
     const bound = new Promise<never>((_resolve, reject) => {
-      timer = setTimeout(
-        () => reject(new Error(`backend did not answer within ${this.probeTimeoutMs}ms`)),
-        this.probeTimeoutMs,
-      );
+      timer = setTimeout(() => {
+        reject(new Error(`backend did not answer within ${this.probeTimeoutMs}ms`));
+        abort.abort();
+      }, this.probeTimeoutMs);
     });
     return Promise.race([work, bound]).finally(() => {
       if (timer) clearTimeout(timer);
@@ -61,11 +64,12 @@ export class RuntimeCheckService {
 }
 
 // `omp models --json`, but REJECTING on failure rather than degrading — the mirror image of
-// ModelsService.readOmp(), which must never reject because a picker depends on it.
-async function readOmpCatalog(): Promise<unknown> {
+// ModelsService.readOmp(), which must never reject because a picker depends on it. The child is
+// SIGKILLed when `signal` aborts; its rejection then lands on a race already lost.
+async function readOmpCatalog(signal: AbortSignal): Promise<unknown> {
   const { spawn } = await import("node:child_process");
   return new Promise((resolve, reject) => {
-    const child = spawn("omp", ["models", "--json"], { stdio: ["ignore", "pipe", "pipe"] });
+    const child = spawn("omp", ["models", "--json"], { stdio: ["ignore", "pipe", "pipe"], signal, killSignal: "SIGKILL" });
     let out = "";
     let err = "";
     child.stdout.on("data", (b: Buffer) => { out += b.toString("utf8"); });

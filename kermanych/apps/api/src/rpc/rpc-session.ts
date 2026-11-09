@@ -6,6 +6,8 @@ import type { RpcEvent, RpcExtensionUIResponse, ImageInput, ThinkingLevel, Subag
 import type { AgentRuntime, RpcStateData, RuntimeLaunchOpts } from "../runtime/agent-runtime";
 import { MCP_TOKEN_ENV, MCP_URL_ENV, ompMcpBridgePath } from "../runtime/omp-mcp-bridge";
 import { AuthFailure, authFailureCode, type AuthFailureCode } from "../runtime/auth-failure";
+import { childLedger } from "../runtime/child-ledger";
+import { signalGroup } from "../runtime/process-group";
 
 interface RpcResponseFrame {
   type: "response"; id?: string; command: string; success: boolean; data?: unknown; error?: string;
@@ -75,10 +77,19 @@ export class RpcSession implements AgentRuntime {
       argv.push("-e", await ompMcpBridgePath());
       env = { ...process.env, ...this.opts.env, [MCP_URL_ENV]: this.opts.mcp.url, [MCP_TOKEN_ENV]: this.opts.mcp.token };
     }
-    this.proc = spawn(argv[0], argv.slice(1), { stdio: ["pipe", "pipe", "pipe"], ...(env ? { env } : {}) });
+    // `detached`: the child leads its own process group, so stop()'s signals reach what it started
+    // — its MCP servers, LSP, test workers — and not just omp. Killed alone, omp left them to
+    // launchd, running on with nobody to stop them.
+    this.proc = spawn(argv[0], argv.slice(1), { stdio: ["pipe", "pipe", "pipe"], detached: true, ...(env ? { env } : {}) });
     // Before `ready`: omp starts its MCP servers and workers during boot, and they inherit the
     // priority only if the renice lands first. A failed spawn has no pid (the 'error' event follows).
-    if (this.proc.pid !== undefined) this.opts.onSpawn?.(this.proc.pid);
+    const pid = this.proc.pid;
+    if (pid !== undefined) {
+      this.opts.onSpawn?.(pid);
+      // Written down until it exits, so an api that dies first leaves it for the next one to stop.
+      childLedger()?.add(pid, "omp");
+      this.proc.once("exit", () => childLedger()?.remove(pid));
+    }
     // Persistent decoders buffer partial multibyte (UTF-8) sequences split across chunk boundaries.
     const outDec = new StringDecoder("utf8");
     const errDec = new StringDecoder("utf8");
@@ -254,12 +265,25 @@ export class RpcSession implements AgentRuntime {
     if (!proc) return;
     try { proc.stdin.end(); } catch {}
     // Child already terminated (crashed, or stop() called twice) → 'close' has fired; don't await it.
-    if (proc.exitCode !== null || proc.signalCode !== null) return;
+    if (proc.pid === undefined || proc.exitCode !== null || proc.signalCode !== null) return;
     const { promise, resolve } = Promise.withResolvers<void>();
     proc.once("close", () => resolve());
     // A wedged child may ignore stdin EOF — escalate to signals so stop()/restart never hangs.
-    const term = setTimeout(() => { try { proc.kill("SIGTERM"); } catch {} }, 1000);
-    const kill = setTimeout(() => { try { proc.kill("SIGKILL"); } catch {} }, 4000);
+    // Sent to the group: a child that needed a signal had no chance to stop its own children, and
+    // a straggler still holding omp's stdout would keep 'close' from ever firing.
+    const pid = proc.pid;
+    const signal = (sig: NodeJS.Signals) => {
+      if (proc.exitCode === null && proc.signalCode === null) signalGroup(pid, sig);
+      else
+        try {
+          // The leader is gone: only the group id is still certainly ours.
+          process.kill(-pid, sig);
+        } catch {
+          /* the whole group is gone */
+        }
+    };
+    const term = setTimeout(() => signal("SIGTERM"), 1000);
+    const kill = setTimeout(() => signal("SIGKILL"), 4000);
     await promise;
     clearTimeout(term);
     clearTimeout(kill);

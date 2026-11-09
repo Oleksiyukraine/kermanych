@@ -392,3 +392,22 @@ describe("watchdog baseline", () => {
     expect(tracks).toEqual([{ id: n.id, pid: 77 }]);
   });
 });
+
+describe("quitting", () => {
+  // Electron quits once onModuleDestroy resolves. A child stopped by the quit is not a failed run,
+  // and the slot it frees must not start the next waiting session into an api that is going away.
+  it("stops every child, leaves a mid-turn row unfailed and starts nothing that waits", async () => {
+    const { launch, sup, registry } = make();
+    const a = await launch("a");
+    instances[0].emit({ type: "agent_start" } as RpcEvent);
+    const b = await launch("b");
+    expect(b.status).toBe("queued");
+
+    await sup.onModuleDestroy();
+
+    expect(instances[0].alive).toBe(false);
+    expect(instances).toHaveLength(1);
+    expect(registry.listSessions().find((s) => s.id === a.id)?.status).not.toBe("error");
+    expect(registry.listSessions().find((s) => s.id === b.id)?.status).toBe("queued");
+  });
+});

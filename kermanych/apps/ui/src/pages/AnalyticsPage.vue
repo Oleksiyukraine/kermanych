@@ -84,7 +84,7 @@
             <AnalyticsTile
               :label="t('analytics.tile.prs')"
               :value="String(shown.tiles.prs.value)"
-              :note="shown.tiles.costPerPr === null ? undefined : t('analytics.tile.costPerPr', { cost: money(shown.tiles.costPerPr) })"
+              :note="prNote"
               :metric="shown.tiles.prs"
             />
           </div>
@@ -93,19 +93,19 @@
             <header class="an__block-head">
               <h2 class="an__block-title">{{ t('analytics.dynamics.title') }}</h2>
               <KTabs :model-value="metric" :tabs="metricTabs" @update:model-value="pickMetric" />
-              <KTabs :model-value="split" :tabs="splitTabs" @update:model-value="pickSplit" />
+              <KTabs v-if="metric !== 'prLeadMs'" :model-value="split" :tabs="splitTabs" @update:model-value="pickSplit" />
             </header>
             <AnalyticsBars
               v-if="barSeries.length"
-              :buckets="shown.dynamics.buckets"
-              :granularity="shown.granularity"
+              :buckets="metric === 'prLeadMs' ? shown.dynamics.prLead.buckets : shown.dynamics.buckets"
+              :granularity="metric === 'prLeadMs' ? shown.dynamics.prLead.granularity : shown.granularity"
               :time-zone="shown.timeZone"
               :series="barSeries"
               :metric="metric"
               :format="formatMetric"
               @toggle="toggleSeries"
             />
-            <p v-else class="an__muted">{{ t('analytics.dynamics.empty') }}</p>
+            <p v-else class="an__muted">{{ t(metric === 'prLeadMs' ? 'analytics.dynamics.prLeadEmpty' : 'analytics.dynamics.empty') }}</p>
           </section>
 
           <div class="an__pair">
@@ -209,11 +209,35 @@
             </KTable>
           </section>
 
+          <!-- «Оцінка vs факт» (docs/specs/2026-11-09-task-estimate.md, decision 5): the PRs of the
+               period that carried an estimate at launch. Medians and coverage only — no sum of
+               «saved hours». -->
           <section class="an__block">
             <header class="an__block-head">
-              <h2 class="an__block-title">{{ t('analytics.minion.title') }}</h2>
+              <h2 class="an__block-title">{{ t('analytics.estimate.title') }}</h2>
+              <span class="an__block-note">{{ t('analytics.estimate.lead') }}</span>
             </header>
-            <div class="an__pair an__pair--flat">
+            <template v-if="estimateRatio">
+              <div class="an__tiles">
+                <AnalyticsTile :label="estimateRatio.label" :value="estimateRatio.value" />
+                <AnalyticsTile :label="t('analytics.estimate.estimateMedian')" :value="time(shown.estimate.estimateMedianMs ?? 0)" />
+                <AnalyticsTile :label="t('analytics.estimate.leadMedian')" :value="time(shown.estimate.leadMedianMs ?? 0)" />
+              </div>
+              <p class="an__note mono">
+                {{ t('analytics.estimate.coverage', { n: shown.estimate.estimated, total: shown.estimate.prs }, shown.estimate.prs) }}
+              </p>
+            </template>
+            <p v-else class="an__muted">
+              {{ shown.estimate.prs > 0 ? t('analytics.estimate.none') : t('analytics.dynamics.prLeadEmpty') }}
+            </p>
+          </section>
+
+          <section class="an__block">
+            <header class="an__block-head">
+              <h2 class="an__block-title">{{ t('analytics.unattended.title') }}</h2>
+              <span class="an__block-note">{{ t('analytics.unattended.lead') }}</span>
+            </header>
+            <div class="an__pair an__pair--flat an__pair--three">
               <div class="an__counts">
                 <h3 class="an__counts-title mono">{{ t('analytics.minion.runs') }}</h3>
                 <ul v-if="minionRuns > 0" class="an__count-list">
@@ -242,7 +266,30 @@
                 </template>
                 <p v-else class="an__muted">{{ t('analytics.findings.none') }}</p>
               </div>
+              <div class="an__counts">
+                <h3 class="an__counts-title mono">{{ t('analytics.tester.title') }}</h3>
+                <ul v-if="shown.tester.runs > 0" class="an__count-list">
+                  <li class="an__count">
+                    <span>{{ t('analytics.tester.tasks') }}</span>
+                    <span class="mono">{{ shown.tester.tasks }}</span>
+                  </li>
+                  <li class="an__count">
+                    <span>{{ t('analytics.tester.runs') }}</span>
+                    <span class="mono">{{ shown.tester.runs }}</span>
+                  </li>
+                </ul>
+                <p v-else class="an__muted">{{ t('analytics.tester.none') }}</p>
+              </div>
             </div>
+            <p class="an__note mono">
+              {{
+                t('analytics.unattended.summary', {
+                  prs: shown.minion.pr,
+                  filed: shown.findings.byStatus.filed,
+                  tested: shown.tester.tasks,
+                })
+              }}
+            </p>
           </section>
         </template>
       </template>
@@ -286,12 +333,12 @@ import AnalyticsHeatmap from 'components/analytics/AnalyticsHeatmap.vue';
 import AnalyticsTile from 'components/analytics/AnalyticsTile.vue';
 import { api } from '../lib/api';
 import {
-  ANALYTICS_METRICS,
+  ANALYTICS_CHART_METRICS,
   ANALYTICS_OTHERS,
   analyticsProjectIds,
   duration,
   foldSeries,
-  isAnalyticsMetricKey,
+  isAnalyticsChartMetric,
   longDate,
   money,
   parallelism,
@@ -300,7 +347,7 @@ import {
   seriesColor,
   share,
   type AnalyticsBarSeries,
-  type AnalyticsMetricKey,
+  type AnalyticsChartMetric,
 } from '../lib/analytics';
 import { tokens } from '../lib/format';
 import { persisted } from '../lib/persisted';
@@ -462,18 +509,42 @@ function costText(cost: number, known: boolean): string {
   return cost > 0 ? `${money(cost)} + ${t('analytics.unpriced')}` : t('analytics.unpriced');
 }
 
+// «PR відкрито»: the cost of one PR and the median time from a session's start to its PR, each
+// only when the report holds it.
+const prNote = computed(() => {
+  const tiles = shown.value?.tiles;
+  if (!tiles) return undefined;
+  const parts = [
+    tiles.costPerPr === null ? undefined : t('analytics.tile.costPerPr', { cost: money(tiles.costPerPr) }),
+    tiles.prLeadMedianMs === null ? undefined : t('analytics.tile.prLead', { time: time(tiles.prLeadMedianMs) }),
+  ].filter((p) => p !== undefined);
+  return parts.length ? parts.join(' · ') : undefined;
+});
+
+// «Оцінка vs факт»: the median `estimate ÷ time to PR` read as a direction and a factor, «×3,2»
+// faster or slower than estimated — never as a percentage of hours «saved».
+const estimateRatio = computed(() => {
+  const ratio = shown.value?.estimate.ratioMedian;
+  if (ratio === null || ratio === undefined) return undefined;
+  const faster = ratio >= 1;
+  return {
+    label: t(faster ? 'analytics.estimate.faster' : 'analytics.estimate.slower'),
+    value: parallelism(faster ? ratio : 1 / ratio, locale.value),
+  };
+});
+
 // ── «Динаміка» ───────────────────────────────────────────────────────────────────
-const metric = ref<AnalyticsMetricKey>('cost');
+const metric = ref<AnalyticsChartMetric>('cost');
 const split = ref<AnalyticsSplit>('model');
 // Legend toggles, by series key. A new split brings new keys, so its toggles start over.
 const hidden = ref<ReadonlySet<string>>(new Set());
 watch(split, () => (hidden.value = new Set()));
 
-const metricTabs = computed(() => ANALYTICS_METRICS.map((m) => ({ value: m, label: t(`analytics.dynamics.metric.${m}`) })));
+const metricTabs = computed(() => ANALYTICS_CHART_METRICS.map((m) => ({ value: m, label: t(`analytics.dynamics.metric.${m}`) })));
 const splitTabs = computed(() => ANALYTICS_SPLITS.map((s) => ({ value: s, label: t(`analytics.dynamics.split.${s}`) })));
 
 function pickMetric(v: string): void {
-  if (isAnalyticsMetricKey(v)) metric.value = v;
+  if (isAnalyticsChartMetric(v)) metric.value = v;
 }
 function pickSplit(v: string): void {
   const next = ANALYTICS_SPLITS.find((s) => s === v);
@@ -490,6 +561,21 @@ function seriesLabel(key: string): string {
 const barSeries = computed<AnalyticsBarSeries[]>(() => {
   const r = shown.value;
   if (!r) return [];
+  if (metric.value === 'prLeadMs') {
+    const lead = r.dynamics.prLead;
+    if (!lead.counts.some((n) => n > 0)) return [];
+    const key = 'prLead';
+    return [
+      {
+        key,
+        label: t('analytics.dynamics.prLeadSeries'),
+        color: seriesColor(key, 0),
+        values: lead.medianMs.map((ms) => ms ?? 0),
+        off: hidden.value.has(key),
+        notes: lead.counts.map((n) => (n > 0 ? t('analytics.dynamics.prCount', { n }, n) : '')),
+      },
+    ];
+  }
   return foldSeries(r.dynamics.series[split.value], metric.value).map((s, i) => ({
     key: s.key,
     label: seriesLabel(s.key),
@@ -719,6 +805,11 @@ function openTop(row: AnalyticsTopSession): void {
   gap: var(--k-sp-5);
 }
 
+// «Зроблено без тебе»: three short lists side by side at the usual 1280–1440 px.
+.an__pair--three {
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+}
+
 .an__muted {
   margin: 0;
   font-size: var(--k-fs-sm);
@@ -798,7 +889,7 @@ function openTop(row: AnalyticsTopSession): void {
   background: var(--k-warning);
 }
 
-// ── Посіпака і знахідки ──
+// ── Зроблено без тебе ──
 .an__counts {
   display: flex;
   flex-direction: column;

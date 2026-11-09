@@ -172,8 +172,8 @@ export class ManagementChatService implements OnModuleDestroy {
     });
   }
 
-  onModuleDestroy(): void {
-    this.pool.dropAll();
+  async onModuleDestroy(): Promise<void> {
+    await this.pool.dropAll();
   }
 
   private async turn(

@@ -269,6 +269,7 @@ export const en: MessageSchema = {
       delete: 'Delete the agent',
       unarchive: 'Return to active',
       agentMap: 'Agent map — this session’s subagents',
+      minion: 'Hand to Minion (/minion): the agent makes the remaining decisions itself and opens a PR',
     },
     map: {
       title: 'Agent map',
@@ -424,6 +425,10 @@ export const en: MessageSchema = {
       branchPlaceholder: 'generated from the task',
       branchNameOwn: 'your name; if that branch exists, -2 is appended',
       branchNameSlugged: 'the branch will be {branch}',
+      estimateLabel: 'Estimate, h',
+      estimatePlaceholder: 'not estimated',
+      estimateHint: 'optional; «Analytics» compares it with the time to PR',
+      estimateInvalid: 'an estimate is a number of hours above zero, e.g. 1.5',
       typeLabel: 'Type',
       worktreeLabel: 'Isolate in a worktree',
       worktreeDesc: 'A separate folder, a separate checkout. The agent won’t touch your working state.',
@@ -665,6 +670,7 @@ export const en: MessageSchema = {
       before: 'Before you finish',
       testTitle: 'Testing',
       testHint: 'The tester walks the card’s QA checklist and gives each item a verdict.',
+      testRun: 'Run',
       prTitle: 'Pull request',
       prHint: 'The agent commits the work, pushes the branch and opens a PR.',
       commitHint: 'The agent commits what is new and pushes it to the open PR.',
@@ -1200,6 +1206,8 @@ export const en: MessageSchema = {
       prefix: 'Type',
       branch: 'Base branch',
       branchPlaceholder: 'project default',
+      estimate: 'Estimate, h',
+      estimatePlaceholder: 'not estimated',
       assignee: 'Assignee',
       unassignedName: 'Unassigned',
       unassigned: 'unassigned',
@@ -3429,15 +3437,20 @@ export const en: MessageSchema = {
       sessions: 'Sessions started',
       prs: 'PRs opened',
       costPerPr: '{cost} per PR',
+      prLead: 'median {time} to PR',
     },
     dynamics: {
       title: 'Trend',
       aria: 'Trend over the period',
       empty: 'Nothing here for this period',
+      prLeadEmpty: 'No PR was opened in this period',
+      prLeadSeries: 'Median from start to PR',
+      prCount: '{n} PR | {n} PRs',
       metric: {
         cost: 'Spend',
         tokens: 'Tokens',
         workingMs: 'Agent time',
+        prLeadMs: 'Time to PR',
       },
       split: {
         model: 'model',
@@ -3498,8 +3511,30 @@ export const en: MessageSchema = {
       deleted: 'deleted session',
       open: 'Open the session',
     },
+    // «Оцінка vs факт» (docs/specs/2026-11-09-task-estimate.md, decision 5).
+    estimate: {
+      title: 'Estimate vs actual',
+      lead: 'Calendar time from launch to PR against the card’s estimate at launch — not a person’s hours',
+      faster: 'Faster than estimated',
+      slower: 'Slower than estimated',
+      estimateMedian: 'Median estimate',
+      leadMedian: 'Median actual',
+      coverage: '{n} of {total} PR in the period had an estimate | {n} of {total} PRs in the period had an estimate',
+      none: 'No PR in this period had an estimate. Set one on the card — the «Estimate, h» field.',
+    },
+    // «Зроблено без тебе» (docs/specs/2026-11-08-analytics-time-to-pr.md, decision 5): counts only.
+    unattended: {
+      title: 'Done without you',
+      lead: 'What the agents did on their own — counted, not converted into hours',
+      summary: 'PRs by the Minion: {prs} · findings that became tasks: {filed} · tasks tested: {tested}',
+    },
+    tester: {
+      title: 'Tester',
+      tasks: 'tasks tested',
+      runs: 'runs',
+      none: 'The Tester did not run in this period',
+    },
     minion: {
-      title: 'Minion and findings',
       runs: 'Minion runs',
       none: 'The Minion did not run in this period',
       outcome: {
@@ -3589,6 +3624,10 @@ export const en: MessageSchema = {
     // A row of managed claude-code, which no longer exists (2026-11-05 spec, decision 9).
     managed_claude_removed:
       'Managed claude-code was removed from Kermanych, so this session cannot continue in Kermanych mode. Open its conversation in a terminal: claude --resume <the id on its Session tab>.',
+    // /minion (2026-11-09-minion-takeover spec).
+    minion_takeover_unsupported:
+      'Only an open agent session with a branch can be handed to Minion — not a chat, discussion, review, design, Synergy or scheduled run.',
+    minion_takeover_running: 'Minion is already running this session on its own.',
     // An in-place agent works in the project checkout itself — the refusals name what blocks
     // it and the two ways out: clean the checkout, or keep the worktree isolation on.
     inplace_tree_dirty:
@@ -3655,6 +3694,7 @@ export const en: MessageSchema = {
     session_dormant_inactive: 'Session inactive. Send a message to restore it and pull in its history.',
     context_compacted: 'context compacted — the conversation history was condensed and token budget freed',
     context_compact_failed: 'could not compact context: {reason}',
+    minion_takeover_started: 'session handed to Minion: the agent makes the remaining decisions itself and opens a PR',
     base_fetch_failed: 'Could not update origin/{base} — the branch was created from {ref} as of the last successful fetch, so the base may not be the latest.',
     pr_behind_base: 'The PR is missing {count} commit from origin/{base}: the agent did not merge the base or did not push the merge. Press “Commit” in the “Finish the session” window. | The PR is missing {count} commits from origin/{base}: the agent did not merge the base or did not push the merge. Press “Commit” in the “Finish the session” window.',
     // The backend child died MID-SESSION — its launch succeeded long ago, so there is nobody to

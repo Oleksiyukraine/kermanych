@@ -621,6 +621,13 @@ export class RegistryService {
     } catch {
       /* column already exists */
     }
+    // Additive migration: the card's estimate as the launch read it, for «Оцінка vs факт»
+    // (docs/specs/2026-11-09-task-estimate.md, decision 3). Fixed at creation; NULL = not estimated.
+    try {
+      this.db.exec(`ALTER TABLE sessions ADD COLUMN estimate_minutes INTEGER`);
+    } catch {
+      /* column already exists */
+    }
     // Additive migration: a native session (docs/specs/2026-10-05-native-sessions.md) runs its
     // harness as its own TUI in a pty and Kermanych only observes it. Fixed at creation.
     try {
@@ -664,7 +671,8 @@ export class RegistryService {
       }
     }
     // Additive migration: a «Посіпака» run (docs/specs/2026-10-23-minion-auto-run.md). `minion`
-    // is fixed at creation, like `native`; `minion_result` is the JSON MinionResult of the run so
+    // is set at creation, or later by `/minion` (docs/specs/2026-11-09-minion-takeover.md), and
+    // never cleared; `minion_result` is the JSON MinionResult of the run so
     // far, rewritten whenever a turn of it ends differently; `finding_kind` is the card's finding
     // kind for a run of a finding card (decision 14), fixed at creation too.
     for (const col of ["minion INTEGER NOT NULL DEFAULT 0", "minion_result TEXT", "finding_kind TEXT"]) {
@@ -1197,11 +1205,14 @@ export class RegistryService {
     s: Omit<Session, "id" | "createdAt" | "status" | "worktree" | "baseBranch" | "lastActivityAt" | "kind" | "parentSessionId" | "usage"> & {
       status?: SessionStatus; worktree?: boolean; baseBranch?: string;
       kind?: Session["kind"]; parentSessionId?: string;
+      // Written to the row for «Аналітика» only; not part of Session (nothing else reads it).
+      estimateMinutes?: number;
     },
   ): Session {
+    const { estimateMinutes, ...fields } = s;
     const createdAt = new Date().toISOString();
     const row: Session = {
-      ...s,
+      ...fields,
       worktree: s.worktree ?? true,
       baseBranch: s.baseBranch,
       kind: s.kind ?? "agent",
@@ -1213,7 +1224,7 @@ export class RegistryService {
     };
     this.db
       .prepare(
-        `INSERT INTO sessions (id, project_id, task_id, name, task, worktree_path, branch, worktree, base_branch, omp_session_id, omp_session_file, parent_session_id, kind, model, prefix, runtime, native, deep_analysis, synergy, synergy_page, minion, finding_kind, tester, schedule_id, schedule_name, effort, status, created_at, last_activity_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+        `INSERT INTO sessions (id, project_id, task_id, name, task, worktree_path, branch, worktree, base_branch, omp_session_id, omp_session_file, parent_session_id, kind, model, prefix, runtime, native, deep_analysis, synergy, synergy_page, minion, finding_kind, tester, schedule_id, schedule_name, effort, status, created_at, last_activity_at, estimate_minutes) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
       )
       .run(
         row.id,
@@ -1245,6 +1256,7 @@ export class RegistryService {
         row.status,
         row.createdAt,
         row.lastActivityAt,
+        estimateMinutes ?? null,
       );
     return row;
   }
@@ -1257,7 +1269,7 @@ export class RegistryService {
     const next = { ...cur, ...patch };
     this.db
       .prepare(
-        `UPDATE sessions SET project_id=?, task_id=?, name=?, task=?, worktree_path=?, branch=?, worktree=?, base_branch=?, omp_session_id=?, omp_session_file=?, kind=?, model=?, prefix=?, runtime=?, effort=?, status=?, pr_opened=?, pr_url=?, pr_opened_at=?, archived=?, minion_result=?, synergy=?, synergy_page=? WHERE id=?`,
+        `UPDATE sessions SET project_id=?, task_id=?, name=?, task=?, worktree_path=?, branch=?, worktree=?, base_branch=?, omp_session_id=?, omp_session_file=?, kind=?, model=?, prefix=?, runtime=?, effort=?, status=?, pr_opened=?, pr_url=?, pr_opened_at=?, archived=?, minion=?, minion_result=?, synergy=?, synergy_page=? WHERE id=?`,
       )
       .run(
         next.projectId,
@@ -1280,6 +1292,7 @@ export class RegistryService {
         next.prUrl || null,
         next.prOpenedAt ?? null,
         next.archived ? 1 : 0,
+        next.minion ? 1 : 0,
         next.minionResult ? JSON.stringify(next.minionResult) : null,
         next.synergy ? 1 : 0,
         next.synergy?.page ?? null,
@@ -1507,12 +1520,12 @@ export class RegistryService {
     const sessions = (
       this.db
         .prepare(
-          `SELECT id, project_id, name, kind, tester, minion, design_dir, synergy, schedule_id, status, created_at, pr_opened, pr_opened_at, minion_result,
+          `SELECT id, project_id, name, kind, tester, minion, design_dir, synergy, schedule_id, status, created_at, pr_opened, pr_opened_at, minion_result, parent_session_id, estimate_minutes,
              EXISTS (SELECT 1 FROM usage_hours u WHERE u.session_id = sessions.id) AS has_usage,
              (SELECT COALESCE(SUM(cost), 0) FROM usage_hours u WHERE u.session_id = sessions.id AND u.cost_known = 1) AS lifetime_cost
            FROM sessions WHERE 1 = 1${scope("project_id")}`,
         )
-        .all(...args) as (LedgerOwnerDbRow & { id: string; name: string; status: SessionStatus; created_at: string; pr_opened: number; pr_opened_at: string | null; minion_result: string | null; has_usage: number; lifetime_cost: number })[]
+        .all(...args) as (LedgerOwnerDbRow & { id: string; name: string; status: SessionStatus; created_at: string; pr_opened: number; pr_opened_at: string | null; minion_result: string | null; parent_session_id: string | null; estimate_minutes: number | null; has_usage: number; lifetime_cost: number })[]
     ).map((r): AnalyticsSessionRow => {
       const minionOutcome = readMinionColumn(r.minion_result)?.outcome;
       return {
@@ -1526,6 +1539,8 @@ export class RegistryService {
         prOpened: r.pr_opened !== 0,
         ...(r.pr_opened_at ? { prOpenedAt: r.pr_opened_at } : {}),
         ...(minionOutcome ? { minionOutcome } : {}),
+        ...(r.parent_session_id ? { parentSessionId: r.parent_session_id } : {}),
+        ...(r.estimate_minutes ? { estimateMinutes: r.estimate_minutes } : {}),
         noHistory: r.has_usage === 0,
         lifetimeCost: r.lifetime_cost,
       };

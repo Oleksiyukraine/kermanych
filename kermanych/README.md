@@ -20,6 +20,34 @@ worktrees, the RPC bridge — is shared.
   the project's `.gitworktree/<branch>`; the registry DB is
   `~/.kermanych/kermanych.sqlite`.
 
+## Processes and disk housekeeping
+
+- **Quitting waits for the agents, up to 15 s.** The api stops every `omp` child (the agents', the
+  Менеджмент, ЦУК and scheduled chats') and preview before the app exits: stdin EOF, then SIGTERM
+  after 1 s and SIGKILL after 4 s to the child's whole process group, so its MCP servers and
+  workers go with it. A session caught mid-turn keeps its status and wakes on the next start; a
+  session waiting for a slot does not start during the quit.
+- **After a crash.** Every `omp` child and preview step is written to
+  `~/.kermanych/children/<api pid>.json` until it exits. At start, the groups an api that is no
+  longer running left there are stopped — only when the pid and its start time still match, so a
+  reused pid is never signalled. A managed child that does not greet within 60 s fails its start
+  with `omp_launch_timeout`, and a hung `omp models` (the AI-login check) is killed.
+- **At start** (the machine's own registry only — skipped when `KERMANYCH_DB` is set): a session
+  whose launch was interrupted after its worktree was created gets the worktree's path back (and
+  waits for a slot again); a clean worktree a finished session left at `.gitworktree/<branch>` is
+  removed (its branch stays; worktrees Kermanych did not make are never touched, nor any with
+  uncommitted changes); leftovers of the old `~/.kermanych/worktrees/` layout no session names are
+  removed, and so are their omp conversations (`~/.omp/agent/sessions/-.kermanych-worktrees-<id>`)
+  no session reads; so are `$TMPDIR/kermanych-native/mcp-<id>.json` files of deleted sessions and
+  the session-browser partitions of deleted projects.
+- **Deleting a session** also deletes its omp conversation file (with its subagents' folder) and
+  a native session's MCP config. A native agent's own harness transcript (claude's, codex's) stays,
+  so it can still be resumed outside Kermanych. **Archiving** stops its omp child and frees its
+  transcript from the api's memory; opening it again wakes it as after a restart.
+- **The window** keeps the transcripts of the sessions you opened — at most 12 besides the ones on
+  screen — and ignores live output of sessions you have not opened; those load their full history
+  when opened. Spec: `docs/specs/2026-11-09-process-memory-disk-cleanup.md`.
+
 ## Prerequisites
 
 - **Node ≥22.12** — REQUIRED. `better-sqlite3` is pinned to v13, whose N-API
@@ -658,6 +686,11 @@ before shipping a client that knows them.
 the launcher's «Гілка» field (NULL: the launch names the branch from the task), and adds it to
 the content `tasks_guard()` watches for auto-run. It only adds, but every task read selects the
 column, so push it before shipping a client that knows it.
+
+`20261109090000_task_estimate.sql` adds `tasks.estimate_minutes`, the card's «Оцінка, год» in
+minutes (NULL: not estimated; a check keeps it above zero). `tasks_guard()` is unchanged: an
+estimate is not what the card asks for, so setting it never switches auto-run off. It only adds,
+but every task read selects the column, so push it before shipping a client that knows it.
 
 ### Running against a local stack or your own project
 
@@ -1476,7 +1509,10 @@ developer's machine. The direction is always task → session.
 
 1. **Create** — any member of the project's workspace creates a task, from the board
    (`/#/board`) or from «Агенти» / «Чат», with a title, a description and optional launch
-   params (model, branch prefix, base branch). A card filed from the board is
+   params (model, branch prefix, base branch) and an optional «Оцінка, год» — a person's
+   estimate in hours (`1,5` or `1.5`), stored as `tasks.estimate_minutes`. A launch copies it
+   onto the local session for «Аналітика» → «Оцінка vs факт»; a Jira or Plane launch takes the
+   ticket's own time estimate instead (a points estimate is not hours and is left out). A card filed from the board is
    unassigned unless its author picks someone; a card filed from «Агенти» or «Чат» is
    assigned to its author, because that is the machine about to run it. Either way it is a
    row in the cloud `tasks` — there is no local-only task — so the whole workspace sees it.
@@ -1738,6 +1774,20 @@ request with nobody watching.
   the Mac from idle sleep (the screen may turn off); otherwise the machine sleeps as usual, so
   set macOS not to sleep on a dedicated box. The desktop app keeps its sign-in fresh while the
   window is hidden. Signing out on one machine currently signs you out on all of them.
+- **Hand a session over: `/minion`.** In a session of your own you can send the minion in
+  yourself (spec: `docs/specs/2026-11-09-minion-takeover.md`): type `/minion` in the composer
+  (it is in the `/` command list as «Передати Посіпаці») or press the bot icon left of «⋯» in
+  the session header. Text after the command reaches the agent as your parting words. From then
+  on the session is a minion run like the ones above: the agent finishes the task this
+  conversation agreed on, decides the open questions itself (a question it was waiting on
+  included) and lists those decisions in the PR, then reports a verdict, and Kermanych runs the
+  docs and PR turns. The agent is restarted on the same conversation first, because only a fresh
+  child gets the ask tool switched off and `report_outcome` — a turn in progress is cut, like ■.
+  It works for an open agent session with a branch, also on a project where the minion is not
+  activated; a chat, discussion, review, design, «Синергія», scheduled or native session is
+  refused. The run takes a place in the machine's minion cap and has the 2-hour limit, but its
+  result counts toward neither the failures nor the pause. Writing to the session takes it back,
+  as with any minion run; `/minion` again hands it over again.
 
 ### «Тестувальник» (QA runs)
 
@@ -1745,8 +1795,8 @@ request with nobody watching.
 project, on the session's device — item by item, and records a verdict for each (specs:
 `docs/specs/2026-11-04-qa-tester-agent.md`, `docs/specs/2026-11-04-tester-mobile-device.md`).
 
-- **Where it starts.** «Виконати тестування» on the «Завершити» sheet and in the header of the
-  session's **QA** tab. It is a separate child session `тестування: <name>` next to the doer, like
+- **Where it starts.** «Виконати» in the «Тестування» step of the «Завершити» sheet and «Виконати
+  тестування» in the header of the session's **QA** tab. It is a separate child session `тестування: <name>` next to the doer, like
   a review: it reads the code but never edits or commits it. It needs a project with a browser (and
   then the desktop app) or a Mobile project (either build; a back-end project cannot be tested), a
   session started from a card, a valid `.kermanych/preview.json` in the doer's directory (the preview
@@ -2095,12 +2145,20 @@ local SQLite only, nothing is sent to the cloud, and every signed-in user sees t
   by week above.
 - **What it shows:** spend, tokens and the cache share; agent working time and parallelism (the
   agents' summed working time ÷ the wall time with at least one of them working); how long agents
-  waited for your answer (total and median); sessions launched; PRs opened and the cost of one;
-  «Динаміка» bars by model, project or session type; a weekday × hour heat map; where the period's
-  agent sessions are now; per-model and per-project tables; the ten dearest sessions (a row opens
-  the session); Посіпака outcomes and findings.
+  waited for your answer (total and median); sessions launched; PRs opened, the cost of one and the
+  median time from a session's start to its PR; «Динаміка» bars of spend, tokens or agent time
+  by model, project or session type, and of «Час до PR» — the median time to PR of the PRs
+  opened in each day (7 days) or week (longer periods), unsplit, since medians do not stack; a
+  weekday × hour heat map; where the period's agent sessions are now; per-model and per-project
+  tables; the ten dearest sessions (a row opens the session); «Оцінка vs факт» — over the
+  period's PRs that carried an estimate at launch, how many there are, the median estimate, the
+  median time to PR and the median of each PR's `estimate ÷ time to PR`, worded «швидше / повільніше
+  за оцінку ×N» (spec: `docs/specs/2026-11-09-task-estimate.md`); «Зроблено без тебе» — Посіпака's
+  runs by outcome, findings by kind and status, and the tasks Тестувальник tested (runs on the
+  same task count once). These are counts only: nothing is converted into «saved hours», because
+  nothing records how long the same work would take by hand.
 - **Where the figures come from.** A local ledger (`usage_hours`, `activity_spans`,
-  `analytics_meta`, `sessions.pr_opened_at`) recorded from the first start of this version: a
+  `analytics_meta`, `sessions.pr_opened_at`, `sessions.estimate_minutes`) recorded from the first start of this version: a
   managed session's turns where the «Сесія» total is counted, a native session's harness file
   after each turn, and the coarse status of every session (working, waiting for input, waiting for
   a slot). The ledger outlives a deleted session, goes with a removed project, and rows older than

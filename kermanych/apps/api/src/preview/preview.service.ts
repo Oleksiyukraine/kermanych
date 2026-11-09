@@ -49,6 +49,7 @@ import {
 import { RegistryService } from "../registry/registry.service";
 import { browserHost } from "../browser/browser-host";
 import { DEVICE_API, type DeviceApi } from "../device/device.contract";
+import { childLedger } from "../runtime/child-ledger";
 import { previewDotenv } from "./preview-dotenv";
 
 // The waits of decision 3 and the stop of decision 7. Mutable so specs can shorten them; the
@@ -644,6 +645,13 @@ export class PreviewService implements OnModuleInit, OnModuleDestroy {
   private spawnStep(run: Run, step: string, command: string, cwd: string, env: Record<string, string>, open: boolean, sessionId?: string): Proc {
     run.logs.set(step, []);
     const child = spawn("sh", ["-c", command], { cwd, env: { ...process.env, ...env }, detached: true, stdio: ["ignore", "pipe", "pipe"] });
+    // Written down while it runs: an api that dies first leaves the group (and its port) to the
+    // next api's sweep instead of to nobody.
+    const pid = child.pid;
+    if (pid !== undefined) {
+      childLedger()?.add(pid, `preview ${step}`);
+      child.once("exit", () => childLedger()?.remove(pid));
+    }
     const { promise: exited, resolve } = Promise.withResolvers<void>();
     const proc: Proc = { step, child, exited, done: false, reason: "", code: null, signal: null, banner: open ? new Set() : null };
     run.procs.push(proc);

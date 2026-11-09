@@ -4,6 +4,7 @@
 // managed is spawned, managed-only actions answer `native_unsupported`, and the live overlay
 // comes from NativeSessionService.
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { setImmediate as nextMacrotask } from "node:timers/promises";
 import { join } from "node:path";
@@ -329,5 +330,33 @@ describe("a native chat (docs/specs/2026-10-06-native-chats.md)", () => {
     await sup.resume(agent.id);
     await sup.setArchived(agent.id, true);
     expect(terminal.kill).not.toHaveBeenCalled();
+  });
+});
+
+describe("deleting a native session", () => {
+  // A native agent's `ompSessionFile` is the harness's own transcript (claude's, codex's): the
+  // operator can still resume it outside Kermanych, so deleting the row leaves it. A managed
+  // agent's omp conversation goes with its row.
+  it("keeps a native agent's harness transcript and removes a managed agent's conversation", async () => {
+    const { sup, registry } = make();
+    const dir = mkdtempSync(join(tmpdir(), "kmq-native-del-"));
+    try {
+      const harness = join(dir, "claude.jsonl");
+      const omp = join(dir, "omp.jsonl");
+      writeFileSync(harness, "{}\n");
+      writeFileSync(omp, "{}\n");
+      const nativeAgent = registry.createSession({ projectId: PROJECT, name: "n", task: "t", worktreePath: "", branch: "", worktree: false, runtime: "claude-code", native: true, status: "stopped" });
+      registry.updateSession(nativeAgent.id, { ompSessionFile: harness });
+      const managed = registry.createSession({ projectId: PROJECT, name: "m", task: "t", worktreePath: "", branch: "", worktree: false, status: "done" });
+      registry.updateSession(managed.id, { ompSessionFile: omp });
+
+      await sup.deleteSession(nativeAgent.id);
+      await sup.deleteSession(managed.id);
+
+      expect(existsSync(harness)).toBe(true);
+      expect(existsSync(omp)).toBe(false);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });

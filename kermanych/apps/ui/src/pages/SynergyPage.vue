@@ -367,6 +367,7 @@ import { useVoicePanel } from '../composables/useVoicePanel';
 import { nextMode as modeFor } from '../lib/message-mode';
 import { useOptimisticValue } from '../composables/useOptimisticValue';
 import { useLoadPhase } from '../composables/useLoadPhase';
+import { useHeldTranscript } from '../composables/useHeldTranscript';
 import { useSendPicks } from '../composables/useSendPicks';
 import KPanel from 'components/kit/KPanel.vue';
 import KRequestBlock from 'components/kit/KRequestBlock.vue';
@@ -441,6 +442,8 @@ function initialSession(projectId: string | undefined): string | undefined {
 
 const sessionId = ref<string | undefined>(initialSession(store.selectedProjectId));
 const session = computed(() => sessions.value.find((s) => s.id === sessionId.value));
+// The open session's log stays resident while it is on screen (the store evicts past its cap).
+useHeldTranscript(() => session.value?.id);
 const voicePanel = useVoicePanel(() => session.value);
 useMarkSeen(() => session.value);
 
