@@ -256,26 +256,51 @@ describe("analyticsReport — outcomes", () => {
 });
 
 describe("analyticsReport — time to PR", () => {
+  const pr = (id: string, createdAt: string, prOpenedAt: string): AnalyticsSessionRow =>
+    session(id, createdAt, { prOpened: true, prOpenedAt });
+  const sessions = [
+    pr("fast", "2026-11-03T09:00:00.000Z", "2026-11-03T10:00:00.000Z"),
+    // Started before the period, PR inside it: its whole way counts.
+    pr("long", "2026-10-28T09:00:00.000Z", "2026-11-04T09:00:00.000Z"),
+    pr("mid", "2026-11-05T09:00:00.000Z", "2026-11-05T13:00:00.000Z"),
+    pr("slow", "2026-11-05T09:00:00.000Z", "2026-11-05T15:00:00.000Z"),
+    // An imported PR time before the session's own start is not a duration.
+    pr("negative", "2026-11-06T09:00:00.000Z", "2026-11-06T08:00:00.000Z"),
+    // PR before the 7-day period: compared on the tile, not in its median.
+    pr("older", "2026-10-29T09:00:00.000Z", "2026-10-29T09:30:00.000Z"),
+    session("nopr", "2026-11-05T09:00:00.000Z"),
+  ];
+
   test("the median from start to PR over the period's PRs, negative pairs and older PRs left out", () => {
-    const r = analyticsReport(
-      input({
-        sessions: [
-          session("fast", "2026-11-03T09:00:00.000Z", { prOpened: true, prOpenedAt: "2026-11-03T10:00:00.000Z" }),
-          // Started before the period, PR inside it: its whole way counts.
-          session("long", "2026-10-28T09:00:00.000Z", { prOpened: true, prOpenedAt: "2026-11-04T09:00:00.000Z" }),
-          session("mid", "2026-11-05T09:00:00.000Z", { prOpened: true, prOpenedAt: "2026-11-05T13:00:00.000Z" }),
-          session("slow", "2026-11-05T09:00:00.000Z", { prOpened: true, prOpenedAt: "2026-11-05T15:00:00.000Z" }),
-          // An imported PR time before the session's own start is not a duration.
-          session("negative", "2026-11-06T09:00:00.000Z", { prOpened: true, prOpenedAt: "2026-11-06T08:00:00.000Z" }),
-          // PR in the previous period: compared on the tile, not in the median.
-          session("older", "2026-10-29T09:00:00.000Z", { prOpened: true, prOpenedAt: "2026-10-29T09:30:00.000Z" }),
-          session("nopr", "2026-11-05T09:00:00.000Z"),
-        ],
-      }),
-    );
+    const r = analyticsReport(input({ sessions }));
     expect(r.tiles.prs.value).toBe(5);
     // 1 h, 4 h, 6 h, 7 days → (4 h + 6 h) / 2.
     expect(r.tiles.prLeadMedianMs).toBe(5 * HOUR);
+  });
+
+  test("over 7 days the trend is by day, each day the median of the PRs opened on it", () => {
+    const { prLead } = analyticsReport(input({ sessions })).dynamics;
+    expect(prLead.granularity).toBe("day");
+    expect(prLead.buckets).toHaveLength(7);
+    // 1–7 November: «fast» on the 3rd, «long» on the 4th, «mid» and «slow» on the 5th.
+    expect(prLead.medianMs).toEqual([null, null, HOUR, 7 * 24 * HOUR, 5 * HOUR, null, null]);
+    expect(prLead.counts).toEqual([0, 0, 1, 1, 2, 0, 0]);
+  });
+
+  test("over 30 days the trend is by week, cut at local Monday midnight", () => {
+    const { prLead } = analyticsReport(input({ period: "30d", sessions })).dynamics;
+    expect(prLead.granularity).toBe("week");
+    // From Friday 9 October, then the Mondays 12, 19, 26 October (EEST) and 2 November (EET).
+    expect(prLead.buckets).toEqual([
+      "2026-10-08T21:00:00.000Z",
+      "2026-10-11T21:00:00.000Z",
+      "2026-10-18T21:00:00.000Z",
+      "2026-10-25T22:00:00.000Z",
+      "2026-11-01T22:00:00.000Z",
+    ]);
+    // «older» alone in the week of 26 October; 1 h, 4 h, 6 h, 7 days in the week of 2 November.
+    expect(prLead.medianMs).toEqual([null, null, null, 30 * MIN, 5 * HOUR]);
+    expect(prLead.counts).toEqual([0, 0, 0, 1, 4]);
   });
 
   test("null when the period opened no PR", () => {

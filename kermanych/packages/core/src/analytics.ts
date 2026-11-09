@@ -235,6 +235,12 @@ export type AnalyticsReport = {
     /** ISO instant each bucket starts at (local midnight, or local Monday midnight by week). */
     buckets: string[];
     series: Record<AnalyticsSplit, AnalyticsSeries[]>;
+    /**
+     * «Час до PR» by the bucket its PR was opened in: the median of `prOpenedAt − createdAt` and
+     * how many PRs it is over (negative pairs left out, as `tiles.prLeadMedianMs`). Its own
+     * buckets: by day for 7 days, by week above — one or two PRs a day make a daily median noise.
+     */
+    prLead: { granularity: "day" | "week"; buckets: string[]; medianMs: (number | null)[]; counts: number[] };
   };
   /** [weekday Monday = 0][local hour 0–23] → working ms. */
   rhythm: number[][];
@@ -393,11 +399,15 @@ export function analyticsReport(input: AnalyticsInput): AnalyticsReport {
   };
 
   // Decision 4: the first bucket starts at `from`; by week the others start at local Monday midnight.
+  const bucketStarts = (by: "day" | "week"): number[] => {
+    const out = [from];
+    for (let d = fromDay + 1; d < fromDay + days; d++) {
+      if (by === "day" || weekdayOf(d) === 0) out.push(midnight(d, timeZone));
+    }
+    return out;
+  };
   const granularity = days <= DAY_GRANULARITY_MAX_DAYS ? "day" : "week";
-  const starts = [from];
-  for (let d = fromDay + 1; d < fromDay + days; d++) {
-    if (granularity === "day" || weekdayOf(d) === 0) starts.push(midnight(d, timeZone));
-  }
+  const starts = bucketStarts(granularity);
 
   const usage = input.usage.filter((r) => inRange(r.hour, cur));
   const prevUsage = input.usage.filter((r) => inRange(r.hour, prev));
@@ -421,6 +431,18 @@ export function analyticsReport(input: AnalyticsInput): AnalyticsReport {
     value,
     previous: prevRows.length === 0 ? null : previous(),
   });
+
+  // «Час до PR»: each PR of the period with its way from the session's start. An imported PR
+  // time before the session's own start is not a duration and is left out (honest figures only).
+  const leads = prs.flatMap((s) => {
+    const at = Date.parse(s.prOpenedAt as string);
+    const ms = at - Date.parse(s.createdAt);
+    return ms >= 0 ? [{ at, ms }] : [];
+  });
+  const leadGranularity = days <= 7 ? "day" : "week";
+  const leadStarts = leadGranularity === granularity ? starts : bucketStarts(leadGranularity);
+  const leadByBucket: number[][] = leadStarts.map(() => []);
+  for (const l of leads) leadByBucket[bucketIndex(leadStarts, l.at)]!.push(l.ms);
 
   const workingMs = lengthOf(working);
   const wallWorking = unionMs(working.map(({ r }) => r));
@@ -613,13 +635,17 @@ export function analyticsReport(input: AnalyticsInput): AnalyticsReport {
       sessions: metric(created.length, prevCreated, () => prevCreated.length),
       prs: metric(prs.length, prevPrs, () => prevPrs.length),
       costPerPr: prs.length > 0 ? sum(prs, (s) => s.lifetimeCost) / prs.length : null,
-      prLeadMedianMs: median(
-        prs.map((s) => Date.parse(s.prOpenedAt as string) - Date.parse(s.createdAt)).filter((ms) => ms >= 0),
-      ),
+      prLeadMedianMs: median(leads.map((l) => l.ms)),
     },
     dynamics: {
       buckets: starts.map((t) => new Date(t).toISOString()),
       series: { model: seriesOf("model"), project: seriesOf("project"), class: seriesOf("class") },
+      prLead: {
+        granularity: leadGranularity,
+        buckets: leadStarts.map((t) => new Date(t).toISOString()),
+        medianMs: leadByBucket.map(median),
+        counts: leadByBucket.map((xs) => xs.length),
+      },
     },
     rhythm,
     outcomes: { counts, total: agents.length, prReworked },

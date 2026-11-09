@@ -3493,10 +3493,14 @@ export const uk = {
       title: 'Динаміка',
       aria: 'Динаміка за період',
       empty: 'За цей період тут нічого немає',
+      prLeadEmpty: 'За цей період PR не відкривали',
+      prLeadSeries: 'Медіана від запуску до PR',
+      prCount: '{n} PR | {n} PR | {n} PR',
       metric: {
         cost: 'Витрати',
         tokens: 'Токени',
         workingMs: 'Час агентів',
+        prLeadMs: 'Час до PR',
       },
       split: {
         model: 'модель',

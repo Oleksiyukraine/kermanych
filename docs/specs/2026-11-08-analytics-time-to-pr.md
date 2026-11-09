@@ -43,10 +43,22 @@ time from a session's start to its PR.
    «$3.20 за PR · медіана 1 год 40 хв до PR». It is written the way the median wait is written
    on its own tile. A seventh tile would leave one tile alone on a third row at 1280–1440 px.
    - Rejected: a ▲/▼ comparison with the previous period. The other notes (cache share,
-     parallelism, median wait) carry none either. A trend line can come later, as its own
-     «Динаміка» metric.
+     parallelism, median wait) carry none either. The change over time is decision 4.
    - Rejected: a «time saved» figure. Nothing on this machine records how long the same work
      would take by hand. A guessed baseline breaks rule 7.
+4. **The trend: «Час до PR», a fourth «Динаміка» metric** (asked by the operator after the
+   tile note landed). Each bar is the median time to PR of the PRs opened in that bucket; the
+   tooltip says how many PRs it is over («3 год · 03.11.2026 · 1 PR»). A bucket without a PR
+   has no bar.
+   - **No split.** Medians do not add up, so they cannot stack into model, project or session
+     type segments. While «Час до PR» is picked, the split tabs are hidden and one series is
+     drawn.
+   - **Its own buckets: by day for 7 days, by week above.** One or two PRs a day make a daily
+     median over 30 days jump with each long task. Weekly buckets over 7 days would leave one or
+     two bars, so 7 days stays by day. The other metrics keep decision 4 of the analytics spec
+     (by day up to 31 days).
+   - Rejected: a line chart. It would need a second chart component for one metric, and the
+     bars already show the trend.
 
 ## Changes
 
@@ -57,7 +69,25 @@ time from a session's start to its PR.
 - **ui, `AnalyticsPage.vue`:** the PR tile's note joins the cost per PR and the median time to PR
   with « · », each shown only when the report holds it.
 - **i18n:** `analytics.tile.prLead` — `uk` «медіана {time} до PR», `en` «median {time} to PR».
-- **README:** the «Аналітика» list names the median time to PR.
+- **README:** the «Аналітика» list names the median time to PR and its trend.
+
+The trend (decision 4):
+
+- **core, `analytics.ts`:** `AnalyticsReport.dynamics.prLead`: `{ granularity, buckets,
+  medianMs, counts }`. The bucket starts are computed the same way as the main buckets.
+  `tiles.prLeadMedianMs` is computed from the same list of non-negative leads.
+- **core test:** 7 days → seven daily medians and counts; 30 days → five weekly buckets cut at
+  local Monday midnight across the October DST change, with the medians and counts per week.
+- **ui, `lib/analytics.ts`:** `ANALYTICS_CHART_METRICS` (the series metrics plus `prLeadMs`),
+  `isAnalyticsChartMetric`. `axisMax` treats `prLeadMs` as a time. `AnalyticsBarSeries.notes`
+  holds one tooltip note per bucket. UI test: the `prLeadMs` axis below an hour is in minutes.
+- **ui, `AnalyticsBars.vue`:** the tooltip appends the bucket's note. `PAD_L` 56 → 76: the
+  half-way tick of a 5-hour axis, «2 год 30 хв», was cut at the left edge. This applies to «Час
+  агентів» too.
+- **ui, `AnalyticsPage.vue`:** the fourth tab. With it picked, the split tabs are hidden, the
+  chart uses `dynamics.prLead`'s buckets, and the empty text is «За цей період PR не відкривали».
+- **i18n:** `analytics.dynamics.metric.prLeadMs`, `prLeadSeries`, `prCount`, `prLeadEmpty`, in
+  `uk` and `en`.
 
 ## Verification
 
@@ -69,10 +99,19 @@ Run on 2026-11-08:
   start → PR times of 1 h 30 min, 4 h and 26 h (the last one starting before the 7-day period),
   plus usage rows of $1.20, $3.40 and $5.00. The «PR відкрито» tile read «3» and
   «$3.20 за PR · медіана 4 год до PR».
-- Not verified: the `en` text on screen (only the key was added beside the `uk` one), and a real
-  agent opening a PR. The preview has no `omp`, so the figure came from seeded rows only.
+- **Trend, live preview** (seeded data, written while the api was stopped: a running api writes
+  its in-memory sessions back and overwrote the first attempt). Nine PR sessions between
+  13 October and 7 November.
+  - 7 days: daily bars on the 3rd, 5th and 7th; the tooltip «Медіана від запуску до PR: 3 год ·
+    03.11.2026 · 1 PR»; the split tabs hidden.
+  - 30 days: weekly bars of 9 h 30 min, 7 h, 5 h 30 min and 2 h 45 min (weeks of 12, 19 and
+    26 October and 2 November), as seeded.
+  - Back on «Витрати» the split tabs return.
+  - Core 459 tests, UI 994, `vue-tsc` and api `tsc --noEmit` clean.
+- Not verified: the `en` text on screen (only the keys were added beside the `uk` ones), and a
+  real agent opening a PR. The preview has no `omp`, so the figures came from seeded rows only.
 
 ## Documentation impact
 
 `kermanych/README.md`, section «Analytics («Аналітика»)», «What it shows»: the median time from
-a session's start to its PR.
+a session's start to its PR, and its trend in «Динаміка».

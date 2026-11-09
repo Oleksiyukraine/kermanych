@@ -2110,10 +2110,11 @@ local SQLite only, nothing is sent to the cloud, and every signed-in user sees t
 - **What it shows:** spend, tokens and the cache share; agent working time and parallelism (the
   agents' summed working time ÷ the wall time with at least one of them working); how long agents
   waited for your answer (total and median); sessions launched; PRs opened, the cost of one and the
-  median time from a session's start to its PR; «Динаміка» bars by model, project or session
-  type; a weekday × hour heat map; where the period's
-  agent sessions are now; per-model and per-project tables; the ten dearest sessions (a row opens
-  the session); Посіпака outcomes and findings.
+  median time from a session's start to its PR; «Динаміка» bars of spend, tokens or agent time
+  by model, project or session type, and of «Час до PR» — the median time to PR of the PRs
+  opened in each day (7 days) or week (longer periods), unsplit, since medians do not stack; a
+  weekday × hour heat map; where the period's agent sessions are now; per-model and per-project
+  tables; the ten dearest sessions (a row opens the session); Посіпака outcomes and findings.
 - **Where the figures come from.** A local ledger (`usage_hours`, `activity_spans`,
   `analytics_meta`, `sessions.pr_opened_at`) recorded from the first start of this version: a
   managed session's turns where the «Сесія» total is counted, a native session's harness file

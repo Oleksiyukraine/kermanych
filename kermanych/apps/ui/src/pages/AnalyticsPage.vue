@@ -93,19 +93,19 @@
             <header class="an__block-head">
               <h2 class="an__block-title">{{ t('analytics.dynamics.title') }}</h2>
               <KTabs :model-value="metric" :tabs="metricTabs" @update:model-value="pickMetric" />
-              <KTabs :model-value="split" :tabs="splitTabs" @update:model-value="pickSplit" />
+              <KTabs v-if="metric !== 'prLeadMs'" :model-value="split" :tabs="splitTabs" @update:model-value="pickSplit" />
             </header>
             <AnalyticsBars
               v-if="barSeries.length"
-              :buckets="shown.dynamics.buckets"
-              :granularity="shown.granularity"
+              :buckets="metric === 'prLeadMs' ? shown.dynamics.prLead.buckets : shown.dynamics.buckets"
+              :granularity="metric === 'prLeadMs' ? shown.dynamics.prLead.granularity : shown.granularity"
               :time-zone="shown.timeZone"
               :series="barSeries"
               :metric="metric"
               :format="formatMetric"
               @toggle="toggleSeries"
             />
-            <p v-else class="an__muted">{{ t('analytics.dynamics.empty') }}</p>
+            <p v-else class="an__muted">{{ t(metric === 'prLeadMs' ? 'analytics.dynamics.prLeadEmpty' : 'analytics.dynamics.empty') }}</p>
           </section>
 
           <div class="an__pair">
@@ -286,12 +286,12 @@ import AnalyticsHeatmap from 'components/analytics/AnalyticsHeatmap.vue';
 import AnalyticsTile from 'components/analytics/AnalyticsTile.vue';
 import { api } from '../lib/api';
 import {
-  ANALYTICS_METRICS,
+  ANALYTICS_CHART_METRICS,
   ANALYTICS_OTHERS,
   analyticsProjectIds,
   duration,
   foldSeries,
-  isAnalyticsMetricKey,
+  isAnalyticsChartMetric,
   longDate,
   money,
   parallelism,
@@ -300,7 +300,7 @@ import {
   seriesColor,
   share,
   type AnalyticsBarSeries,
-  type AnalyticsMetricKey,
+  type AnalyticsChartMetric,
 } from '../lib/analytics';
 import { tokens } from '../lib/format';
 import { persisted } from '../lib/persisted';
@@ -475,17 +475,17 @@ const prNote = computed(() => {
 });
 
 // ── «Динаміка» ───────────────────────────────────────────────────────────────────
-const metric = ref<AnalyticsMetricKey>('cost');
+const metric = ref<AnalyticsChartMetric>('cost');
 const split = ref<AnalyticsSplit>('model');
 // Legend toggles, by series key. A new split brings new keys, so its toggles start over.
 const hidden = ref<ReadonlySet<string>>(new Set());
 watch(split, () => (hidden.value = new Set()));
 
-const metricTabs = computed(() => ANALYTICS_METRICS.map((m) => ({ value: m, label: t(`analytics.dynamics.metric.${m}`) })));
+const metricTabs = computed(() => ANALYTICS_CHART_METRICS.map((m) => ({ value: m, label: t(`analytics.dynamics.metric.${m}`) })));
 const splitTabs = computed(() => ANALYTICS_SPLITS.map((s) => ({ value: s, label: t(`analytics.dynamics.split.${s}`) })));
 
 function pickMetric(v: string): void {
-  if (isAnalyticsMetricKey(v)) metric.value = v;
+  if (isAnalyticsChartMetric(v)) metric.value = v;
 }
 function pickSplit(v: string): void {
   const next = ANALYTICS_SPLITS.find((s) => s === v);
@@ -502,6 +502,21 @@ function seriesLabel(key: string): string {
 const barSeries = computed<AnalyticsBarSeries[]>(() => {
   const r = shown.value;
   if (!r) return [];
+  if (metric.value === 'prLeadMs') {
+    const lead = r.dynamics.prLead;
+    if (!lead.counts.some((n) => n > 0)) return [];
+    const key = 'prLead';
+    return [
+      {
+        key,
+        label: t('analytics.dynamics.prLeadSeries'),
+        color: seriesColor(key, 0),
+        values: lead.medianMs.map((ms) => ms ?? 0),
+        off: hidden.value.has(key),
+        notes: lead.counts.map((n) => (n > 0 ? t('analytics.dynamics.prCount', { n }, n) : '')),
+      },
+    ];
+  }
   return foldSeries(r.dynamics.series[split.value], metric.value).map((s, i) => ({
     key: s.key,
     label: seriesLabel(s.key),

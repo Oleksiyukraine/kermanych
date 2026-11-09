@@ -139,6 +139,8 @@ describe('figures', () => {
     expect(axisMax(7.3, 'cost')).toBe(10);
     expect(axisMax(1_400, 'tokens')).toBe(2_000);
     expect(axisMax(3.2 * 3_600_000, 'workingMs')).toBe(5 * 3_600_000);
+    // «Час до PR» is a time too: below an hour the scale is in minutes, not in milliseconds.
+    expect(axisMax(30 * 60_000, 'prLeadMs')).toBe(50 * 60_000);
     expect(axisMax(0, 'cost')).toBe(1);
   });
 

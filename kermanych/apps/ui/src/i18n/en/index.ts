@@ -3479,10 +3479,14 @@ export const en: MessageSchema = {
       title: 'Trend',
       aria: 'Trend over the period',
       empty: 'Nothing here for this period',
+      prLeadEmpty: 'No PR was opened in this period',
+      prLeadSeries: 'Median from start to PR',
+      prCount: '{n} PR | {n} PRs',
       metric: {
         cost: 'Spend',
         tokens: 'Tokens',
         workingMs: 'Agent time',
+        prLeadMs: 'Time to PR',
       },
       split: {
         model: 'model',
