@@ -1,9 +1,10 @@
-# «Аналітика»: час від запуску сесії до PR
+# «Аналітика»: час до PR і «Зроблено без тебе»
 
 - **Date:** 2026-11-08
 - **Branch:** `feature/self-assessment-by-table`
-- **Scope:** `packages/core` (`analyticsReport`), `apps/ui` (the «PR відкрито» tile, i18n `uk` / `en`),
-  `kermanych/README.md`. No api change, no migration, no new dependency.
+- **Scope:** `packages/core` (`analyticsReport`), `apps/api` (one more column read for the report),
+  `apps/ui` («PR відкрито», «Динаміка», «Зроблено без тебе», i18n `uk` / `en`),
+  `kermanych/README.md`. No migration, no cloud read, no new dependency.
 - **Status:** the operator asked to rate Kermanych against a contest rubric (Business Impact,
   Repeatability, Automation, Quality & Control, Reusability, Innovation) and then to start closing
   the gaps «з найпростішого». This is the first step.
@@ -59,6 +60,30 @@ time from a session's start to its PR.
      (by day up to 31 days).
    - Rejected: a line chart. It would need a second chart component for one metric, and the
      bars already show the trend.
+5. **«Зроблено без тебе»: counts, never hours** (the operator's decisions after the «saved
+   time» discussion). The operator listed parallel work, Посіпака, findings and Тестувальник as
+   saved time. Only a tracker estimate gives a measured «by hand» figure. Each of the others
+   would need an assumed per-item time, and the operator rejected coefficients: «краще простіше
+   але чесніше».
+   - The block «Посіпака і знахідки» becomes «Зроблено без тебе». Next to Посіпака's runs and the
+     findings it adds a «Тестувальник» column: the tasks tested (distinct doers of the period's
+     Тестувальник runs, so a task tested twice counts once) and the runs. A closing line sums it
+     up: «PR від Посіпаки · знахідок стали задачами · задач протестовано».
+   - Тестувальник comes from the local `sessions` rows (`tester`, `parent_session_id`). The
+     verdicts in the cloud `qa_checklist` are not read: the operator ruled it out, and «N задач
+     протестовано» is enough.
+   - Parallel work gets no figure of its own. Паралельність is already a tile note, and the
+     saving of a parallel task is that task's own; adding it again would count it twice.
+   - Rejected: hours per category from coefficients set in the workspace (the operator's call);
+     a sum of «saved hours».
+6. **«Оцінка vs факт» is not built, for lack of data.** It would compare a tracker estimate
+   (Jira `originalEstimateSeconds`, Plane time estimates, both already mirrored) with the time to
+   PR. On the operator's machine (`~/.kermanych/kermanych.sqlite`, read-only, 2026-11-08), 1 of
+   462 agent sessions was launched from a tracker ticket (its name starts «KEY-123 — »), and
+   it has no PR. The rest come from Kermanych's own board, whose cards carry no estimate. The
+   figure would rest on nothing. It is left to the operator whether to add an estimate to the
+   card; that is a cloud migration, and an estimate written once the task is already going to an
+   agent leans toward the agent.
 
 ## Changes
 
@@ -89,6 +114,18 @@ The trend (decision 4):
 - **i18n:** `analytics.dynamics.metric.prLeadMs`, `prLeadSeries`, `prCount`, `prLeadEmpty`, in
   `uk` and `en`.
 
+«Зроблено без тебе» (decision 5):
+
+- **core, `analytics.ts`:** `AnalyticsSessionRow.parentSessionId`; `AnalyticsReport.tester:
+  { runs, tasks }` over the Тестувальник sessions created in the period.
+- **core test:** three runs on two doers → `{ runs: 3, tasks: 2 }`; a run before the period
+  and an ordinary «Ревізор» fork left out.
+- **api, `registry.service.ts` `analyticsRows`:** reads `parent_session_id`.
+- **ui, `AnalyticsPage.vue`:** the block's title and lead, the «Тестувальник» column, the
+  summary line; `.an__pair--three` keeps three columns side by side from 220 px each.
+- **i18n:** `analytics.unattended.*`, `analytics.tester.*` in `uk` and `en`;
+  `analytics.minion.title` removed (no longer used).
+
 ## Verification
 
 Run on 2026-11-08:
@@ -108,10 +145,17 @@ Run on 2026-11-08:
     26 October and 2 November), as seeded.
   - Back on «Витрати» the split tabs return.
   - Core 459 tests, UI 994, `vue-tsc` and api `tsc --noEmit` clean.
+- **«Зроблено без тебе», live preview** (seeded with the api stopped: three Тестувальник runs
+  on two doers, one Посіпака run with a PR, three findings, two of them filed).
+  - 7 days: the Тестувальник column reads «задач протестовано 2 · запусків 3», and the
+    summary «PR від Посіпаки: 0 · знахідок стали задачами: 2 · задач протестовано: 2». The
+    Посіпака run started on 21 October, outside the period.
+  - 30 days: «PR від Посіпаки: 1». The three columns sit side by side at 1280 px.
+  - Core 460 tests, UI 994, api `test/analytics.spec.ts` 5; `vue-tsc` clean.
 - Not verified: the `en` text on screen (only the keys were added beside the `uk` ones), and a
   real agent opening a PR. The preview has no `omp`, so the figures came from seeded rows only.
 
 ## Documentation impact
 
 `kermanych/README.md`, section «Analytics («Аналітика»)», «What it shows»: the median time from
-a session's start to its PR, and its trend in «Динаміка».
+a session's start to its PR, its trend in «Динаміка», and «Зроблено без тебе».

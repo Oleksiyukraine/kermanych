@@ -2114,7 +2114,10 @@ local SQLite only, nothing is sent to the cloud, and every signed-in user sees t
   by model, project or session type, and of «Час до PR» — the median time to PR of the PRs
   opened in each day (7 days) or week (longer periods), unsplit, since medians do not stack; a
   weekday × hour heat map; where the period's agent sessions are now; per-model and per-project
-  tables; the ten dearest sessions (a row opens the session); Посіпака outcomes and findings.
+  tables; the ten dearest sessions (a row opens the session); «Зроблено без тебе» — Посіпака's
+  runs by outcome, findings by kind and status, and the tasks Тестувальник tested (runs on the
+  same task count once). These are counts only: nothing is converted into «saved hours», because
+  nothing records how long the same work would take by hand.
 - **Where the figures come from.** A local ledger (`usage_hours`, `activity_spans`,
   `analytics_meta`, `sessions.pr_opened_at`) recorded from the first start of this version: a
   managed session's turns where the «Сесія» total is counted, a native session's harness file

@@ -1506,12 +1506,12 @@ export class RegistryService {
     const sessions = (
       this.db
         .prepare(
-          `SELECT id, project_id, name, kind, tester, minion, design_dir, synergy, schedule_id, status, created_at, pr_opened, pr_opened_at, minion_result,
+          `SELECT id, project_id, name, kind, tester, minion, design_dir, synergy, schedule_id, status, created_at, pr_opened, pr_opened_at, minion_result, parent_session_id,
              EXISTS (SELECT 1 FROM usage_hours u WHERE u.session_id = sessions.id) AS has_usage,
              (SELECT COALESCE(SUM(cost), 0) FROM usage_hours u WHERE u.session_id = sessions.id AND u.cost_known = 1) AS lifetime_cost
            FROM sessions WHERE 1 = 1${scope("project_id")}`,
         )
-        .all(...args) as (LedgerOwnerDbRow & { id: string; name: string; status: SessionStatus; created_at: string; pr_opened: number; pr_opened_at: string | null; minion_result: string | null; has_usage: number; lifetime_cost: number })[]
+        .all(...args) as (LedgerOwnerDbRow & { id: string; name: string; status: SessionStatus; created_at: string; pr_opened: number; pr_opened_at: string | null; minion_result: string | null; parent_session_id: string | null; has_usage: number; lifetime_cost: number })[]
     ).map((r): AnalyticsSessionRow => {
       const minionOutcome = readMinionColumn(r.minion_result)?.outcome;
       return {
@@ -1525,6 +1525,7 @@ export class RegistryService {
         prOpened: r.pr_opened !== 0,
         ...(r.pr_opened_at ? { prOpenedAt: r.pr_opened_at } : {}),
         ...(minionOutcome ? { minionOutcome } : {}),
+        ...(r.parent_session_id ? { parentSessionId: r.parent_session_id } : {}),
         noHistory: r.has_usage === 0,
         lifetimeCost: r.lifetime_cost,
       };

@@ -3547,8 +3547,19 @@ export const en: MessageSchema = {
       deleted: 'deleted session',
       open: 'Open the session',
     },
+    // «Зроблено без тебе» (docs/specs/2026-11-08-analytics-time-to-pr.md, decision 5): counts only.
+    unattended: {
+      title: 'Done without you',
+      lead: 'What the agents did on their own — counted, not converted into hours',
+      summary: 'PRs by the Minion: {prs} · findings that became tasks: {filed} · tasks tested: {tested}',
+    },
+    tester: {
+      title: 'Tester',
+      tasks: 'tasks tested',
+      runs: 'runs',
+      none: 'The Tester did not run in this period',
+    },
     minion: {
-      title: 'Minion and findings',
       runs: 'Minion runs',
       none: 'The Minion did not run in this period',
       outcome: {

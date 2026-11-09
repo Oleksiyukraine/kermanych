@@ -115,6 +115,8 @@ export type AnalyticsSessionRow = {
   prOpened: boolean;
   prOpenedAt?: string;
   minionOutcome?: MinionOutcome;
+  /** The session it was forked from — for a Тестувальник run, the doer whose task it tested. */
+  parentSessionId?: string;
   /** Neither a usage row nor a readable harness file: spend unknown (decision 6). */
   noHistory: boolean;
   /**
@@ -249,6 +251,11 @@ export type AnalyticsReport = {
   projects: AnalyticsProjectRow[];
   topSessions: AnalyticsTopSession[];
   minion: Record<MinionOutcome, number>;
+  /**
+   * Тестувальник runs started in the period, and the tasks they tested: distinct doers, so a
+   * task checked twice counts once. Verdicts live in the cloud checklist and are not read here.
+   */
+  tester: { runs: number; tasks: number };
   findings: { byKind: Record<FindingKind, number>; byStatus: Record<FindingStatus, number> };
 };
 
@@ -600,6 +607,8 @@ export function analyticsReport(input: AnalyticsInput): AnalyticsReport {
   // ── Посіпака and findings ──
   const minion = zeros(MINION_OUTCOMES);
   for (const s of created) if (s.sessionClass === "minion" && s.minionOutcome !== undefined) minion[s.minionOutcome]++;
+  const testerRuns = created.filter((s) => s.sessionClass === "tester");
+  const tester = { runs: testerRuns.length, tasks: new Set(testerRuns.map((s) => s.parentSessionId ?? s.id)).size };
   const byKind = zeros(FINDING_KINDS);
   const byStatus = zeros(FINDING_STATUSES);
   for (const f of input.findings) {
@@ -653,6 +662,7 @@ export function analyticsReport(input: AnalyticsInput): AnalyticsReport {
     projects,
     topSessions,
     minion,
+    tester,
     findings: { byKind, byStatus },
   };
 }

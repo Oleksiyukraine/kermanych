@@ -211,9 +211,10 @@
 
           <section class="an__block">
             <header class="an__block-head">
-              <h2 class="an__block-title">{{ t('analytics.minion.title') }}</h2>
+              <h2 class="an__block-title">{{ t('analytics.unattended.title') }}</h2>
+              <span class="an__block-note">{{ t('analytics.unattended.lead') }}</span>
             </header>
-            <div class="an__pair an__pair--flat">
+            <div class="an__pair an__pair--flat an__pair--three">
               <div class="an__counts">
                 <h3 class="an__counts-title mono">{{ t('analytics.minion.runs') }}</h3>
                 <ul v-if="minionRuns > 0" class="an__count-list">
@@ -242,7 +243,30 @@
                 </template>
                 <p v-else class="an__muted">{{ t('analytics.findings.none') }}</p>
               </div>
+              <div class="an__counts">
+                <h3 class="an__counts-title mono">{{ t('analytics.tester.title') }}</h3>
+                <ul v-if="shown.tester.runs > 0" class="an__count-list">
+                  <li class="an__count">
+                    <span>{{ t('analytics.tester.tasks') }}</span>
+                    <span class="mono">{{ shown.tester.tasks }}</span>
+                  </li>
+                  <li class="an__count">
+                    <span>{{ t('analytics.tester.runs') }}</span>
+                    <span class="mono">{{ shown.tester.runs }}</span>
+                  </li>
+                </ul>
+                <p v-else class="an__muted">{{ t('analytics.tester.none') }}</p>
+              </div>
             </div>
+            <p class="an__note mono">
+              {{
+                t('analytics.unattended.summary', {
+                  prs: shown.minion.pr,
+                  filed: shown.findings.byStatus.filed,
+                  tested: shown.tester.tasks,
+                })
+              }}
+            </p>
           </section>
         </template>
       </template>
@@ -746,6 +770,11 @@ function openTop(row: AnalyticsTopSession): void {
   gap: var(--k-sp-5);
 }
 
+// «Зроблено без тебе»: three short lists side by side at the usual 1280–1440 px.
+.an__pair--three {
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+}
+
 .an__muted {
   margin: 0;
   font-size: var(--k-fs-sm);
@@ -825,7 +854,7 @@ function openTop(row: AnalyticsTopSession): void {
   background: var(--k-warning);
 }
 
-// ── Посіпака і знахідки ──
+// ── Зроблено без тебе ──
 .an__counts {
   display: flex;
   flex-direction: column;

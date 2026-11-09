@@ -308,3 +308,25 @@ describe("analyticsReport — time to PR", () => {
     expect(r.tiles.prLeadMedianMs).toBeNull();
   });
 });
+
+describe("analyticsReport — Тестувальник", () => {
+  test("runs of the period, and the tasks they tested counted once each", () => {
+    const run = (id: string, createdAt: string, parentSessionId: string): AnalyticsSessionRow =>
+      session(id, createdAt, { kind: "review", sessionClass: "tester", parentSessionId });
+    const r = analyticsReport(
+      input({
+        sessions: [
+          run("t1", "2026-11-03T09:00:00.000Z", "doer-a"),
+          // The same task tested again after a fix: one more run, not one more task.
+          run("t2", "2026-11-04T09:00:00.000Z", "doer-a"),
+          run("t3", "2026-11-05T09:00:00.000Z", "doer-b"),
+          // Before the period.
+          run("t0", "2026-10-20T09:00:00.000Z", "doer-c"),
+          // An ordinary «Ревізор» fork is not a Тестувальник run.
+          session("rev", "2026-11-05T09:00:00.000Z", { kind: "review", sessionClass: "review", parentSessionId: "doer-d" }),
+        ],
+      }),
+    );
+    expect(r.tester).toEqual({ runs: 3, tasks: 2 });
+  });
+});
