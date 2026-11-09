@@ -39,7 +39,7 @@ const START_TIMEOUT_MS = 30_000;
 const IDLE_TTL_MS = 30 * 60_000;
 
 // The sink the live child's single event/exit callback feeds. `RpcSession.onEvent` only
-// ever pushes (rpc-session.ts:41) — there is no way to remove a callback — so exactly one
+// ever pushes onto its callback list — there is no way to remove a callback — so exactly one
 // pair is registered per child and each turn swaps what it points at. A per-turn callback
 // would still be attached on turn two, and turn one's collector would quietly accumulate
 // turn two's frames.
@@ -108,8 +108,9 @@ export class RpcChatPool<X = never> {
 
   // The live child for a conversation, spawned on first use and respawned when the
   // previous one died between turns. A dead child must never be written to: the write to
-  // its closed stdin is swallowed (rpc-session.ts:181-186), so the message would vanish
-  // and the turn would hang until the turn timeout for no reason at all.
+  // its closed stdin is swallowed (the stdin 'error' handler in `RpcSession.start()`), so
+  // the message would vanish and the turn would hang until the turn timeout for no reason
+  // at all.
   async child(key: string, launch: () => ChatLaunch<X>): Promise<ChatChild<X>> {
     const cur = this.map.get(key);
     if (cur?.rpc.isAlive()) {
