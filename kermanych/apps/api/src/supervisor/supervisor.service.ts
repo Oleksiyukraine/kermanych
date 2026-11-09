@@ -98,6 +98,8 @@ import {
   MINION_PR_TITLE_RULE,
   MINION_FINDINGS_SKILL,
   minionFindingLine,
+  minionTakeoverAllowed,
+  minionTakeoverPrompt,
   MINION_TIME_CAP_MS,
   MINION_GRACE_MS,
   type MinionResult,
@@ -278,6 +280,9 @@ type MinionRun = {
   // The launch has not returned yet: a child that dies now is the launch's failure, which
   // launchTask undoes and MinionService counts — not a run to fail a second time.
   starting?: boolean;
+  // The operator handed the session over with `/minion` (docs/specs/2026-11-09-minion-takeover.md):
+  // the poll did not start this run, so its result counts toward neither the failures nor the pause.
+  takeover?: boolean;
   capTimer?: NodeJS.Timeout;
   graceTimer?: NodeJS.Timeout;
 };
@@ -2557,9 +2562,73 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
   // `sendAsKermanych`, which is the same delivery with the operator's own affordances off.
   // `voice`: said in a voice conversation (docs/specs/2026-11-02-voice-conversation.md, decision 6).
   async sendMessage(id: string, text: string, mode: "prompt" | "follow_up" | "steer", images?: ImageInput[], opts: { voice?: boolean } = {}) {
+    // `/minion` hands the session to «Посіпака» instead of taking it back: it must not attend the
+    // run first. A voice transcript is never a command (deliverNow).
+    const cmd = opts.voice ? null : parseCommand(text);
+    if (cmd?.name === "minion") return this.handToMinion(id, text, cmd.args);
     // The operator took over a «Посіпака» run: it works again, with no clock from here on.
     this.attendMinionRun(id);
     await this.deliver(id, text, mode, images, true, undefined, opts);
+  }
+
+  // `/minion` (docs/specs/2026-11-09-minion-takeover.md): the operator hands a session to
+  // «Посіпака» and leaves. From here it is a minion run at `work`, like one the poll started: no
+  // ask tool, a `report_outcome` verdict, then the docs and PR turns (onMinionTurnEnd). omp reads
+  // the ask overlay (spawnOpts) and the MCP tool list only when it starts, so a live child is
+  // stopped — a turn in progress is cut, like ■ — and woken on the same conversation before the
+  // hand-over prompt goes in. A refusal is thrown, so the composer gets the text back.
+  private async handToMinion(id: string, text: string, note: string): Promise<void> {
+    const row = this.registry.listSessions().find((x) => x.id === id);
+    if (!row) throw new Error("session not found");
+    if (row.native) throw nativeUnsupported();
+    this.refuseManagedClaude(row);
+    if (!minionTakeoverAllowed(row))
+      throw new CodedError(
+        "minion_takeover_unsupported",
+        "Посіпаці можна передати лише відкриту сесію агента з гілкою — не чат, обговорення, ревізію, дизайн, «Синергію» чи запуск за розкладом.",
+      );
+    const current = this.minionRuns.get(id);
+    if (row.minion && current && !current.attended && current.phase !== "idle")
+      throw new CodedError("minion_takeover_running", "Посіпака вже веде цю сесію сам.");
+
+    this.forgetMinionRun(id);
+    const l = this.map.get(id);
+    if (l) {
+      // Stopped on purpose: its exit is neither an `error` nor a failed run.
+      l.live.status = "stopped";
+      this.stopPoll(l);
+      await l.rpc.stop().catch(() => {});
+      this.map.delete(id);
+      this.toolDetails.dropSession(id);
+      this.skillLabels.delete(id);
+    }
+    // A result of an earlier run (its «потрібне рішення») is over: this run has none yet.
+    this.registry.updateSession(id, { minion: true, minionResult: undefined });
+    const run: MinionRun = { phase: "work", takeover: true };
+    this.minionRuns.set(id, run);
+    try {
+      await this.liveOrResume(id);
+      this.appendEntry(id, this.userEntry(text));
+      this.appendEntry(id, this.noticeEntry({ text: "сесію передано Посіпаці: агент сам ухвалить рішення, що лишились, і відкриє ПР", code: "minion_takeover_started" }));
+      this.pushUpdate(id);
+      await this.sendAsKermanych(id, `${minionTakeoverPrompt(note)}\n\n${MINION_OUTCOME_CONTRACT}`, "prompt");
+    } catch (err) {
+      // Nothing went in: the session goes back to what it was, and a child woken in the minion's
+      // mode is dropped, so the operator's next message respawns it as before.
+      this.registry.updateSession(id, { minion: row.minion, minionResult: row.minionResult });
+      if (row.minion) Object.assign(run, { phase: "idle", attended: true });
+      else this.forgetMinionRun(id);
+      const woken = this.map.get(id);
+      if (woken) {
+        woken.live.status = "stopped";
+        this.stopPoll(woken);
+        await woken.rpc.stop().catch(() => {});
+        this.map.delete(id);
+      }
+      this.pushUpdate(id);
+      throw err;
+    }
+    this.startMinionClock(id);
   }
 
   // Kermanych's own prompt into a session: a fired trigger's agent, a PR request, a merged
@@ -4334,7 +4403,8 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     this.drainSlots();
   }
 
-  // Persist a run's result, show it, send it to the card, and tell MinionService how it counts.
+  // Persist a run's result, show it, send it to the card, and tell MinionService how it counts —
+  // a run the operator handed over with `/minion` counts neither way: the pause guards the poll.
   private async recordMinionResult(id: string, result: MinionResult, effect: MinionRunResult["effect"], signedOut = false): Promise<void> {
     const row = this.registry.listSessions().find((x) => x.id === id);
     if (!row?.minion) return;
@@ -4342,7 +4412,8 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     if (run) this.clearMinionClock(run);
     this.registry.updateSession(id, { minionResult: result });
     this.pushUpdate(id);
-    this.minionResults.next({ sessionId: id, title: row.name, result, effect, ...(signedOut ? { signedOut } : {}) });
+    const counted = run?.takeover ? { effect: "neutral" as const } : { effect, ...(signedOut ? { signedOut } : {}) };
+    this.minionResults.next({ sessionId: id, title: row.name, result, ...counted });
     await this.queueTaskReport(id, this.map.get(id)?.transcript);
   }
 

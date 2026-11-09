@@ -29,6 +29,8 @@ export type NoticeCode =
   // supervisor.service.ts — the transcript notices the /compact command appends:
   | "context_compacted" // supervisor.service.ts — /compact succeeded, context was compacted (params: none)
   | "context_compact_failed" // supervisor.service.ts — /compact failed (params: { reason })
+  // supervisor.service.ts handToMinion — /minion (docs/specs/2026-11-09-minion-takeover.md):
+  | "minion_takeover_started" // the session was handed to «Посіпака» (params: none)
   // supervisor.service.ts — the base-sync notices (docs/specs/2026-10-14-create-pr-base-sync.md):
   | "base_fetch_failed" // supervisor.service.ts launch — origin/<base> could not be refreshed; forked from the last-known base (params: { base, ref })
   | "pr_behind_base" // supervisor.service.ts after a PR/commit turn — the PR head lacks commits of origin/<base> (params: { base, count })
@@ -128,6 +130,9 @@ export type ApiErrorCode =
   // supervisor.service.ts — a managed spawn of a row stamped with a runtime other than omp: a
   // leftover of the removed managed claude-code (docs/specs/2026-11-05-remove-managed-claude-code.md)
   | "managed_claude_removed" // (params: none)
+  // supervisor.service.ts handToMinion — /minion refused (docs/specs/2026-11-09-minion-takeover.md):
+  | "minion_takeover_unsupported" // not an open agent session with a branch, or a design / «Синергія» / scheduled run (params: none)
+  | "minion_takeover_running" // the session already runs as «Посіпака» on its own (params: none)
   // supervisor.service.ts resolveLaunchParams — an in-place (non-worktree) launch refused:
   | "inplace_tree_dirty" // the project checkout has uncommitted changes (params: { count, files } — files: the first few paths, comma-joined, `…` when cut)
   | "inplace_already_active" // another in-place agent already owns the project checkout (params: none)
@@ -157,6 +162,7 @@ export const NOTICE_CODES = [
   "session_dormant_inactive",
   "context_compacted",
   "context_compact_failed",
+  "minion_takeover_started",
   "base_fetch_failed",
   "pr_behind_base",
   "omp_not_authenticated",
@@ -233,6 +239,8 @@ export const API_ERROR_CODES = [
   "native_busy",
   "native_unsupported",
   "managed_claude_removed",
+  "minion_takeover_unsupported",
+  "minion_takeover_running",
   "inplace_tree_dirty",
   "inplace_already_active",
   "inplace_detached_head",

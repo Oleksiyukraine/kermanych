@@ -662,7 +662,8 @@ export class RegistryService {
       }
     }
     // Additive migration: a «Посіпака» run (docs/specs/2026-10-23-minion-auto-run.md). `minion`
-    // is fixed at creation, like `native`; `minion_result` is the JSON MinionResult of the run so
+    // is set at creation, or later by `/minion` (docs/specs/2026-11-09-minion-takeover.md), and
+    // never cleared; `minion_result` is the JSON MinionResult of the run so
     // far, rewritten whenever a turn of it ends differently; `finding_kind` is the card's finding
     // kind for a run of a finding card (decision 14), fixed at creation too.
     for (const col of ["minion INTEGER NOT NULL DEFAULT 0", "minion_result TEXT", "finding_kind TEXT"]) {
@@ -1256,7 +1257,7 @@ export class RegistryService {
     const next = { ...cur, ...patch };
     this.db
       .prepare(
-        `UPDATE sessions SET project_id=?, task_id=?, name=?, task=?, worktree_path=?, branch=?, worktree=?, base_branch=?, omp_session_id=?, omp_session_file=?, kind=?, model=?, prefix=?, runtime=?, effort=?, status=?, pr_opened=?, pr_url=?, pr_opened_at=?, archived=?, minion_result=?, synergy=?, synergy_page=? WHERE id=?`,
+        `UPDATE sessions SET project_id=?, task_id=?, name=?, task=?, worktree_path=?, branch=?, worktree=?, base_branch=?, omp_session_id=?, omp_session_file=?, kind=?, model=?, prefix=?, runtime=?, effort=?, status=?, pr_opened=?, pr_url=?, pr_opened_at=?, archived=?, minion=?, minion_result=?, synergy=?, synergy_page=? WHERE id=?`,
       )
       .run(
         next.projectId,
@@ -1279,6 +1280,7 @@ export class RegistryService {
         next.prUrl || null,
         next.prOpenedAt ?? null,
         next.archived ? 1 : 0,
+        next.minion ? 1 : 0,
         next.minionResult ? JSON.stringify(next.minionResult) : null,
         next.synergy ? 1 : 0,
         next.synergy?.page ?? null,

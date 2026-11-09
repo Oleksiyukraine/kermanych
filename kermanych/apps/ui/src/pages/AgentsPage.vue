@@ -328,6 +328,27 @@
                   @click="onUnarchive(selectedSession)"
                 >⤒</KIconButton>
               </template>
+              <!-- «Посіпака» (docs/specs/2026-11-09-minion-takeover.md): the composer's `/minion`
+                   one click away, beside ⋯ — the agent decides what is left and opens the PR. A
+                   native agent shows it blocked with the reason, like 🎤. -->
+              <template v-if="minionTakeoverAllowed(selectedSession)">
+                <KIconButton
+                  v-if="selectedSession.native"
+                  class="agents__blocked-btn"
+                  aria-disabled="true"
+                  :title="t('agents.native.managedOnly')"
+                  :aria-label="`${t('agents.actions.minion')} — ${t('agents.native.managedOnly')}`"
+                  @click="explainBlocked(t('agents.native.managedOnly'))"
+                ><KIcon name="minion" /></KIconButton>
+                <KIconButton
+                  v-else
+                  :loading="minionAction.busy.value"
+                  :disabled="selectedBlocked"
+                  :title="t('agents.actions.minion')"
+                  :aria-label="t('agents.actions.minion')"
+                  @click="onMinion(selectedSession)"
+                ><KIcon name="minion" /></KIconButton>
+              </template>
             </div>
 
             <!-- Overflow — the actions that don't earn a permanent glyph, plus the two
@@ -1399,7 +1420,7 @@ import KDictation from 'components/kit/KDictation.vue';
 import KCheckbox from 'components/kit/KCheckbox.vue';
 import KField from 'components/kit/KField.vue';
 import KSelect from 'components/kit/KSelect.vue';
-import { BRANCH_PREFIXES, platformHasBrowser, platformHasDevice, prependHelper, type BranchPrefix } from '@kermanych/core';
+import { BRANCH_PREFIXES, minionTakeoverAllowed, platformHasBrowser, platformHasDevice, prependHelper, type BranchPrefix } from '@kermanych/core';
 import { useImageAttach } from '../composables/useImageAttach';
 import { useFileMention } from '../composables/useFileMention';
 import { useDictationField } from '../composables/useDictationField';
@@ -2426,6 +2447,9 @@ const answering = computed(
   () => answerAction.busy.value || (!!selectedSession.value && pending.isPending(answerKey(selectedSession.value.id))),
 );
 const summaryAction = useAsyncAction((s: Session) => store.sendMessage(s.id, t('agents.prompt.summary'), nextMode(s)));
+// The header's «Посіпака» button sends the composer's own command, so both reach the one api
+// path (docs/specs/2026-11-09-minion-takeover.md); a refusal comes back as the toast.
+const minionAction = useAsyncAction((s: Session) => store.sendMessage(s.id, '/minion', nextMode(s)));
 
 // Any session action in flight (the actions are page-wide, like the one header they serve).
 const actionInFlight = computed(
@@ -2438,7 +2462,8 @@ const actionInFlight = computed(
     archiveAction.busy.value ||
     unarchiveAction.busy.value ||
     resumeNativeAction.busy.value ||
-    restartAction.busy.value,
+    restartAction.busy.value ||
+    minionAction.busy.value,
 );
 function isSessionPending(id: string): boolean {
   return pending.isPending(sessionKey(id));
@@ -3552,6 +3577,10 @@ async function onStop(): Promise<void> {
 async function onRestart(): Promise<void> {
   const s = selectedSession.value;
   if (s && !sessionBlocked(s)) await restartAction.run(s);
+}
+
+async function onMinion(s: Session): Promise<void> {
+  if (!sessionBlocked(s)) await minionAction.run(s);
 }
 
 // The composer's effort chip and model picker, save-on-change: the chip shows the pick (and a

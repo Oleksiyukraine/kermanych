@@ -1749,6 +1749,20 @@ request with nobody watching.
   the Mac from idle sleep (the screen may turn off); otherwise the machine sleeps as usual, so
   set macOS not to sleep on a dedicated box. The desktop app keeps its sign-in fresh while the
   window is hidden. Signing out on one machine currently signs you out on all of them.
+- **Hand a session over: `/minion`.** In a session of your own you can send the minion in
+  yourself (spec: `docs/specs/2026-11-09-minion-takeover.md`): type `/minion` in the composer
+  (it is in the `/` command list as «Передати Посіпаці») or press the bot icon left of «⋯» in
+  the session header. Text after the command reaches the agent as your parting words. From then
+  on the session is a minion run like the ones above: the agent finishes the task this
+  conversation agreed on, decides the open questions itself (a question it was waiting on
+  included) and lists those decisions in the PR, then reports a verdict, and Kermanych runs the
+  docs and PR turns. The agent is restarted on the same conversation first, because only a fresh
+  child gets the ask tool switched off and `report_outcome` — a turn in progress is cut, like ■.
+  It works for an open agent session with a branch, also on a project where the minion is not
+  activated; a chat, discussion, review, design, «Синергія», scheduled or native session is
+  refused. The run takes a place in the machine's minion cap and has the 2-hour limit, but its
+  result counts toward neither the failures nor the pause. Writing to the session takes it back,
+  as with any minion run; `/minion` again hands it over again.
 
 ### «Тестувальник» (QA runs)
 
