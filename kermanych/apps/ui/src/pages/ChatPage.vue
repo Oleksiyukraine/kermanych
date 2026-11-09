@@ -287,6 +287,7 @@ import { useVoicePanel } from '../composables/useVoicePanel';
 import { nextMode as modeFor } from '../lib/message-mode';
 import { useOptimisticValue } from '../composables/useOptimisticValue';
 import { useLoadPhase } from '../composables/useLoadPhase';
+import { useHeldTranscript } from '../composables/useHeldTranscript';
 import { defaultLaunchMode, LAUNCH_MODES, nativeHarnessName, nativeRuntimeFor, sessionLaunchMode, type LaunchMode } from '../lib/native-session';
 import { needsSignIn } from '../lib/session-auth';
 import KPanel from 'components/kit/KPanel.vue';
@@ -336,6 +337,8 @@ const logFailed = ref<Set<string>>(new Set());
 const logPhase = useLoadPhase(
   () => !!chatId.value && store.transcripts[chatId.value] === undefined && !logFailed.value.has(chatId.value),
 );
+// The open thread's log stays resident while it is on screen (the store evicts past its cap).
+useHeldTranscript(() => chatId.value);
 // Read a thread's log; a failure releases the skeleton (see logFailed) instead of hanging it.
 async function loadLog(id: string): Promise<void> {
   try {

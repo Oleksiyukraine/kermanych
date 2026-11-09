@@ -9,6 +9,7 @@ import { setBrowserHost, type BrowserHost } from "./browser/browser-host";
 import { setKeepAwake, type KeepAwake } from "./minion/keep-awake";
 import { setScheduleTray, type ScheduleTrayListener } from "./schedules/schedule-tray";
 import { setUiProof, uiProofFor } from "./auth/ui-proof";
+import { ChildLedger, setChildLedger } from "./runtime/child-ledger";
 
 export type {
   BrowserActionResult,
@@ -40,6 +41,12 @@ export async function bootstrap(
   setKeepAwake(opts.keepAwake);
   setScheduleTray(opts.schedules);
   setUiProof(uiProofFor(opts.uiKey, process.env.KERMANYCH_UI_ORIGINS));
+  // Before Nest: the agents and previews a crashed predecessor left running are stopped first, so
+  // the ports they held are free and nothing of theirs is mistaken for this api's. From here on
+  // every omp child and preview step is written down until it exits (runtime/child-ledger.ts).
+  const ledger = new ChildLedger();
+  await ledger.open().catch((err: unknown) => console.warn(`[children] ledger unavailable: ${(err as Error).message}`));
+  setChildLedger(ledger);
   // Images ride message/create payloads as base64 (omp caps each at 20 MiB),
   // so lift the body limit well past Express's 100 KB default.
   const app = await NestFactory.create<NestExpressApplication>(AppModule, { bodyParser: false });
@@ -56,6 +63,15 @@ export async function bootstrap(
   const url = `http://127.0.0.1:${port}`;
   console.log(`Kermanych API on ${url}`);
   return { app, url };
+}
+
+// The ids of the projects this machine's registry knows, for the desktop app's own sweep of the
+// session-browser partitions (`persist:kermanych-browser-<projectId>`) that deleted projects left
+// on disk. Undefined for an api on a custom KERMANYCH_DB (a preview api, a demo): it knows none
+// of the real projects, and a sweep by it would wipe their logins.
+export function knownProjectIds(app: INestApplication): Set<string> | undefined {
+  if (process.env.KERMANYCH_DB) return undefined;
+  return new Set(app.get(RegistryService).listProjects().map((p) => p.id));
 }
 
 if (require.main === module) void bootstrap();

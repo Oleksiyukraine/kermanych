@@ -173,6 +173,43 @@ export class WorktreeService {
     await git(repoDir, ["branch", "-D", branch]);
   }
 
+  // Forgets every registration whose tree is gone from disk, so a later listing names only
+  // trees that are really there.
+  async pruneWorktrees(repoDir: string): Promise<void> {
+    await git(repoDir, ["worktree", "prune"]);
+  }
+
+  // Every worktree git has registered for the repo, the main checkout first: its path as git
+  // stores it, the branch it has checked out ("" on a detached HEAD) and whether someone locked
+  // it. Empty on a non-repo or any git failure. stdout only, like the other parsed listings.
+  async listWorktrees(repoDir: string): Promise<{ path: string; branch: string; locked: boolean }[]> {
+    const r = await gitStdout(repoDir, ["worktree", "list", "--porcelain"]);
+    if (!r.ok) return [];
+    const trees: { path: string; branch: string; locked: boolean }[] = [];
+    for (const block of r.out.split("\n\n")) {
+      let path = "";
+      let branch = "";
+      let locked = false;
+      for (const line of block.split("\n")) {
+        if (line.startsWith("worktree ")) path = line.slice("worktree ".length);
+        else if (line.startsWith("branch refs/heads/")) branch = line.slice("branch refs/heads/".length);
+        else if (line === "locked" || line.startsWith("locked ")) locked = true;
+      }
+      if (path) trees.push({ path, branch, locked });
+    }
+    return trees;
+  }
+
+  // The main checkout a linked worktree belongs to: the parent of the repository's shared
+  // `.git` directory. Empty when `dir` is no worktree, or when the repository is bare (its git
+  // directory is not a `.git` folder inside a checkout).
+  async mainCheckout(dir: string): Promise<string> {
+    const r = await gitStdout(dir, ["rev-parse", "--git-common-dir"]);
+    if (!r.ok) return "";
+    const common = resolve(dir, r.out.trim());
+    return basename(common) === ".git" ? dirname(common) : "";
+  }
+
   // Empty string on a detached HEAD (symbolic-ref fails) so callers can treat it as "no branch".
   async currentBranch(repoDir: string): Promise<string> {
     const r = await git(repoDir, ["symbolic-ref", "--short", "HEAD"]);

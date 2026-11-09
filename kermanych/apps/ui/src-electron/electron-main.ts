@@ -2,11 +2,11 @@ import { app, BrowserWindow, ipcMain, dialog, nativeImage, powerSaveBlocker, she
 import { execFile } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import { readFileSync } from 'node:fs';
-import { writeFile } from 'node:fs/promises';
+import { rm, readdir, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:net';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { bootstrap } from '@kermanych/api';
+import { bootstrap, knownProjectIds } from '@kermanych/api';
 import type { ScheduleTrayState } from '@kermanych/core';
 import type { INestApplication } from '@nestjs/common';
 import { closeLoopback, startLoopbackOAuth } from './oauth-loopback';
@@ -36,6 +36,9 @@ const uiKey = randomBytes(32).toString('hex');
 // refresh keeps the api's token current) and a menu-bar icon stays. `quitting` is set by
 // `before-quit` — ⌘Q, the app menu's Quit, the tray's «Завершити» — and lets the close through.
 let quitting = false;
+// How long quitting may wait for the api to stop its children. An omp child that ignores the EOF
+// is SIGKILLed within 4 s and a preview group within 2 s; past this the quit goes ahead anyway.
+const QUIT_TIMEOUT_MS = 15_000;
 const scheduleTray = new ScheduleTray({
   // Packaged: Quasar copies src-electron/icons next to the compiled main. Dev: the source tree.
   iconPaths: [
@@ -111,10 +114,30 @@ async function startBackend(port: number): Promise<void> {
     const res = await bootstrap({ port, browser: browsers, keepAwake, uiKey, schedules });
     nest = res.app;
     backend.resolve();
+    void sweepPartitions(knownProjectIds(res.app));
     setBootStatus('ready');
   } catch (err) {
     backend.reject(err as Error);
     throw err;
+  }
+}
+
+// The session browser keeps one persistent partition per project (`persist:kermanych-browser-
+// <projectId>`, session-browser/browsers.ts): its cookies, storage and HTTP cache, which grows to
+// gigabytes. Nothing removed it with the project, so the partitions of deleted projects stayed on
+// disk for good. Swept once per start; only a partition of a project the registry no longer has
+// goes, and no view can open one of those. `known` is undefined for an api on a custom database,
+// which knows none of the real projects: then nothing is swept.
+async function sweepPartitions(known: Set<string> | undefined): Promise<void> {
+  if (!known) return;
+  const root = path.join(app.getPath('userData'), 'Partitions');
+  const prefix = 'kermanych-browser-';
+  const names = await readdir(root).catch(() => [] as string[]);
+  for (const name of names) {
+    if (!name.startsWith(prefix) || known.has(name.slice(prefix.length))) continue;
+    await rm(path.join(root, name), { recursive: true, force: true }).catch((err: unknown) =>
+      console.warn(`[partitions] could not remove ${name}: ${(err as Error).message}`),
+    );
   }
 }
 
@@ -345,9 +368,13 @@ app.on('before-quit', (e) => {
     e.preventDefault();
     const closing = nest;
     nest = undefined;
-    // nest.close() runs each module's onModuleDestroy: SupervisorService stops the omp
-    // rpc children and PreviewService stops preview children. finally() guarantees quit
-    // even if a child's stop() rejects, so the app can never get stuck un-quittable.
-    void closing.close().finally(() => app.quit());
+    // nest.close() runs each module's onModuleDestroy: SupervisorService and the chat pools wait
+    // for their omp children to stop, PreviewService for its preview groups, DeviceService for the
+    // devices. finally() guarantees quit even if a stop rejects, and the cap guarantees it even if
+    // one hangs (an emulator's shutdown alone can take over a minute): the quit then goes ahead,
+    // and whatever was still running is in the child ledger for the next start to stop.
+    const cap = Promise.withResolvers<void>();
+    setTimeout(cap.resolve, QUIT_TIMEOUT_MS);
+    void Promise.race([closing.close(), cap.promise]).finally(() => app.quit());
   }
 });

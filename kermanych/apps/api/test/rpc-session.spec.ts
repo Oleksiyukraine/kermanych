@@ -1,5 +1,5 @@
 // apps/api/test/rpc-session.spec.ts
-import { afterAll, beforeAll, expect, test } from "vitest";
+import { afterAll, beforeAll, expect, test, vi } from "vitest";
 import { chmodSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -139,4 +139,36 @@ test("isAlive() reports dead the instant stop() is called, before the child has 
 
   await stopped; // let the SIGTERM escalation reap the lingering child
   expect(rpc.isAlive()).toBe(false);
+});
+
+test("a stop that has to signal reaches what the child started, not just omp", async () => {
+  // omp's MCP servers and test workers are its children. A child that ignores the EOF gets
+  // SIGTERM; sent to omp alone, the grandchild was left to launchd and ran on.
+  const omp = fakeOmp(
+    "spawns-and-lingers.mjs",
+    `import { spawn } from "node:child_process";` +
+      `const g = spawn("sleep", ["30"], { stdio: "ignore" });` +
+      `process.stdout.write(JSON.stringify({type:"ready",protocolVersion:2,grandchild:g.pid})+"\\n");` +
+      `process.stdin.resume();setInterval(()=>{},1000);`,
+  );
+  const rpc = new RpcSession({ cwd: dir, ompPath: omp });
+  let grandchild = 0;
+  rpc.onEvent((e) => {
+    if (e.type === "ready" && typeof e.grandchild === "number") grandchild = e.grandchild;
+  });
+  rpc.onExit(() => {});
+  await rpc.start();
+  expect(grandchild).toBeGreaterThan(0);
+
+  await rpc.stop();
+
+  const alive = (): boolean => {
+    try {
+      process.kill(grandchild, 0);
+      return true;
+    } catch {
+      return false;
+    }
+  };
+  await vi.waitFor(() => expect(alive()).toBe(false), { timeout: 3_000 });
 });
