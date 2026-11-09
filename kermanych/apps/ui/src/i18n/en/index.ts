@@ -272,6 +272,7 @@ export const en: MessageSchema = {
       delete: 'Delete the agent',
       unarchive: 'Return to active',
       agentMap: 'Agent map — this session’s subagents',
+      minion: 'Hand to Minion (/minion): the agent makes the remaining decisions itself and opens a PR',
     },
     map: {
       title: 'Agent map',
@@ -3633,6 +3634,10 @@ export const en: MessageSchema = {
     // A row of managed claude-code, which no longer exists (2026-11-05 spec, decision 9).
     managed_claude_removed:
       'Managed claude-code was removed from Kermanych, so this session cannot continue in Kermanych mode. Open its conversation in a terminal: claude --resume <the id on its Session tab>.',
+    // /minion (2026-11-09-minion-takeover spec).
+    minion_takeover_unsupported:
+      'Only an open agent session with a branch can be handed to Minion — not a chat, discussion, review, design, Synergy or scheduled run.',
+    minion_takeover_running: 'Minion is already running this session on its own.',
     // An in-place agent works in the project checkout itself — the refusals name what blocks
     // it and the two ways out: clean the checkout, or keep the worktree isolation on.
     inplace_tree_dirty:
@@ -3699,6 +3704,7 @@ export const en: MessageSchema = {
     session_dormant_inactive: 'Session inactive. Send a message to restore it and pull in its history.',
     context_compacted: 'context compacted — the conversation history was condensed and token budget freed',
     context_compact_failed: 'could not compact context: {reason}',
+    minion_takeover_started: 'session handed to Minion: the agent makes the remaining decisions itself and opens a PR',
     base_fetch_failed: 'Could not update origin/{base} — the branch was created from {ref} as of the last successful fetch, so the base may not be the latest.',
     pr_behind_base: 'The PR is missing {count} commit from origin/{base}: the agent did not merge the base or did not push the merge. Press “Commit” in the “Finish the session” window. | The PR is missing {count} commits from origin/{base}: the agent did not merge the base or did not push the merge. Press “Commit” in the “Finish the session” window.',
     // The backend child died MID-SESSION — its launch succeeded long ago, so there is nobody to

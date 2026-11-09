@@ -73,8 +73,9 @@ export type Session = {
   deepAnalysis?: boolean;
   // Run by «Посіпака» (docs/specs/2026-10-23-minion-auto-run.md): the minion took the card and
   // runs it with nobody watching — no ask tool, a `report_outcome` verdict, a PR at the end.
-  // Stamped when the session is created and never changed. Absent means a session a person
-  // started, even when its card allows auto-run.
+  // Stamped when the session is created, or set later when the operator hands the session to
+  // the minion with `/minion` (docs/specs/2026-11-09-minion-takeover.md); never cleared. Absent
+  // means a session a person drives, even when its card allows auto-run.
   minion?: boolean;
   // A «Дизайн» session (docs/specs/2026-10-29-design-tab.md): the repository-relative folder
   // its design lands in, e.g. `docs/design/2026-10-29-orders-list`. Stamped from a design card
