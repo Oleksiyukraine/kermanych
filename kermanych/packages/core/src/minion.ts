@@ -188,13 +188,13 @@ export const MINION_TIME_CAP_PROMPT = [
 /**
  * `/minion` (docs/specs/2026-11-09-minion-takeover.md): whether a session can be handed to
  * «Посіпака» mid-way — an agent with a branch the PR turn can push, still open, and none of the
- * kinds with a protocol of their own (a design, a «Синергія» prototype, a scheduled run). A native
+ * kinds with a protocol of their own (a «Синергія» prototype, a scheduled run). A native
  * session is refused apart, like every command: the harness owns its tools.
  */
 export function minionTakeoverAllowed(
-  s: Pick<Session, "kind" | "branch" | "status" | "archived" | "designDir" | "synergy" | "schedule">,
+  s: Pick<Session, "kind" | "branch" | "status" | "archived" | "synergy" | "schedule">,
 ): boolean {
-  return s.kind === "agent" && !!s.branch && s.status !== "merged" && !s.archived && !s.designDir && !s.synergy && !s.schedule;
+  return s.kind === "agent" && !!s.branch && s.status !== "merged" && !s.archived && !s.synergy && !s.schedule;
 }
 
 /**

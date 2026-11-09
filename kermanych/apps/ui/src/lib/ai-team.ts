@@ -21,8 +21,6 @@
 import {
   AGENTS,
   DEFAULT_SKILLS,
-  DESIGNER_AGENT_ID,
-  DESIGN_SAVE_AGENT_ID,
   MINION_AGENT_ID,
   SYNERGY_AGENT_ID,
   SYNERGY_IMPLEMENT_AGENT_ID,
@@ -78,11 +76,10 @@ export function aiTeamSection(key: unknown): AiTeamSection {
 // lives here and not in core's AGENTS — and each agent has its mark (decision 6). Every id of
 // AGENTS must sit in exactly one group and have a mark, or a new agent drops out of the list.
 
-export type AiTeamAgentGroup = 'work' | 'design' | 'synergy' | 'ship' | 'auto';
+export type AiTeamAgentGroup = 'work' | 'synergy' | 'ship' | 'auto';
 
 export const AI_TEAM_AGENT_GROUPS: readonly { key: AiTeamAgentGroup; agents: readonly string[] }[] = [
   { key: 'work', agents: [MINION_AGENT_ID, 'promote'] },
-  { key: 'design', agents: [DESIGNER_AGENT_ID, DESIGN_SAVE_AGENT_ID] },
   // «Синергія» (docs/specs/2026-11-06-synergy.md): the prototyping role and its handoff.
   { key: 'synergy', agents: [SYNERGY_AGENT_ID, SYNERGY_IMPLEMENT_AGENT_ID] },
   { key: 'ship', agents: ['review', TESTER_AGENT_ID, 'pull-request', 'commit', 'resolve-conflict'] },
@@ -92,8 +89,6 @@ export const AI_TEAM_AGENT_GROUPS: readonly { key: AiTeamAgentGroup; agents: rea
 export const AGENT_ICONS: Readonly<Record<string, KIconName>> = {
   [MINION_AGENT_ID]: 'minion',
   promote: 'agentPromote',
-  [DESIGNER_AGENT_ID]: 'design',
-  [DESIGN_SAVE_AGENT_ID]: 'agentDesignSave',
   [SYNERGY_AGENT_ID]: 'synergy',
   [SYNERGY_IMPLEMENT_AGENT_ID]: 'agentSynergyImplement',
   review: 'agentReview',

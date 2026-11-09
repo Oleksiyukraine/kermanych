@@ -2,7 +2,7 @@
 // composer uses. A managed session gets the crops as images; a native one their file paths in
 // the text (it takes text only — lib/browser-picks.ts). A refusal (`native_busy`, a dead child)
 // keeps the tray so nothing the operator wrote is lost. Shared by every page that hosts a
-// KBrowserPane (Агенти, Дизайн), so the tray sends the same way wherever it is.
+// KBrowserPane (Агенти, Синергія), so the tray sends the same way wherever it is.
 import { ref, type Ref } from 'vue';
 import type { Session } from '@kermanych/core';
 import { useOrchestrator } from 'stores/orchestrator';

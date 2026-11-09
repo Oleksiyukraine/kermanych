@@ -133,7 +133,6 @@
               :status-line="markdownPreview(item.card.description)"
               :model="item.card.model"
               :deep-analysis="item.card.deepAnalysis"
-              :design="item.card.design"
               :auto-run="item.card.autoRun"
               :needs-decision="cardDecisionReason(t, item.card)"
               :not-needed="cardNotNeededReason(t, item.card)"
@@ -158,7 +157,6 @@
               :model="item.session.model"
               :harness="item.session.kind === 'task' ? undefined : sessionLaunchMode(item.session)"
               :deep-analysis="item.session.deepAnalysis"
-              :design="!!item.session.designDir"
               :minion="item.session.minion"
               :schedule="item.session.schedule?.name"
               :needs-decision="sessionDecisionReason(t, item.session)"
@@ -248,8 +246,7 @@
             >{{ shownName }}</span>
             <KTag v-if="selectedSession.branch" class="agents__detail-branch">⑂ {{ selectedSession.branch }}</KTag>
             <KAnalysisMark v-if="selectedSession.deepAnalysis" />
-            <KDesignMark v-if="selectedSession.designDir" />
-            <KMinionMark v-if="selectedSession.minion" kind="running" />
+              <KMinionMark v-if="selectedSession.minion" kind="running" />
             <KScheduleMark v-if="selectedSession.schedule" :name="selectedSession.schedule.name" />
             <!-- A tester walks this session's QA checklist: the run is one click away. -->
             <button
@@ -1161,7 +1158,7 @@
                 class="agents-launcher__seg-btn mono"
                 :class="{ 'agents-launcher__seg-btn--active': opt === draftMode, 'agents-launcher__seg-btn--blocked': modeBlocked(opt) }"
                 :aria-disabled="modeBlocked(opt) || undefined"
-                v-tip="modeBlocked(opt) ? t('agents.native.designManagedOnly') : undefined"
+                v-tip="modeBlocked(opt) ? t('agents.native.synergyManagedOnly') : undefined"
                 @click="pickLaunchMode(opt)"
               >{{ opt === 'managed' ? t('agents.native.modeManaged') : opt }}</button>
             </div>
@@ -1421,7 +1418,6 @@ import KTag from 'components/kit/KTag.vue';
 import KSessionCard from 'components/kit/KSessionCard.vue';
 import SessionFindings from 'components/agents/SessionFindings.vue';
 import KAnalysisMark from 'components/kit/KAnalysisMark.vue';
-import KDesignMark from 'components/kit/KDesignMark.vue';
 import DocTaskDialog from 'components/docs/DocTaskDialog.vue';
 import { canTaskFromDoc, isDesignReadme } from '../lib/doc-task';
 import KMinionMark from 'components/kit/KMinionMark.vue';
@@ -1519,8 +1515,8 @@ function openAgentMapAt(sessionId: string): void {
   mapOpen.value = true;
 }
 
-// A session card on the map, like a card in the list, means «go to this agent». A design opens
-// on «Дизайн» instead (MainLayout's selection watcher), since this page has no row for it.
+// A session card on the map, like a card in the list, means «go to this agent». A Синергія
+// session opens on «Синергія» instead (MainLayout's selection watcher), since this page has no row for it.
 function onMapOpenSession(id: string): void {
   mapOpen.value = false;
   store.selectSession(id);
@@ -1619,9 +1615,9 @@ const scopedIds = computed(() =>
 );
 const inScope = computed(() => new Set(scopedIds.value));
 
-// Every non-chat, non-design, non-Синергія session in scope, with the tab bucketOf files it
+// Every non-chat, non-Синергія session in scope, with the tab bucketOf files it
 // under — the one rule the counts and the list share, so a fork sits in its parent's tab here
-// exactly as it is counted there. Chats live on Чат, designs on Дизайн and Синергія sessions on
+// exactly as it is counted there. Chats live on Чат and Синергія sessions on
 // Синергія, each its only view; «Карта агентів» still shows them, because they are running
 // agents (AgentMap reads the store itself). «Імплементувати» clears `synergy`, and the session
 // shows up here as an ordinary agent.
@@ -1629,7 +1625,7 @@ const scopedBuckets = computed(() => {
   const byId = new Map(store.sessions.map((s) => [s.id, s]));
   const out: { session: Session; bucket: Bucket }[] = [];
   for (const s of store.sessions) {
-    if (s.kind === 'chat' || s.designDir || s.synergy || !inScope.value.has(s.projectId)) continue;
+    if (s.kind === 'chat' || s.synergy || !inScope.value.has(s.projectId)) continue;
     out.push({ session: s, bucket: bucketOf(s, (id) => byId.get(id)) });
   }
   return out;
@@ -2969,12 +2965,10 @@ const draftModel = ref('');
 const draftEffort = ref<ThinkingLevel | ''>('');
 // The segmented pickers offer core's vocabularies verbatim — the same constants openLauncher
 // validates a card's free-text launch params against, so a prefix added to core cannot show
-// up as accepted-but-unpickable here. Except `design`: a design card comes only from
-// «+ Новий дизайн», which also marks it `design`; a stored design card still shows its own. And
-// `synergy`, which only a Синергія launch takes (docs/specs/2026-11-06-synergy.md, decision 5).
+// up as accepted-but-unpickable here. Except `synergy`, which only a Синергія launch takes (docs/specs/2026-11-06-synergy.md, decision 5).
 const draftPrefix = ref<BranchPrefix>('feature');
 const prefixOptions = computed(() =>
-  BRANCH_PREFIXES.filter((p) => p !== 'synergy' && (p !== 'design' || draftPrefix.value === 'design')),
+  BRANCH_PREFIXES.filter((p) => p !== 'synergy'),
 );
 const modelPickOptions = computed(() => modelOptions(store.models));
 // The effort ladder narrows to the chosen model's own (empty for a non-reasoning model);
@@ -3005,7 +2999,7 @@ const draftBaseBranch = ref('');
 const draftMode = ref<LaunchMode>('managed');
 function pickLaunchMode(mode: LaunchMode): void {
   if (modeBlocked(mode)) {
-    explainBlocked(t('agents.native.designManagedOnly'));
+    explainBlocked(t('agents.native.synergyManagedOnly'));
     return;
   }
   draftMode.value = mode;
@@ -3022,9 +3016,9 @@ const editingTaskId = ref<string | null>(null);
 const editingTask = computed<Task | undefined>(() =>
   editingTaskId.value ? board.tasks.find((t) => t.id === editingTaskId.value) : undefined,
 );
-// A design card runs only in «Керманич»: the «Дизайн» page renders only a managed session.
+// A card that continues a «Синергія» prototype runs only in «Керманич» (docs/specs/2026-11-09-merge-design-into-synergy.md, decision 5).
 function modeBlocked(mode: LaunchMode): boolean {
-  return mode !== 'managed' && !!editingTask.value?.design;
+  return mode !== 'managed' && !!editingTask.value?.synergyBranch;
 }
 // A colleague's card (one assigned to me from «Задачі») cannot be switched to auto-run by me.
 const draftAutoRunLocked = computed(() => autoRunSwitchLocked(draftAutoRun.value, editingTask.value, auth.user?.id ?? ''));
@@ -3261,7 +3255,7 @@ function openLauncher(card?: Task, deepAnalysis = false): void {
   nameEdited.value = !!card;
   launcherError.value = null;
   clearLaunchImages();
-  draftMode.value = defaultLaunchMode(auth.provider, { design: !!card?.design });
+  draftMode.value = defaultLaunchMode(auth.provider, { synergy: !!card?.synergyBranch });
   launcherOpen.value = true;
   void nextTick(() => taskInput.value?.focus());
 }
@@ -3725,7 +3719,7 @@ async function onUnarchive(s: Session): Promise<void> {
 }
 
 // ── Finish (retire the worktree; the branch stays for its PR) ──────────────
-// The sheet itself is components/agents/FinishSheet.vue, shared with Дизайн; it reads the
+// The sheet itself is components/agents/FinishSheet.vue; it reads the
 // branch on open. `finishFor` is the session as it was when ✓ was pressed.
 const finishOpen = ref(false);
 const finishFor = ref<Session | null>(null);

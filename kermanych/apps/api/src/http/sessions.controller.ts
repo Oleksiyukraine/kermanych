@@ -123,6 +123,26 @@ export class SessionsController {
     }
   }
 
+  // «Задача →» (docs/specs/2026-11-09-merge-design-into-synergy.md): the screenshots for the card's
+  // dialog, then the push its «Створити» makes before filing the card.
+  @Get(":id/synergy/screens")
+  async synergyScreens(@Param("id") id: string) {
+    try {
+      return await this.sup.synergyScreens(id);
+    } catch (err) {
+      throw sessionFailure(err);
+    }
+  }
+
+  @Post(":id/synergy/push")
+  async pushSynergy(@Param("id") id: string) {
+    try {
+      return await this.sup.pushSynergy(id);
+    } catch (err) {
+      throw sessionFailure(err);
+    }
+  }
+
   // `voice`: the text is a transcript from a voice conversation (docs/specs/2026-11-02-voice-conversation.md).
   @Post(":id/message")
   async message(@Param("id") id: string, @Body() b: { text: string; mode: "prompt" | "follow_up" | "steer"; images?: ImageInput[]; voice?: boolean }) {
@@ -420,17 +440,6 @@ export class SessionsController {
   async commit(@Param("id") id: string) {
     try {
       return await this.sup.commitChanges(id);
-    } catch (err) {
-      throw sessionFailure(err);
-    }
-  }
-
-  // «Зберегти дизайн» (docs/specs/2026-10-29-design-tab.md): `{ sent: true }`; a 400 for a
-  // session that is not a design.
-  @Post(":id/design/save")
-  async saveDesign(@Param("id") id: string) {
-    try {
-      return await this.sup.saveDesign(id);
     } catch (err) {
       throw sessionFailure(err);
     }

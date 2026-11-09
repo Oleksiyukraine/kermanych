@@ -122,3 +122,28 @@ export function synergyBrief(input: { startPage?: string | undefined; requests: 
   parts.push(`Operator requests, in order (rolled-back steps excluded):\n${list.length ? list.join("\n") : "(none)"}`);
   return parts.join("\n\n");
 }
+
+// «Задача →» (docs/specs/2026-11-09-merge-design-into-synergy.md, decision 3): the pages Kermanych
+// photographs for the card, at most this many.
+export const SYNERGY_HANDOFF_SCREENS_MAX = 6;
+
+// The start page, then every page a surviving request was made on, first-seen order, no repeats.
+// Each is kept as path, query and hash: a recorded page is the preview's full URL of that turn,
+// and the preview may run on another port by now.
+export function synergyHandoffPages(startPage: string | undefined, requests: readonly { page?: string }[]): string[] {
+  const pages: string[] = [];
+  for (const raw of [startPage, ...requests.map((r) => r.page)]) {
+    const text = raw?.trim();
+    if (!text) continue;
+    let page: string;
+    try {
+      const url = new URL(text);
+      page = `${url.pathname}${url.search}${url.hash}`;
+    } catch {
+      page = text.startsWith("/") ? text : `/${text}`;
+    }
+    if (!pages.includes(page)) pages.push(page);
+    if (pages.length === SYNERGY_HANDOFF_SCREENS_MAX) break;
+  }
+  return pages;
+}

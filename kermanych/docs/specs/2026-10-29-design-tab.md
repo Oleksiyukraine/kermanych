@@ -1,5 +1,11 @@
 # «Дизайн» tab: design sessions that land in `docs/design/`
 
+> **Superseded in part** by `docs/specs/2026-11-09-merge-design-into-synergy.md` (2026-11-09): the
+> tab, the design session (`designDir`, `design/<slug>`, «Дизайнер», «Зберегти дизайн», the
+> `design-readme` gate) and the `tasks.design` card flag are gone; prototyping on the live app is
+> «Синергія». The `docs/design/` folders, the docs-policy kind `design`, the skills `design-spec` and
+> `implement-from-design`, `browser_screenshot`'s `path` and «Задача →» on a design README stay.
+
 ## Goal
 
 Designs today are self-contained HTML files (`design/*.html`, 230–490 KB each) kept beside the

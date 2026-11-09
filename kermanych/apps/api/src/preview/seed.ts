@@ -25,8 +25,6 @@ type Demo = {
   usage?: Usage;
   // A «Глибокий аналіз» agent, so the preview shows the mark its card and header carry.
   deepAnalysis?: boolean;
-  // A «Дизайн» session's folder, so the Дизайн page has an entry to list.
-  designDir?: string;
   // A «Синергія» session, so the Синергія page has an entry to list.
   synergy?: { page?: string };
   // Branches forked off this agent's conversation, as branchSession/reviewSession make
@@ -62,7 +60,6 @@ export function seedDemo(registry: RegistryService): void {
       baseBranch: d.baseBranch,
       model: d.model,
       ...(d.deepAnalysis ? { deepAnalysis: true } : {}),
-      ...(d.designDir ? { designDir: d.designDir } : {}),
       ...(d.synergy ? { synergy: d.synergy } : {}),
     });
     if (d.archived) registry.updateSession(s.id, { archived: true });
@@ -105,7 +102,6 @@ export function seedDemo(registry: RegistryService): void {
     { name: "Міграція БД", branch: "feature/db-migration", status: "conflict", model: "opus-5", usage: { input: 12_600, output: 5_800, cacheRead: 720_000, cacheWrite: 41_000, cost: 2.07 } },
     { name: "Логотип у хедері", branch: "feature/header-logo", status: "merged", model: "haiku", usage: { input: 620, output: 240, cacheRead: 9_100, cacheWrite: 0, cost: 0.02 } },
     { name: "Стара фіча", branch: "feature/legacy", status: "done", archived: true, model: "sonnet-4.5", usage: { input: 2_400, output: 800, cacheRead: 51_000, cacheWrite: 3_300, cost: 0.19 } },
-    { name: "Список замовлень", branch: "design/orders-list", status: "done", model: "opus-5", designDir: "docs/design/2026-10-29-orders-list", usage: { input: 4_200, output: 2_300, cacheRead: 140_000, cacheWrite: 7_800, cost: 0.52 } },
     { name: "Синергія: /users/42", branch: "synergy/users-42", status: "done", model: "sonnet-5.5", synergy: { page: "/users/42" }, usage: { input: 900, output: 400, cacheRead: 30_000, cacheWrite: 2_000, cost: 0.05 } },
   ];
   for (const r of acmeRows) seed(acme.id, r);

@@ -101,7 +101,6 @@ function card(over: Partial<Task> = {}): Task {
     createdAt: "",
     updatedAt: "",
     worktree: true,
-    design: false,
     model: "claude-opus-4-8",
     effort: "high",
     ...over,
@@ -116,9 +115,9 @@ beforeEach(() => {
 });
 
 describe("a native launch", () => {
-  it("refuses a design card before claiming it", async () => {
+  it("refuses a «Синергія» card before claiming it", async () => {
     const { sup, registry, terminal, worktree } = make();
-    card({ design: true });
+    card({ synergyBranch: "synergy/orders" });
 
     await expect(sup.createSessionFromTask("task-1", USER, undefined, "claude-code")).rejects.toMatchObject({ code: "native_unsupported" });
 

@@ -256,8 +256,7 @@ import { PENDING_TIMEOUT_MS } from 'stores/pending';
 import { addressToUrl } from '../../lib/browser-url';
 
 // `splittable`: the host page has a Браузер tab that ◫ «Поруч із логом» can move beside the Лог;
-// the «Дизайн» page lays the pane beside its log already and has no such tab, so it hides the
-// toggle.
+// a page that lays the pane beside its log already has no such tab, so it hides the toggle.
 const props = withDefaults(
   defineProps<{ session: Session; sending: boolean; hold?: boolean; splittable?: boolean }>(),
   { hold: false, splittable: true },

@@ -1206,8 +1206,7 @@ const DOCS_GROUPS: { key: 'task' | 'living' | 'frontBack' | 'screens'; kinds: Do
   { key: 'task', kinds: ['spec', 'plan'] },
   { key: 'living', kinds: ['schemas'] },
   { key: 'frontBack', kinds: ['handoff', 'apiRequest'] },
-  // «Дизайн» sessions write their folder whatever the rule; it only decides whether every other
-  // session of the project is told that designs live there (policyLine).
+  // It decides whether every session of the project is told that designs live there (policyLine).
   { key: 'screens', kinds: ['design'] },
 ];
 

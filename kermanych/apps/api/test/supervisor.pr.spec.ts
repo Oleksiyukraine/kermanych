@@ -300,21 +300,19 @@ describe("the reflection step in Kermanych's turns", () => {
     const mcp = new BrowserMcpService(registry, {} as PreviewService, fakeDevice().device, http, undefined, {} as SkillImprovementService);
     const sup = new SupervisorService(registry, worktree as unknown as WorktreeService, offlineAuth(), skills, {} as ModelsService, undefined, mcp);
     registry.upsertProject({ id: "p1", name: "g", localRepoPath: "/tmp/proj" });
-    const s = registry.createSession({ projectId: "p1", name: "AAA", task: "t", worktreePath: "/tmp/wt", branch: "feature/aaa", baseBranch: "dev", designDir: "docs/design/x" });
+    const s = registry.createSession({ projectId: "p1", name: "AAA", task: "t", worktreePath: "/tmp/wt", branch: "feature/aaa", baseBranch: "dev" });
     registry.updateSession(s.id, { status: "done" });
     // The session's launch: its tools/list holds improve_skill.
     await mcp.handle(s.id, { jsonrpc: "2.0", id: 1, method: "tools/list" });
     return { sup, registry, id: s.id };
   }
 
-  it("ends «Створити ПР», «Закоміти» and «Зберегти дизайн» with the step at the operator's level", async () => {
+  it("ends «Створити ПР» and «Закоміти» with the step at the operator's level", async () => {
     const { sup, registry, id } = await setup();
     await sup.createPullRequest(id);
     expect(prompts.at(-1)!.endsWith(`\n\n${skillReflectionBlock("moderate")}`)).toBe(true);
     registry.setAuthSession({ userId: "u1", accessToken: "t", skillImprovementLevel: "active" });
     await sup.commitChanges(id);
-    expect(prompts.at(-1)!.endsWith(`\n\n${skillReflectionBlock("active")}`)).toBe(true);
-    await sup.saveDesign(id);
     expect(prompts.at(-1)!.endsWith(`\n\n${skillReflectionBlock("active")}`)).toBe(true);
   });
 

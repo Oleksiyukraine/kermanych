@@ -18,12 +18,12 @@ describe('defaultLaunchMode', () => {
     expect(defaultLaunchMode('codex')).toBe('codex');
     expect(defaultLaunchMode(null)).toBe('managed');
     expect(defaultLaunchMode(undefined)).toBe('managed');
-    expect(defaultLaunchMode('claude-code', { design: false })).toBe('claude');
+    expect(defaultLaunchMode('claude-code', { synergy: false })).toBe('claude');
   });
 
-  it('is «Керманич» for a design card whatever the provider', () => {
+  it('is «Керманич» for a card that continues a Синергія prototype whatever the provider', () => {
     for (const provider of ['omp', 'claude-code', 'codex', null, undefined] as const) {
-      expect(defaultLaunchMode(provider, { design: true })).toBe('managed');
+      expect(defaultLaunchMode(provider, { synergy: true })).toBe('managed');
     }
   });
 });

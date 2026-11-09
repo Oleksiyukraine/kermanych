@@ -13,7 +13,7 @@ import { isFindingKind, readDocsReport, readSessionReport, type QaChecklist } fr
 // on every card read it. Literal strings, so supabase-js can type the selects; Realtime's
 // `select` takes the same list as an array.
 const TASK_LIST_COLUMNS =
-  "id, project_id, title, description, status, assignee_id, created_by, model, effort, prefix, kind, branch, branch_slug, estimate_minutes, worktree, hidden, deep_analysis, auto_run, design, finding_kind, image_paths, jira_key, linear_key, plane_key, session_report, created_at, updated_at";
+  "id, project_id, title, description, status, assignee_id, created_by, model, effort, prefix, kind, branch, branch_slug, synergy_branch, estimate_minutes, worktree, hidden, deep_analysis, auto_run, finding_kind, image_paths, jira_key, linear_key, plane_key, session_report, created_at, updated_at";
 const TASK_COLUMNS = `${TASK_LIST_COLUMNS}, qa_checklist, docs_report` as const;
 const TASK_LIST_COLUMN_NAMES = TASK_LIST_COLUMNS.split(", ");
 
@@ -33,11 +33,11 @@ type TaskRow = {
   hidden: boolean;
   deep_analysis: boolean;
   auto_run: boolean;
-  design: boolean;
   finding_kind: string | null;
   kind: string | null;
   branch: string | null;
   branch_slug: string | null;
+  synergy_branch: string | null;
   estimate_minutes: number | null;
   image_paths: string[] | null;
   jira_key: string | null;
@@ -63,8 +63,6 @@ export function toTask(row: TaskRow): Task {
     deepAnalysis: row.deep_analysis,
     // `not null default false`; `=== true` keeps a row from a pre-migration select an ordinary card.
     autoRun: row.auto_run === true,
-    // `not null default false`, like auto_run.
-    design: row.design === true,
   };
   // Optional keys are omitted rather than set to undefined, so a mapped task deep-equals a
   // hand-written literal in tests and carries no null noise into Vue's reactivity.
@@ -78,6 +76,7 @@ export function toTask(row: TaskRow): Task {
   if (row.branch !== null) t.branch = row.branch;
   // `!= null`, not `!== null`: a hand-built row from before the column (test fixtures) omits it.
   if (row.branch_slug != null) t.branchSlug = row.branch_slug;
+  if (row.synergy_branch != null) t.synergyBranch = row.synergy_branch;
   // `!= null` for the same reason as branch_slug.
   if (row.estimate_minutes != null) t.estimateMinutes = row.estimate_minutes;
   // The column's check constraint names the same four kinds; anything else reads as «not from a
@@ -236,8 +235,8 @@ export async function createTask(
     }),
     // Insert-only, so not part of toTaskRow: tasks_guard() keeps it frozen on every update.
     ...(input.findingKind ? { finding_kind: input.findingKind } : {}),
-    // Insert-only too: a card is a design from the moment «+ Новий дизайн» files it.
-    ...(input.design ? { design: true } : {}),
+    // Insert-only too: «Задача →» names the prototype's branch once (no patch carries it).
+    ...(input.synergyBranch ? { synergy_branch: input.synergyBranch } : {}),
   };
   const { data, error } = await client.from("tasks").insert(row).select(TASK_COLUMNS).single();
   if (error) throw new Error(error.message);
@@ -403,8 +402,8 @@ export async function listMinionCandidates(
     .eq("auto_run", true)
     .eq("created_by", userId)
     .eq("deep_analysis", false)
-    // A design is drawn with a person watching; nobody watches a minion run.
-    .eq("design", false)
+    // A prototype is continued with a person at hand; nobody watches a minion run.
+    .is("synergy_branch", null)
     .is("jira_key", null)
     .is("linear_key", null)
     .is("plane_key", null)
@@ -427,7 +426,7 @@ export async function claimMinionTask(client: SupabaseClient, id: string, userId
     .eq("auto_run", true)
     .eq("created_by", userId)
     .eq("deep_analysis", false)
-    .eq("design", false)
+    .is("synergy_branch", null)
     .is("jira_key", null)
     .is("linear_key", null)
     .is("plane_key", null)

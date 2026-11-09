@@ -169,7 +169,6 @@
           :assignee="resolveAssignee(task.assigneeId, membersOf(task.projectId))"
           :assignee-loading="!!task.assigneeId && rosterPending(task.projectId)"
           :deep-analysis="task.deepAnalysis"
-          :design="task.design"
           :auto-run="task.autoRun"
           :needs-decision="cardDecisionReason(t, task)"
           :not-needed="cardNotNeededReason(t, task)"
@@ -1175,11 +1174,11 @@ type LaunchOutcome = 'started' | 'unbound' | 'failed';
 
 // Starts the session and, once it exists, closes whichever modal asked and goes to the
 // Агенти board. `report` puts a refusal where the operator is looking (the open modal).
-// The mode is the provider's default; a design card is always «Керманич».
+// The mode is the provider's default; a card that continues a «Синергія» prototype is always «Керманич».
 async function runLaunch(task: Task, report: (message: string) => void): Promise<LaunchOutcome> {
   launching.value = task.id;
   try {
-    const native = nativeRuntimeFor(defaultLaunchMode(auth.provider, { design: task.design }));
+    const native = nativeRuntimeFor(defaultLaunchMode(auth.provider, { synergy: !!task.synergyBranch }));
     const session = await api.createSessionFromTask(task.id, undefined, native);
     editorOpen.value = false;
     bindingOpen.value = false;
@@ -1252,10 +1251,8 @@ const effortPickOptions = computed(() => {
   const allowed = effortOptions(local.models, draftModel.value || undefined);
   return EFFORT_OPTIONS.filter((o) => allowed.includes(o.value)).map((o) => ({ value: o.value, label: t(o.labelKey) }));
 });
-// Core's prefixes, less `design`: a design card comes only from «+ Новий дизайн», which also marks
-// it `design`. A stored design card still shows its prefix — KSelect lists a held value it lacks.
-// Less `synergy` too: only a Синергія launch takes it (docs/specs/2026-11-06-synergy.md).
-const PREFIX_OPTIONS = BRANCH_PREFIXES.filter((p) => p !== 'design' && p !== 'synergy');
+// Core's prefixes, less `synergy`: only a Синергія launch takes it (docs/specs/2026-11-06-synergy.md).
+const PREFIX_OPTIONS = BRANCH_PREFIXES.filter((p) => p !== 'synergy');
 
 const editorOpen = ref(false);
 const editingId = ref<string | null>(null);

@@ -1051,9 +1051,6 @@ export const api = {
   // «Написати запит на API» / «Написати хендоф»: the agent writes that one document now, mid-task.
   writeDoc: (id: string, kind: DocsWriteKind): Promise<{ sent: true }> => post(`/sessions/${id}/docs/write`, { kind }),
 
-  // «Зберегти дизайн»: one Kermanych prompt asking the Дизайнер to screenshot every listed state,
-  // bring the README in line and commit; 400 for a session that is not a design.
-  saveDesign: (id: string): Promise<{ sent: true }> => post(`/sessions/${id}/design/save`, {}),
 
   // «Синергія» (docs/specs/2026-11-06-synergy.md). A launch with no card (decision 5): the api
   // creates the `synergy/<slug>` worktree, starts the preview on `page` and spawns the child idle.
@@ -1077,6 +1074,15 @@ export const api = {
   // agent starts on the brief in the same worktree.
   implementSynergy: (id: string, taskId: string): Promise<Session> =>
     post<Session>(`/sessions/${id}/synergy/implement`, { taskId }),
+
+  // «Задача →» (docs/specs/2026-11-09-merge-design-into-synergy.md): the screenshots of the pages
+  // the prototype touched, shot by the session browser ([] without one), and the push of its
+  // branch that «Створити» makes before filing the card.
+  synergyScreens: (id: string): Promise<{ page: string; data: string; mimeType: 'image/png' }[]> =>
+    get<{ page: string; data: string; mimeType: 'image/png' }[]>(`/sessions/${id}/synergy/screens`),
+
+  pushSynergy: (id: string): Promise<{ branch: string; base: string }> =>
+    post<{ branch: string; base: string }>(`/sessions/${id}/synergy/push`, {}),
 
   archiveSession: (id: string): Promise<{ ok: boolean }> =>
     post<{ ok: boolean }>(`/sessions/${id}/archive`, {}),

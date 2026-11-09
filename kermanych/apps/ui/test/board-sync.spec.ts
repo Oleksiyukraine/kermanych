@@ -56,7 +56,6 @@ function card(id: string, at: string, over: Partial<Task> = {}): Task {
     worktree: true,
     hidden: false,
     deepAnalysis: false,
-    design: false,
     autoRun: false,
     createdAt: `2026-11-01T00:00:0${id.slice(1)}.000Z`,
     updatedAt: at,

@@ -70,7 +70,7 @@ per-user choice that sets the **default launch mode**: omp → «Кермани�
 `claude`, codex → native `codex`. The UI applies it wherever you do not pick a mode yourself:
 «Дошка» ▶, the Jira, Linear and Plane launch dialogs, ЦУК, the «Режим» that «Нова задача» opens
 with and the «Чат» chip (both can still be changed per launch; neither remembers the last pick).
-Design cards, Посіпака, Тестувальник, Ревізор and branches always run in «Керманич». The api
+«Синергія» cards, Посіпака, Тестувальник, Ревізор and branches always run in «Керманич». The api
 itself keeps «no `native` = managed».
 
 The value lives in `profiles.agent_runtime` (no migration; a stored `claude-code` now means
@@ -321,7 +321,7 @@ the red dot sits on the pill's corner instead.
 A workspace row wears the same mark summed over its projects, so a folded workspace still
 shows that something inside it is waiting. Chats, archived and merged agents, and agents
 you stopped yourself never mark a row. A result counts as read once you open the agent in
-«Агенти» (a design: in «Дизайн») while the window is visible. Read state is kept per machine, in
+«Агенти» (a «Синергія» session: in «Синергія») while the window is visible. Read state is kept per machine, in
 the browser's local storage; finished agents from before this feature shipped count as read.
 The desktop app's Dock icon counts the same agents, except the running ones (see
 [Desktop app](#desktop-app-macos)).
@@ -850,7 +850,7 @@ is listening; the web build shows the same splash with «Входжу…» only.
 `docs/specs/2026-11-01-dock-attention.md`). Its number counts the agents whose turn it is, over
 every project: waiting for an answer, failed or stopped on a merge conflict, or finished with a
 result you have not opened yet — the sidebar marks without «працює». A result leaves the number
-once you open the agent (a design: in «Дизайн»); a failure stays until the agent is restarted,
+once you open the agent (a «Синергія» session: in «Синергія»); a failure stays until the agent is restarted,
 archived or deleted. When another agent's turn comes while you are in another app, the icon
 bounces once, and it bounces for a memory warning and a «Посіпака» pause too. A click on the icon
 brings the window back, also when it was minimised. **Налаштування → Застосунок → Сповіщення**
@@ -1009,7 +1009,7 @@ session's own agent (omp / claude, with the repository and its tools). GPT-Live 
 voice: it never answers about the code itself, and asks back only when it did not hear you.
 
 - **Where.** 🎤 in the composer of every managed conversation: «Агенти» (agents, «Глибокий
-  аналіз», discussions, reviews), «Чат» and «Дизайн». Not native sessions, not «Менеджмент».
+  аналіз», discussions, reviews), «Чат» and «Синергія». Not native sessions, not «Менеджмент».
 - **The key.** Settings → Застосунок → «Голос»: your own OpenAI API key, stored in this machine's
   SQLite (`voice_keys`) like the Jira/Linear tokens — never in the cloud, never in the window;
   the local api exchanges the window's WebRTC offer with OpenAI (`POST /api/voice/session`).
@@ -1053,8 +1053,8 @@ Speak a task description instead of typing it (spec: `docs/specs/2026-11-03-voic
 OpenAI's streaming transcription (`gpt-live-transcribe`) turns speech into text as you talk.
 
 - **Where.** «Диктувати» under the description of every popup that creates or edits a task:
-  «Нова задача» on «Агенти» (incl. «Глибокий аналіз»), the card editor on «Дошка», «Новий
-  дизайн», a task from a document, a finding → task, and the Jira / Linear issue editors. **⌥D**
+  «Нова задача» on «Агенти» (incl. «Глибокий аналіз»), the card editor on «Дошка», «Синергія»'s
+  «Задача →», a task from a document, a finding → task, and the Jira / Linear issue editors. **⌥D**
   in the description toggles it.
 - **How text lands.** The phrase being spoken shows as a grey draft under the field; when you
   pause (~0.8 s) its final text is inserted at the caret. The field stays editable meanwhile.
@@ -1347,70 +1347,44 @@ it and shows the screen live in the tab, in the desktop app and the web build al
   `GET /api/sessions/:id/device/screenshot`, and the `/device` socket.io namespace (`watch`,
   `unwatch`, `input`, `frame`), authenticated like `/terminal`.
 
-## Designs («Дизайн»)
+## Design folders (`docs/design/`)
 
-The «Дизайн» tab, right after «Чат», is where a screen is designed with an agent (spec:
-`docs/specs/2026-10-29-design-tab.md`). A design is a **prototype built on the project's own UI
-kit with fixtures**, not a drawing, so it cannot drift from the code; what lands in the
-repository is a folder that people and implementing agents read.
+A screen design is a **prototype built on the project's own UI kit with fixtures** plus a folder
+that people and implementing agents read (spec: `docs/specs/2026-10-29-design-tab.md`). Any agent
+session asked to design a screen follows the default skill `design-spec`: kit components only (a
+missing one is a kit gap in the README), one dev-only route per screen
+(`/__design/<design>/<screen>`), every state (data, empty, loading, error, long content, narrow),
+and `browser_screenshot` with `path` for the screenshots. The «Дизайн» tab that ran such sessions
+is gone: prototyping on the live app is «Синергія» below (spec:
+`docs/specs/2026-11-09-merge-design-into-synergy.md`).
 
-- **The page.** Left: the selected project's designs and «+ Новий дизайн». Centre: the
-  design's session browser on the running preview, with the width presets, «◎ Вказати» and the
-  picks tray (picks go to the agent, as on «Агенти»). Right: the agent's log and composer.
-  The web build has no canvas (the session browser needs the desktop app): it shows the
-  design's saved folder instead — the screenshots and the rendered README. Opening a design
-  starts its [live preview](#live-preview) when the branch has a valid `.kermanych/preview.json`;
-  without one the canvas's preview row offers «Доручити агенту», and a Back-end or Mobile project
-  has no canvas at all. The page opens a design from a desktop notification or «Карта агентів»
-  too.
-- **A design is an agent session.** «+ Новий дизайн» asks for a topic, an optional description
-  and base branch, files a card on the board (`tasks.design`, migration
-  `20261029090000_task_design.sql`) assigned to you, and launches it. The session runs on a
-  `design/<slug>` branch in its own worktree, stamped with its folder
-  `docs/design/YYYY-MM-DD-<slug>/`. Commit, PR, finish and resume work as for any agent.
-  Designs are hidden from «Агенти» but stay on «Карта агентів», and their card on the board
-  carries the design mark. «Посіпака» never takes a design card.
-- **References.** The modal's «Референси» block takes images (paste anywhere in the form, drop
-  on the block, or «⛶ Зображення») and links (`http`/`https`; a bare host gets `https://`,
-  `localhost` gets `http://`; a typed link not yet added is added on «Створити»). The images go
-  to the Дизайнер with its first message and then onto the card; the links go into the card's
-  description under `References:`. The Дизайнер studies every reference before it builds and
-  records in the README what it took from each (spec: `docs/specs/2026-11-05-design-references.md`).
-- **«Дизайнер»** (`designer` in «ШІ-команда → Агенти», editable) opens the session: reuse kit
-  components only (a missing one is a kit gap in the README), one dev-only route per screen
-  (`/__design/<design>/<screen>`), every state (data, empty, loading, error, long content,
-  narrow), and a `browser_screenshot` check at 390 and 1280 after each change. Its method and
-  README template are the default skill `design-spec`.
-- **The folder.** `README.md` (purpose, references, screens, states, decisions, open questions,
-  acceptance criteria, prototype files and routes, kit gaps) and
-  `screens/<screen>-<state>@<width>.png`. The prototype code stays in the app's source and is
-  merged with the design; the task that implements the screen turns it into the real one and
-  deletes it.
-- **«Зберегти дизайн»** sends the procedure `design-save` (editable too): screenshot every
-  screen and state at 390 and 1280 into `screens/`, delete stale ones, make the README match
-  the prototype, commit as `design: <topic>`. The design reaches the default branch through
-  «Створити ПР» and review, like code.
-- **From design to implementation.** «Задача →» on a design's README (on the page and in the
-  session's «Документація» tab) creates a card in the same project by default, with the README
-  as the description and the screenshots attached as card images. An
-  agent working from such a card follows the default skill `implement-from-design`: read the
-  README and screenshots, reuse the prototype, build every state, compare its own screenshots,
-  delete the prototype.
+- **The folder.** `docs/design/YYYY-MM-DD-<topic>/README.md` (purpose, references, screens,
+  states, decisions, open questions, acceptance criteria, prototype files and routes, kit gaps)
+  and `screens/<screen>-<state>@<width>.png`. The prototype code stays in the app's source; the
+  task that implements the screen turns it into the real one and deletes it.
+- **From design to implementation.** «Задача →» on a design's README in the session's
+  «Документація» tab creates a card in the same project by default, with the README as the
+  description and the screenshots attached as card images. An agent working from such a card
+  follows the default skill `implement-from-design`: read the README and screenshots, reuse the
+  prototype, build every state, compare its own screenshots, delete the prototype.
 
 ## Prototyping («Синергія»)
 
-The «Синергія» tab, right after «Дизайн», is for building a feature by talking to the running
+The «Синергія» tab, right after «Чат», is for building a feature by talking to the running
 app: «прибери кнопку», «перемісти ліворуч», «перенеси пункт меню в іншу секцію», «додай сторінку
 зі списком замовлень», by text, by voice and with «◎ Вказати». Each change should land in seconds;
-when the result is right, «Імплементувати» hands it to a regular agent (spec:
-`docs/specs/2026-11-06-synergy.md`).
+when the result is right, «Імплементувати» hands it to a regular agent, or «Задача →» files it as
+a card for later or for a teammate (specs: `docs/specs/2026-11-06-synergy.md`,
+`docs/specs/2026-11-09-merge-design-into-synergy.md`).
 
 - **Starting.** «+ Нова фіча» asks for an optional topic; «+ Змінити сторінку» for the start
   path (e.g. `/users/42`). Both take the base branch, the model and the effort; the model defaults
   to `claude-sonnet-5-5` with effort `low` (the project default when this machine's catalogue
   lacks it), and the form remembers your last choice. No card is filed. The session runs on a
   `synergy/<slug>` branch in its own worktree; its [live preview](#live-preview) starts at once
-  and opens on the start path. The agent sits idle until your first request.
+  and opens on the start path. The agent sits idle until your first request. References (images,
+  links to sites or mockups) go with a request: paste or attach images in the composer, paste links
+  into the text.
 - **Why it is fast.** The agent edits the real app code and the dev server's hot reload shows it.
   It runs with `read`, `edit`, `write`, `grep`, `glob` and the session browser / preview tools
   only (no shell, no subagents, no LSP), with no skills and no documentation policy, under the
@@ -1431,11 +1405,26 @@ when the result is right, «Імплементувати» hands it to a regular
   `synergy-implement` instruction: read `git diff <base>...HEAD` and every `synergy-mock`, keep
   what you saw, build the backend, tests, i18n and docs. The session moves to «Агенти»; PR and
   «Завершити» work as for any agent.
+- **«Задача →»** hands the prototype over without starting the work now. The dialog is filled in
+  for you: the title is the session name, the description is the same brief (editable, with
+  «Диктувати»), the assignee is nobody unless you pick a teammate or yourself, and the screenshots
+  are taken by Kermanych itself in the session browser: the start page and every page a surviving
+  request was made on, at most 6, at the pane's width (the pane visibly walks them and comes
+  back; each shot can be left out). Nothing happens until «Створити», which then pushes the
+  `synergy/<slug>` branch to origin (the project's `GIT_TOKEN` for an https origin, else this
+  machine's credentials), files the card in the same project (`tasks.synergy_branch` names the
+  branch, `tasks.branch` keeps the base, migration `20261109100000_task_synergy_branch.sql`) and
+  closes the session like «Відкинути»; the branch stays on origin. Whoever launches the card, on
+  any machine, continues that branch in a worktree with the `synergy-implement` instruction around
+  the card's text, and the PR targets the base. Such a card always runs in «Керманич», and
+  «Посіпака» never takes it. A refused push files nothing; a failed card or close keeps the session
+  and «Створити» can be pressed again without a second card.
 - **«Відкинути»** deletes the session: the agent, the preview, the worktree and the local branch.
 - **Limits.** Desktop app only (the session browser), and only for projects whose platform has a
   browser.
 - **API.** `POST /api/sessions/synergy`, `GET /api/sessions/:id/synergy/steps`,
-  `POST /api/sessions/:id/synergy/restore`, `POST /api/sessions/:id/synergy/implement`, and the
+  `POST /api/sessions/:id/synergy/restore`, `POST /api/sessions/:id/synergy/implement`,
+  `GET /api/sessions/:id/synergy/screens`, `POST /api/sessions/:id/synergy/push`, and the
   `synergy_steps` socket event.
 
 ## Monorepo layout
@@ -1466,8 +1455,8 @@ The visual source of truth lives in [`design/`](./design/):
   set from it with `python3 scripts/gen-icons.py` (stdlib only; the macOS
   `.icns` step needs `iconutil`).
 
-These HTML files are historical. New screens are designed on the «Дизайн» tab (see
-«Designs» above) and land in `docs/design/`.
+These HTML files are historical. New screen designs land in `docs/design/` (see «Design
+folders» above).
 
 Custom `K*` components implement this look; Quasar is used only for the
 framework, layout, build, and state plumbing.
@@ -1863,7 +1852,7 @@ project, on the session's device — item by item, and records a verdict for eac
 ### Agents («ШІ-команда → Агенти»)
 
 A short list of Kermanych's own agents (spec: `docs/specs/2026-11-03-ai-team-agent-pages.md`),
-grouped by stage of work: «Виконання», «Дизайн», «Перевірка і здача», and the two with no
+grouped by stage of work: «Виконання», «Синергія», «Перевірка і здача», and the two with no
 instruction of their own. Each row has the agent's icon, one line on what it does, «переписано»
 when its instruction is not Kermanych's default, and the number of assigned skills. A row opens
 the agent's page, `/ai-team/agents/<id>` (deep-linkable; an unknown id lands on the list). The
@@ -1924,7 +1913,7 @@ A managed session's agent can improve a library skill it used, the way Hermes Ag
 It calls the `improve_skill` tool of its `kermanych` MCP server. Nothing waits for approval: the
 change applies at once, and you can roll it back.
 
-- **When.** Kermanych ends «Створити ПР», «Закоміти» and «Зберегти дизайн» with its own step,
+- **When.** Kermanych ends «Створити ПР» and «Закоміти» with its own step,
   after the instruction (default or overridden) and every other block: the agent looks back over
   the session at the library skills it used and calls the tool for each lesson it has not
   recorded yet. A «Посіпака» run's PR goes through the same turn. The agent may also call the tool
@@ -1949,7 +1938,7 @@ change applies at once, and you can roll it back.
   `docs/specs/2026-11-07-skill-improvement-review.md`). The step follows a new level at
   once; the tool's description follows it in sessions launched afterwards. Routes:
   `GET /api/account/skill-improvement` → `{ level }`, `POST /api/account/skill-improvement`
-  (`{ level }`). «ШІ-команда» shows the step under the PR, commit and design-save agents.
+  (`{ level }`). «ШІ-команда» shows the step under the PR and commit agents.
 
 - **Where it lands.** In your personal layer: a user-scope row with the skill's name, which outranks
   the project, workspace and default text in your next sessions on every runtime that receives
@@ -1967,7 +1956,7 @@ change applies at once, and you can roll it back.
   handed in memory: after a restart no call is refused for this.
 - **Limits.** At most 5 improvements per session; a skill may grow to 64 000 bytes. Each change is
   recorded in the cloud table `skill_improvements` (only you read it; the newest 100 are kept).
-- **Who gets the tool and the step.** Managed agent sessions (deep analysis, designer and
+- **Who gets the tool and the step.** Managed agent sessions (deep analysis and
   «Посіпака» runs included) and project chats (the tool only: a chat has none of the three turns).
   Not native sessions, discussion and review forks, or tester runs. A session whose agent was
   launched while the level was `off` gets no step until it is relaunched with the tool.
@@ -2029,10 +2018,7 @@ every required document is on the branch:
   document has a `## Documentation impact` section whose first line starts with `None`,
   followed by the reason. The reviewer sees that reason in the diff.
 
-A design session's branch is judged by its own folder only: it needs
-`docs/design/<date>-<slug>/README.md`, and the task-document, plan and living-documentation
-rules do not apply to it. The design rule itself never blocks: `optional` tells every other
-session where designs live and that a task naming one is implemented with
+The design rule never blocks: `optional` tells every session where designs live and that a task naming one is implemented with
 `implement-from-design`; `off` keeps them from being told.
 
 The finish sheet («Завершити сесію») lists whatever is still missing in plain language; it has

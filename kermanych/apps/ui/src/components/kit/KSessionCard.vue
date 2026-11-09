@@ -50,10 +50,9 @@
           <KStatusDot :status="status" />
           <span v-if="statusLine" v-tip.overflow="statusTip" class="k-session-card__status-line">{{ statusLine }}</span>
         </span>
-        <span v-if="harness || deepAnalysis || design || minion || schedule || autoRun || needsDecision || notNeeded" class="k-session-card__marks mono">
+        <span v-if="harness || deepAnalysis || minion || schedule || autoRun || needsDecision || notNeeded" class="k-session-card__marks mono">
           <KHarnessMark v-if="harness" :harness="harness" />
           <KAnalysisMark v-if="deepAnalysis" />
-          <KDesignMark v-if="design" />
           <KMinionMark v-if="minion" kind="running" />
           <KMinionMark v-else-if="autoRun" kind="allowed" />
           <KScheduleMark v-if="schedule" :name="schedule" />
@@ -89,7 +88,6 @@ import type { SessionStatus, Usage } from '@kermanych/core';
 import KStatusDot from './KStatusDot.vue';
 import KHarnessMark from './KHarnessMark.vue';
 import KAnalysisMark from './KAnalysisMark.vue';
-import KDesignMark from './KDesignMark.vue';
 import KMinionMark from './KMinionMark.vue';
 import KScheduleMark from './KScheduleMark.vue';
 import KDecisionMark from './KDecisionMark.vue';
@@ -137,7 +135,6 @@ import type { LaunchMode } from '../../lib/native-session';
 //
 // `deepAnalysis` marks a «Глибокий аналіз» card (KAnalysisMark) in the status row, right
 // after the harness: it is HOW this agent works, and it never clips — the status does.
-// `design` marks a «Дизайн» session or card (KDesignMark) beside it, for the same reason.
 //
 // `minion` marks a session «Посіпака» runs, `autoRun` a card it may take (KMinionMark, the same
 // shape, a different tooltip); `needsDecision` is the worded reason of a run that stopped on a
@@ -163,8 +160,6 @@ const props = withDefaults(
     harness?: LaunchMode | undefined;
     // A «Глибокий аналіз» task or session: the agent interviews before it codes.
     deepAnalysis?: boolean | undefined;
-    // A «Дизайн» session (`designDir`) or card (`task.design`).
-    design?: boolean | undefined;
     // Run by «Посіпака».
     minion?: boolean | undefined;
     // A scheduled task's run: the task's name.

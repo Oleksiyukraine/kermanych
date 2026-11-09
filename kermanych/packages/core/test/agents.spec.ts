@@ -13,9 +13,9 @@ import {
 } from "../src/agents";
 import { SKILL_NAME_RE } from "../src/skills";
 
-test("the registry describes thirteen agents, eleven of them instruction-bearing", () => {
+test("the registry describes eleven agents, nine of them instruction-bearing", () => {
   expect(AGENTS.map((a) => a.id)).toEqual([
-    "review", "promote", "pull-request", "commit", "resolve-conflict", "minion", "designer", "design-save",
+    "review", "promote", "pull-request", "commit", "resolve-conflict", "minion",
     "synergy", "synergy-implement", "tester", "finish", "summary",
   ]);
   for (const a of AGENTS) {
@@ -23,7 +23,7 @@ test("the registry describes thirteen agents, eleven of them instruction-bearing
     expect(a.labelKey).toBe(`agents.role.${a.id}`);
   }
   expect(AGENTS.filter((a) => a.instruction).map((a) => a.id)).toEqual([
-    "review", "promote", "pull-request", "commit", "resolve-conflict", "minion", "designer", "design-save",
+    "review", "promote", "pull-request", "commit", "resolve-conflict", "minion",
     "synergy", "synergy-implement", "tester",
   ]);
   // `automation` means no model is involved, so there is nothing to display.

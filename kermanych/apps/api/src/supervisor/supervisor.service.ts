@@ -71,6 +71,7 @@ import {
   synergySteps,
   synergyChronology,
   synergyBrief,
+  synergyHandoffPages,
   type SynergyStepsView,
   type BranchPrefix,
   type StatusState,
@@ -109,11 +110,6 @@ import {
   type PrCheckState,
   DEFAULT_SKILLS,
   type SkillView,
-  DESIGNER_AGENT_ID,
-  DESIGN_SAVE_AGENT_ID,
-  DESIGN_SPEC_SKILL,
-  designDirFor,
-  designCommitMessage,
   voiceMessagePrompt,
   TESTER_AGENT_ID,
   testerRefusal,
@@ -1220,9 +1216,9 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     const task = await getTask(client, taskId);
     if (!task) throw new Error("task not found");
     if (task.assigneeId && task.assigneeId !== userId) throw new Error("task assigned to someone else");
-    // A design card runs only in «Керманич»: the «Дизайн» page renders a managed session only
-    // (docs/specs/2026-11-05-remove-managed-claude-code.md, decision 4).
-    if (native && task.design) throw nativeUnsupported();
+    // A card that continues a «Синергія» prototype runs only in «Керманич»: its opening prompt is
+    // the «Імплементувати Синергію» instruction (docs/specs/2026-11-09-merge-design-into-synergy.md).
+    if (native && task.synergyBranch) throw nativeUnsupported();
 
     // A second launch of a running card mints a second worktree and a second omp child
     // bound to the same taskId; both would then mirror status for it and the board would
@@ -1266,7 +1262,7 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
   // A scheduled agent run in a project (docs/specs/2026-11-06-scheduled-tasks.md): ScheduleService
   // filed and claimed the hidden card and deletes it when this throws. The ordinary task launch
   // with these differences: the row is stamped with its task, it always gets a worktree, it is
-  // never native, deep analysis or design, its opening prompt is the scheduled-run instruction
+  // never native, deep analysis or a «Синергія» continuation, its opening prompt is the scheduled-run instruction
   // (openingPrompt), and it runs without the ask tool under the minion's time cap. Unlike the
   // minion it takes a slot like any launch and waits in the queue when none is free.
   launchScheduled(task: Task, userId: string, schedule: { id: string; name: string }): Promise<Session> {
@@ -1312,11 +1308,17 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
 
     // The board stores launch params as free text; validate them against the local
     // vocabularies instead of casting, so a bad card cannot produce a bogus branch prefix.
-    // A design card is always a `design/` branch, whatever the card says
-    // (docs/specs/2026-10-29-design-tab.md); a minion never runs one (its queries skip them).
-    const design = task.design && !unattended;
-    const prefix: BranchPrefix = design
-      ? "design"
+    // A card «Задача →» filed from «Синергія» (docs/specs/2026-11-09-merge-design-into-synergy.md,
+    // decision 5) continues the prototype's pushed branch: always in a worktree, no new branch and
+    // no naming call, the base the card names for the pull request. Never unattended: «Посіпака»
+    // skips such cards, and an unattended run of one would be an ordinary launch.
+    const synergyBranch = unattended ? undefined : task.synergyBranch?.trim() || undefined;
+    if (synergyBranch && (!synergyBranch.startsWith("synergy/") || !isGitBranchName(synergyBranch)))
+      throw new Error(`the card names an invalid «Синергія» branch: ${synergyBranch}`);
+    if (synergyBranch && this.registry.listSessions().some((x) => x.projectId === project.id && x.branch === synergyBranch))
+      throw new Error(`branch ${synergyBranch} is already open in another session on this machine`);
+    const prefix: BranchPrefix = synergyBranch
+      ? "synergy"
       : (BRANCH_PREFIXES as readonly string[]).includes(task.prefix ?? "")
         ? (task.prefix as BranchPrefix)
         : "feature";
@@ -1326,25 +1328,37 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     // survives exactly for the person who filed the card — for anybody else the card is
     // isolated, whatever it says. A minion or scheduled run is always isolated: the operator
     // works in that checkout.
-    const inPlace = !unattended && task.worktree === false && task.createdBy === userId;
+    const inPlace = !synergyBranch && !unattended && task.worktree === false && task.createdBy === userId;
     const worktree = !inPlace;
 
-    const { branch, baseBranch } = await this.resolveLaunchParams(
-      project,
-      { title: task.title, description: task.description, branchSlug: task.branchSlug },
-      prefix,
-      worktree,
-      undefined,
-      task.branch ?? project.defaultBranch,
-    );
+    const { branch, baseBranch } = synergyBranch
+      ? {
+          branch: synergyBranch,
+          baseBranch: task.branch || project.defaultBranch || (await this.worktree.currentBranch(project.localRepoPath)) || undefined,
+        }
+      : await this.resolveLaunchParams(
+          project,
+          { title: task.title, description: task.description, branchSlug: task.branchSlug },
+          prefix,
+          worktree,
+          undefined,
+          task.branch ?? project.defaultBranch,
+        );
     const runtime = native ?? "omp";
     // A model the omp catalog no longer offers is dropped so omp uses its own default; an
     // unreadable catalog keeps the id untouched. A native session carries neither model nor
     // effort: the harness's own `/model` owns them.
     const model = native ? undefined : await this.models.validModel(task.model);
-    // The design's folder is named once, from the launch day and the branch's own slug (already
-    // made unique), and stays on the row: a resume or a slot replay reads it back, never re-derives.
-    const designDir = design ? designDirFor(todayIso(), branch.slice("design/".length)) : undefined;
+    // The «Імплементувати Синергію» instruction around the card's text (the brief «Задача →»
+    // wrote, perhaps edited), rendered here and sent as the whole first prompt, so a launch parked
+    // for a slot replays it as is. Skills resolve from the operator's checkout: the worktree does
+    // not exist yet.
+    let firstPrompt: string | undefined;
+    if (synergyBranch) {
+      const { template, block } = await this.agentPrompt(project.id, SYNERGY_IMPLEMENT_AGENT_ID, project.localRepoPath);
+      const brief = task.description?.trim() || task.title;
+      firstPrompt = renderInstruction(agentById(SYNERGY_IMPLEMENT_AGENT_ID)!, { branch, base: baseBranch ?? "HEAD", brief }, template).trimEnd() + block;
+    }
     const session = this.registry.createSession({
       projectId: project.id,
       taskId: task.id,
@@ -1363,7 +1377,6 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
       // A «Глибокий аналіз» card opens with the wrapped prompt (launch → openingPrompt). The
       // minion never takes one: that agent interviews a person.
       ...(task.deepAnalysis && !unattended ? { deepAnalysis: true } : {}),
-      ...(designDir ? { designDir } : {}),
       ...(minion ? { minion: true } : {}),
       // A minion run of a finding card carries the kind for its opening prompt (decision 14).
       ...(minion && task.findingKind ? { findingKind: task.findingKind } : {}),
@@ -1375,7 +1388,11 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     if (minion) this.minionRuns.set(session.id, { phase: "work", starting: true });
     if (schedule) this.scheduleRuns.set(session.id, { scheduleId: schedule.id, starting: true });
     try {
-      const launched = await this.launch(session, project, { images, ...(minion ? { direct: true } : {}) });
+      const launched = await this.launch(session, project, {
+        images,
+        ...(minion ? { direct: true } : {}),
+        ...(synergyBranch ? { continueBranch: true, firstPrompt } : {}),
+      });
       const run = this.minionRuns.get(session.id);
       if (run) run.starting = false;
       const scheduled = this.scheduleRuns.get(session.id);
@@ -1632,7 +1649,7 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
   private async launch(
     session: Session,
     project: Project,
-    opts: { images?: ImageInput[]; fork?: string; firstPrompt?: string; direct?: boolean } = {},
+    opts: { images?: ImageInput[]; fork?: string; firstPrompt?: string; direct?: boolean; continueBranch?: boolean } = {},
   ): Promise<Session> {
     const { id, branch, worktree, baseBranch, task } = session;
     if (!project.localRepoPath) throw new Error("project not bound");
@@ -1644,7 +1661,14 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     // Origin could not be asked before the fork: the transcript says the base may be stale.
     let staleFrom = "";
     try {
-      if (worktree) {
+      if (worktree && opts.continueBranch) {
+        // A «Синергія» card (launchTask): the prototype's branch from origin. Whatever the local
+        // branch held is on origin too (attachRemoteBranch), so a failed launch may delete it.
+        wtDir = worktreeDir(project.localRepoPath, branch);
+        await this.worktree.attachRemoteBranch(project.localRepoPath, wtDir, branch);
+        branchCreated = true;
+        await copyCarryFiles(project.localRepoPath, wtDir, project.carryFiles ?? [".env"]);
+      } else if (worktree) {
         wtDir = worktreeDir(project.localRepoPath, branch);
         // docs/specs/2026-10-14-create-pr-base-sync.md, decision 4: the fresher of `<base>` and
         // `origin/<base>`, after asking origin.
@@ -1834,15 +1858,6 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
       const card = firstPrompt.trim() === session.name.trim() ? session.name : `${session.name}\n\n${firstPrompt}`;
       const about = kind ? `\n\n${minionFindingLine(kind)}` : "";
       return `${renderInstruction(agentById(MINION_AGENT_ID)!, { task: card }, template)}${about}${block}\n\n${MINION_OUTCOME_CONTRACT}`;
-    }
-    // A «Дизайн» session (docs/specs/2026-10-29-design-tab.md) opens with the Дизайнер's
-    // instruction around the card — its folder, topic and description — plus the `design-spec`
-    // skill after the assigned ones, like the minion's extra. Native sessions take it too: the
-    // instruction is the task the operator chose, as with deep analysis.
-    if (session.designDir && firstPrompt.trim()) {
-      const { template, block } = await this.agentPrompt(session.projectId, DESIGNER_AGENT_ID, cwd, [DESIGN_SPEC_SKILL]);
-      const description = firstPrompt.trim() === session.name.trim() ? "" : firstPrompt.trim();
-      return renderInstruction(agentById(DESIGNER_AGENT_ID)!, { designDir: session.designDir, topic: session.name, description }, template).trimEnd() + block;
     }
     if (!session.deepAnalysis || !firstPrompt.trim()) return firstPrompt;
     let block = "";
@@ -2634,7 +2649,7 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     if (!minionTakeoverAllowed(row))
       throw new CodedError(
         "minion_takeover_unsupported",
-        "Посіпаці можна передати лише відкриту сесію агента з гілкою — не чат, обговорення, ревізію, дизайн, «Синергію» чи запуск за розкладом.",
+        "Посіпаці можна передати лише відкриту сесію агента з гілкою — не чат, обговорення, ревізію, «Синергію» чи запуск за розкладом.",
       );
     const current = this.minionRuns.get(id);
     if (row.minion && current && !current.attended && current.phase !== "idle")
@@ -3167,26 +3182,6 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     return { ok: true };
   }
 
-  // «Зберегти дизайн» (docs/specs/2026-10-29-design-tab.md): one Kermanych prompt into the
-  // Дизайнер — screenshots of every listed screen and state, the README brought in line with the
-  // prototype, one commit `design: <topic>`. Ungated, like «Написати хендоф»: saving is how the
-  // README the gate wants gets written. Nothing is armed: the agent commits on its own branch, so
-  // the turn settles like any other.
-  async saveDesign(id: string): Promise<{ sent: true }> {
-    const s = this.registry.listSessions().find((x) => x.id === id);
-    if (!s) throw new Error("session not found");
-    if (s.kind !== "agent" || !s.designDir) throw new Error(`only design sessions can save a design (this is ${s.kind === "agent" ? "an ordinary agent" : `a ${s.kind}`})`);
-    const dir = s.worktreePath || this.project(s.projectId).localRepoPath;
-    const { template, block } = await this.agentPrompt(s.projectId, DESIGN_SAVE_AGENT_ID, dir);
-    const prompt =
-      renderInstruction(agentById(DESIGN_SAVE_AGENT_ID)!, { designDir: s.designDir, branch: s.branch, message: designCommitMessage(s.name) }, template) +
-      block +
-      (this.browser?.skillReflection(id) ?? "");
-    // Parked for an agent slot: replayed whole later, like commitChanges.
-    await this.sendAsKermanych(id, prompt, "prompt", () => this.saveDesign(id));
-    return { sent: true };
-  }
-
   // ── «Синергія» (docs/specs/2026-11-06-synergy.md) ─────────────────────────────────────────────
 
   // «Нова фіча» / «Змінити сторінку» (decision 5): an agent session with no card, on a
@@ -3392,6 +3387,60 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     return this.merge(this.registry.listSessions().find((x) => x.id === id) ?? session);
   }
 
+  // «Задача →» (docs/specs/2026-11-09-merge-design-into-synergy.md, decision 2): the prototype's
+  // branch goes to origin, so whoever launches the card, on any machine, continues it. Refused
+  // while a turn runs and before the first checkpoint, like «Імплементувати»; what the agent left
+  // uncommitted becomes a checkpoint first. Pushing again is harmless: origin is then up to date.
+  // `base` is what the card stores as its base, the pull request's target.
+  async pushSynergy(id: string): Promise<{ branch: string; base: string }> {
+    const { s, dir } = this.synergyRow(id);
+    if (this.turnRunning(s)) throw new Error("wait for the agent to finish its turn before «Задача →»");
+    const project = this.boundProject(s.projectId);
+    const view = await this.synergySerial(id, async () => {
+      await this.flushSynergy(id);
+      return this.readSynergySteps(s, dir);
+    });
+    if (!view.steps.some((x) => x.kind === "change")) throw new Error("nothing to hand over yet: the prototype has no checkpoint");
+    await this.worktree.pushBranch(project.localRepoPath, s.branch, await this.gitToken(project.localRepoPath));
+    return { branch: s.branch, base: view.base };
+  }
+
+  // The card's screenshots (decision 3): the start page and every page a surviving request was
+  // made on (core synergyHandoffPages), each loaded in the session browser on the running
+  // preview and shot at the pane's width. No model is involved. The pane visibly walks the pages
+  // and goes back to where it was. A page that fails to load or shoot is left out; with no
+  // session browser (web build, standalone api) or no running preview there are none.
+  async synergyScreens(id: string): Promise<{ page: string; data: string; mimeType: "image/png" }[]> {
+    const { s, dir } = this.synergyRow(id);
+    const host = browserHost();
+    const origin = this.preview?.urlOf(id)?.replace(/\/+$/, "");
+    if (!host || !origin) return [];
+    const view = await this.readSynergySteps(s, dir);
+    const pages = synergyHandoffPages(s.synergy.page, synergyChronology(view.steps, view.startSha));
+    const target = { sessionId: id, projectId: s.projectId };
+    let back: string | undefined;
+    try {
+      const href: unknown = JSON.parse(await host.evaluate(target, "location.href"));
+      if (typeof href === "string" && href.startsWith("http")) back = href;
+    } catch {
+      // No page open yet, or the agent's control is paused: nothing to go back to.
+    }
+    // Nothing recorded where the requests were made: the page on screen is the prototype.
+    if (!pages.length) pages.push(back ? synergyHandoffPages(back, [])[0]! : "/");
+    const shots: { page: string; data: string; mimeType: "image/png" }[] = [];
+    for (const page of pages) {
+      try {
+        await host.navigate(target, `${origin}${page}`);
+        const shot = await host.screenshot(target, { fullPage: false });
+        shots.push({ page, ...shot });
+      } catch (err) {
+        console.warn(`[supervisor] «Задача →» skipped ${page} of session ${id}: ${(err as Error).message}`);
+      }
+    }
+    if (back) await host.navigate(target, back).catch(() => {});
+    return shots;
+  }
+
   answerUi(id: string, res: RpcExtensionUIResponse) {
     if (this.registry.listSessions().find((x) => x.id === id)?.native) throw nativeUnsupported();
     this.map.get(id)?.rpc.answerUi(res);
@@ -3590,7 +3639,7 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     const dirty = await this.worktree.hasUncommitted(dir);
     const conflicts = await this.worktree.unmergedFiles(dir);
     const files = await this.worktree.changedFiles(dir, from);
-    const docsGate = await this.evaluateDocsGate(g, dir, files, s.designDir);
+    const docsGate = await this.evaluateDocsGate(g, dir, files);
     if (!conflicts.length) this.clearConflict(s);
     return { branch: s.branch, target, ahead, behind, dirty, conflicts, files, docsGate };
   }
@@ -3645,25 +3694,22 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     const g = this.boundProject(s.projectId);
     if (s.worktree && !s.worktreePath) throw new Error("session has no worktree — reopen it to continue");
     const { dir, from } = await this.branchBase(s, g);
-    return this.evaluateDocsGate(g, dir, await this.worktree.changedFiles(dir, from), s.designDir);
+    return this.evaluateDocsGate(g, dir, await this.worktree.changedFiles(dir, from));
   }
 
   // The pure gate (core docsGateFailures) over an already-listed change set. Only the changed
   // task documents are read — for their `## Documentation impact` declaration; a deleted or
-  // unreadable one reads as empty, so it can never declare `None`. A design session
-  // (`designDir`) is checked for its own folder's README only (docs/specs/2026-10-29-design-tab.md).
-  private async evaluateDocsGate(project: Project, dir: string, files: readonly ChangedFile[], designDir?: string): Promise<DocsGate> {
+  // unreadable one reads as empty, so it can never declare `None`.
+  private async evaluateDocsGate(project: Project, dir: string, files: readonly ChangedFile[]): Promise<DocsGate> {
     if (!project.docsRequired) return { enabled: false, failures: [] };
     const policy = docsPolicy(project.docsPolicy);
     const paths = files.map((f) => f.path);
-    const specBodies = designDir
-      ? []
-      : await Promise.all(
-          paths
-            .filter((p) => docsLayoutKind(p) === "spec" && isMarkupPath(p))
-            .map((p) => this.worktree.readFileContent(dir, p).then((f) => f.content, () => "")),
-        );
-    return { enabled: true, failures: docsGateFailures({ policy, paths, specBodies, ...(designDir ? { designDir } : {}) }) };
+    const specBodies = await Promise.all(
+      paths
+        .filter((p) => docsLayoutKind(p) === "spec" && isMarkupPath(p))
+        .map((p) => this.worktree.readFileContent(dir, p).then((f) => f.content, () => "")),
+    );
+    return { enabled: true, failures: docsGateFailures({ policy, paths, specBodies }) };
   }
 
   // PR, commit-to-PR and finish refuse while the gate fails — right after each action's own
@@ -3694,10 +3740,7 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
         console.warn(`[supervisor] no documentation skills for ${id}: ${(err as Error).message}`);
       }
     }
-    // The core ask says "the design folder your instruction names"; the folder is named here too,
-    // because the instruction may be far back in a long conversation.
-    const folder = failures.includes("design-readme") && s.designDir ? `\n\nThe design folder is \`${s.designDir}\`.` : "";
-    await this.sendAsKermanych(id, docsCompletionPrompt(failures) + folder + block, "prompt");
+    await this.sendAsKermanych(id, docsCompletionPrompt(failures) + block, "prompt");
     return { sent: true, failures };
   }
 

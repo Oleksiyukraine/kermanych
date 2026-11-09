@@ -45,7 +45,7 @@ pull request — the session starts working as «Посіпака».
    *Rejected:* the «Посіпака» card instruction: it re-checks that a card still applies and refuses
    schema or API changes the operator may already have agreed in this conversation.
 4. **Which sessions:** an agent session with a branch that is not native, merged, archived, a
-   design, a «Синергія» prototype or a scheduled run (`minionTakeoverAllowed`, core). The rest is
+   «Синергія» prototype or a scheduled run (`minionTakeoverAllowed`, core). The rest is
    refused with `minion_takeover_unsupported`; native with the usual `native_unsupported`. A run
    that already works on its own (`work`, `docs` or `pr`, not attended) is refused with
    `minion_takeover_running`. A minion run the operator took over can be handed back with `/minion`.
