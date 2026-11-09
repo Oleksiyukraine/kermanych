@@ -33,15 +33,17 @@ worktrees, the RPC bridge — is shared.
   reused pid is never signalled. A managed child that does not greet within 60 s fails its start
   with `omp_launch_timeout`, and a hung `omp models` (the AI-login check) is killed.
 - **At start** (the machine's own registry only — skipped when `KERMANYCH_DB` is set): a session
-  whose launch was interrupted after its worktree was created gets the worktree's path back; a
-  clean worktree a finished session left at `.gitworktree/<branch>` is removed (its branch stays;
-  worktrees Kermanych did not make are never touched, nor any with uncommitted changes); leftovers
-  of the old `~/.kermanych/worktrees/` layout no session names are removed; so are
-  `$TMPDIR/kermanych-native/mcp-<id>.json` files of deleted sessions and the session-browser
-  partitions of deleted projects.
+  whose launch was interrupted after its worktree was created gets the worktree's path back (and
+  waits for a slot again); a clean worktree a finished session left at `.gitworktree/<branch>` is
+  removed (its branch stays; worktrees Kermanych did not make are never touched, nor any with
+  uncommitted changes); leftovers of the old `~/.kermanych/worktrees/` layout no session names are
+  removed, and so are their omp conversations (`~/.omp/agent/sessions/-.kermanych-worktrees-<id>`)
+  no session reads; so are `$TMPDIR/kermanych-native/mcp-<id>.json` files of deleted sessions and
+  the session-browser partitions of deleted projects.
 - **Deleting a session** also deletes its omp conversation file (with its subagents' folder) and
-  a native session's MCP config. **Archiving** stops its omp child and frees its transcript from
-  the api's memory; opening it again wakes it as after a restart.
+  a native session's MCP config. A native agent's own harness transcript (claude's, codex's) stays,
+  so it can still be resumed outside Kermanych. **Archiving** stops its omp child and frees its
+  transcript from the api's memory; opening it again wakes it as after a restart.
 - **The window** keeps the transcripts of the sessions you opened — at most 12 besides the ones on
   screen — and ignores live output of sessions you have not opened; those load their full history
   when opened. Spec: `docs/specs/2026-11-09-process-memory-disk-cleanup.md`.

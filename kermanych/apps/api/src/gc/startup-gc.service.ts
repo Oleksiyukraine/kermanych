@@ -2,7 +2,7 @@
 import { Injectable, type OnModuleInit } from "@nestjs/common";
 import { lstat, readdir, readFile, realpath, rm, stat } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
-import { join, resolve, sep } from "node:path";
+import { join, relative, resolve, sep } from "node:path";
 import { worktreeDir } from "@kermanych/core";
 import { RegistryService } from "../registry/registry.service";
 import { WorktreeService } from "../worktree/worktree.service";
@@ -13,6 +13,10 @@ export type StartupGcOptions = {
   legacyRoot: string;
   // Where native sessions write their per-session claude MCP config (native-hooks.ts).
   nativeRoot: string;
+  // omp's conversations, one folder per working directory, named after the directory's path
+  // relative to `home` with every separator turned into `-`.
+  ompSessionsRoot: string;
+  home: string;
 };
 
 // The real path, so a tree git registered under `/private/var/...` and a row that stored it as
@@ -28,9 +32,11 @@ function errText(err: unknown): string {
 
 // What a long-running Kermanych leaves on disk and nothing else ever deletes: the trees finished
 // sessions left behind, rows that never learned their tree's path, the leftovers of the older
-// `~/.kermanych/worktrees/` layout, and native sessions' MCP configs, each holding a live bearer. Swept
-// once per start, awaited in onModuleInit, so it ends before the api listens — no launch can add
-// a worktree its row does not name yet while the sweep is deciding which trees are orphans.
+// `~/.kermanych/worktrees/` layout and the omp conversations of those trees nothing names any
+// more, and native sessions' MCP configs, each holding a live bearer. Swept once per start,
+// before the api listens — no launch can add a worktree its row does not name yet while the
+// sweep is deciding which trees are orphans — and before the supervisor restores its slot queue
+// from the rows adoption repairs (`ready()`).
 // Every step is best effort: a failure is logged and the next step still runs, and the api
 // starts either way. Uncommitted work is never deleted; such a tree stays and is named in the log.
 @Injectable()
@@ -38,27 +44,38 @@ export class StartupGcService implements OnModuleInit {
   readonly opts: StartupGcOptions = {
     legacyRoot: join(process.env.KERMANYCH_SKILLS_HOME ?? join(homedir(), ".kermanych"), "worktrees"),
     nativeRoot: join(tmpdir(), "kermanych-native"),
+    ompSessionsRoot: join(homedir(), ".omp", "agent", "sessions"),
+    home: homedir(),
   };
+  private sweep?: Promise<void>;
 
   constructor(
     private registry: RegistryService,
     private worktrees: WorktreeService,
   ) {}
 
+  onModuleInit(): Promise<void> {
+    return this.ready();
+  }
+
+  // The one sweep of this start, begun by whoever asks first: Nest runs the init hooks of one
+  // module side by side, so the supervisor may ask before this service's own hook has run.
   // PreviewService.sweep's rule: only the api on the machine's own registry sweeps. One on a
   // custom KERMANYCH_DB (preview mode, a test) knows none of the real sessions and would take
   // their worktrees and configs for orphans.
-  async onModuleInit(): Promise<void> {
-    if (process.env.KERMANYCH_DB) return;
-    await this.run();
+  ready(): Promise<void> {
+    this.sweep ??= process.env.KERMANYCH_DB ? Promise.resolve() : this.run();
+    return this.sweep;
   }
 
   // Adoption goes first: a row it repairs names its tree before the sweep that follows would
-  // take that tree for an orphan.
+  // take that tree for an orphan. The legacy conversations follow the legacy trees, whose
+  // removal makes theirs orphans too.
   async run(): Promise<void> {
     await this.step("adopting worktrees of interrupted launches", () => this.adopt());
     await this.step("sweeping project worktrees", () => this.sweepProjects());
     await this.step(`sweeping ${this.opts.legacyRoot}`, () => this.sweepLegacy());
+    await this.step(`sweeping legacy conversations in ${this.opts.ompSessionsRoot}`, () => this.sweepLegacyConversations());
     await this.step(`sweeping ${this.opts.nativeRoot}`, () => this.sweepNativeConfigs());
   }
 
@@ -192,6 +209,35 @@ export class StartupGcService implements OnModuleInit {
       } catch (err) {
         console.warn(`[gc] sweeping ${dir} failed: ${errText(err)}`);
       }
+    }
+  }
+
+  // omp keeps a legacy tree's conversations in `<sessions>/-<legacy root, home-relative>-<uuid>/`.
+  // The legacy root is Kermanych's alone, so such a folder is Kermanych's too, and once its tree
+  // is gone and no row's `ompSessionFile` lies inside, nothing can open it again: a deleted
+  // session's history. A retired session's stays — its row still reads its transcript and can be
+  // reopened. Folders of the project-root and `.gitworktree/` layouts are never touched: the
+  // operator's own omp conversations live under the same names. Off when the legacy root is not
+  // under home (a custom KERMANYCH_SKILLS_HOME, a spec): its folders' names are not knowable.
+  private async sweepLegacyConversations(): Promise<void> {
+    const rel = relative(this.opts.home, this.opts.legacyRoot);
+    if (!rel || rel.startsWith("..") || resolve(this.opts.home, rel) !== resolve(this.opts.legacyRoot)) return;
+    const prefix = `-${rel.split(sep).join("-")}-`;
+    const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+    let names: string[];
+    try {
+      names = await readdir(this.opts.ompSessionsRoot);
+    } catch {
+      return;
+    }
+    const files = this.registry.listSessions().map((s) => s.ompSessionFile).filter((f): f is string => !!f);
+    for (const name of names) {
+      const id = name.startsWith(prefix) ? name.slice(prefix.length) : "";
+      if (!uuid.test(id)) continue;
+      const dir = join(this.opts.ompSessionsRoot, name);
+      if (await stat(join(this.opts.legacyRoot, id)).then(() => true, () => false)) continue;
+      if (files.some((f) => f.startsWith(dir + sep))) continue;
+      await rm(dir, { recursive: true, force: true }).catch((err: unknown) => console.warn(`[gc] removing ${dir} failed: ${errText(err)}`));
     }
   }
 

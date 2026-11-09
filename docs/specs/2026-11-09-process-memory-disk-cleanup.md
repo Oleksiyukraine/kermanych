@@ -74,8 +74,10 @@ priority list (items 1–6 of «Що виправляти насамперед»
    opening it again wakes it like any dormant session. *Rejected:* releasing it after the 15-minute
    reaper, as the audit suggested — every look at a finished session would then respawn omp (~300 MB)
    just to re-read its history, trading kilobytes of heap for a process.
-8. **Startup GC** (`gc/startup-gc.service.ts`), awaited in `onModuleInit` so it ends before the api
-   listens, skipped under `KERMANYCH_DB` (the `PreviewService.sweep` rule):
+8. **Startup GC** (`gc/startup-gc.service.ts`), run once per start through `ready()` — begun by its
+   own `onModuleInit` or by the supervisor's, whichever comes first — so it ends before the api
+   listens and before `restoreSlotQueue` reads the rows adoption repairs; skipped under
+   `KERMANYCH_DB` (the `PreviewService.sweep` rule):
    - *adopt* — a row with `worktree`, no `worktreePath`, not `merged`, whose
      `worktreeDir(repo, branch)` is a registered tree on that branch, gets the path back;
    - *project trees* — `git worktree prune`, then remove a clean, unlocked tree only if it sits at
@@ -86,10 +88,17 @@ priority list (items 1–6 of «Що виправляти насамперед»
      `feature/client-price-resolution`); the rule was narrowed to this;
    - *legacy* `~/.kermanych/worktrees/<id>` not referenced by a row: no `.git` or a dangling gitdir →
      deleted; a clean linked tree → removed through its repo; dirty → kept;
+   - *legacy conversations* — `~/.omp/agent/sessions/-.kermanych-worktrees-<uuid>/` whose tree is
+     gone and inside which no row's `ompSessionFile` lies (a deleted session's history). Folders of
+     the project-root and `.gitworktree/` layouts are never touched: the operator's own omp
+     conversations share those names. Off when the legacy root is not under home;
    - `mcp-<id>.json` of sessions that are gone → deleted.
-9. **Delete removes the conversation**: `deleteSession` deletes the row's `ompSessionFile` (any kind,
-   not only forks), its subagents' folder beside it and the per-cwd folder once empty — only when the
-   file itself existed. A native session's `mcp-<id>.json` goes too (`removeMcpConfig`).
+9. **Delete removes the conversation**: `deleteSession` deletes the row's `ompSessionFile`, its
+   subagents' folder beside it and the per-cwd folder once empty — only when the file itself
+   existed. Not for a native agent: its file is the harness's own transcript (claude's
+   `transcript_path`, codex's rollout), which the operator can still resume outside Kermanych; a
+   native chat's file went with it before this change and still does. A native session's
+   `mcp-<id>.json` goes too (`removeMcpConfig`).
 10. **Partitions of deleted projects** are removed by Electron main after bootstrap
     (`knownProjectIds`, undefined under `KERMANYCH_DB`).
 
@@ -118,17 +127,18 @@ priority list (items 1–6 of «Що виправляти насамперед»
 ## Verification
 
 - `apps/api`: `pnpm exec tsc --noEmit -p tsconfig.json` clean; `pnpm exec vitest run --maxWorkers=4`
-  → 133 files / 1396 tests passed.
+  → 133 files / 1398 tests passed.
 - `apps/ui`: `pnpm run typecheck` (vue-tsc, includes `src-electron`) clean;
   `pnpm exec vitest run --maxWorkers=4` → 93 files / 1000 tests passed.
 - Crash smoke: built api started on a temp home and DB, `kill -9`'d; a detached `/bin/sleep`
   written into its ledger file was stopped by the next start («stopping fake omp (pid …)»).
 - Real omp: `RpcSession` against the installed `omp` → ready in 177 ms, pgid = pid, `stop()` in 85 ms,
   nothing left in the group.
-- GC dry run against a copy of the operator's registry (removals stubbed): no project tree flagged
-  after decision 8's narrowing; a read-only classification of `~/.kermanych/worktrees` shows the
-  legacy step would delete the 5 unreferenced folders (3 dangling smoke-test trees, 2 without
-  `.git`, < 40 KB) and keep the 5 referenced ones.
+- GC dry run against a copy of the operator's registry (`rm` and worktree removal stubbed): no
+  project tree flagged after decision 8's narrowing; the legacy step would delete the 5
+  unreferenced folders of `~/.kermanych/worktrees` (3 dangling smoke-test trees, 2 without `.git`,
+  < 40 KB) and keep the 5 referenced ones; the conversation step would delete 66 folders (192 MB;
+  891 MB of conversations of retired sessions whose rows still exist stay).
 
 **Not verified:** a real quit of the desktop app mid-turn (the claim that omp no longer survives it
 rests on the unit tests and the smoke above, not on a `ps` after ⌘Q); the partition sweep in a

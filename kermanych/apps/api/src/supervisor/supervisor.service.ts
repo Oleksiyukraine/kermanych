@@ -7,6 +7,7 @@ import { dirname, join, posix } from "node:path";
 import { Observable, Subject } from "rxjs";
 import { RegistryService } from "../registry/registry.service";
 import { WorktreeService, type ChangedFile } from "../worktree/worktree.service";
+import { StartupGcService } from "../gc/startup-gc.service";
 import type { SplitDiff } from "../worktree/split-diff";
 import { createRuntime, type AgentRuntime, type RuntimeLaunchOpts } from "../runtime/agent-runtime";
 import { BrowserMcpService } from "../browser/browser-mcp.service";
@@ -474,6 +475,9 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     // (docs/specs/2026-11-07-skill-improvement-review.md, decision 3). Optional so specs construct
     // the supervisor without it — then nothing is remembered and no call is refused as stale.
     @Optional() private handedSkills?: HandedSkills,
+    // The startup GC gives an interrupted launch its worktree back before the slot queue is
+    // restored from the rows. Optional so specs construct the supervisor without it.
+    @Optional() private gc?: StartupGcService,
   ) {
     this.native?.events$.subscribe((e) => {
       if (e.type === "changed") {
@@ -606,7 +610,7 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
 
   private skillSource = (sessionId: string): SkillSource => (name) => this.skillLabels.get(sessionId)?.get(name);
 
-  onModuleInit(): void {
+  async onModuleInit(): Promise<void> {
     // A minute is far finer than the 15-minute TTL, so a child is reaped within a minute of
     // crossing it. Unref'd: the janitor must never hold the app open — a clean quit runs
     // onModuleDestroy, which stops the children anyway. ManagementChatService sweeps on-use
@@ -614,6 +618,10 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     // on-use sweep never reaches, so this one rides a timer.
     this.reaper = setInterval(() => this.reapIdleChildren(), 60_000);
     this.reaper.unref();
+    // From rows the GC has repaired: a `queued` launch is replayed only once its row names its
+    // worktree again (restoreSlotQueue skips one without), so restoring first would leave it
+    // waiting until the next start.
+    if (this.gc) await this.gc.ready();
     this.restoreSlotQueue();
   }
 
@@ -3391,9 +3399,11 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
       this.toolDetails.dropSession(id);
       this.skillLabels.delete(id);
     }
-    // The conversation file goes with the row, whatever the kind: nothing reads it once the row is
-    // gone, and a big run's file (with its subagents' beside it) is tens of megabytes.
-    if (s?.ompSessionFile) await removeOmpSessionFiles(s.ompSessionFile);
+    // The conversation file goes with the row: nothing reads it once the row is gone, and a big
+    // run's file (with its subagents' beside it) is tens of megabytes. Not a native agent's: its
+    // file is the harness's own transcript (claude's, codex's), which the operator can still
+    // resume outside Kermanych. A native chat's has always gone with it.
+    if (s?.ompSessionFile && !(s.native && s.kind === "agent")) await removeOmpSessionFiles(s.ompSessionFile);
     // A native session's MCP config holds its bearer, which dies with the session.
     if (s?.native) await removeMcpConfig(id);
     // Only an agent has git to undo: any other kind owns no branch/worktree (its cwd is the parent's).

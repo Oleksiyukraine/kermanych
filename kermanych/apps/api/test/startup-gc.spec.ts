@@ -1,6 +1,7 @@
 // apps/api/test/startup-gc.spec.ts
 import { afterEach, beforeEach, expect, test } from "vitest";
 import { execFileSync } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -37,6 +38,9 @@ beforeEach(() => {
   gc = new StartupGcService(reg, wt);
   gc.opts.legacyRoot = legacy;
   gc.opts.nativeRoot = native;
+  // Never the operator's own omp conversations: a home of its own, with no sessions folder.
+  gc.opts.home = native;
+  gc.opts.ompSessionsRoot = join(native, "no-omp-sessions");
   delete process.env.KERMANYCH_DB;
 });
 afterEach(() => {
@@ -162,4 +166,32 @@ test("with KERMANYCH_DB set nothing is swept", async () => {
   expect(reg.listSessions().find((s) => s.id === crashId)!.worktreePath).toBe("");
   expect(existsSync(bare)).toBe(true);
   expect(existsSync(join(native, "mcp-gone-session.json"))).toBe(true);
+});
+
+test("conversations of legacy trees nothing names go; a row's and a living tree's stay", async () => {
+  const home = mkdtempSync(join(tmpdir(), "kmq-gc-home-"));
+  trash.push(home);
+  gc.opts.home = home;
+  gc.opts.legacyRoot = join(home, ".kermanych", "worktrees");
+  gc.opts.ompSessionsRoot = join(home, ".omp", "agent", "sessions");
+  const conv = (id: string) => join(gc.opts.ompSessionsRoot, `-.kermanych-worktrees-${id}`);
+  const [gone, retired, living] = [randomUUID(), randomUUID(), randomUUID()];
+  for (const id of [gone, retired, living]) {
+    mkdirSync(conv(id), { recursive: true });
+    writeFileSync(join(conv(id), "2026-01-01_x.jsonl"), "{}\n");
+  }
+  const projectRoot = join(gc.opts.ompSessionsRoot, "-Documents-app");
+  mkdirSync(projectRoot);
+  // A retired session: its tree is gone, its row still reads the conversation.
+  reg.updateSession(session("feature/retired", ""), { status: "merged", ompSessionFile: join(conv(retired), "2026-01-01_x.jsonl") });
+  // A living legacy tree a row still names.
+  mkdirSync(join(gc.opts.legacyRoot, living), { recursive: true });
+  session("feature/living", join(gc.opts.legacyRoot, living));
+
+  await gc.run();
+
+  expect(existsSync(conv(gone))).toBe(false);
+  expect(existsSync(conv(retired))).toBe(true);
+  expect(existsSync(conv(living))).toBe(true);
+  expect(existsSync(projectRoot)).toBe(true);
 });
