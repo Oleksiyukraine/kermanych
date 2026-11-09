@@ -70,7 +70,6 @@
             <span class="agent-map__meta mono">
               <KHarnessMark v-if="data.node.session.kind !== 'task'" :harness="sessionLaunchMode(data.node.session)" />
               <KAnalysisMark v-if="data.node.session.deepAnalysis" />
-              <KDesignMark v-if="data.node.session.designDir" />
               <KMinionMark v-if="data.node.session.minion" kind="running" />
               <KScheduleMark v-if="data.node.session.schedule" :name="data.node.session.schedule.name" />
               <KDecisionMark v-if="sessionDecisionReason(t, data.node.session)" :reason="sessionDecisionReason(t, data.node.session)!" />
@@ -209,7 +208,6 @@ import { useLoadPhase } from '../../composables/useLoadPhase';
 import KStatusDot from 'components/kit/KStatusDot.vue';
 import KHarnessMark from 'components/kit/KHarnessMark.vue';
 import KAnalysisMark from 'components/kit/KAnalysisMark.vue';
-import KDesignMark from 'components/kit/KDesignMark.vue';
 import KMinionMark from 'components/kit/KMinionMark.vue';
 import KScheduleMark from 'components/kit/KScheduleMark.vue';
 import KDecisionMark from 'components/kit/KDecisionMark.vue';

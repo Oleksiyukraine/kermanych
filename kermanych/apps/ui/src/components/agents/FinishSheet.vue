@@ -103,7 +103,7 @@
 </template>
 
 <script setup lang="ts">
-// «Завершити»'s sheet, shared by Агенти and Дизайн: what retiring the session would do (the
+// «Завершити»'s sheet, on Агенти: what retiring the session would do (the
 // branch, how far it is ahead of / behind its base), a tree left mid-merge, and the
 // documentation gate's failures — each block with the action that answers it (resolve, complete
 // the docs), then the optional steps before finishing («Виконати тестування», «Створити ПР» /
@@ -141,7 +141,6 @@ const DOCS_FAILURE_KEYS: Record<DocsGateFailure, string> = {
   'docs-impact': 'agents.finish.docsFailure.docsImpact',
   handoff: 'agents.finish.docsFailure.handoff',
   'api-request': 'agents.finish.docsFailure.apiRequest',
-  'design-readme': 'agents.finish.docsFailure.designReadme',
 };
 // Documentation policy (project setting): the gate's failures, as the api reported them.
 const docsFailures = computed<DocsGateFailure[]>(() => info.value?.docsGate.failures ?? []);

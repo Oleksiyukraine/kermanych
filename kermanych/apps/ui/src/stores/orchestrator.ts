@@ -690,10 +690,6 @@ export const useOrchestrator = defineStore('orchestrator', () => {
     return api.writeDoc(id, kind);
   }
 
-  function saveDesign(id: string) {
-    return api.saveDesign(id);
-  }
-
   // «Синергія» (docs/specs/2026-11-06-synergy.md).
   function createSynergy(body: Parameters<typeof api.createSynergy>[0]) {
     return api.createSynergy(body);
@@ -820,7 +816,6 @@ export const useOrchestrator = defineStore('orchestrator', () => {
     commitChanges,
     completeDocs,
     writeDoc,
-    saveDesign,
     createSynergy,
     synergySteps,
     restoreSynergy,

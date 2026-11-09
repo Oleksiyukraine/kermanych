@@ -23,7 +23,7 @@
 // preview (decision 9): the gate is here, in tools/list and in every call, not in bindingFor.
 // A managed agent or chat session also gets `improve_skill` (skills/improve-skill-tool.ts,
 // docs/specs/2026-11-04-skill-self-improvement.md) while the operator's level is not `off`; such a
-// session's PR, commit and design-save turns end with the reflection step (`skillReflection`,
+// session's PR and commit turns end with the reflection step (`skillReflection`,
 // docs/specs/2026-11-06-skill-improvement-reflection.md).
 import { Inject, Injectable, Optional } from "@nestjs/common";
 import { HttpAdapterHost } from "@nestjs/core";
@@ -216,7 +216,7 @@ const TOOLS = [
     description:
       `${SHARED} A PNG of the visible viewport, the whole page (\`full_page\`) or one element (\`ref\`). Use it to check layout and visuals; ` +
       "to find elements or read text, browser_snapshot is cheaper and gives refs. With `path` the PNG is saved into this session's worktree " +
-      "instead of being shown to you — use it to keep a screenshot as a file, e.g. a design's screens as `<designDir>/screens/<screen>-<state>@<width>.png`.",
+      "instead of being shown to you — use it to keep a screenshot as a file, e.g. a design's screens as `docs/design/<date>-<topic>/screens/<screen>-<state>@<width>.png`.",
     inputSchema: {
       type: "object",
       properties: {

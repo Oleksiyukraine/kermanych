@@ -301,4 +301,44 @@ describe("checkpoints, restore and implement", () => {
     // An ordinary agent now: it counts for a slot again, and synergy actions refuse it.
     await expect(sup.synergyStepsView(s.id)).rejects.toThrow(/not a «Синергія» session/);
   });
+
+  // «Задача →» (docs/specs/2026-11-09-merge-design-into-synergy.md, decisions 2 and 5): the push
+  // carries everything the agent wrote, and another clone continues the very same branch.
+  it("«Задача →» pushes the prototype with its base, and another clone continues that branch", async () => {
+    const origin = mkdtempSync(join(tmpdir(), "kmq-synergy-origin-"));
+    const clone = mkdtempSync(join(tmpdir(), "kmq-synergy-clone-"));
+    try {
+      git(origin, "init", "-q", "--bare", "-b", "main");
+      git(repo, "remote", "add", "origin", origin);
+      git(repo, "push", "-q", "origin", "main");
+      const { sup, s, dir, turn } = await prototype();
+      await expect(sup.pushSynergy(s.id)).rejects.toThrow(/no checkpoint/);
+      await turn("додай фільтр", { "app.txt": "v1\n" });
+      // Left uncommitted by the agent: it becomes a checkpoint before the push.
+      writeFileSync(join(dir, "late.txt"), "late\n");
+
+      expect(await sup.pushSynergy(s.id)).toEqual({ branch: "synergy/proto", base: "main" });
+      const head = git(dir, "rev-parse", "HEAD");
+      expect(git(origin, "rev-parse", "synergy/proto")).toBe(head);
+      expect(git(dir, "show", "HEAD:late.txt")).toBe("late");
+
+      git(clone, "clone", "-q", origin, ".");
+      const wt = new WorktreeService();
+      // A local branch of that name with a commit origin lacks is never overwritten.
+      git(clone, "branch", "synergy/proto", "main");
+      git(clone, "-c", "user.email=t@example.com", "-c", "user.name=T", "commit", "-q", "--allow-empty", "-m", "local only");
+      git(clone, "branch", "-f", "synergy/proto", "HEAD");
+      await expect(wt.attachRemoteBranch(clone, join(clone, "wt-refused"), "synergy/proto")).rejects.toThrow(/commits origin does not have/);
+      git(clone, "reset", "-q", "--hard", "origin/main");
+      git(clone, "branch", "-f", "synergy/proto", "origin/main");
+
+      const wtDir = join(clone, "wt");
+      await wt.attachRemoteBranch(clone, wtDir, "synergy/proto");
+      expect(git(wtDir, "rev-parse", "HEAD")).toBe(head);
+      expect(git(wtDir, "rev-parse", "--abbrev-ref", "@{upstream}")).toBe("origin/synergy/proto");
+    } finally {
+      rmSync(origin, { recursive: true, force: true });
+      rmSync(clone, { recursive: true, force: true });
+    }
+  });
 });

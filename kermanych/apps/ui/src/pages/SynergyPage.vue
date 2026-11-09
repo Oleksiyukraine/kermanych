@@ -5,7 +5,7 @@
       {{ t('synergy.page.blank') }}
     </div>
 
-    <!-- Three columns, each an existing surface, as on «Дизайн»: the rail of sessions, the
+    <!-- Three columns, each an existing surface: the rail of sessions, the
          session browser over the branch preview with the step strip, and the Лог. -->
     <div
       v-else
@@ -81,6 +81,13 @@
                 :title="implementTip"
                 @click="onImplement"
               >{{ t('synergy.page.implement') }}</KBtn>
+              <KBtn
+                v-if="live"
+                variant="secondary"
+                :disabled="!canImplement || sessionPending || implementAction.busy.value || discardAction.busy.value"
+                :title="handoffTip"
+                @click="handoffOpen = true"
+              >{{ t('synergy.page.handoff') }}</KBtn>
               <KBtn
                 variant="ghost"
                 :loading="discardAction.busy.value"
@@ -160,7 +167,7 @@
           @keydown="onLogResizeKeydown"
         ></div>
 
-        <!-- LOG — the agent's transcript and composer with the voice conversation, as on «Дизайн».
+        <!-- LOG — the agent's transcript and composer with the voice conversation, as on «Агенти».
              Every message here — typed, «Надіслати агенту» or said — carries the page and the
              picks (decision 8; stores/orchestrator.ts sendMessage). -->
         <aside class="syn__log" :style="{ width: logWidth + 'px' }">
@@ -299,6 +306,17 @@
         >{{ t('synergy.new.start') }}</KBtn>
       </template>
     </KModal>
+
+    <!-- «Задача →» (docs/specs/2026-11-09-merge-design-into-synergy.md): the prototype as a card for
+         later or for a teammate; its own dialog runs the push, the card and the close. -->
+    <SynergyTaskDialog
+      v-if="session && view"
+      v-model="handoffOpen"
+      :session="session"
+      :brief="synergyBrief({ startPage: session.synergy?.page, requests: chronology })"
+      :base="view.base"
+      @handed-over="onHandedOver"
+    />
   </main>
 </template>
 
@@ -307,10 +325,11 @@
 // running app — by text, by voice and with the ◎ pointer — and sees each change in seconds. A
 // Синергія session is an ordinary `kind: 'agent'` session stamped with `synergy`, on its own
 // `synergy/<slug>` worktree, run by a fast model with a narrow toolset; this page is its only
-// view (Агенти hides it). Built from «Дизайн»'s parts: the rail, the session browser over the
-// branch preview (started by itself), the Лог with voice. Its own: the step strip — Kermanych
-// commits a checkpoint after every turn, and «Повернутися сюди» restores one with a new commit —
-// and the toolbar's «Імплементувати» (a card + a fresh agent on the brief) and «Відкинути».
+// view (Агенти hides it): the rail, the session browser over the branch preview (started by
+// itself), the Лог with voice; the step strip — Kermanych commits a checkpoint after every turn,
+// and «Повернутися сюди» restores one with a new commit — and the toolbar's «Імплементувати» (a
+// card + a fresh agent on the brief), «Задача →» (the pushed branch as a card for later, the
+// session closed; docs/specs/2026-11-09-merge-design-into-synergy.md) and «Відкинути».
 import { computed, nextTick, onMounted, ref, watch, type ComponentPublicInstance } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
 import { useI18n } from 'vue-i18n';
@@ -357,6 +376,7 @@ import KBtn from 'components/kit/KBtn.vue';
 import KTabs from 'components/kit/KTabs.vue';
 import KTag from 'components/kit/KTag.vue';
 import KModal from 'components/kit/KModal.vue';
+import SynergyTaskDialog from 'components/synergy/SynergyTaskDialog.vue';
 import KField from 'components/kit/KField.vue';
 import KSelect from 'components/kit/KSelect.vue';
 import KSkeleton from 'components/kit/KSkeleton.vue';
@@ -391,7 +411,7 @@ const sessions = computed(() =>
 const loadPhase = useLoadPhase(() => !store.snapshotReceived);
 
 // ── Selection ───────────────────────────────────────────────────────────────
-// The «Дизайн» rule: the open session lives in the URL (`?session=`, which MainLayout's redirect
+// The open session lives in the URL (`?session=`, which MainLayout's redirect
 // and «Карта агентів» use) and, per project, on this machine.
 const SELECTED_KEY = 'kermanych.synergy.selected';
 function readRemembered(): Record<string, string> {
@@ -457,7 +477,7 @@ const retired = computed(
 const live = computed(() => !!session.value && !retired.value && !session.value.archived);
 
 // ── Log ─────────────────────────────────────────────────────────────────────
-// The Агенти rule (lib/open-session-history.ts), as on «Дизайн»: the first open brings the
+// The Агенти rule (lib/open-session-history.ts): the first open brings the
 // transcript back, resuming the child when that is what it takes.
 const transcriptFailed = ref<string | null>(null);
 const refreshingId = ref<string | null>(null);
@@ -598,7 +618,7 @@ function onSetModel(patch: { model: string; provider?: string }): void {
   void modelPick.set(patch.model);
 }
 
-// A text selection in the log → a backlog card, the «Дизайн» / Чат path.
+// A text selection in the log → a backlog card, the Чат path.
 const { run: onNewTask } = useAsyncAction(async (text: string) => {
   const s = session.value;
   const userId = auth.user?.id;
@@ -630,7 +650,7 @@ const { run: onNewTask } = useAsyncAction(async (text: string) => {
 });
 
 // ── Canvas ──────────────────────────────────────────────────────────────────
-// Opening a session starts its preview — «Дизайн»'s ensurePreview. The launch already started
+// Opening a session starts its preview. The launch already started
 // it on the start path; this covers a reopened session after an api restart or an idle stop.
 const previewStart = useKeyedAction(async (id: string) => {
   const info = await store.previewInfo(id);
@@ -756,6 +776,15 @@ const canImplement = computed(() => live.value && !running.value && chronology.v
 const implementTip = computed(() =>
   running.value ? t('synergy.page.busyTip') : chronology.value.length ? t('synergy.page.implementTip') : t('synergy.page.implementEmptyTip'),
 );
+// «Задача →»: offered when «Імплементувати» is; the dialog says the rest.
+const handoffOpen = ref(false);
+const handoffTip = computed(() =>
+  running.value ? t('synergy.page.busyTip') : chronology.value.length ? t('synergy.page.handoffTip') : t('synergy.page.implementEmptyTip'),
+);
+// The card exists and the delete is on its way: the row waits for `session_removed`, as «Відкинути».
+function onHandedOver(s: Session): void {
+  pending.mark('session:' + s.id, () => !store.sessions.some((x) => x.id === s.id));
+}
 const implementCards = new Map<string, string>();
 
 const implementAction = useAsyncAction(async (s: Session, brief: string) => {
@@ -874,7 +903,7 @@ const effortPickOptions = computed(() => {
   return EFFORT_OPTIONS.filter((o) => allowed.includes(o.value)).map((o) => ({ value: o.value, label: t(o.labelKey) }));
 });
 
-// The fork base, as on «Дизайн»: the project's default first, then every branch once the repo
+// The fork base: the project's default first, then every branch once the repo
 // answers. A reopened modal drops an older reply.
 async function loadBranches(projectId: string): Promise<void> {
   const run = ++branchesRun;
@@ -990,7 +1019,7 @@ onMounted(() => {
 </script>
 
 <style scoped lang="scss">
-// The «Дизайн» page's geometry (pages/DesignPage.vue), so the two screens read as one system.
+// The page's geometry: rail, stage and log columns.
 .syn {
   height: 100%;
   overflow: hidden;

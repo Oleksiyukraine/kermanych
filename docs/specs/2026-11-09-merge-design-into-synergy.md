@@ -4,8 +4,8 @@
 - **Scope:** `packages/core`, `packages/cloud`, `supabase/migrations`, `apps/api`, `apps/ui`,
   i18n `uk` / `en`, `kermanych/README.md`, `kermanych/docs/specs/2026-10-29-design-tab.md`
   (superseded note).
-- **Status:** decisions agreed with the operator in the deep-analysis interview (2026-11-09);
-  waiting for the go-ahead before implementation.
+- **Status:** decisions agreed with the operator in the deep-analysis interview (2026-11-09),
+  approved the same day; implemented on this branch (see «Verification»).
 
 ## Goal
 
@@ -142,7 +142,9 @@ as a second handoff, «Задача →», next to «Імплементуват�
 - `worktree.service.ts`: push with a token; a worktree on an existing remote branch.
 - `sessions.controller.ts`: drop `POST /sessions/:id/design/save`; add
   `POST /sessions/:id/synergy/push`, `GET /sessions/:id/synergy/screens`.
-- `registry.service.ts`: stop reading and writing `design_dir` (the SQLite column stays).
+- `registry.service.ts`: stop reading and writing `design_dir`. The SQLite column stays: an old
+  row that carries it still counts as `design` in «Аналітика» (the class stays in core's
+  `ANALYTICS_SESSION_CLASSES` for those rows), and the claude-code retirement still skips it.
 - `browser-mcp.service.ts`: the `path` hint no longer names a design session.
 - `preview/seed.ts`: drop the design row.
 
@@ -157,9 +159,13 @@ as a second handoff, «Задача →», next to «Імплементуват�
   at least one checkpoint). It opens the dialog: screens load as skeletons, then thumbnails.
   «Створити» runs push → `board.createTask({…, synergyBranch, branch: base}, screens)` → delete,
   through `useAsyncAction`.
-- `DocTaskDialog.vue`: a prefilled mode for a «Синергія» handoff (fixed project, given images,
-  `synergyBranch`), or a shared core both dialogs use; whichever keeps one dialog.
-- `stores/cuk-chat.ts`: a synergy card launches with omp, as a design card did.
+- New `components/synergy/SynergyTaskDialog.vue` (changed during implementation from «a mode of
+  `DocTaskDialog`»): the doc dialog's work is reading a document, its framing, target projects and
+  «Глибокий аналіз», none of which applies here, so a mode would be mostly branches. The new dialog
+  uses the same kit pieces and labels (title, assignee, description with «Диктувати») plus the
+  screenshot strip (`KAttachStrip`, each shot removable) and runs push → card → close.
+- `lib/native-session.ts` `defaultLaunchMode(provider, { synergy })`: a synergy card launches with
+  omp, as a design card did (`stores/cuk-chat.ts`, `BoardPage`, `AgentsPage`).
 - i18n `uk` / `en`: drop `design.*` and `common.nav.viewDesign`; add the handoff strings.
 
 ### Docs
@@ -169,17 +175,26 @@ as a second handoff, «Задача →», next to «Імплементуват�
 
 ## Verification
 
-- core, cloud, api, ui test suites (`--maxWorkers=4`), `vue-tsc --noEmit`.
-- New tests where a consumer could see a bug:
-  - api: `pushSynergy` refusals and the push against a temp bare origin; launching a card with
-    `synergyBranch` checks out that branch from origin, sets the base from `tasks.branch`, uses
-    the «Імплементувати Синергію» prompt, and a PR base line names the base.
-  - cloud: `synergy_branch` round-trips; the «Посіпака» queries skip such cards.
-- Removed with the code: design launch, `saveDesign`, design gate and design seed tests.
-- Live preview: no «Дизайн» tab; «Синергія» toolbar shows «Задача →»; the seeded session's
-  dialog in the web build.
-- Not verifiable here without the desktop app: the screenshots walk and a card launched on
-  another machine. Recorded as such.
+- **Tests:** core 32 files / 453 tests (new case in `test/synergy.spec.ts`: distinct handoff pages,
+  start page first, at most six; `design.spec.ts` deleted with the functions it covered); cloud
+  13 files / 204 tests (`synergy_branch` round trip on read and insert, the «Посіпака» predicate
+  skips it); api 131 files / 1379 tests (new: `supervisor.synergy.spec.ts` pushes a prototype to a
+  real bare origin with the uncommitted remainder checkpointed first, refuses before the first
+  checkpoint, and another clone continues the branch with `attachRemoteBranch`, which refuses a
+  local branch carrying commits origin lacks; `sessions.from-task.spec.ts` launches a synergy card
+  on its branch with `baseBranch` from the card, prefix `synergy`, a worktree even when the card
+  says in place, and the «Імплементувати Синергію» prompt, and refuses a branch outside
+  `synergy/`; `supervisor.native.spec.ts` refuses such a card natively before the claim); ui
+  92 files / 994 tests; `vue-tsc --noEmit` clean.
+- **Live preview** (web build, seeded api): the tabs are Агенти, Дошка, Чат, Синергія, Менеджмент,
+  ШІ-команда, Аналітика — no «Дизайн». The seeded Синергія session shows «Імплементувати»,
+  «Задача →» (disabled with no step) and «Відкинути». The dialog, opened on it, shows the branch,
+  the default-base wording, the session name as title, the brief, «не призначено», the
+  no-screenshots note (no session browser in the web build) and the close note; «Створити» on a
+  project that is not in the cloud stops with the «publish first» line inside the dialog and the
+  session stays.
+- **Not verified:** the screenshot walk in the desktop session browser, a push through a real
+  `GIT_TOKEN` to GitHub, and a card launched on another machine.
 
 ## Documentation impact
 

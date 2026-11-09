@@ -3,6 +3,7 @@ import { expect, test } from "vitest";
 import {
   synergyBrief,
   synergyCheckpointMessage,
+  synergyHandoffPages,
   synergyChronology,
   synergyMessage,
   synergyRequestOf,
@@ -86,4 +87,20 @@ test("synergyBrief lists the start page and the requests with their pages", () =
       "1. Прибери кнопку\n   і тінь\n   Page: /users/42\n2. Додай фільтр",
   );
   expect(synergyBrief({ requests: [] })).toBe("Operator requests, in order (rolled-back steps excluded):\n(none)");
+});
+
+// «Задача →» photographs each page once: the same screen recorded under two preview ports is one
+// page, the start path comes first, and the walk stops at six.
+test("synergyHandoffPages keeps distinct paths, start page first, at most six", () => {
+  expect(
+    synergyHandoffPages("users/42", [
+      { page: "http://localhost:5173/orders?tab=open" },
+      {},
+      { page: "http://localhost:61234/orders?tab=open" },
+      { page: "http://localhost:5173/users/42" },
+    ]),
+  ).toEqual(["/users/42", "/orders?tab=open"]);
+  expect(synergyHandoffPages(undefined, [])).toEqual([]);
+  const many = Array.from({ length: 9 }, (_, i) => ({ page: `http://h:1/p${i}` }));
+  expect(synergyHandoffPages(undefined, many)).toEqual(["/p0", "/p1", "/p2", "/p3", "/p4", "/p5"]);
 });

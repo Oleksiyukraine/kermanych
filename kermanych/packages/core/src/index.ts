@@ -197,7 +197,6 @@ export {
   TASK_PLAN_SKILL,
   FRONTEND_HANDOFF_SKILL,
   API_REQUEST_SKILL,
-  DESIGN_SPEC_SKILL,
   IMPLEMENT_FROM_DESIGN_SKILL,
   DESIGN_README,
   docsPolicy,
@@ -236,8 +235,6 @@ export {
 export {
   AGENTS,
   MINION_AGENT_ID,
-  DESIGNER_AGENT_ID,
-  DESIGN_SAVE_AGENT_ID,
   SYNERGY_AGENT_ID,
   SYNERGY_IMPLEMENT_AGENT_ID,
   TESTER_AGENT_ID,
@@ -255,17 +252,7 @@ export {
   type AgentKind,
 } from "./agents";
 export { DEEP_ANALYSIS_SKILL, deepAnalysisPrompt } from "./deep-analysis";
-export {
-  DESIGN_SCREENS_DIR,
-  DESIGN_WIDTHS,
-  designDirFor,
-  designReadmePath,
-  designDirOf,
-  designScreenshots,
-  designCommitMessage,
-  designReferenceLink,
-  designBrief,
-} from "./design";
+export { DESIGN_SCREENS_DIR, designReadmePath, designDirOf, designScreenshots } from "./design";
 export {
   SYNERGY_DEFAULT_MODEL,
   SYNERGY_DEFAULT_EFFORT,
@@ -278,6 +265,8 @@ export {
   synergySteps,
   synergyChronology,
   synergyBrief,
+  SYNERGY_HANDOFF_SCREENS_MAX,
+  synergyHandoffPages,
   type SynergyCommit,
   type SynergyStep,
   type SynergyStepsView,

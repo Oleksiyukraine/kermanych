@@ -109,11 +109,6 @@ export type Task = {
   // by itself (docs/specs/2026-10-23-minion-auto-run.md). Only the author can switch it on, and
   // anyone else's edit of the card's content switches it off — both enforced by tasks_guard().
   autoRun: boolean;
-  // `tasks.design` is `not null default false`, so like `hidden` this key is always present.
-  // `true` means the card was filed by «+ Новий дизайн» (docs/specs/2026-10-29-design-tab.md):
-  // its session is a «Дизайнер» on a `design/<slug>` branch, stamped with a `designDir`. Set on
-  // insert only; no patch carries it.
-  design: boolean;
   // The kind of the «Знахідка» the card was filed from; absent for every other card. Set once by
   // the filing dialog and frozen by tasks_guard(), so finding-born cards can be counted.
   findingKind?: FindingKind;
@@ -124,6 +119,10 @@ export type Task = {
   // «Гілка» box was filled in. Absent means the launch names it from the task with a model
   // (docs/specs/2026-11-04-custom-branch-name.md). Taken as typed; the launch slugifies it.
   branchSlug?: string;
+  // A card «Задача →» filed from «Синергія» (docs/specs/2026-11-09-merge-design-into-synergy.md):
+  // the prototype's pushed `synergy/<slug>` branch, which the launch continues instead of forking
+  // a new one; `branch` stays the base the pull request targets. Set on insert only.
+  synergyBranch?: string;
   // Storage object paths in the `task-images` bucket (private). The board mints signed
   // URLs from these on demand; the row never carries a URL. Absent when the task has none.
   imagePaths?: string[];
@@ -166,10 +165,10 @@ export type TaskInsert = {
   deepAnalysis?: boolean;
   autoRun?: boolean;
   findingKind?: FindingKind;
-  design?: boolean;
   kind?: string;
   branch?: string;
   branchSlug?: string;
+  synergyBranch?: string;
   imagePaths?: string[];
   jiraKey?: string;
   linearKey?: string;

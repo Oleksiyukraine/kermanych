@@ -25,8 +25,10 @@ export function isAnalyticsPeriod(v: unknown): v is AnalyticsPeriod {
 
 /**
  * What a session is, for the «тип сесії» split (decision 8.3). The stamped flags win over
- * `kind`: a Тестувальник is a `review` child, a Посіпака run, a design or a synergy session is
- * an `agent`, a scheduled run is whichever kind it launched as.
+ * `kind`: a Тестувальник is a `review` child, a Посіпака run or a synergy session is an
+ * `agent`, a scheduled run is whichever kind it launched as. `design` is no longer derived (the
+ * «Дизайн» tab is gone, docs/specs/2026-11-09-merge-design-into-synergy.md); it stays for the
+ * usage rows recorded under it.
  */
 export const ANALYTICS_SESSION_CLASSES = [
   "agent",
@@ -43,11 +45,10 @@ export const ANALYTICS_SESSION_CLASSES = [
 export type AnalyticsSessionClass = (typeof ANALYTICS_SESSION_CLASSES)[number];
 
 export function analyticsSessionClass(
-  s: Pick<Session, "kind" | "tester" | "minion" | "designDir" | "synergy" | "schedule">,
+  s: Pick<Session, "kind" | "tester" | "minion" | "synergy" | "schedule">,
 ): AnalyticsSessionClass {
   if (s.tester) return "tester";
   if (s.minion) return "minion";
-  if (s.designDir) return "design";
   if (s.synergy) return "synergy";
   if (s.schedule) return "schedule";
   return s.kind;

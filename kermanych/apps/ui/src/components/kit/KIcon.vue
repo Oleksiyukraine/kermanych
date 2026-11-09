@@ -36,7 +36,6 @@ export type KIconName =
   | 'minion'
   | 'decision'
   | 'notNeeded'
-  | 'design'
   | 'synergy'
   | 'viewSource'
   | 'viewSplit'
@@ -51,7 +50,6 @@ export type KIconName =
   | 'mic'
   | 'micOff'
   | 'agentPromote'
-  | 'agentDesignSave'
   | 'agentSynergyImplement'
   | 'agentReview'
   | 'agentPullRequest'
@@ -167,14 +165,6 @@ const ICONS: Record<KIconName, readonly string[]> = {
   // «Не потрібно» — a slashed disc (Lucide's ban): the run found nothing to change and closed
   // the card (KNotNeededMark).
   notNeeded: ['M3 12a9 9 0 1 0 18 0a9 9 0 1 0-18 0', 'm4.9 4.9 14.2 14.2'],
-  // «Дизайн» — a pen nib (Lucide's pen-tool): a design session and its card (KDesignMark), the
-  // agent that drafts screens rather than code.
-  design: [
-    'M15.707 21.293a1 1 0 0 1-1.414 0l-1.586-1.586a1 1 0 0 1 0-1.414l5.586-5.586a1 1 0 0 1 1.414 0l1.586 1.586a1 1 0 0 1 0 1.414z',
-    'm18 13-1.375-6.874a1 1 0 0 0-.746-.776L3.235 2.028a1 1 0 0 0-1.207 1.207L5.35 15.879a1 1 0 0 0 .776.746L13 18',
-    'm2.3 2.3 7.286 7.286',
-    'M9 11a2 2 0 1 0 4 0a2 2 0 1 0-4 0',
-  ],
   // «Синергія» — a lightning bolt (Lucide's zap): fast prototyping on the live app
   // (docs/specs/2026-11-06-synergy.md), the «ШІ-команда» mark of its instruction.
   synergy: [
@@ -216,20 +206,13 @@ const ICONS: Record<KIconName, readonly string[]> = {
   micOff: ['m2 2 20 20', 'M18.89 13.23A7.12 7.12 0 0 0 19 12v-2', 'M5 10v2a7 7 0 0 0 12 5', 'M15 9.34V5a3 3 0 0 0-5.68-1.33', 'M9 9v3a3 3 0 0 0 5.12 2.12', 'M12 19v3'],
 
   // «ШІ-команда → Агенти» (docs/specs/2026-11-03-ai-team-agent-pages.md, decision 6): one mark per
-  // built-in agent, in a disc on its list row and its page. «Посіпака» is `minion` and «Дизайнер»
-  // is `design` above; the rest are Lucide's. Not the magnifier or the rocket: those already mean
+  // built-in agent, in a disc on its list row and its page. «Посіпака» is `minion` above; the rest are Lucide's. Not the magnifier or the rocket: those already mean
   // «Глибокий аналіз» and «Розпочати».
   // Промоутер — a hammer (Lucide's): from talking it over to building it.
   agentPromote: [
     'm15 12-8.373 8.373a1 1 0 1 1-3-3L12 9',
     'm18 15 4-4',
     'm21.5 11.5-1.914-1.914A2 2 0 0 1 19 8.172V7l-2.26-2.26a6 6 0 0 0-4.202-1.756L9 2.96l.92.82A6.18 6.18 0 0 1 12 8.4V10l2 2h1.172a2 2 0 0 1 1.414.586L18.5 14.5',
-  ],
-  // Зберегти дизайн — a floppy (Lucide's save).
-  agentDesignSave: [
-    'M15.2 3a2 2 0 0 1 1.4.6l3.8 3.8a2 2 0 0 1 .6 1.4V19a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z',
-    'M17 21v-7a1 1 0 0 0-1-1H8a1 1 0 0 0-1 1v7',
-    'M7 3v4a1 1 0 0 0 1 1h7',
   ],
   // Імплементувати Синергію — a wrench (Lucide's): the prototype rebuilt properly.
   agentSynergyImplement: [

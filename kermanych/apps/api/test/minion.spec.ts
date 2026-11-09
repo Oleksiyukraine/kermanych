@@ -130,7 +130,7 @@ const eligible = (t: Task, projectIds: string[], userId: string) =>
   t.autoRun &&
   t.createdBy === userId &&
   !t.deepAnalysis &&
-  !t.design &&
+  !t.synergyBranch &&
   !t.jiraKey &&
   !t.linearKey &&
   !t.planeKey &&
@@ -261,7 +261,6 @@ function card(over: Partial<Task> & { id: string; projectId: string }): Task {
     worktree: true,
     hidden: false,
     deepAnalysis: false,
-    design: false,
     autoRun: true,
     ...over,
   };

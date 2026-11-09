@@ -1,6 +1,6 @@
 // apps/ui/src/lib/message-mode.ts
 // Which omp message mode the session's next message takes — one rule for every place the
-// operator talks to an agent: the «Агенти», «Чат» and «Дизайн» composers, «Надіслати агенту» from
+// operator talks to an agent: the «Агенти», «Чат» and «Синергія» composers, «Надіслати агенту» from
 // the session browser, and the voice conversation. An empty session (a fresh quick chat) starts
 // its first turn with a prompt. Otherwise: a settled session gets a fresh follow-up; a live one is
 // steered mid-turn.

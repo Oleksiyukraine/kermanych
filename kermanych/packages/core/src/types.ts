@@ -76,11 +76,6 @@ export type Session = {
   // Stamped when the session is created and never changed. Absent means a session a person
   // started, even when its card allows auto-run.
   minion?: boolean;
-  // A «Дизайн» session (docs/specs/2026-10-29-design-tab.md): the repository-relative folder
-  // its design lands in, e.g. `docs/design/2026-10-29-orders-list`. Stamped from a design card
-  // at launch (designDirFor) and never changed; its presence is what makes the session a design.
-  // Absent for every other session.
-  designDir?: string;
   // A «Синергія» session (docs/specs/2026-11-06-synergy.md): fast prototyping on a
   // `synergy/<slug>` branch with a narrow toolset and a checkpoint after every turn. `page` is
   // the start path of «Змінити сторінку». Stamped at launch; «Імплементувати» clears it, turning

@@ -130,7 +130,6 @@ vi.mock("@kermanych/cloud", () => ({
       hidden: input.hidden ?? false,
       deepAnalysis: false,
       autoRun: input.autoRun ?? false,
-      design: false,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     } as Task;

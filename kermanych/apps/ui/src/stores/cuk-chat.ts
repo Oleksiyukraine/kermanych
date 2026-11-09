@@ -165,7 +165,6 @@ export const useCukChat = defineStore('cuk-chat', () => {
       { id: 'agents', label: t('common.nav.viewAgents'), to: { name: 'agents' } },
       { id: 'board', label: t('common.nav.viewBoard'), to: { name: 'board' } },
       { id: 'chat', label: t('common.nav.viewChat'), to: { name: 'chat' } },
-      { id: 'design', label: t('common.nav.viewDesign'), to: { name: 'design' } },
       { id: 'synergy', label: t('common.nav.viewSynergy'), to: { name: 'synergy' } },
       { id: 'ai-team', label: t('common.nav.viewAiTeam'), to: { name: 'ai-team' } },
       { id: 'management', label: t('common.nav.viewManagement'), to: { name: MANAGEMENT_DEFAULT_SECTION } },
@@ -505,7 +504,7 @@ export const useCukChat = defineStore('cuk-chat', () => {
     }
   }
 
-  // Show one session where it lives: a design in «Дизайн», a Синергія session in «Синергія»
+  // Show one session where it lives: a Синергія session in «Синергія»
   // (opened by the page's `session` query), every other one in «Агенти» on its own tab. Also
   // what a result line's «Відкрити сесію» does.
   async function openSession(id: string): Promise<void> {
@@ -518,10 +517,6 @@ export const useCukChat = defineStore('cuk-chat', () => {
       store.selectedProjectId === s.projectId ||
       (!store.selectedProjectId && !!store.selectedWorkspaceId && store.projectWorkspace[s.projectId] === store.selectedWorkspaceId);
     if (!inScope) store.selectProject(s.projectId);
-    if (s.designDir) {
-      await go({ name: 'design' });
-      return;
-    }
     if (s.synergy) {
       await go({ name: 'synergy', query: { session: s.id } });
       return;
@@ -576,7 +571,7 @@ export const useCukChat = defineStore('cuk-chat', () => {
       result('info', globalTr.t('cuk.result.cardCreated', { title: created.title, project: project.name }));
       return;
     }
-    const native = nativeRuntimeFor(defaultLaunchMode(auth.provider, { design: created.design }));
+    const native = nativeRuntimeFor(defaultLaunchMode(auth.provider, { synergy: !!created.synergyBranch }));
     const session = await api.createSessionFromTask(created.id, undefined, native);
     result('info', globalTr.t('cuk.result.agentStarted', { title: created.title, project: project.name }), session.id);
   }

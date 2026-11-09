@@ -6,7 +6,7 @@ import { useSeen } from 'stores/seen';
 // ring and the Dock icon's number (stores/seen.ts). Re-marked whenever it moves while open, so a
 // result that lands under the operator's eyes lights neither — but only while the window is
 // actually visible: a result that arrives behind another app has not been seen, and is marked the
-// moment the window comes back. Every page that opens a session uses it: «Агенти» and «Дизайн».
+// moment the window comes back. Every page that opens a session uses it: «Агенти» and «Синергія».
 export function useMarkSeen(open: () => Session | undefined): void {
   const seen = useSeen();
   function mark(): void {

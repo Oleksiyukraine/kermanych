@@ -5,7 +5,7 @@ import type { agentAbout as uk } from '../uk/agent-about';
 export const agentAbout: typeof uk = {
   minion: {
     tagline: 'Picks up cards allowed to auto-run and works them on its own',
-    when: 'There is no button: once a minute the Minion looks for your backlog cards marked “Allow auto-run” (not deep analysis, not design) and takes one when a slot is free. A trigger cannot run it.',
+    when: 'There is no button: once a minute the Minion looks for your backlog cards marked “Allow auto-run” (not deep analysis) and takes one when a slot is free. A trigger cannot run it.',
     steps:
       'Opens its own session in its own worktree; the ask tool is off, so it cannot ask the operator.\nChecks whether the card still applies.\nMakes the smallest change; if it would touch an API, schema, migration or dependency, it stops and asks for a decision.\nChecks the work against the acceptance criteria, runs the checks and commits without pushing or opening a PR.\nIt has 2 hours; then it is asked to wrap up, and 10 minutes later the turn is stopped.',
     inputs: {
@@ -24,32 +24,6 @@ export const agentAbout: typeof uk = {
     },
     adds: 'The rules on commit co-authorship and keeping docs up to date.',
     ends: 'The session becomes an ordinary agent and appears on the Agents page. If the launch fails, the chat is restored as it was.',
-  },
-  designer: {
-    tagline: 'Builds a screen prototype on the project’s UI kit',
-    when: 'The “+ New design” button on the Design page: fill in topic, description, references (images and links) and base branch, then “Create”. A trigger cannot run it.',
-    steps:
-      'Reads the project’s UI kit and routing.\nStudies the references: looks at the images and opens the links in the browser.\nBuilds each screen on its own dev route with fixtures, covering every state.\nTakes screenshots at 390 and 1280 pixels after each change.\nKeeps the design README current and commits without pushing or opening a PR.\nWorks with you in conversation, turn by turn.',
-    inputs: {
-      designDir: 'The design folder: docs/design/date-name.',
-      topic: 'The topic, which is the session name.',
-      description: 'The card text, with the reference links at its end; empty when it equals the name. Reference images go with the first message.',
-    },
-    adds: 'The design-spec skill, always, plus the rules on commit co-authorship and keeping docs up to date.',
-    ends: 'The session stays open for conversation. Next, on the Design page: “Save design”, “Create PR” or “Commit”, and “Finish”. For a design, the docs check looks only at the README in the design folder.',
-  },
-  'design-save': {
-    tagline: 'Screenshots every design screen, syncs the README and commits',
-    when: 'The “Save design” button on the Design page. A trigger cannot run it.',
-    steps:
-      'Sends a message to the same Designer in its session.\nIt reads the list of screens and states from the README.\nCaptures each at 390 and 1280 pixels into the screens folder and deletes stale screenshots.\nSyncs the README with the prototype, commits without pushing and lists the screenshots.',
-    inputs: {
-      designDir: 'This session’s design folder.',
-      branch: 'The session branch.',
-      message: 'The commit message: design: and the session name.',
-    },
-    adds: 'At the very end, a look back over the session for skill lessons (improve_skill), while «Improve skills» is not off.',
-    ends: 'The turn ends as usual; the page waits for it up to 30 minutes.',
   },
   synergy: {
     tagline: 'Changes the running app with you, one request at a time, in seconds',
@@ -103,7 +77,7 @@ export const agentAbout: typeof uk = {
   },
   'pull-request': {
     tagline: 'Commits, pushes the branch and opens a pull request',
-    when: 'The “Create PR” button in the finish sheet or on the Design page, while the branch has no PR. Also started by a trigger, and by the Minion after a ready verdict.',
+    when: 'The “Create PR” button in the finish sheet, while the branch has no PR. Also started by a trigger, and by the Minion after a ready verdict.',
     steps:
       'Sends a message to the agent that did the work, in its own session.\nIt brings in the base branch with `git merge` (no rebase, no force-push) and resolves conflicts.\nCommits and pushes the branch, taking the token from the worktree .env.\nOpens the PR and replies with the link.',
     inputs: {
@@ -116,7 +90,7 @@ export const agentAbout: typeof uk = {
   },
   commit: {
     tagline: 'Commits and pushes new changes to a branch that already has a PR',
-    when: 'The “Commit” button in the finish sheet or on the Design page, once the branch has a PR. A trigger cannot run it.',
+    when: 'The “Commit” button in the finish sheet, once the branch has a PR. A trigger cannot run it.',
     steps:
       'Sends a message to the agent in its own session.\nIt brings in the base branch with `git merge` and resolves conflicts.\nCommits and pushes, taking the token from the worktree .env; it opens no new PR.\nIf there is nothing to commit, it says so.',
     inputs: {
@@ -139,7 +113,7 @@ export const agentAbout: typeof uk = {
   },
   finish: {
     tagline: 'Closes the session: removes the worktree, keeps the branch for the PR',
-    when: 'The “✓” button on the Agents page or “Finish” on the Design page opens the finish sheet; there, “Finish”. Disabled while there are conflicts or docs are missing. A trigger cannot run it.',
+    when: 'The “✓” button on the Agents page opens the finish sheet; there, “Finish”. Disabled while there are conflicts or docs are missing. A trigger cannot run it.',
     steps:
       'No model is used; Kermanych does it all.\nCommits unsaved work as session work and the session name.\nStops the agent, the preview and any unfinished Minion run.\nRemoves the worktree; nothing is merged anywhere.',
     inputs: {},

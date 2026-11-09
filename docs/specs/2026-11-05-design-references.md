@@ -1,5 +1,8 @@
 # Референси в «+ Новий дизайн»
 
+> **Superseded** by `docs/specs/2026-11-09-merge-design-into-synergy.md` (decision 6): the «Дизайн»
+> tab and its «Референси» block are gone; in «Синергія» images and links go with a request.
+
 ## Goal
 
 When the operator creates a design, they can attach references: images (screenshots, mockups)

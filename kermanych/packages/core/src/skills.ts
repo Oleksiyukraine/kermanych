@@ -575,12 +575,12 @@ export const DEFAULT_SKILLS: readonly SkillDef[] = [
       "  assembleDebug && adb install -r app/build/outputs/apk/debug/app-debug.apk`.",
     ].join("\n"),
   },
-  // «Дизайн» (docs/specs/2026-10-29-design-tab.md): the Дизайнер's method and README template.
-  // The launch pastes it into a design session's opening prompt; overridable by name.
+  // A design folder under `docs/design/` (docs/specs/2026-10-29-design-tab.md): the method and
+  // the README template for a session asked to design a screen; overridable by name.
   {
     name: "design-spec",
     description:
-      "Use in a «Дизайн» session (the «Дизайнер» role): build the screen as a prototype on the project's UI kit with fixtures, cover every state, and keep the design folder's README and screenshots current.",
+      "Use when asked to design a screen as a prototype in docs/design/: build it on the project's UI kit with fixtures, cover every state, and keep the design folder's README and screenshots current.",
     body: [
       "# Designing a screen as a prototype",
       "",
@@ -592,7 +592,7 @@ export const DEFAULT_SKILLS: readonly SkillDef[] = [
       "4. References from the operator (attached images, links under «References:») come before the",
       "   first screen: open every link in the browser and note what to take from each.",
       "5. After each change, `browser_screenshot` at 390 and 1280 and look before you answer.",
-      "6. Screenshots: `<designDir>/screens/<screen>-<state>@<width>.png`, via `path`.",
+      "6. Screenshots: `docs/design/<date>-<topic>/screens/<screen>-<state>@<width>.png`, via `path`.",
       "",
       "## README template",
       "",

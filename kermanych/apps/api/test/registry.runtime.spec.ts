@@ -57,21 +57,6 @@ test("session round-trips deepAnalysis", () => {
   expect("deepAnalysis" in byId.get(absent.id)!).toBe(false);
 });
 
-// A design session's folder is stamped once at creation; a later status write keeps it, and an
-// ordinary row carries no key at all.
-test("session round-trips designDir", () => {
-  const r = new RegistryService(":memory:");
-  const proj = r.upsertProject({ id: "p-1", name: "test" });
-  const base = { projectId: proj.id, name: "task", task: "do it", worktreePath: "/tmp/wt", branch: "design/orders" };
-  const design = r.createSession({ ...base, designDir: "docs/design/2026-10-29-orders" });
-  const plain = r.createSession(base);
-
-  r.updateSession(design.id, { status: "done" });
-  const byId = new Map(r.listSessions(proj.id).map((s) => [s.id, s]));
-  expect(byId.get(design.id)?.designDir).toBe("docs/design/2026-10-29-orders");
-  expect("designDir" in byId.get(plain.id)!).toBe(false);
-});
-
 test("session guards runtime with isNativeHarness", () => {
   const r = new RegistryService(":memory:");
   const proj = r.upsertProject({ id: "p-1", name: "test" });
@@ -125,7 +110,7 @@ test("start retires managed claude-code rows", () => {
     const base = { projectId: proj.id, name: "t", task: "do it", worktreePath: "/tmp/wt", branch: "feature/t" };
     const agent = r.createSession({ ...base, runtime: "claude-code", status: "thinking" });
     const chat = r.createSession({ ...base, runtime: "claude-code", kind: "chat", status: "done" });
-    const design = r.createSession({ ...base, runtime: "claude-code", designDir: "docs/design/x" });
+    const design = r.createSession({ ...base, runtime: "claude-code" });
     const minion = r.createSession({ ...base, runtime: "claude-code", minion: true, status: "queued" });
     const tester = r.createSession({ ...base, runtime: "claude-code", kind: "review", tester: true });
     const review = r.createSession({ ...base, runtime: "claude-code", kind: "review" });
@@ -133,6 +118,8 @@ test("start retires managed claude-code rows", () => {
     const omp = r.createSession({ ...base, runtime: "omp", status: "thinking" });
     type DbAccess = { db: { prepare: (sql: string) => { run: (...args: unknown[]) => void } } };
     (r as unknown as DbAccess).db.prepare(`UPDATE sessions SET pending_prompt = 'go', slot_queued_at = 1`).run();
+    // A row of the retired «Дизайн» tab: only an old database still carries its folder.
+    (r as unknown as DbAccess).db.prepare(`UPDATE sessions SET design_dir = 'docs/design/x' WHERE id = ?`).run(design.id);
 
     const read = (reg: RegistryService) => new Map(reg.listSessions(proj.id).map((s) => [s.id, s]));
     const queue = (reg: RegistryService, id: string) =>

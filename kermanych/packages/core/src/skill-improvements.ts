@@ -128,8 +128,8 @@ const CONSERVATIVE_WHEN =
   "Improve a skill when: the operator corrected how you did a kind of task the skill describes; the skill turned out wrong, outdated or missing a step; " +
   "or, after failed attempts, you found a working method that is not obvious.";
 
-/** The agents whose turn Kermanych ends with `skillReflectionBlock`: «Створити ПР», «Закоміти», «Зберегти дизайн». */
-export const SKILL_REFLECTION_AGENT_IDS: readonly string[] = ["pull-request", "commit", "design-save"];
+/** The agents whose turn Kermanych ends with `skillReflectionBlock`: «Створити ПР», «Закоміти». */
+export const SKILL_REFLECTION_AGENT_IDS: readonly string[] = ["pull-request", "commit"];
 
 const LESSON_WHEN: Record<SkillImprovementOnLevel, string> = {
   conservative: CONSERVATIVE_WHEN,
@@ -148,7 +148,7 @@ const LESSON_NEVER =
   "a wrong step had to be undone), and `reason` names it; a risk that could have happened is not a lesson. " +
   "Never for: a one-off task; an environment or setup failure the operator can fix; an attempt that never worked; claims that some tool does not work; " +
   "facts about this one repository (commands, paths, conventions) — hand those to report_finding as a proposal for the repository's AGENTS.md or docs; " +
-  "an error or gap in Kermanych's own turn instruction (the pull request, commit or design-save text, the base-sync step, the skill review step) — report it with " +
+  "an error or gap in Kermanych's own turn instruction (the pull request or commit text, the base-sync step, the skill review step) — report it with " +
   "report_finding and leave the skills alone, even one that describes the same action; " +
   "secrets, tokens or personal data.";
 
