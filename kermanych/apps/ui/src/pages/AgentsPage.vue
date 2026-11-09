@@ -1433,6 +1433,7 @@ import { useVoicePanel } from '../composables/useVoicePanel';
 import { nextMode as modeFor } from '../lib/message-mode';
 import { useOptimisticValue } from '../composables/useOptimisticValue';
 import { useLoadPhase } from '../composables/useLoadPhase';
+import { useHeldTranscript } from '../composables/useHeldTranscript';
 import { useTaskDetails } from '../composables/useTaskDetails';
 import { usePending } from 'stores/pending';
 import { needsSignIn } from '../lib/session-auth';
@@ -1907,6 +1908,10 @@ const transcriptLoaded = computed(() => {
   return !id || store.transcripts[id] !== undefined || transcriptFailed.value === id;
 });
 const logPhase = useLoadPhase(() => !transcriptLoaded.value);
+// The selected session's log stays resident while it is on screen (the store evicts past its
+// cap); one evicted after the operator moved on reads `undefined` again, and the watcher that
+// loads history on selection brings it back.
+useHeldTranscript(() => store.selectedSessionId);
 const entries = computed<TranscriptEntry[]>(() =>
   store.selectedSessionId
     ? store.transcripts[store.selectedSessionId] ?? []

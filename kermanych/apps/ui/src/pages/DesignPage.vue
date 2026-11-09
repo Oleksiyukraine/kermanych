@@ -343,6 +343,7 @@ import { useImageAttach } from '../composables/useImageAttach';
 import { nextMode as modeFor } from '../lib/message-mode';
 import { useOptimisticValue } from '../composables/useOptimisticValue';
 import { useLoadPhase } from '../composables/useLoadPhase';
+import { useHeldTranscript } from '../composables/useHeldTranscript';
 import { useSendPicks } from '../composables/useSendPicks';
 import KPanel from 'components/kit/KPanel.vue';
 import KRequestBlock from 'components/kit/KRequestBlock.vue';
@@ -421,6 +422,8 @@ function initialDesign(projectId: string | undefined): string | undefined {
 
 const designId = ref<string | undefined>(initialDesign(store.selectedProjectId));
 const design = computed(() => designs.value.find((s) => s.id === designId.value));
+// The open design's log stays resident while it is on screen (the store evicts past its cap).
+useHeldTranscript(() => design.value?.id);
 // The voice conversation (docs/specs/2026-11-02-voice-conversation.md) with this design session.
 const voicePanel = useVoicePanel(() => design.value);
 // The open design is read by the rule of «Агенти», which never opens one: without this a design's

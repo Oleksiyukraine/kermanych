@@ -20,6 +20,32 @@ worktrees, the RPC bridge — is shared.
   the project's `.gitworktree/<branch>`; the registry DB is
   `~/.kermanych/kermanych.sqlite`.
 
+## Processes and disk housekeeping
+
+- **Quitting waits for the agents, up to 15 s.** The api stops every `omp` child (the agents', the
+  Менеджмент, ЦУК and scheduled chats') and preview before the app exits: stdin EOF, then SIGTERM
+  after 1 s and SIGKILL after 4 s to the child's whole process group, so its MCP servers and
+  workers go with it. A session caught mid-turn keeps its status and wakes on the next start; a
+  session waiting for a slot does not start during the quit.
+- **After a crash.** Every `omp` child and preview step is written to
+  `~/.kermanych/children/<api pid>.json` until it exits. At start, the groups an api that is no
+  longer running left there are stopped — only when the pid and its start time still match, so a
+  reused pid is never signalled. A managed child that does not greet within 60 s fails its start
+  with `omp_launch_timeout`, and a hung `omp models` (the AI-login check) is killed.
+- **At start** (the machine's own registry only — skipped when `KERMANYCH_DB` is set): a session
+  whose launch was interrupted after its worktree was created gets the worktree's path back; a
+  clean worktree a finished session left at `.gitworktree/<branch>` is removed (its branch stays;
+  worktrees Kermanych did not make are never touched, nor any with uncommitted changes); leftovers
+  of the old `~/.kermanych/worktrees/` layout no session names are removed; so are
+  `$TMPDIR/kermanych-native/mcp-<id>.json` files of deleted sessions and the session-browser
+  partitions of deleted projects.
+- **Deleting a session** also deletes its omp conversation file (with its subagents' folder) and
+  a native session's MCP config. **Archiving** stops its omp child and frees its transcript from
+  the api's memory; opening it again wakes it as after a restart.
+- **The window** keeps the transcripts of the sessions you opened — at most 12 besides the ones on
+  screen — and ignores live output of sessions you have not opened; those load their full history
+  when opened. Spec: `docs/specs/2026-11-09-process-memory-disk-cleanup.md`.
+
 ## Prerequisites
 
 - **Node ≥22.12** — REQUIRED. `better-sqlite3` is pinned to v13, whose N-API

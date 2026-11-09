@@ -28,6 +28,7 @@ import { locale } from '../lib/locale';
 import { nextMode } from '../lib/message-mode';
 import { globalTr } from '../boot/i18n';
 import { errorText } from '../composables/useAsyncAction';
+import { useHeldTranscript } from '../composables/useHeldTranscript';
 import { useAuth } from './auth';
 import { useOrchestrator } from './orchestrator';
 
@@ -97,6 +98,9 @@ export const useVoice = defineStore('voice', () => {
   let seenEntries = 0;
 
   const bound = computed(() => (sessionId.value ? orchestrator.sessions.find((x) => x.id === sessionId.value) : undefined));
+  // The bridge reads the bound session's transcript for the agent's replies whichever page the
+  // operator looks at (decision 8), so it stays resident for the whole conversation.
+  useHeldTranscript(() => sessionId.value);
 
   const activity = computed<VoiceActivity>(() => {
     if (now.value - lastSpokeAt.value < TALKING_MS) return 'speaking';

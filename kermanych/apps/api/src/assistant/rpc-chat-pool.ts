@@ -219,7 +219,7 @@ export class RpcChatPool<X = never> {
       // Timed out or died: either way this child can no longer be trusted with the next
       // turn — its stdin may hold half a message, and a late `agent_end` would resolve
       // somebody else's question. Drop it so the next ask starts clean.
-      this.drop(key);
+      void this.drop(key);
       throw err;
     } finally {
       live.turn = undefined;
@@ -254,21 +254,24 @@ export class RpcChatPool<X = never> {
     await live.rpc.stop().catch(() => {});
   }
 
-  drop(key: string): void {
+  // Resolves once the child is gone; callers that only need it detached do not wait.
+  drop(key: string): Promise<void> {
     this.cfg.onDrop?.(key);
     const live = this.map.get(key);
-    if (!live) return;
+    if (!live) return Promise.resolve();
     this.map.delete(key);
     live.turn = undefined;
     this.release(live);
-    void live.rpc.stop().catch(() => {});
+    return live.rpc.stop().catch(() => {});
   }
 
-  // A leaked omp child outlives the api and keeps spending the plan, so every one is
-  // stopped. The stops are not awaited: Nest's shutdown has no budget worth blocking on,
-  // and `stop()` already escalates to a kill.
-  dropAll(): void {
-    for (const key of [...this.map.keys()]) this.drop(key);
+  // A leaked omp child outlives the api and keeps spending the plan, so every one is stopped,
+  // and shutdown waits for them: Electron quits the moment the owning service's onModuleDestroy
+  // resolves, and a stop() still waiting on its SIGTERM/SIGKILL timers would die with the
+  // process, leaving a child that ignored the EOF running. stop() escalates to SIGKILL within
+  // seconds, so the wait is bounded.
+  async dropAll(): Promise<void> {
+    await Promise.allSettled([...this.map.keys()].map((key) => this.drop(key)));
   }
 
   // Idle eviction on use, not on a timer: a conversation nobody has touched for the TTL is
@@ -280,7 +283,7 @@ export class RpcChatPool<X = never> {
     for (const [key, live] of [...this.map]) {
       // Never evict a conversation mid-turn: `turn` is set exactly while one is in flight.
       if (live.turn || live.lastAt >= cutoff) continue;
-      this.drop(key);
+      void this.drop(key);
       this.tail.delete(key);
     }
   }
