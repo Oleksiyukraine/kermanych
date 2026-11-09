@@ -366,6 +366,21 @@ describe("createSessionFromTask", () => {
     expect(session.branch).toBe("fix/kan-42-login-2");
   });
 
+  // «Оцінка vs факт» compares the estimate the card carried at launch
+  // (docs/specs/2026-11-09-task-estimate.md, decision 3); «Аналітика» reads it from the local row.
+  it("stamps the card's estimate on the local session, and leaves an unestimated one without it", async () => {
+    const { sup, registry } = make();
+    bind(registry);
+    task({ assigneeId: USER, estimateMinutes: 150 });
+    const estimated = await sup.createSessionFromTask("task-1", USER);
+    task({ id: "task-2", assigneeId: USER });
+    const plain = await sup.createSessionFromTask("task-2", USER);
+
+    const rows = registry.analyticsRows(undefined, "2000-01-01T00:00:00.000Z", new Date().toISOString()).sessions;
+    expect(rows.find((r) => r.id === estimated.id)?.estimateMinutes).toBe(150);
+    expect(rows.find((r) => r.id === plain.id)).not.toHaveProperty("estimateMinutes");
+  });
+
   it("falls back to the task title and safe launch defaults", async () => {
     const { sup, registry } = make();
     bind(registry);

@@ -115,6 +115,10 @@ export type AnalyticsSessionRow = {
   prOpened: boolean;
   prOpenedAt?: string;
   minionOutcome?: MinionOutcome;
+  /** The session it was forked from — for a Тестувальник run, the doer whose task it tested. */
+  parentSessionId?: string;
+  /** The card's estimate as the launch stamped it (docs/specs/2026-11-09-task-estimate.md). */
+  estimateMinutes?: number;
   /** Neither a usage row nor a readable harness file: spend unknown (decision 6). */
   noHistory: boolean;
   /**
@@ -225,11 +229,36 @@ export type AnalyticsReport = {
     prs: AnalyticsMetric;
     /** Lifetime known cost of the period's PR sessions ÷ their count; null without PRs. */
     costPerPr: number | null;
+    /**
+     * Median of `prOpenedAt − createdAt` over the period's PR sessions (the same ones `prs`
+     * counts); a negative pair is left out. Null without any.
+     */
+    prLeadMedianMs: number | null;
   };
   dynamics: {
     /** ISO instant each bucket starts at (local midnight, or local Monday midnight by week). */
     buckets: string[];
     series: Record<AnalyticsSplit, AnalyticsSeries[]>;
+    /**
+     * «Час до PR» by the bucket its PR was opened in: the median of `prOpenedAt − createdAt` and
+     * how many PRs it is over (negative pairs left out, as `tiles.prLeadMedianMs`). Its own
+     * buckets: by day for 7 days, by week above — one or two PRs a day make a daily median noise.
+     */
+    prLead: { granularity: "day" | "week"; buckets: string[]; medianMs: (number | null)[]; counts: number[] };
+  };
+  /**
+   * «Оцінка vs факт» (docs/specs/2026-11-09-task-estimate.md, decision 5), over the PRs the
+   * «Час до PR» figures use: how many there are, how many carried an estimate at launch, and,
+   * over those, the median estimate, the median time to PR and the median of each PR's
+   * `estimate ÷ time to PR` (above 1: faster than estimated). The medians are null without an
+   * estimated PR.
+   */
+  estimate: {
+    prs: number;
+    estimated: number;
+    estimateMedianMs: number | null;
+    leadMedianMs: number | null;
+    ratioMedian: number | null;
   };
   /** [weekday Monday = 0][local hour 0–23] → working ms. */
   rhythm: number[][];
@@ -238,6 +267,11 @@ export type AnalyticsReport = {
   projects: AnalyticsProjectRow[];
   topSessions: AnalyticsTopSession[];
   minion: Record<MinionOutcome, number>;
+  /**
+   * Тестувальник runs started in the period, and the tasks they tested: distinct doers, so a
+   * task checked twice counts once. Verdicts live in the cloud checklist and are not read here.
+   */
+  tester: { runs: number; tasks: number };
   findings: { byKind: Record<FindingKind, number>; byStatus: Record<FindingStatus, number> };
 };
 
@@ -388,11 +422,15 @@ export function analyticsReport(input: AnalyticsInput): AnalyticsReport {
   };
 
   // Decision 4: the first bucket starts at `from`; by week the others start at local Monday midnight.
+  const bucketStarts = (by: "day" | "week"): number[] => {
+    const out = [from];
+    for (let d = fromDay + 1; d < fromDay + days; d++) {
+      if (by === "day" || weekdayOf(d) === 0) out.push(midnight(d, timeZone));
+    }
+    return out;
+  };
   const granularity = days <= DAY_GRANULARITY_MAX_DAYS ? "day" : "week";
-  const starts = [from];
-  for (let d = fromDay + 1; d < fromDay + days; d++) {
-    if (granularity === "day" || weekdayOf(d) === 0) starts.push(midnight(d, timeZone));
-  }
+  const starts = bucketStarts(granularity);
 
   const usage = input.usage.filter((r) => inRange(r.hour, cur));
   const prevUsage = input.usage.filter((r) => inRange(r.hour, prev));
@@ -416,6 +454,22 @@ export function analyticsReport(input: AnalyticsInput): AnalyticsReport {
     value,
     previous: prevRows.length === 0 ? null : previous(),
   });
+
+  // «Час до PR»: each PR of the period with its way from the session's start. An imported PR
+  // time before the session's own start is not a duration and is left out (honest figures only).
+  const leads = prs.flatMap((s) => {
+    const at = Date.parse(s.prOpenedAt as string);
+    const ms = at - Date.parse(s.createdAt);
+    return ms >= 0 ? [{ at, ms, estimateMinutes: s.estimateMinutes }] : [];
+  });
+  // «Оцінка vs факт»: a PR at the very moment of its launch has no ratio, so it needs a lead > 0.
+  const estimated = leads.flatMap(({ ms, estimateMinutes }) =>
+    estimateMinutes !== undefined && ms > 0 ? [{ ms, estimateMs: estimateMinutes * 60_000 }] : [],
+  );
+  const leadGranularity = days <= 7 ? "day" : "week";
+  const leadStarts = leadGranularity === granularity ? starts : bucketStarts(leadGranularity);
+  const leadByBucket: number[][] = leadStarts.map(() => []);
+  for (const l of leads) leadByBucket[bucketIndex(leadStarts, l.at)]!.push(l.ms);
 
   const workingMs = lengthOf(working);
   const wallWorking = unionMs(working.map(({ r }) => r));
@@ -573,6 +627,8 @@ export function analyticsReport(input: AnalyticsInput): AnalyticsReport {
   // ── Посіпака and findings ──
   const minion = zeros(MINION_OUTCOMES);
   for (const s of created) if (s.sessionClass === "minion" && s.minionOutcome !== undefined) minion[s.minionOutcome]++;
+  const testerRuns = created.filter((s) => s.sessionClass === "tester");
+  const tester = { runs: testerRuns.length, tasks: new Set(testerRuns.map((s) => s.parentSessionId ?? s.id)).size };
   const byKind = zeros(FINDING_KINDS);
   const byStatus = zeros(FINDING_STATUSES);
   for (const f of input.findings) {
@@ -608,10 +664,17 @@ export function analyticsReport(input: AnalyticsInput): AnalyticsReport {
       sessions: metric(created.length, prevCreated, () => prevCreated.length),
       prs: metric(prs.length, prevPrs, () => prevPrs.length),
       costPerPr: prs.length > 0 ? sum(prs, (s) => s.lifetimeCost) / prs.length : null,
+      prLeadMedianMs: median(leads.map((l) => l.ms)),
     },
     dynamics: {
       buckets: starts.map((t) => new Date(t).toISOString()),
       series: { model: seriesOf("model"), project: seriesOf("project"), class: seriesOf("class") },
+      prLead: {
+        granularity: leadGranularity,
+        buckets: leadStarts.map((t) => new Date(t).toISOString()),
+        medianMs: leadByBucket.map(median),
+        counts: leadByBucket.map((xs) => xs.length),
+      },
     },
     rhythm,
     outcomes: { counts, total: agents.length, prReworked },
@@ -619,6 +682,14 @@ export function analyticsReport(input: AnalyticsInput): AnalyticsReport {
     projects,
     topSessions,
     minion,
+    tester,
+    estimate: {
+      prs: leads.length,
+      estimated: estimated.length,
+      estimateMedianMs: median(estimated.map((e) => e.estimateMs)),
+      leadMedianMs: median(estimated.map((e) => e.ms)),
+      ratioMedian: median(estimated.map((e) => e.estimateMs / e.ms)),
+    },
     findings: { byKind, byStatus },
   };
 }

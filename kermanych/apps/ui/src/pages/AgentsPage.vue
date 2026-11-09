@@ -1125,6 +1125,29 @@
             <div class="agents-launcher__hint mono">{{ branchHint }}</div>
           </div>
 
+          <!-- «Оцінка, год»: the card's estimate (`tasks.estimate_minutes`), optional. The launch
+               stamps it on the session and «Аналітика» compares it with the time to PR
+               (docs/specs/2026-11-09-task-estimate.md). A refused value says so here and stops
+               the save (submitLauncher). -->
+          <div>
+            <div class="agents-launcher__label">{{ t('agents.launcher.estimateLabel') }}</div>
+            <label class="agents-launcher__branch agents-launcher__branch--edit mono">
+              <input
+                v-model="draftEstimate"
+                class="agents-launcher__branch-input"
+                inputmode="decimal"
+                :placeholder="t('agents.launcher.estimatePlaceholder')"
+                :aria-invalid="estimateInvalid || undefined"
+                autocomplete="off"
+              />
+            </label>
+            <div
+              class="agents-launcher__hint mono"
+              :class="{ 'agents-launcher__hint--error': estimateInvalid }"
+              :role="estimateInvalid ? 'alert' : undefined"
+            >{{ estimateInvalid ? t('agents.launcher.estimateInvalid') : t('agents.launcher.estimateHint') }}</div>
+          </div>
+
           <!-- «Режим» — Kermanych's managed session, or the harness's own TUI in a terminal.
                Opens on the provider's default; a design card runs only in «Керманич», so its
                native modes are blocked with the reason (aria-disabled, as above). -->
@@ -1370,6 +1393,8 @@ import {
   autoRunSwitchLocked,
   cardModesFromCard,
   myBacklogTasks,
+  estimateMinutesFromText,
+  estimateTextFromMinutes,
   taskInsertFromDraft,
   taskPatchFromDraft,
   withAutoRun,
@@ -3010,6 +3035,9 @@ let openedAutoRun = false;
 // (docs/specs/2026-11-04-custom-branch-name.md), so the hint names the branch that lands whenever
 // slugify changes what was typed — a ref must not differ from the box without saying so.
 const draftBranchSlug = ref('');
+// «Оцінка, год» as typed; lib/tasks-view turns it into minutes for the card.
+const draftEstimate = ref('');
+const estimateInvalid = computed(() => estimateMinutesFromText(draftEstimate.value) === 'invalid');
 const branchNameHint = computed(() => {
   const typed = draftBranchSlug.value.trim();
   if (!typed) return t('agents.launcher.branchNameGenerated');
@@ -3222,6 +3250,7 @@ function openLauncher(card?: Task, deepAnalysis = false): void {
     : 'feature';
   draftWorktree.value = card?.worktree ?? true;
   draftBranchSlug.value = card?.branchSlug ?? '';
+  draftEstimate.value = estimateTextFromMinutes(card?.estimateMinutes);
   draftHidden.value = card?.hidden ?? false;
   const modes = cardModesFromCard(card, deepAnalysis);
   draftDeep.value = modes.deepAnalysis;
@@ -3255,6 +3284,7 @@ function openTaskFromText(text: string): void {
   draftWorktree.value = true;
   draftHidden.value = false;
   draftBranchSlug.value = '';
+  draftEstimate.value = '';
   draftDeep.value = false;
   draftAutoRun.value = false;
   void loadLaunchBranches(undefined);
@@ -3302,6 +3332,10 @@ async function submitLauncher(asTask: boolean): Promise<void> {
     launcherError.value = t('agents.hints.publishFirst');
     return;
   }
+  if (estimateInvalid.value) {
+    launcherError.value = t('agents.launcher.estimateInvalid');
+    return;
+  }
   const draft = {
     name: draftName.value.trim(),
     task: draftTask.value.trim(),
@@ -3314,6 +3348,7 @@ async function submitLauncher(asTask: boolean): Promise<void> {
     autoRun: draftAutoRun.value,
     baseBranch: draftBaseBranch.value || undefined,
     branchSlug: draftBranchSlug.value,
+    estimate: draftEstimate.value,
   };
   const images = launchImages.value.map((i) => ({ data: i.data, mimeType: i.mimeType }));
   launcherError.value = null;
@@ -4989,6 +5024,9 @@ function openDocTask(path: string): void {
   font-size: 11.5px;
   line-height: 1.6;
   color: var(--k-muted);
+}
+.agents-launcher__hint--error {
+  color: var(--k-danger);
 }
 
 .agents-launcher__branch {
