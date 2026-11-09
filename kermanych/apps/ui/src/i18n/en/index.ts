@@ -427,6 +427,10 @@ export const en: MessageSchema = {
       branchPlaceholder: 'generated from the task',
       branchNameOwn: 'your name; if that branch exists, -2 is appended',
       branchNameSlugged: 'the branch will be {branch}',
+      estimateLabel: 'Estimate, h',
+      estimatePlaceholder: 'not estimated',
+      estimateHint: 'optional; «Analytics» compares it with the time to PR',
+      estimateInvalid: 'an estimate is a number of hours above zero, e.g. 1.5',
       typeLabel: 'Type',
       worktreeLabel: 'Isolate in a worktree',
       worktreeDesc: 'A separate folder, a separate checkout. The agent won’t touch your working state.',
@@ -1204,6 +1208,8 @@ export const en: MessageSchema = {
       prefix: 'Type',
       branch: 'Base branch',
       branchPlaceholder: 'project default',
+      estimate: 'Estimate, h',
+      estimatePlaceholder: 'not estimated',
       assignee: 'Assignee',
       unassignedName: 'Unassigned',
       unassigned: 'unassigned',
@@ -3546,6 +3552,17 @@ export const en: MessageSchema = {
       cost: 'Spend',
       deleted: 'deleted session',
       open: 'Open the session',
+    },
+    // «Оцінка vs факт» (docs/specs/2026-11-09-task-estimate.md, decision 5).
+    estimate: {
+      title: 'Estimate vs actual',
+      lead: 'Calendar time from launch to PR against the card’s estimate at launch — not a person’s hours',
+      faster: 'Faster than estimated',
+      slower: 'Slower than estimated',
+      estimateMedian: 'Median estimate',
+      leadMedian: 'Median actual',
+      coverage: '{n} of {total} PR in the period had an estimate | {n} of {total} PRs in the period had an estimate',
+      none: 'No PR in this period had an estimate. Set one on the card — the «Estimate, h» field.',
     },
     // «Зроблено без тебе» (docs/specs/2026-11-08-analytics-time-to-pr.md, decision 5): counts only.
     unattended: {

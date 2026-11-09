@@ -1319,6 +1319,9 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
       // A minion run of a finding card carries the kind for its opening prompt (decision 14).
       ...(minion && task.findingKind ? { findingKind: task.findingKind } : {}),
       ...(schedule ? { schedule } : {}),
+      // «Оцінка vs факт» compares the estimate that stood before the agent started
+      // (docs/specs/2026-11-09-task-estimate.md, decision 3), so it is taken from the card now.
+      ...(task.estimateMinutes ? { estimateMinutes: task.estimateMinutes } : {}),
     });
     if (minion) this.minionRuns.set(session.id, { phase: "work", starting: true });
     if (schedule) this.scheduleRuns.set(session.id, { scheduleId: schedule.id, starting: true });

@@ -330,3 +330,42 @@ describe("analyticsReport — Тестувальник", () => {
     expect(r.tester).toEqual({ runs: 3, tasks: 2 });
   });
 });
+
+describe("analyticsReport — оцінка vs факт", () => {
+  test("over the period's PRs with an estimate: coverage, both medians, and the median ratio", () => {
+    const pr = (id: string, createdAt: string, prOpenedAt: string, estimateMinutes?: number): AnalyticsSessionRow =>
+      session(id, createdAt, { prOpened: true, prOpenedAt, ...(estimateMinutes === undefined ? {} : { estimateMinutes }) });
+    const r = analyticsReport(
+      input({
+        sessions: [
+          // 8 h estimated, 2 h taken → ×4.
+          pr("a", "2026-11-03T08:00:00.000Z", "2026-11-03T10:00:00.000Z", 480),
+          // 1 h estimated, 2 h taken → ×0.5.
+          pr("b", "2026-11-04T08:00:00.000Z", "2026-11-04T10:00:00.000Z", 60),
+          // 6 h estimated, 3 h taken → ×2.
+          pr("c", "2026-11-05T08:00:00.000Z", "2026-11-05T11:00:00.000Z", 360),
+          // No estimate: counted among the PRs, not in the medians.
+          pr("d", "2026-11-05T08:00:00.000Z", "2026-11-05T09:00:00.000Z"),
+          // A negative pair is no PR of «Час до PR», so none here either.
+          pr("e", "2026-11-06T08:00:00.000Z", "2026-11-06T07:00:00.000Z", 60),
+          // Before the period.
+          pr("f", "2026-10-20T08:00:00.000Z", "2026-10-20T09:00:00.000Z", 60),
+        ],
+      }),
+    );
+    expect(r.estimate).toEqual({
+      prs: 4,
+      estimated: 3,
+      estimateMedianMs: 6 * HOUR,
+      leadMedianMs: 2 * HOUR,
+      ratioMedian: 2,
+    });
+  });
+
+  test("no estimated PR leaves the medians null", () => {
+    const r = analyticsReport(
+      input({ sessions: [session("d", "2026-11-05T08:00:00.000Z", { prOpened: true, prOpenedAt: "2026-11-05T09:00:00.000Z" })] }),
+    );
+    expect(r.estimate).toEqual({ prs: 1, estimated: 0, estimateMedianMs: null, leadMedianMs: null, ratioMedian: null });
+  });
+});

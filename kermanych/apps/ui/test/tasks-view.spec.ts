@@ -8,6 +8,8 @@ import {
   canRunTask,
   cardModesFromCard,
   myBacklogTasks,
+  estimateMinutesFromText,
+  estimateTextFromMinutes,
   taskInsertFromDraft,
   taskPatchFromDraft,
   withAutoRun,
@@ -45,6 +47,7 @@ const draft: LauncherDraft = {
   autoRun: false,
   baseBranch: 'develop',
   branchSlug: '  kan-42-login  ',
+  estimate: ' 1,5 ',
 };
 
 describe('taskInsertFromDraft', () => {
@@ -65,6 +68,7 @@ describe('taskInsertFromDraft', () => {
       autoRun: false,
       branch: 'develop',
       branchSlug: 'kan-42-login',
+      estimateMinutes: 90,
       assigneeId: ME,
     });
   });
@@ -91,8 +95,9 @@ describe('taskInsertFromDraft', () => {
 
 describe('taskPatchFromDraft', () => {
   it('sends every editable field, so clearing one clears the column', () => {
-    // A blanked «Гілка» travels as "", so the card goes back to a model-named branch.
-    expect(taskPatchFromDraft({ ...draft, model: undefined, branchSlug: ' ' }, false)).toEqual({
+    // A blanked «Гілка» travels as "", so the card goes back to a model-named branch; a blanked
+    // «Оцінка» travels as null, «не оцінено».
+    expect(taskPatchFromDraft({ ...draft, model: undefined, branchSlug: ' ', estimate: '' }, false)).toEqual({
       title: 'Add login',
       description: 'wire GitHub OAuth',
       model: '',
@@ -103,7 +108,35 @@ describe('taskPatchFromDraft', () => {
       deepAnalysis: false,
       branch: 'develop',
       branchSlug: '',
+      estimateMinutes: null,
     });
+  });
+
+  it('leaves the estimate alone when the typed one is refused', () => {
+    expect(taskPatchFromDraft({ ...draft, estimate: 'soon' }, false)).not.toHaveProperty('estimateMinutes');
+  });
+});
+
+describe('«Оцінка, год»', () => {
+  it('reads hours with a comma or a dot, blank as «не оцінено», and refuses the rest', () => {
+    expect(estimateMinutesFromText('2')).toBe(120);
+    expect(estimateMinutesFromText('1,5')).toBe(90);
+    expect(estimateMinutesFromText(' 0.25 ')).toBe(15);
+    expect(estimateMinutesFromText('  ')).toBeNull();
+    expect(estimateMinutesFromText(undefined)).toBeNull();
+    expect(estimateMinutesFromText('0')).toBe('invalid');
+    expect(estimateMinutesFromText('-2')).toBe('invalid');
+    expect(estimateMinutesFromText('2h')).toBe('invalid');
+    // Rounds to no minute at all.
+    expect(estimateMinutesFromText('0.001')).toBe('invalid');
+  });
+
+  it('writes a card back into the field in the same notation', () => {
+    expect(estimateTextFromMinutes(90)).toBe('1,5');
+    expect(estimateTextFromMinutes(120)).toBe('2');
+    expect(estimateTextFromMinutes(80)).toBe('1,33');
+    expect(estimateTextFromMinutes(undefined)).toBe('');
+    expect(estimateMinutesFromText(estimateTextFromMinutes(90))).toBe(90);
   });
 });
 

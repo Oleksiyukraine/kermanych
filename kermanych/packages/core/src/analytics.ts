@@ -117,6 +117,8 @@ export type AnalyticsSessionRow = {
   minionOutcome?: MinionOutcome;
   /** The session it was forked from — for a Тестувальник run, the doer whose task it tested. */
   parentSessionId?: string;
+  /** The card's estimate as the launch stamped it (docs/specs/2026-11-09-task-estimate.md). */
+  estimateMinutes?: number;
   /** Neither a usage row nor a readable harness file: spend unknown (decision 6). */
   noHistory: boolean;
   /**
@@ -243,6 +245,20 @@ export type AnalyticsReport = {
      * buckets: by day for 7 days, by week above — one or two PRs a day make a daily median noise.
      */
     prLead: { granularity: "day" | "week"; buckets: string[]; medianMs: (number | null)[]; counts: number[] };
+  };
+  /**
+   * «Оцінка vs факт» (docs/specs/2026-11-09-task-estimate.md, decision 5), over the PRs the
+   * «Час до PR» figures use: how many there are, how many carried an estimate at launch, and,
+   * over those, the median estimate, the median time to PR and the median of each PR's
+   * `estimate ÷ time to PR` (above 1: faster than estimated). The medians are null without an
+   * estimated PR.
+   */
+  estimate: {
+    prs: number;
+    estimated: number;
+    estimateMedianMs: number | null;
+    leadMedianMs: number | null;
+    ratioMedian: number | null;
   };
   /** [weekday Monday = 0][local hour 0–23] → working ms. */
   rhythm: number[][];
@@ -444,8 +460,12 @@ export function analyticsReport(input: AnalyticsInput): AnalyticsReport {
   const leads = prs.flatMap((s) => {
     const at = Date.parse(s.prOpenedAt as string);
     const ms = at - Date.parse(s.createdAt);
-    return ms >= 0 ? [{ at, ms }] : [];
+    return ms >= 0 ? [{ at, ms, estimateMinutes: s.estimateMinutes }] : [];
   });
+  // «Оцінка vs факт»: a PR at the very moment of its launch has no ratio, so it needs a lead > 0.
+  const estimated = leads.flatMap(({ ms, estimateMinutes }) =>
+    estimateMinutes !== undefined && ms > 0 ? [{ ms, estimateMs: estimateMinutes * 60_000 }] : [],
+  );
   const leadGranularity = days <= 7 ? "day" : "week";
   const leadStarts = leadGranularity === granularity ? starts : bucketStarts(leadGranularity);
   const leadByBucket: number[][] = leadStarts.map(() => []);
@@ -663,6 +683,13 @@ export function analyticsReport(input: AnalyticsInput): AnalyticsReport {
     topSessions,
     minion,
     tester,
+    estimate: {
+      prs: leads.length,
+      estimated: estimated.length,
+      estimateMedianMs: median(estimated.map((e) => e.estimateMs)),
+      leadMedianMs: median(estimated.map((e) => e.ms)),
+      ratioMedian: median(estimated.map((e) => e.estimateMs / e.ms)),
+    },
     findings: { byKind, byStatus },
   };
 }

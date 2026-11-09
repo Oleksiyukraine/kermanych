@@ -364,6 +364,27 @@ describe("branchSlug on a task", () => {
   });
 });
 
+// «Оцінка vs факт» reads the estimate the launch stamps from the card, so the card must carry
+// it both ways, and an editor that blanks the field must be able to clear it.
+describe("estimateMinutes on a task", () => {
+  it("is selected and mapped, and absent while the column is null", async () => {
+    const { client, queries } = fakeClient({ data: [{ ...taskRow, estimate_minutes: 90 }, { ...taskRow, id: "t2", estimate_minutes: null }], error: null });
+    const [estimated, unestimated] = await listTasks(client, ["p1"]);
+    const [, columns] = queries[0]!.ops[0] as [string, string];
+    expect(columns.split(", ")).toContain("estimate_minutes");
+    expect(estimated!.estimateMinutes).toBe(90);
+    expect(unestimated).not.toHaveProperty("estimateMinutes");
+  });
+
+  it("sends the minutes on create and patches null to clear them", async () => {
+    const { client, queries } = fakeClient({ data: taskRow, error: null }, { data: taskRow, error: null });
+    await createTask(client, { projectId: "p1", title: "T", estimateMinutes: 120, createdBy: "u1" });
+    expect(queries[0]!.ops[0]).toEqual(["insert", { project_id: "p1", created_by: "u1", title: "T", estimate_minutes: 120 }]);
+    await patchTask(client, "t1", { estimateMinutes: null });
+    expect(queries[1]!.ops[0]).toEqual(["update", { estimate_minutes: null }]);
+  });
+});
+
 // The reports the api leaves on the card for the «Документація» and «Сесія» tabs. jsonb with a
 // `{}` default: a card no session has reported on yet must read as «no report», not as an empty
 // one, and a write must touch nothing but the two columns.

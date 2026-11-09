@@ -209,6 +209,29 @@
             </KTable>
           </section>
 
+          <!-- «Оцінка vs факт» (docs/specs/2026-11-09-task-estimate.md, decision 5): the PRs of the
+               period that carried an estimate at launch. Medians and coverage only — no sum of
+               «saved hours». -->
+          <section class="an__block">
+            <header class="an__block-head">
+              <h2 class="an__block-title">{{ t('analytics.estimate.title') }}</h2>
+              <span class="an__block-note">{{ t('analytics.estimate.lead') }}</span>
+            </header>
+            <template v-if="estimateRatio">
+              <div class="an__tiles">
+                <AnalyticsTile :label="estimateRatio.label" :value="estimateRatio.value" />
+                <AnalyticsTile :label="t('analytics.estimate.estimateMedian')" :value="time(shown.estimate.estimateMedianMs ?? 0)" />
+                <AnalyticsTile :label="t('analytics.estimate.leadMedian')" :value="time(shown.estimate.leadMedianMs ?? 0)" />
+              </div>
+              <p class="an__note mono">
+                {{ t('analytics.estimate.coverage', { n: shown.estimate.estimated, total: shown.estimate.prs }, shown.estimate.prs) }}
+              </p>
+            </template>
+            <p v-else class="an__muted">
+              {{ shown.estimate.prs > 0 ? t('analytics.estimate.none') : t('analytics.dynamics.prLeadEmpty') }}
+            </p>
+          </section>
+
           <section class="an__block">
             <header class="an__block-head">
               <h2 class="an__block-title">{{ t('analytics.unattended.title') }}</h2>
@@ -496,6 +519,18 @@ const prNote = computed(() => {
     tiles.prLeadMedianMs === null ? undefined : t('analytics.tile.prLead', { time: time(tiles.prLeadMedianMs) }),
   ].filter((p) => p !== undefined);
   return parts.length ? parts.join(' · ') : undefined;
+});
+
+// «Оцінка vs факт»: the median `estimate ÷ time to PR` read as a direction and a factor, «×3,2»
+// faster or slower than estimated — never as a percentage of hours «saved».
+const estimateRatio = computed(() => {
+  const ratio = shown.value?.estimate.ratioMedian;
+  if (ratio === null || ratio === undefined) return undefined;
+  const faster = ratio >= 1;
+  return {
+    label: t(faster ? 'analytics.estimate.faster' : 'analytics.estimate.slower'),
+    value: parallelism(faster ? ratio : 1 / ratio, locale.value),
+  };
 });
 
 // ── «Динаміка» ───────────────────────────────────────────────────────────────────

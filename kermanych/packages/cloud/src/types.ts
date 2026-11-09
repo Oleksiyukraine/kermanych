@@ -124,6 +124,10 @@ export type Task = {
   // «Гілка» box was filled in. Absent means the launch names it from the task with a model
   // (docs/specs/2026-11-04-custom-branch-name.md). Taken as typed; the launch slugifies it.
   branchSlug?: string;
+  // A person's estimate of the work, in minutes (docs/specs/2026-11-09-task-estimate.md):
+  // «Оцінка, год» in the forms, or a Jira/Plane time estimate on a shadow card. Absent means
+  // «не оцінено». The launch stamps it on the local session for «Оцінка vs факт».
+  estimateMinutes?: number;
   // Storage object paths in the `task-images` bucket (private). The board mints signed
   // URLs from these on demand; the row never carries a URL. Absent when the task has none.
   imagePaths?: string[];
@@ -170,6 +174,7 @@ export type TaskInsert = {
   kind?: string;
   branch?: string;
   branchSlug?: string;
+  estimateMinutes?: number;
   imagePaths?: string[];
   jiraKey?: string;
   linearKey?: string;
@@ -191,6 +196,7 @@ export type TaskPatch = {
   kind?: string;
   branch?: string;
   branchSlug?: string; // "" clears the column: the launch names the branch again
+  estimateMinutes?: number | null; // null clears the column: «не оцінено»
   imagePaths?: string[];
   jiraKey?: string;
   linearKey?: string;

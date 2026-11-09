@@ -283,6 +283,10 @@
           <KSelect v-model="draftPrefix" :label="t('board.editor.prefix')" :options="PREFIX_OPTIONS" placeholder="feature" />
         </div>
         <KField v-model="draftBranch" :label="t('board.editor.branch')" :placeholder="t('board.editor.branchPlaceholder')" />
+        <!-- «Оцінка, год» (docs/specs/2026-11-09-task-estimate.md): optional; a refused value is
+             said under the field and stops the save (submitEditor). -->
+        <KField v-model="draftEstimate" :label="t('board.editor.estimate')" :placeholder="t('board.editor.estimatePlaceholder')" />
+        <p v-if="estimateInvalid" class="board__error" role="alert">{{ t('agents.launcher.estimateInvalid') }}</p>
         <!-- «Дозволити автовиконання». Only the author switches it on (tasks_guard() refuses
              anyone else), so for a colleague's card the box is locked while it is off — and stays
              clickable while on, because anyone may switch it off. This form does not show «Глибокий
@@ -463,7 +467,15 @@ import { api } from '../lib/api';
 import { installReconcile } from '../lib/reconcile';
 import { UNASSIGNED, filterTasks, scopedProjectIds } from '../lib/scope';
 import { ASSIGNMENT_REFUSALS } from '../lib/cloud-errors';
-import { autoRunSwitchLocked, boardTasks, canAssignTask, canRunTask, cardModesFromCard } from '../lib/tasks-view';
+import {
+  autoRunSwitchLocked,
+  boardTasks,
+  canAssignTask,
+  canRunTask,
+  cardModesFromCard,
+  estimateMinutesFromText,
+  estimateTextFromMinutes,
+} from '../lib/tasks-view';
 import { cardDecisionReason, cardNotNeededReason } from '../lib/minion';
 import { defaultLaunchMode, nativeRuntimeFor } from '../lib/native-session';
 import JiraBoardView from 'components/jira/JiraBoardView.vue';
@@ -1274,6 +1286,9 @@ const draftModel = ref('');
 const draftEffort = ref<ThinkingLevel | ''>('');
 const draftPrefix = ref('');
 const draftBranch = ref('');
+// «Оцінка, год» as typed; lib/tasks-view turns it into minutes.
+const draftEstimate = ref('');
+const estimateInvalid = computed(() => estimateMinutesFromText(draftEstimate.value) === 'invalid');
 // Creation only: while editing, the select writes through onAssign and the card itself is
 // the value. '' is «не призначено».
 const draftAssignee = ref('');
@@ -1388,6 +1403,7 @@ function openCreate(): void {
   draftEffort.value = createDefault?.defaultEffort ?? '';
   draftPrefix.value = '';
   draftBranch.value = '';
+  draftEstimate.value = '';
   draftAssignee.value = '';
   draftAutoRun.value = false;
   clearDraftImages();
@@ -1404,6 +1420,7 @@ function openEdit(task: Task): void {
   draftEffort.value = task.effort ?? '';
   draftPrefix.value = task.prefix ?? '';
   draftBranch.value = task.branch ?? '';
+  draftEstimate.value = estimateTextFromMinutes(task.estimateMinutes);
   // Reset with the rest of the draft set rather than left over from a previous dialog: only
   // the create branch reads it, and a half-reset draft set is a trap for the next edit here.
   draftAssignee.value = task.assigneeId ?? '';
@@ -1425,6 +1442,11 @@ async function submitEditor(): Promise<void> {
     }
   }
   editorError.value = null;
+  const estimate = estimateMinutesFromText(draftEstimate.value);
+  if (estimate === 'invalid') {
+    editorError.value = t('agents.launcher.estimateInvalid');
+    return;
+  }
   // Blank strings are meaningful: toTaskRow() turns them into NULL, which is how a user
   // clears a launch param they set earlier. The project is immutable after creation —
   // moving a task between projects would move it between membership sets.
@@ -1453,7 +1475,8 @@ async function submitEditor(): Promise<void> {
   submitting.value = true;
   try {
     if (editingId.value) {
-      if (!(await board.updateTaskFields(editingId.value, fields))) {
+      // A blank field clears the estimate on an edit: null is «не оцінено».
+      if (!(await board.updateTaskFields(editingId.value, { ...fields, estimateMinutes: estimate }))) {
         editorError.value = t('board.editor.updateFailed');
         return;
       }
@@ -1468,6 +1491,7 @@ async function submitEditor(): Promise<void> {
           {
             projectId,
             ...fields,
+            ...(estimate !== null ? { estimateMinutes: estimate } : {}),
             // «не призначено» is still the default: the board is the shared backlog. An assignee
             // picked here is the «this one is yours» case, and tasks_guard refuses a non-member.
             ...(draftAssignee.value ? { assigneeId: draftAssignee.value } : {}),

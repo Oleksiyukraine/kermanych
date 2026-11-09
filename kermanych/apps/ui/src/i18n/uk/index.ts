@@ -432,6 +432,10 @@ export const uk = {
       branchPlaceholder: 'згенерується із задачі',
       branchNameOwn: 'ваша назва; якщо така гілка вже є, додасться -2',
       branchNameSlugged: 'гілка буде {branch}',
+      estimateLabel: 'Оцінка, год',
+      estimatePlaceholder: 'не оцінено',
+      estimateHint: 'необовʼязково; «Аналітика» порівняє її з часом до PR',
+      estimateInvalid: 'оцінка — це кількість годин більше нуля, наприклад 1,5',
       typeLabel: 'Тип',
       worktreeLabel: 'Ізолювати у worktree',
       worktreeDesc: 'Окрема тека, окремий чекаут. Агент не чіпає твій робочий стан.',
@@ -1210,6 +1214,8 @@ export const uk = {
       prefix: 'Тип',
       branch: 'Базова гілка',
       branchPlaceholder: 'за замовчуванням проєкту',
+      estimate: 'Оцінка, год',
+      estimatePlaceholder: 'не оцінено',
       assignee: 'Виконавець',
       unassignedName: 'Не призначено',
       unassigned: 'не призначено',
@@ -3560,6 +3566,17 @@ export const uk = {
       cost: 'Витрати',
       deleted: 'видалена сесія',
       open: 'Відкрити сесію',
+    },
+    // «Оцінка vs факт» (docs/specs/2026-11-09-task-estimate.md, decision 5).
+    estimate: {
+      title: 'Оцінка vs факт',
+      lead: 'Календарний час від запуску до PR проти оцінки з картки на момент запуску — не години людини',
+      faster: 'Швидше за оцінку',
+      slower: 'Повільніше за оцінку',
+      estimateMedian: 'Медіана оцінки',
+      leadMedian: 'Медіана факту',
+      coverage: '{n} з {total} PR за період мав оцінку | {n} з {total} PR за період мали оцінку | {n} з {total} PR за період мали оцінку',
+      none: 'Жоден PR за цей період не мав оцінки. Її вказують у картці — поле «Оцінка, год».',
     },
     // «Зроблено без тебе» (docs/specs/2026-11-08-analytics-time-to-pr.md, decision 5): counts only.
     unattended: {

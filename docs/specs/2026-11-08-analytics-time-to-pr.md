@@ -83,7 +83,8 @@ time from a session's start to its PR.
    it has no PR. The rest come from Kermanych's own board, whose cards carry no estimate. The
    figure would rest on nothing. It is left to the operator whether to add an estimate to the
    card; that is a cloud migration, and an estimate written once the task is already going to an
-   agent leans toward the agent.
+   agent leans toward the agent. The operator chose to add the field:
+   `docs/specs/2026-11-09-task-estimate.md`.
 
 ## Changes
 

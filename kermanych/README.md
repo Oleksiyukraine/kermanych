@@ -659,6 +659,11 @@ the launcher's «Гілка» field (NULL: the launch names the branch from the 
 the content `tasks_guard()` watches for auto-run. It only adds, but every task read selects the
 column, so push it before shipping a client that knows it.
 
+`20261109090000_task_estimate.sql` adds `tasks.estimate_minutes`, the card's «Оцінка, год» in
+minutes (NULL: not estimated; a check keeps it above zero). `tasks_guard()` is unchanged: an
+estimate is not what the card asks for, so setting it never switches auto-run off. It only adds,
+but every task read selects the column, so push it before shipping a client that knows it.
+
 ### Running against a local stack or your own project
 
 Everything below is for pointing Kermanych somewhere OTHER than the team's
@@ -1487,7 +1492,10 @@ developer's machine. The direction is always task → session.
 
 1. **Create** — any member of the project's workspace creates a task, from the board
    (`/#/board`) or from «Агенти» / «Чат», with a title, a description and optional launch
-   params (model, branch prefix, base branch). A card filed from the board is
+   params (model, branch prefix, base branch) and an optional «Оцінка, год» — a person's
+   estimate in hours (`1,5` or `1.5`), stored as `tasks.estimate_minutes`. A launch copies it
+   onto the local session for «Аналітика» → «Оцінка vs факт»; a Jira or Plane launch takes the
+   ticket's own time estimate instead (a points estimate is not hours and is left out). A card filed from the board is
    unassigned unless its author picks someone; a card filed from «Агенти» or «Чат» is
    assigned to its author, because that is the machine about to run it. Either way it is a
    row in the cloud `tasks` — there is no local-only task — so the whole workspace sees it.
@@ -2114,12 +2122,15 @@ local SQLite only, nothing is sent to the cloud, and every signed-in user sees t
   by model, project or session type, and of «Час до PR» — the median time to PR of the PRs
   opened in each day (7 days) or week (longer periods), unsplit, since medians do not stack; a
   weekday × hour heat map; where the period's agent sessions are now; per-model and per-project
-  tables; the ten dearest sessions (a row opens the session); «Зроблено без тебе» — Посіпака's
+  tables; the ten dearest sessions (a row opens the session); «Оцінка vs факт» — over the
+  period's PRs that carried an estimate at launch, how many there are, the median estimate, the
+  median time to PR and the median of each PR's `estimate ÷ time to PR`, worded «швидше / повільніше
+  за оцінку ×N» (spec: `docs/specs/2026-11-09-task-estimate.md`); «Зроблено без тебе» — Посіпака's
   runs by outcome, findings by kind and status, and the tasks Тестувальник tested (runs on the
   same task count once). These are counts only: nothing is converted into «saved hours», because
   nothing records how long the same work would take by hand.
 - **Where the figures come from.** A local ledger (`usage_hours`, `activity_spans`,
-  `analytics_meta`, `sessions.pr_opened_at`) recorded from the first start of this version: a
+  `analytics_meta`, `sessions.pr_opened_at`, `sessions.estimate_minutes`) recorded from the first start of this version: a
   managed session's turns where the «Сесія» total is counted, a native session's harness file
   after each turn, and the coarse status of every session (working, waiting for input, waiting for
   a slot). The ledger outlives a deleted session, goes with a removed project, and rows older than
