@@ -1283,7 +1283,7 @@ of an iOS Simulator or an Android Virtual Device without a window, installs the 
 it and shows the screen live in the tab, in the desktop app and the web build alike.
 
 - **Prerequisites.** Kermanych finds, and never installs: Xcode (`xcode-select -p`) for iOS, the
-  Android SDK (`ANDROID_HOME`, then `ANDROID_SDK_ROOT`, then `~/Library/Android/sdk`) with the
+  Android SDK (`ANDROID_HOME`, then `ANDROID_SDK_ROOT`, then `~/Library/Android/sdk` on macOS or `~/Android/Sdk` on Linux) with the
   emulator and `adb` for Android. A missing one shows in the tab with what to install. iOS runs on
   Apple Silicon only: the screen and input go through [serve-sim](https://github.com/EvanBacon/serve-sim),
   pinned in the api's dependencies; `KERMANYCH_SERVE_SIM=/path/to/serve-sim` uses another copy
