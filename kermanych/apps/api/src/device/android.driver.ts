@@ -31,9 +31,12 @@ const KEYCODE_PASTE = 279;
 // DeviceInput `key` names are the W3C key values the emulator's sendKey understands as they are.
 const W3C_KEYS = new Set(["Enter", "Backspace", "Tab", "Escape", "ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "Delete"]);
 
+// Where Android Studio installs the SDK by default: ~/Android/Sdk on Linux, ~/Library/Android/sdk on macOS.
+const STUDIO_SDK_DIR = process.platform === "linux" ? ["Android", "Sdk"] : ["Library", "Android", "sdk"];
+
 // The SDK of decision 3: ANDROID_HOME, then ANDROID_SDK_ROOT, then the Android Studio default.
 export function androidSdk(): string | null {
-  for (const dir of [process.env.ANDROID_HOME, process.env.ANDROID_SDK_ROOT, join(homedir(), "Library", "Android", "sdk")]) {
+  for (const dir of [process.env.ANDROID_HOME, process.env.ANDROID_SDK_ROOT, join(homedir(), ...STUDIO_SDK_DIR)]) {
     if (dir?.trim() && existsSync(dir)) return dir;
   }
   return null;
@@ -92,7 +95,7 @@ export class AndroidDriver implements DeviceDriver {
 
   async tools(): Promise<DeviceToolStatus> {
     const dir = androidSdk();
-    if (!dir) return { ok: false, reason: "Android SDK не знайдено: встановіть Android Studio (або Android SDK) і задайте ANDROID_HOME, якщо SDK не в ~/Library/Android/sdk" };
+    if (!dir) return { ok: false, reason: `Android SDK не знайдено: встановіть Android Studio (або Android SDK) і задайте ANDROID_HOME, якщо SDK не в ~/${STUDIO_SDK_DIR.join("/")}` };
     const t = sdkTools(dir);
     if (!existsSync(t.emulator)) return { ok: false, reason: `В Android SDK (${dir}) немає емулятора: встановіть «Android Emulator» у SDK Manager Android Studio` };
     if (!existsSync(t.adb)) return { ok: false, reason: `В Android SDK (${dir}) немає adb: встановіть «Android SDK Platform-Tools» у SDK Manager Android Studio` };
