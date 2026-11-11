@@ -72,13 +72,27 @@ const emit = defineEmits<{
   border-bottom: 1px solid var(--k-line);
 }
 
+// Too many tabs for the row (a narrow detail pane) scroll sideways under the trailing controls
+// instead of painting over them; a focused tab scrolls itself into view. The padding, undone by
+// the negative margin so the row keeps its size, keeps the 2px focus rings and the active
+// underline (which sits on the row's rule) inside the clip.
 .k-tabs__list {
   display: flex;
   gap: var(--k-sp-4);
   min-width: 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
+  padding: 2px 2px 1px;
+  margin: -2px -2px -1px;
+
+  &::-webkit-scrollbar {
+    display: none;
+  }
 }
 
 .k-tabs__item {
+  flex: none;
   display: inline-flex;
   align-items: baseline;
   border-bottom: 2px solid transparent;
@@ -99,6 +113,7 @@ const emit = defineEmits<{
   align-items: baseline;
   gap: 6px;
   font-family: var(--k-font-ui);
+  white-space: nowrap;
   font-size: var(--k-fs-base);
   font-weight: var(--k-fw-medium);
   line-height: 1;

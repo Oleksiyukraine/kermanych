@@ -23,7 +23,7 @@
         :size="22"
       />
     </div>
-    <div class="k-kanban-card__branch">{{ branch }}</div>
+    <div v-tip.overflow="branch" class="k-kanban-card__branch">{{ branch }}</div>
     <div class="k-kanban-card__meta">
       <!-- A teammate's ▶ on this card launches the deep analysis too, so the board says so. -->
       <KAnalysisMark v-if="deepAnalysis" />
@@ -140,7 +140,13 @@ const emit = defineEmits<{ click: [] }>();
   white-space: nowrap;
 }
 
+// One line inside the card: a long branch name ellipsizes (full name on hover) instead of
+// running past the card's edge.
 .k-kanban-card__branch {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   font-family: var(--k-font-mono);
   font-size: var(--k-fs-xs);
   color: var(--k-faint);

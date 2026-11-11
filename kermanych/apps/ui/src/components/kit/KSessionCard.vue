@@ -504,18 +504,21 @@ const spend = computed(() => {
 // The one row under the name: status, marks, coins. Only the status line may shrink — the
 // marks say how the agent works and the coins are a single glyph, so neither clips. The row
 // is as tall as a mark chip (an xs icon in 2px padding) whether or not the card has one, so
-// every card of a kind is the same height.
+// every card of a kind is the same height. The status starts from zero width and fills what
+// is left, so the row breaks only when the marks alone outgrow a narrow card — they drop to a
+// second line instead of running past its edge.
 .k-session-card__row {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: var(--k-sp-2);
+  gap: var(--k-sp-1) var(--k-sp-2);
   min-width: 0;
   min-height: calc(var(--k-icon-xs) + 4px);
 }
 
 .k-session-card__status {
   display: flex;
-  flex: 1 1 auto;
+  flex: 1 1 0;
   align-items: center;
   gap: var(--k-sp-2);
   min-width: 0;
