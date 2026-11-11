@@ -40,7 +40,7 @@
 // Label weight is identical in every state on purpose: switching the active
 // segment to semibold would re-measure the strip and nudge its neighbours
 // sideways every time the thumb lands.
-import { computed, ref } from 'vue';
+import { computed, nextTick, onMounted, ref, watch } from 'vue';
 import { useSlidingIndicator } from '../../composables/useSlidingIndicator';
 
 // `options` is readonly because this component only ever reads it — that lets a
@@ -78,6 +78,21 @@ function setBtn(value: string, el: unknown): void {
   if (el instanceof HTMLElement) btns.set(value, el);
   else btns.delete(value);
 }
+
+// A host MAY let the strip scroll sideways when the row is too narrow for it (the shell header
+// does). The active segment is then kept in view, scrolling the strip alone — scrollIntoView
+// would scroll the page's ancestors too.
+function revealActive(): void {
+  const root = rootEl.value;
+  const el = btns.get(props.modelValue);
+  if (!root || !el || root.scrollWidth <= root.clientWidth) return;
+  const left = el.offsetLeft;
+  const right = left + el.offsetWidth;
+  if (left < root.scrollLeft) root.scrollLeft = left;
+  else if (right > root.scrollLeft + root.clientWidth) root.scrollLeft = right - root.clientWidth;
+}
+onMounted(revealActive);
+watch(active, () => void nextTick(revealActive));
 
 const STEP: Record<string, number> = { ArrowRight: 1, ArrowDown: 1, ArrowLeft: -1, ArrowUp: -1 };
 

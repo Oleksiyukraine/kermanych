@@ -294,27 +294,27 @@ async function copyManifest(): Promise<void> {
   color: var(--k-text);
 }
 
+// One shared label column sized to the widest label, so a long translation pushes the values
+// over instead of running into them.
 .rs__facts {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 6px var(--k-sp-3);
   margin: 0;
+  font-size: var(--k-fs-sm);
 
   div {
-    display: flex;
-    gap: var(--k-sp-2);
-    font-size: var(--k-fs-sm);
+    display: contents;
   }
 
   dt {
-    width: 72px;
-    flex: none;
     color: var(--k-muted);
   }
 
   dd {
     margin: 0;
     color: var(--k-text);
+    overflow-wrap: anywhere;
   }
 }
 

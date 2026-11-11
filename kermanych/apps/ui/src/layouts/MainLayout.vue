@@ -2226,8 +2226,20 @@ const pullHint = computed(() => {
   text-overflow: ellipsis;
 }
 
+// The nav is the widest thing in the row and the one that gives way on a narrow window: it
+// shrinks first (a large shrink factor against the brand's 1) and scrolls its segments
+// sideways, so it never paints over the brand and the project switcher. 120px keeps a couple
+// of segments in view before the brand starts to give up its switcher.
 .shell__nav {
   margin: 0 auto;
+  flex: 0 1000 auto;
+  min-width: 120px;
+  overflow-x: auto;
+  scrollbar-width: none;
+
+  &::-webkit-scrollbar {
+    display: none;
+  }
 }
 
 .shell__actions {
