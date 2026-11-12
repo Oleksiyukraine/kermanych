@@ -3,6 +3,8 @@ import { contextBridge, ipcRenderer } from 'electron';
 // main passes --api-base=<url> and --ui-key=<secret> via webPreferences.additionalArguments.
 const arg = process.argv.find((a) => a.startsWith('--api-base='));
 const apiBase = arg ? arg.slice('--api-base='.length) : 'http://localhost:4317/api';
+// main adds --app-packaged for a packaged build (app.isPackaged is main-only).
+const packaged = process.argv.includes('--app-packaged');
 const keyArg = process.argv.find((a) => a.startsWith('--ui-key='));
 const uiKey = keyArg ? keyArg.slice('--ui-key='.length) : undefined;
 
@@ -85,4 +87,12 @@ contextBridge.exposeInMainWorld('kermanych', {
     onShortcut: (cb) => subscribe<[string, KermanychBrowserShortcut]>('kermanych:browser:shortcut', cb),
     onDownload: (cb) => subscribe<[string, { name: string; path: string }]>('kermanych:browser:download', cb),
   } satisfies KermanychBrowserBridge,
+  updates: {
+    packaged,
+    state: () => ipcRenderer.invoke('kermanych:update:state'),
+    check: () => ipcRenderer.invoke('kermanych:update:check'),
+    install: () => ipcRenderer.send('kermanych:update:install'),
+    changelog: (version) => ipcRenderer.invoke('kermanych:update:changelog', version),
+    onState: (cb) => subscribe<[KermanychUpdateState]>('kermanych:update:state-changed', cb),
+  } satisfies KermanychUpdatesBridge,
 });

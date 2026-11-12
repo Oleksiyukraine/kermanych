@@ -239,6 +239,8 @@
            the page, toggled from the footer, and persists across views. Under both sits the
            integrated terminal panel, as in an IDE: it takes its height from the work area. -->
       <div class="shell__main">
+        <!-- A downloaded app update: «What's new» and «Restart». Empty otherwise. -->
+        <AppUpdateBanner />
         <div ref="workareaEl" class="shell__workarea">
           <template v-if="store.fileManagerVisible && store.fileManagerSide === 'left'">
             <KFileManager class="shell__fm shell__fm--left" :style="{ width: `${fmLeft.size.value}px` }" />
@@ -610,6 +612,7 @@ import KField from 'components/kit/KField.vue';
 import KSelect from 'components/kit/KSelect.vue';
 import KBtn from 'components/kit/KBtn.vue';
 import KToast from 'components/kit/KToast.vue';
+import AppUpdateBanner from 'components/AppUpdateBanner.vue';
 import KConfirmDialog from 'components/kit/KConfirmDialog.vue';
 import KProgressBar from 'components/kit/KProgressBar.vue';
 import { useActivity } from '../stores/activity';

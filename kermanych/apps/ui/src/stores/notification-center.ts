@@ -56,6 +56,7 @@ import { globalTr } from '../boot/i18n';
 import { bounceDock } from '../lib/dock';
 import { reasonText } from '../lib/schedules';
 import { isUnseen, mergeFeed, type NotificationItem } from '../lib/notification-feed';
+import { useAppUpdate } from './app-update';
 
 export type { NotificationItem };
 
@@ -90,6 +91,7 @@ export const useNotificationCenter = defineStore('notification-center', () => {
   const ui = useOrchestrator();
   const overlay = useAssistantOverlay();
   const schedules = useSchedules();
+  const appUpdate = useAppUpdate();
 
   // The cloud rows. Newest first, at most SKILL_IMPROVEMENTS_KEEP: the cloud keeps no more, so
   // neither does the column.
@@ -108,8 +110,8 @@ export const useNotificationCenter = defineStore('notification-center', () => {
   // Opened entries, by id. A record's text never changes; its state is patched from Realtime.
   const details = ref<Record<string, SkillImprovementDetail>>({});
 
-  // The one feed: cloud improvements and local slips by time (lib/notification-feed.ts).
-  const feed = computed(() => mergeFeed(items.value.map((i) => i.entry), schedules.slips ?? []));
+  // The one feed: cloud improvements, local slips and local app updates by time (lib/notification-feed.ts).
+  const feed = computed(() => mergeFeed(items.value.map((i) => i.entry), schedules.slips ?? [], appUpdate.updates));
   const unread = computed(() => feed.value.filter(isUnseen).length);
 
   let started = false;
@@ -260,8 +262,10 @@ export const useNotificationCenter = defineStore('notification-center', () => {
     }
   }
 
-  // Both sources at once; either refusal is the action's error, and its rows stay new.
+  // Every source at once; a refusal is the action's error, and its rows stay new. The updates
+  // are this machine's own and cannot fail.
   async function markAllSeen(): Promise<void> {
+    appUpdate.markUpdatesSeen(appUpdate.updates.map((u) => u.id));
     const slips = (schedules.slips ?? []).filter((s) => !s.seen).map((s) => s.id);
     await Promise.all([markSeen(items.value.map((i) => i.entry.id)), schedules.markSlipsSeen(slips)]);
   }

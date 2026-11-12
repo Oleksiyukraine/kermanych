@@ -104,6 +104,7 @@ export {
   getMySkillImprovementLevel,
   setMySkillImprovementLevel,
 } from "./account";
+export { getMinAppVersion } from "./app-release";
 
 export type { CloudProjectPatch, CloudProjectInsert } from "./projects";
 export {
