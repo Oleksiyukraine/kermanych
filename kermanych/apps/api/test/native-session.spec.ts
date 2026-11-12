@@ -596,3 +596,23 @@ describe("api start", () => {
     expect(registry.listSessions().find((s) => s.id === parked.id)?.status).toBe("queued");
   });
 });
+
+describe("claude history", () => {
+  // A row whose worktree is gone has nothing under its cwd; without `dir` the SDK searches
+  // every project, so its history still shows.
+  it("reads again without the cwd when the cwd holds no history", async () => {
+    const { native, create } = make();
+    const s = create("claude-code", { ompSessionId: "11111111-2222-3333-4444-555555555555" });
+    const asked: unknown[] = [];
+    native.readClaudeHistory = async (_id, options) => {
+      asked.push(options);
+      if (options?.dir) return [];
+      return [
+        { type: "assistant", uuid: "u1", session_id: "x", parent_tool_use_id: null, message: { role: "assistant", content: [{ type: "text", text: "found it" }] } },
+      ] as never;
+    };
+    const { entries } = await native.transcript(s);
+    expect(asked).toEqual([{ dir }, undefined]);
+    expect(entries).toContainEqual(expect.objectContaining({ kind: "assistant_text", text: "found it" }));
+  });
+});

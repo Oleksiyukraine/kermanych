@@ -202,8 +202,8 @@ export const useOnboarding = defineStore('onboarding', () => {
   }
 
   // Open the checklist on first sight of a fresh account: signed in, not permanently
-  // dismissed, and not yet able to launch. The caller gates on `auth.runtime` first so the
-  // one-time runtime picker (MainLayout) is answered before this stacks over it.
+  // dismissed, and not yet able to launch. The caller waits for the provider gate (MainLayout)
+  // to be settled and down, so the one-time provider picker never has this stacked over it.
   function maybeAutoOpen(): void {
     if (autoShown) return;
     autoShown = true;

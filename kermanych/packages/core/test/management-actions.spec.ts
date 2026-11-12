@@ -529,7 +529,7 @@ test("a ticket.create without a project is refused rather than filed on a guess"
 test("a ticket.create refuses a prefix outside the app's vocabulary", () => {
   expect(
     validateManagementAction({ kind: "ticket.create", project: "Альфа", ticket: TICKET, prefix: "hotfix" }),
-  ).toMatchObject({ error: { code: "ticket_prefix_unknown", text: 'невідомий тип задачі "hotfix" (feature, fix, refactoring, chore, design)' } });
+  ).toMatchObject({ error: { code: "ticket_prefix_unknown", text: 'невідомий тип задачі "hotfix" (feature, fix, refactoring, chore, synergy)' } });
 });
 
 // The requirement this whole action exists to satisfy: a ticket that reaches a board contains

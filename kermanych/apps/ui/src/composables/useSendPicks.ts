@@ -2,7 +2,7 @@
 // composer uses. A managed session gets the crops as images; a native one their file paths in
 // the text (it takes text only — lib/browser-picks.ts). A refusal (`native_busy`, a dead child)
 // keeps the tray so nothing the operator wrote is lost. Shared by every page that hosts a
-// KBrowserPane (Агенти, Дизайн), so the tray sends the same way wherever it is.
+// KBrowserPane (Агенти, Синергія), so the tray sends the same way wherever it is.
 import { ref, type Ref } from 'vue';
 import type { Session } from '@kermanych/core';
 import { useOrchestrator } from 'stores/orchestrator';
@@ -30,12 +30,16 @@ export function useSendPicks(opts: SendPicksOptions): { send: (s: Session) => Pr
     const native = !!s.native;
     sending.value = true;
     try {
-      await store.sendMessage(
-        s.id,
-        composePicksMessage(picks, { native, comment: browser.notes[s.id] }),
-        opts.mode(s),
-        picksImages(picks, { native }),
-      );
+      // A Синергія session: sendMessage itself attaches the tray and the page (decision 8 of
+      // docs/specs/2026-11-06-synergy.md, lib/synergy-outgoing.ts) and empties the tray.
+      if (s.synergy) await store.sendMessage(s.id, '', opts.mode(s));
+      else
+        await store.sendMessage(
+          s.id,
+          composePicksMessage(picks, { native, comment: browser.notes[s.id] }),
+          opts.mode(s),
+          picksImages(picks, { native }),
+        );
       browser.clearPicks(s.id);
       opts.onSent?.(s);
     } catch (e) {

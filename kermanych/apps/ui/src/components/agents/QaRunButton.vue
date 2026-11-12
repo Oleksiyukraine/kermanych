@@ -17,11 +17,12 @@
       />
       <KBtn
         variant="secondary"
+        class="qa-run__btn"
         :disabled="state.kind === 'refused'"
         :loading="launch.busy.value || (state.kind === 'ready' && (detailsPending || previewPending))"
         :title="hint"
         @click="onRun"
-      >{{ t('tester.run.label') }}</KBtn>
+      >{{ label ?? t('tester.run.label') }}</KBtn>
       <span v-if="hint" class="qa-run__hint">{{ hint }}</span>
     </template>
   </div>
@@ -47,7 +48,9 @@ import KBtn from 'components/kit/KBtn.vue';
 import KChipSelect from 'components/kit/KChipSelect.vue';
 import KSpinner from 'components/kit/KSpinner.vue';
 
-const props = defineProps<{ session: Session }>();
+// `label`: the FinishSheet's step is already titled «Тестування», so it passes a bare «Виконати»;
+// the QA tab keeps the full «Виконати тестування».
+const props = defineProps<{ session: Session; label?: string }>();
 const emit = defineEmits<{ select: [sessionId: string] }>();
 
 const { t } = useI18n();
@@ -146,6 +149,12 @@ function onRun(): void {
   justify-content: flex-end;
   align-items: center;
   gap: 8px;
+}
+
+// One line, like the FinishSheet's other step buttons: a two-line label made the step taller and
+// pushed the scope chip onto a row of its own.
+.qa-run__btn {
+  white-space: nowrap;
 }
 
 // The reason sits on its own line under the button, never squeezing the header beside it.

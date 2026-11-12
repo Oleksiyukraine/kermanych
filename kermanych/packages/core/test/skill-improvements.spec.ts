@@ -8,6 +8,9 @@ import {
   shareTarget,
   skillTextDiff,
   validateImproveSkillArgs,
+  skillLessonRule,
+  skillReflectionBlock,
+  isSkillImprovementLevel,
   type SkillImprovement,
 } from "../src/skill-improvements";
 
@@ -43,6 +46,41 @@ describe("validateImproveSkillArgs", () => {
     const v = validateImproveSkillArgs(args);
     expect(v.ok).toBe(false);
     expect(!v.ok && v.error).toMatch(error);
+  });
+});
+
+describe("the level's lesson rule", () => {
+  const on = ["conservative", "moderate", "active"] as const;
+
+  it("raises the bar step by step: moderate keeps every conservative case, and no level sets a quota", () => {
+    const [, conservativeWhen] = /^(Improve a skill when:.*?not obvious\.)/.exec(skillLessonRule("conservative"))!;
+    expect(skillLessonRule("moderate")).toContain(conservativeWhen);
+    expect(skillLessonRule("moderate")).toMatch(/Repeated friction/);
+    expect(skillLessonRule("conservative")).not.toMatch(/Repeated friction/);
+    expect(skillLessonRule("active")).toMatch(/Review every library skill you used/);
+    for (const level of on) expect(skillLessonRule(level)).not.toMatch(/at least one|Most sessions/);
+  });
+
+  it.each(on)("keeps the shared exclusions at %s", (level) => {
+    const rule = skillLessonRule(level);
+    expect(rule).toMatch(/rests on something that happened in this session/);
+    expect(rule).toMatch(/a risk that could have happened is not a lesson/);
+    expect(rule).toMatch(/Kermanych's own turn instruction .* report it with report_finding and leave the skills alone/);
+    expect(rule).toMatch(/one-off task/);
+    expect(rule).toMatch(/report_finding/);
+    expect(rule).toMatch(/secrets, tokens or personal data/);
+  });
+
+  it.each(on)("frames the reflection step at %s so an overridden instruction does not cancel it", (level) => {
+    const block = skillReflectionBlock(level);
+    expect(block).toContain(skillLessonRule(level));
+    expect(block).toMatch(/applies whatever the instruction above says/);
+    expect(block).toMatch(/not yet made in this session, call `improve_skill`/);
+  });
+
+  it("knows the four stored levels and nothing else", () => {
+    expect(["off", "conservative", "moderate", "active"].every(isSkillImprovementLevel)).toBe(true);
+    expect([true, "on", "", null].some(isSkillImprovementLevel)).toBe(false);
   });
 });
 

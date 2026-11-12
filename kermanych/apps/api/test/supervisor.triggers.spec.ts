@@ -198,7 +198,7 @@ describe("an operator trigger fires before the message is forwarded", () => {
     expect(launch.text).toBe("тригер «Хоче ПР» запускає «resolve-conflict»");
   });
 
-  // The picker offers every instruction-carrying agent but the card/design ones, «Комітер»
+  // The picker offers every instruction-carrying agent but the card and «Синергія» ones, «Комітер»
   // included; a trigger naming it must start it, not end in «агента «commit» не існує».
   it("runs «Комітер» for a trigger naming `commit`", async () => {
     const { sup, registry, project } = make([t({ agentId: "commit", pattern: "закоміть" })]);

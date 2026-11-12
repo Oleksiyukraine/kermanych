@@ -133,7 +133,6 @@
               :status-line="markdownPreview(item.card.description)"
               :model="item.card.model"
               :deep-analysis="item.card.deepAnalysis"
-              :design="item.card.design"
               :auto-run="item.card.autoRun"
               :needs-decision="cardDecisionReason(t, item.card)"
               :not-needed="cardNotNeededReason(t, item.card)"
@@ -158,8 +157,8 @@
               :model="item.session.model"
               :harness="item.session.kind === 'task' ? undefined : sessionLaunchMode(item.session)"
               :deep-analysis="item.session.deepAnalysis"
-              :design="!!item.session.designDir"
               :minion="item.session.minion"
+              :schedule="item.session.schedule?.name"
               :needs-decision="sessionDecisionReason(t, item.session)"
               :not-needed="sessionNotNeededReason(t, item.session)"
               :usage="item.session.usage"
@@ -247,8 +246,8 @@
             >{{ shownName }}</span>
             <KTag v-if="selectedSession.branch" class="agents__detail-branch">⑂ {{ selectedSession.branch }}</KTag>
             <KAnalysisMark v-if="selectedSession.deepAnalysis" />
-            <KDesignMark v-if="selectedSession.designDir" />
-            <KMinionMark v-if="selectedSession.minion" kind="running" />
+              <KMinionMark v-if="selectedSession.minion" kind="running" />
+            <KScheduleMark v-if="selectedSession.schedule" :name="selectedSession.schedule.name" />
             <!-- A tester walks this session's QA checklist: the run is one click away. -->
             <button
               v-if="runningTester"
@@ -273,6 +272,17 @@
             <!-- Primary session actions — one column that outlives the tab choice, so finish and
                  defer are on screen in Лог, Зміни and Сесія alike. -->
             <div class="agents__actions">
+              <!-- The voice conversation runs only through KPanel («Керманич»): a native agent
+                   shows 🎤 blocked with the reason — aria-disabled, so v-tip still gets
+                   mouseenter/focusin; a click states the reason as a toast. -->
+              <KIconButton
+                v-if="selectedSession.native"
+                class="agents__blocked-btn"
+                aria-disabled="true"
+                :title="t('agents.native.managedOnly')"
+                :aria-label="`${t('kit.composer.voice')} — ${t('agents.native.managedOnly')}`"
+                @click="explainBlocked(t('agents.native.managedOnly'))"
+              ><KIcon name="mic" /></KIconButton>
               <KIconButton
                 v-if="(store.subagents[selectedSession.id]?.length ?? 0) > 0"
                 :title="t('agents.actions.agentMap')"
@@ -315,6 +325,27 @@
                   @click="onUnarchive(selectedSession)"
                 >⤒</KIconButton>
               </template>
+              <!-- «Посіпака» (docs/specs/2026-11-09-minion-takeover.md): the composer's `/minion`
+                   one click away, beside ⋯ — the agent decides what is left and opens the PR. A
+                   native agent shows it blocked with the reason, like 🎤. -->
+              <template v-if="minionTakeoverAllowed(selectedSession)">
+                <KIconButton
+                  v-if="selectedSession.native"
+                  class="agents__blocked-btn"
+                  aria-disabled="true"
+                  :title="t('agents.native.managedOnly')"
+                  :aria-label="`${t('agents.actions.minion')} — ${t('agents.native.managedOnly')}`"
+                  @click="explainBlocked(t('agents.native.managedOnly'))"
+                ><KIcon name="minion" /></KIconButton>
+                <KIconButton
+                  v-else
+                  :loading="minionAction.busy.value"
+                  :disabled="selectedBlocked"
+                  :title="t('agents.actions.minion')"
+                  :aria-label="t('agents.actions.minion')"
+                  @click="onMinion(selectedSession)"
+                ><KIcon name="minion" /></KIconButton>
+              </template>
             </div>
 
             <!-- Overflow — the actions that don't earn a permanent glyph, plus the two
@@ -345,12 +376,35 @@
                   </button>
                 </template>
                 <template v-else-if="!selectedSession.archived">
-                  <button v-if="canReview(selectedSession) && !selectedSession.native" type="button" class="agents__menu-item" role="menuitem" :disabled="selectedBlocked" @click="menuReview">
+                  <!-- A native agent keeps ⚖ and ⑂ on screen, blocked with the reason
+                       (aria-disabled: v-tip needs mouseenter/focusin, which a disabled button
+                       never gets); a click states the reason as a toast. -->
+                  <button
+                    v-if="reviewShown(selectedSession)"
+                    type="button"
+                    class="agents__menu-item"
+                    :class="{ 'agents__menu-item--blocked': selectedSession.native }"
+                    role="menuitem"
+                    :disabled="!selectedSession.native && selectedBlocked"
+                    :aria-disabled="selectedSession.native || undefined"
+                    v-tip="selectedSession.native ? t('agents.native.managedOnly') : undefined"
+                    @click="menuReview"
+                  >
                     <span class="agents__menu-mark" aria-hidden="true">⚖</span>
                     <span class="agents__menu-label">{{ t('agents.detail.menu.review') }}</span>
                     <KKbd tone="muted" class="agents__menu-kbd">⌘D</KKbd>
                   </button>
-                  <button v-if="selectedSession.kind === 'agent' && !selectedSession.native" type="button" class="agents__menu-item" role="menuitem" :disabled="selectedBlocked" @click="menuBranch">
+                  <button
+                    v-if="selectedSession.kind === 'agent'"
+                    type="button"
+                    class="agents__menu-item"
+                    :class="{ 'agents__menu-item--blocked': selectedSession.native }"
+                    role="menuitem"
+                    :disabled="!selectedSession.native && selectedBlocked"
+                    :aria-disabled="selectedSession.native || undefined"
+                    v-tip="selectedSession.native ? t('agents.native.managedOnly') : undefined"
+                    @click="menuBranch"
+                  >
                     <span class="agents__menu-mark" aria-hidden="true">⑂</span>
                     <span class="agents__menu-label">{{ t('agents.detail.menu.branch') }}</span>
                   </button>
@@ -707,7 +761,7 @@
               <dt
                 v-tip="engineSessionIdHint"
                 class="agents__meta-label"
-              >{{ selectedSession?.native && selectedSession.runtime === 'codex' ? t('agents.native.engineIdCodex') : t('agents.session.engineId') }}</dt>
+              >{{ t(engineIdLabelKey(selectedSession)) }}</dt>
               <dd class="agents__meta-value mono agents__meta-value--id">{{ engineSessionId }}</dd>
             </div>
           </dl>
@@ -734,6 +788,13 @@
               <ul class="agents__docs-read">
                 <li v-for="p in usedDocs" :key="p" class="agents__docs-read-item">
                   <span class="agents__docs-read-path mono">{{ p }}</span>
+                  <button
+                    v-tip="t('agents.docs.copyPath')"
+                    type="button"
+                    class="agents__docs-copy"
+                    :aria-label="t('agents.docs.copyPath')"
+                    @click="copyDocPath(p)"
+                  ><KIcon name="copy" /></button>
                 </li>
               </ul>
             </section>
@@ -755,6 +816,13 @@
                         <span class="agents__diff-del">−{{ d.removed }}</span>
                       </span>
                     </div>
+                    <button
+                      v-tip="t('agents.docs.copyPath')"
+                      type="button"
+                      class="agents__docs-copy"
+                      :aria-label="t('agents.docs.copyPath')"
+                      @click="copyDocPath(d.path)"
+                    ><KIcon name="copy" /></button>
                   </div>
                   <div v-else class="agents__docs-row">
                     <button
@@ -773,6 +841,13 @@
                         <span class="agents__diff-del">−{{ d.removed }}</span>
                       </span>
                     </button>
+                    <button
+                      v-tip="t('agents.docs.copyPath')"
+                      type="button"
+                      class="agents__docs-copy"
+                      :aria-label="t('agents.docs.copyPath')"
+                      @click="copyDocPath(d.path)"
+                    ><KIcon name="copy" /></button>
                     <button
                       v-if="canTaskFromDoc(d.path)"
                       v-tip="t(isDesignReadme(d.path) ? 'agents.docs.toTaskHintDesign' : 'agents.docs.toTaskHint')"
@@ -859,9 +934,9 @@
             </div>
             <!-- Хелпери, the same panel as the chat composer's: `/` on an empty task or the
                  «/ Хелпери» button below prepends a helper, and the launch expands it. A native
-                 harness gets the text as-is, so it is not offered there. Файли (`@` at a word
-                 start or «@ Файл») name a file of the project's checkout as `@path` — plain
-                 text, so a native harness gets it too. -->
+                 harness gets the text as-is, so there the button and `/` state why they cannot
+                 act. Файли (`@` at a word start or «@ Файл») name a file of the project's
+                 checkout as `@path` — plain text, so a native harness gets it too. -->
             <div class="agents-launcher__task-wrap">
               <KHelperPicker
                 v-if="!launchNative"
@@ -881,11 +956,11 @@
                 ref="taskInput"
                 v-model="draftTask"
                 class="agents-launcher__task"
-                rows="9"
+                rows="6"
                 :placeholder="t('agents.launcher.taskPlaceholder')"
                 @keydown="onTaskKeydown"
-                @paste="!launchNative && onLaunchPaste($event)"
-                @drop.prevent="!launchNative && onLaunchDrop($event)"
+                @paste="onLaunchPasteEvent"
+                @drop.prevent="onLaunchDropEvent"
                 @dragover.prevent
               />
             </div>
@@ -899,13 +974,18 @@
             />
           </div>
 
+          <!-- In a native «Режим» the «Керманич»-only controls stay on screen, blocked with their
+               reason: `aria-disabled` rather than `disabled`, because v-tip listens for
+               mouseenter/focusin and Chromium dispatches neither on a disabled button. A click
+               states the reason as a toast. -->
           <div class="agents-launcher__attach">
             <button
-              v-if="!launchNative"
               type="button"
               class="agents-launcher__attach-btn mono"
-              v-tip="t('agents.launcher.helpersTip')"
-              @click="launchHelperOpen = !launchHelperOpen"
+              :class="{ 'agents-launcher__attach-btn--blocked': launchNative }"
+              :aria-disabled="launchNative || undefined"
+              v-tip="launchNative ? t('agents.native.managedOnly') : t('agents.launcher.helpersTip')"
+              @click="onLaunchHelpersBtn"
             >{{ t('agents.launcher.helpers') }}</button>
             <button
               type="button"
@@ -914,10 +994,15 @@
               :disabled="!launchFiles"
               @click="launchMention.toggle"
             >{{ t('agents.launcher.files') }}</button>
+            <button
+              type="button"
+              class="agents-launcher__attach-btn mono"
+              :class="{ 'agents-launcher__attach-btn--blocked': launchNative }"
+              :aria-disabled="launchNative || undefined"
+              v-tip="launchNative ? t('agents.native.managedOnly') : undefined"
+              @click="onLaunchImageBtn"
+            >{{ t('agents.launcher.image') }}</button>
             <template v-if="!launchNative">
-              <button type="button" class="agents-launcher__attach-btn mono" @click="launchFileInput?.click()">
-                {{ t('agents.launcher.image') }}
-              </button>
               <input
                 ref="launchFileInput"
                 type="file"
@@ -929,6 +1014,7 @@
               <span class="agents-launcher__attach-note mono">{{ t('agents.launcher.dragHint') }}</span>
             </template>
           </div>
+          <!-- A native launch sends no images, so the strip is not shown under one. -->
           <KAttachStrip v-if="launchImages.length && !launchNative" :images="launchImages" @remove="removeLaunchImage" />
           <p v-if="launchError" class="agents__error" role="alert">{{ launchError }}</p>
 
@@ -945,8 +1031,20 @@
 
           <!-- «Модель» and «Рівень роздумів» — how the agent runs, not where it lands, so
                they sit under the ask rather than in the right column. Paired on one row: two
-               narrow selects read as a couple and keep the modal from growing a scrollbar. -->
-          <div v-if="!launchNative" class="agents-launcher__run">
+               narrow selects read as a couple and keep the modal from growing a scrollbar.
+               A native harness takes its model in its own TUI (`/model`): the selects stay
+               visible but inert, and this block carries the reason — the selects take no
+               pointer events there, so hover and click reach the block, and it is focusable. -->
+          <div
+            class="agents-launcher__run"
+            :class="{ 'agents-launcher__run--blocked': launchNative }"
+            :role="launchNative ? 'group' : undefined"
+            :tabindex="launchNative ? 0 : undefined"
+            :aria-disabled="launchNative || undefined"
+            :aria-label="launchNative ? t('agents.native.modelInTui') : undefined"
+            v-tip="launchNative ? t('agents.native.modelInTui') : undefined"
+            @click="launchNative && explainBlocked(t('agents.native.modelInTui'))"
+          >
             <div class="agents-launcher__duo">
               <div>
                 <div class="agents-launcher__label">{{ t('agents.session.model') }}</div>
@@ -956,12 +1054,13 @@
                   v-model="draftModel"
                   :options="modelPickOptions"
                   :placeholder="t('agents.launcher.defaultOption')"
+                  :disabled="launchNative"
                   searchable
                 />
               </div>
               <div>
                 <div class="agents-launcher__label">{{ t('agents.launcher.effortLabel') }}</div>
-                <KSelect v-model="draftEffort" :options="effortPickOptions" :placeholder="t('agents.launcher.defaultOption')" />
+                <KSelect v-model="draftEffort" :options="effortPickOptions" :placeholder="t('agents.launcher.defaultOption')" :disabled="launchNative" />
               </div>
             </div>
           </div>
@@ -1023,7 +1122,32 @@
             <div class="agents-launcher__hint mono">{{ branchHint }}</div>
           </div>
 
-          <!-- «Режим» — Kermanych's managed session, or the harness's own TUI in a terminal. -->
+          <!-- «Оцінка, год»: the card's estimate (`tasks.estimate_minutes`), optional. The launch
+               stamps it on the session and «Аналітика» compares it with the time to PR
+               (docs/specs/2026-11-09-task-estimate.md). A refused value says so here and stops
+               the save (submitLauncher). -->
+          <div>
+            <div class="agents-launcher__label">{{ t('agents.launcher.estimateLabel') }}</div>
+            <label class="agents-launcher__branch agents-launcher__branch--edit mono">
+              <input
+                v-model="draftEstimate"
+                class="agents-launcher__branch-input"
+                inputmode="decimal"
+                :placeholder="t('agents.launcher.estimatePlaceholder')"
+                :aria-invalid="estimateInvalid || undefined"
+                autocomplete="off"
+              />
+            </label>
+            <div
+              class="agents-launcher__hint mono"
+              :class="{ 'agents-launcher__hint--error': estimateInvalid }"
+              :role="estimateInvalid ? 'alert' : undefined"
+            >{{ estimateInvalid ? t('agents.launcher.estimateInvalid') : t('agents.launcher.estimateHint') }}</div>
+          </div>
+
+          <!-- «Режим» — Kermanych's managed session, or the harness's own TUI in a terminal.
+               Opens on the provider's default; a design card runs only in «Керманич», so its
+               native modes are blocked with the reason (aria-disabled, as above). -->
           <div>
             <div class="agents-launcher__label">{{ t('agents.native.modeLabel') }}</div>
             <div class="agents-launcher__seg agents-launcher__seg--fit">
@@ -1032,7 +1156,9 @@
                 :key="opt"
                 type="button"
                 class="agents-launcher__seg-btn mono"
-                :class="{ 'agents-launcher__seg-btn--active': opt === draftMode }"
+                :class="{ 'agents-launcher__seg-btn--active': opt === draftMode, 'agents-launcher__seg-btn--blocked': modeBlocked(opt) }"
+                :aria-disabled="modeBlocked(opt) || undefined"
+                v-tip="modeBlocked(opt) ? t('agents.native.synergyManagedOnly') : undefined"
                 @click="pickLaunchMode(opt)"
               >{{ opt === 'managed' ? t('agents.native.modeManaged') : opt }}</button>
             </div>
@@ -1041,7 +1167,7 @@
 
           <div>
             <div class="agents-launcher__label">{{ t('agents.launcher.typeLabel') }}</div>
-            <div class="agents-launcher__seg agents-launcher__seg--grid2">
+            <div class="agents-launcher__seg agents-launcher__seg--fit">
               <button
                 v-for="opt in prefixOptions"
                 :key="opt"
@@ -1264,6 +1390,8 @@ import {
   autoRunSwitchLocked,
   cardModesFromCard,
   myBacklogTasks,
+  estimateMinutesFromText,
+  estimateTextFromMinutes,
   taskInsertFromDraft,
   taskPatchFromDraft,
   withAutoRun,
@@ -1290,10 +1418,10 @@ import KTag from 'components/kit/KTag.vue';
 import KSessionCard from 'components/kit/KSessionCard.vue';
 import SessionFindings from 'components/agents/SessionFindings.vue';
 import KAnalysisMark from 'components/kit/KAnalysisMark.vue';
-import KDesignMark from 'components/kit/KDesignMark.vue';
 import DocTaskDialog from 'components/docs/DocTaskDialog.vue';
 import { canTaskFromDoc, isDesignReadme } from '../lib/doc-task';
 import KMinionMark from 'components/kit/KMinionMark.vue';
+import KScheduleMark from 'components/kit/KScheduleMark.vue';
 import KDecisionMark from 'components/kit/KDecisionMark.vue';
 import KNotNeededMark from 'components/kit/KNotNeededMark.vue';
 import { cardDecisionReason, cardNotNeededReason, sessionDecisionReason, sessionNotNeededReason } from '../lib/minion';
@@ -1313,7 +1441,7 @@ import KDictation from 'components/kit/KDictation.vue';
 import KCheckbox from 'components/kit/KCheckbox.vue';
 import KField from 'components/kit/KField.vue';
 import KSelect from 'components/kit/KSelect.vue';
-import { BRANCH_PREFIXES, platformHasBrowser, platformHasDevice, prependHelper, type BranchPrefix } from '@kermanych/core';
+import { BRANCH_PREFIXES, minionTakeoverAllowed, platformHasBrowser, platformHasDevice, prependHelper, type BranchPrefix } from '@kermanych/core';
 import { useImageAttach } from '../composables/useImageAttach';
 import { useFileMention } from '../composables/useFileMention';
 import { useDictationField } from '../composables/useDictationField';
@@ -1325,7 +1453,7 @@ import { EFFORT_OPTIONS } from '../lib/effort';
 import { modelOptions, effortOptions } from '../lib/models';
 import { useResizablePanel } from '../composables/useResizablePanel';
 import { useVirtualList } from '../composables/useVirtualList';
-import { nativeHarnessName, nativeRuntimeFor, sessionCostKnown, sessionLaunchMode, LAUNCH_MODES, readLaunchMode, writeLaunchMode, type LaunchMode } from '../lib/native-session';
+import { defaultLaunchMode, engineIdLabelKey, nativeHarnessName, nativeRuntimeFor, sessionCostKnown, sessionLaunchMode, LAUNCH_MODES, type LaunchMode } from '../lib/native-session';
 import KTerminalView from 'components/kit/KTerminalView.vue';
 import KBrowserPane from 'components/kit/KBrowserPane.vue';
 import KPreviewWebPane from 'components/kit/KPreviewWebPane.vue';
@@ -1347,6 +1475,7 @@ import { useVoicePanel } from '../composables/useVoicePanel';
 import { nextMode as modeFor } from '../lib/message-mode';
 import { useOptimisticValue } from '../composables/useOptimisticValue';
 import { useLoadPhase } from '../composables/useLoadPhase';
+import { useHeldTranscript } from '../composables/useHeldTranscript';
 import { useTaskDetails } from '../composables/useTaskDetails';
 import { usePending } from 'stores/pending';
 import { needsSignIn } from '../lib/session-auth';
@@ -1386,8 +1515,8 @@ function openAgentMapAt(sessionId: string): void {
   mapOpen.value = true;
 }
 
-// A session card on the map, like a card in the list, means «go to this agent». A design opens
-// on «Дизайн» instead (MainLayout's selection watcher), since this page has no row for it.
+// A session card on the map, like a card in the list, means «go to this agent». A Синергія
+// session opens on «Синергія» instead (MainLayout's selection watcher), since this page has no row for it.
 function onMapOpenSession(id: string): void {
   mapOpen.value = false;
   store.selectSession(id);
@@ -1486,15 +1615,17 @@ const scopedIds = computed(() =>
 );
 const inScope = computed(() => new Set(scopedIds.value));
 
-// Every non-chat, non-design session in scope, with the tab bucketOf files it under — the one
-// rule the counts and the list share, so a fork sits in its parent's tab here exactly as it is
-// counted there. Chats live on Чат and designs on Дизайн, each its only view; «Карта агентів»
-// still shows designs, because they are running agents (AgentMap reads the store itself).
+// Every non-chat, non-Синергія session in scope, with the tab bucketOf files it
+// under — the one rule the counts and the list share, so a fork sits in its parent's tab here
+// exactly as it is counted there. Chats live on Чат and Синергія sessions on
+// Синергія, each its only view; «Карта агентів» still shows them, because they are running
+// agents (AgentMap reads the store itself). «Імплементувати» clears `synergy`, and the session
+// shows up here as an ordinary agent.
 const scopedBuckets = computed(() => {
   const byId = new Map(store.sessions.map((s) => [s.id, s]));
   const out: { session: Session; bucket: Bucket }[] = [];
   for (const s of store.sessions) {
-    if (s.kind === 'chat' || s.designDir || !inScope.value.has(s.projectId)) continue;
+    if (s.kind === 'chat' || s.synergy || !inScope.value.has(s.projectId)) continue;
     out.push({ session: s, bucket: bucketOf(s, (id) => byId.get(id)) });
   }
   return out;
@@ -1712,8 +1843,8 @@ const launchScopeName = computed(() => {
 // be: that one drew the OS rectangle after a ~1s delay, the single square bubble left in a
 // rounded UI. A <dt> is neither focusable nor disabled, so the directive fires on it.
 const skillsHint = computed(() => t('agents.session.skillsHint'));
-// The id is the same string the worktree folder under ~/.kermanych/worktrees is named after,
-// so the bubble says where to spend it rather than leaving an opaque uuid on screen.
+// The bubble says where to spend the id (bug reports, logs) rather than leaving an opaque uuid on
+// screen; the worktree folder is named after the branch, not the id.
 const sessionIdHint = computed(() => t('agents.session.idHint'));
 // The engine's own handle, which is what `--resume` takes — our id names the folder, not the
 // conversation. A claude or codex session keeps its id in `ompSessionId` (`codex resume`
@@ -1819,6 +1950,10 @@ const transcriptLoaded = computed(() => {
   return !id || store.transcripts[id] !== undefined || transcriptFailed.value === id;
 });
 const logPhase = useLoadPhase(() => !transcriptLoaded.value);
+// The selected session's log stays resident while it is on screen (the store evicts past its
+// cap); one evicted after the operator moved on reads `undefined` again, and the watcher that
+// loads history on selection brings it back.
+useHeldTranscript(() => store.selectedSessionId);
 const entries = computed<TranscriptEntry[]>(() =>
   store.selectedSessionId
     ? store.transcripts[store.selectedSessionId] ?? []
@@ -1893,6 +2028,18 @@ async function copySessionId(id: string | undefined): Promise<void> {
   try {
     await navigator.clipboard.writeText(id);
     store.notify(t('agents.session.sessionIdCopied'), 'info');
+  } catch (e) {
+    store.notify(e instanceof Error ? e.message : String(e), 'error');
+  }
+}
+
+// «Документація»: every listed path — read or changed, live or the card's copy after
+// «Завершити» — copies as it is shown (repository-relative for a change, as the agent named it
+// for a read), so the operator can paste it into a prompt or an editor without selecting it.
+async function copyDocPath(path: string): Promise<void> {
+  try {
+    await navigator.clipboard.writeText(path);
+    store.notify(t('agents.docs.pathCopied'), 'info');
   } catch (e) {
     store.notify(e instanceof Error ? e.message : String(e), 'error');
   }
@@ -2326,6 +2473,9 @@ const answering = computed(
   () => answerAction.busy.value || (!!selectedSession.value && pending.isPending(answerKey(selectedSession.value.id))),
 );
 const summaryAction = useAsyncAction((s: Session) => store.sendMessage(s.id, t('agents.prompt.summary'), nextMode(s)));
+// The header's «Посіпака» button sends the composer's own command, so both reach the one api
+// path (docs/specs/2026-11-09-minion-takeover.md); a refusal comes back as the toast.
+const minionAction = useAsyncAction((s: Session) => store.sendMessage(s.id, '/minion', nextMode(s)));
 
 // Any session action in flight (the actions are page-wide, like the one header they serve).
 const actionInFlight = computed(
@@ -2338,7 +2488,8 @@ const actionInFlight = computed(
     archiveAction.busy.value ||
     unarchiveAction.busy.value ||
     resumeNativeAction.busy.value ||
-    restartAction.busy.value,
+    restartAction.busy.value ||
+    minionAction.busy.value,
 );
 function isSessionPending(id: string): boolean {
   return pending.isPending(sessionKey(id));
@@ -2362,8 +2513,18 @@ watch(menuOpen, (open) => {
 // A session switch (deselect included) drops an open menu — it belonged to the old session.
 watch(() => store.selectedSessionId, () => { menuOpen.value = false; });
 
-function menuReview(): void { const s = selectedSession.value; menuOpen.value = false; if (s) void onReview(s); }
-function menuBranch(): void { menuOpen.value = false; void onBranch(); }
+// Ревізор and branches run only in «Керманич»: on a native agent the item states why.
+function menuReview(): void {
+  const s = selectedSession.value;
+  menuOpen.value = false;
+  if (s?.native) explainBlocked(t('agents.native.managedOnly'));
+  else if (s) void onReview(s);
+}
+function menuBranch(): void {
+  menuOpen.value = false;
+  if (selectedSession.value?.native) explainBlocked(t('agents.native.managedOnly'));
+  else void onBranch();
+}
 function menuEditor(): void { menuOpen.value = false; void onEditor(); }
 function menuStop(): void { menuOpen.value = false; void onStop(); }
 function menuDelete(): void { const s = selectedSession.value; menuOpen.value = false; if (s) void onDeleteAgent(s); }
@@ -2388,10 +2549,11 @@ function onDetailShortcut(e: KeyboardEvent): void {
   const blocked = sessionBlocked(s);
   switch (e.key.toLowerCase()) {
     case 'd':
-      if (!branchKind && !s.archived && !s.native && canReview(s)) {
+      if (!branchKind && !s.archived && reviewShown(s)) {
         e.preventDefault();
         menuOpen.value = false;
-        if (!blocked) void onReview(s);
+        if (s.native) explainBlocked(t('agents.native.managedOnly'));
+        else if (!blocked) void onReview(s);
       }
       break;
     case 'e':
@@ -2803,10 +2965,11 @@ const draftModel = ref('');
 const draftEffort = ref<ThinkingLevel | ''>('');
 // The segmented pickers offer core's vocabularies verbatim — the same constants openLauncher
 // validates a card's free-text launch params against, so a prefix added to core cannot show
-// up as accepted-but-unpickable here. Except `design`: a design card comes only from
-// «+ Новий дизайн», which also marks it `design`; a stored design card still shows its own.
+// up as accepted-but-unpickable here. Except `synergy`, which only a Синергія launch takes (docs/specs/2026-11-06-synergy.md, decision 5).
 const draftPrefix = ref<BranchPrefix>('feature');
-const prefixOptions = computed(() => BRANCH_PREFIXES.filter((p) => p !== 'design' || draftPrefix.value === 'design'));
+const prefixOptions = computed(() =>
+  BRANCH_PREFIXES.filter((p) => p !== 'synergy'),
+);
 const modelPickOptions = computed(() => modelOptions(store.models));
 // The effort ladder narrows to the chosen model's own (empty for a non-reasoning model);
 // «за замовчуванням» or an unknown alias keeps the full ladder. Labels stay ours (lib/effort).
@@ -2830,14 +2993,22 @@ function onDraftModes(flip: (m: CardModes, on: boolean) => CardModes, on: boolea
 }
 const nameEdited = ref(false);
 const draftBaseBranch = ref('');
-// «Режим»: a launch choice, not a card field — «В беклог» and board launches stay managed.
-// Each launcher opens on the mode last picked here (remembered per device).
-const draftMode = ref<LaunchMode>(readLaunchMode());
+// «Режим»: a launch choice, not a card field. Every launcher opens on the provider's default
+// (`defaultLaunchMode`, docs/specs/2026-11-05-remove-managed-claude-code.md decision 4); a pick
+// holds for this launcher only.
+const draftMode = ref<LaunchMode>('managed');
 function pickLaunchMode(mode: LaunchMode): void {
+  if (modeBlocked(mode)) {
+    explainBlocked(t('agents.native.synergyManagedOnly'));
+    return;
+  }
   draftMode.value = mode;
-  writeLaunchMode(mode);
 }
 const launchNative = computed(() => draftMode.value !== 'managed');
+// A blocked control's reason, on click — hover and focus show it through v-tip.
+function explainBlocked(reason: string): void {
+  store.notify(reason, 'info');
+}
 const launchBranches = ref<string[]>([]);
 const editingTaskId = ref<string | null>(null);
 // The card `editingTaskId` points at, resolved from the store rather than snapshotted, so a
@@ -2845,6 +3016,10 @@ const editingTaskId = ref<string | null>(null);
 const editingTask = computed<Task | undefined>(() =>
   editingTaskId.value ? board.tasks.find((t) => t.id === editingTaskId.value) : undefined,
 );
+// A card that continues a «Синергія» prototype runs only in «Керманич» (docs/specs/2026-11-09-merge-design-into-synergy.md, decision 5).
+function modeBlocked(mode: LaunchMode): boolean {
+  return mode !== 'managed' && !!editingTask.value?.synergyBranch;
+}
 // A colleague's card (one assigned to me from «Задачі») cannot be switched to auto-run by me.
 const draftAutoRunLocked = computed(() => autoRunSwitchLocked(draftAutoRun.value, editingTask.value, auth.user?.id ?? ''));
 // The switch as the launcher opened, so a save sends `autoRun` only when this form changed it.
@@ -2854,6 +3029,9 @@ let openedAutoRun = false;
 // (docs/specs/2026-11-04-custom-branch-name.md), so the hint names the branch that lands whenever
 // slugify changes what was typed — a ref must not differ from the box without saying so.
 const draftBranchSlug = ref('');
+// «Оцінка, год» as typed; lib/tasks-view turns it into minutes for the card.
+const draftEstimate = ref('');
+const estimateInvalid = computed(() => estimateMinutesFromText(draftEstimate.value) === 'invalid');
 const branchNameHint = computed(() => {
   const typed = draftBranchSlug.value.trim();
   if (!typed) return t('agents.launcher.branchNameGenerated');
@@ -2889,6 +3067,29 @@ function onLaunchFilePick(e: Event): void {
   const input = e.target as HTMLInputElement;
   if (input.files) void addLaunchFiles(input.files);
   input.value = '';
+}
+function onLaunchImageBtn(): void {
+  if (launchNative.value) explainBlocked(t('agents.native.managedOnly'));
+  else launchFileInput.value?.click();
+}
+// A native launch sends no images: an image pasted or dropped there is refused with the
+// reason; pasted text goes in as usual, also when the clipboard carries an image beside it.
+function onLaunchPasteEvent(e: ClipboardEvent): void {
+  if (!launchNative.value) {
+    void onLaunchPaste(e);
+    return;
+  }
+  const items = [...(e.clipboardData?.items ?? [])];
+  if (!items.some((it) => it.kind === 'file' && it.type.startsWith('image/'))) return;
+  if (!items.some((it) => it.kind === 'string' && it.type === 'text/plain')) e.preventDefault();
+  explainBlocked(t('agents.native.managedOnly'));
+}
+function onLaunchDropEvent(e: DragEvent): void {
+  if (!launchNative.value) {
+    void onLaunchDrop(e);
+    return;
+  }
+  if ([...(e.dataTransfer?.files ?? [])].some((f) => f.type.startsWith('image/'))) explainBlocked(t('agents.native.managedOnly'));
 }
 
 const canLaunch = computed(
@@ -2940,7 +3141,8 @@ function onLauncherKeydown(e: KeyboardEvent): void {
 
 // Хелпери in the task text: `/` on an EMPTY task opens the picker instead of typing the slash,
 // exactly as in KComposer — mid-text a slash is a path. A pick lands at the front of the task
-// (prependHelper says why), where the launch expands it.
+// (prependHelper says why), where the launch expands it. A native harness gets the task as-is,
+// so there `/` types the slash and states why no picker opens.
 const launchHelperOpen = ref(false);
 // A launcher reopened on a panel left open would hide the task it opens for.
 watch(launcherOpen, (open) => {
@@ -2953,13 +3155,21 @@ function closeLaunchHelper(): void {
 function onLaunchHelper(name: string): void {
   draftTask.value = prependHelper(draftTask.value, name);
 }
+function onLaunchHelpersBtn(): void {
+  if (launchNative.value) explainBlocked(t('agents.native.managedOnly'));
+  else launchHelperOpen.value = !launchHelperOpen.value;
+}
 function onTaskKeydown(e: KeyboardEvent): void {
   launchDictation.onKeydown(e);
   if (e.defaultPrevented) return;
-  if (e.key === '/' && draftTask.value === '' && !launchNative.value) {
-    e.preventDefault();
-    launchHelperOpen.value = true;
-    return;
+  if (e.key === '/' && draftTask.value === '') {
+    if (launchNative.value) {
+      explainBlocked(t('agents.native.managedOnly'));
+    } else {
+      e.preventDefault();
+      launchHelperOpen.value = true;
+      return;
+    }
   }
   launchMention.onKeydown(e);
 }
@@ -3034,6 +3244,7 @@ function openLauncher(card?: Task, deepAnalysis = false): void {
     : 'feature';
   draftWorktree.value = card?.worktree ?? true;
   draftBranchSlug.value = card?.branchSlug ?? '';
+  draftEstimate.value = estimateTextFromMinutes(card?.estimateMinutes);
   draftHidden.value = card?.hidden ?? false;
   const modes = cardModesFromCard(card, deepAnalysis);
   draftDeep.value = modes.deepAnalysis;
@@ -3044,7 +3255,7 @@ function openLauncher(card?: Task, deepAnalysis = false): void {
   nameEdited.value = !!card;
   launcherError.value = null;
   clearLaunchImages();
-  draftMode.value = readLaunchMode();
+  draftMode.value = defaultLaunchMode(auth.provider, { synergy: !!card?.synergyBranch });
   launcherOpen.value = true;
   void nextTick(() => taskInput.value?.focus());
 }
@@ -3067,13 +3278,14 @@ function openTaskFromText(text: string): void {
   draftWorktree.value = true;
   draftHidden.value = false;
   draftBranchSlug.value = '';
+  draftEstimate.value = '';
   draftDeep.value = false;
   draftAutoRun.value = false;
   void loadLaunchBranches(undefined);
   nameEdited.value = true;
   launcherError.value = null;
   clearLaunchImages();
-  draftMode.value = readLaunchMode();
+  draftMode.value = defaultLaunchMode(auth.provider);
   launcherOpen.value = true;
   void nextTick(() => nameField.value?.focus());
 }
@@ -3114,6 +3326,10 @@ async function submitLauncher(asTask: boolean): Promise<void> {
     launcherError.value = t('agents.hints.publishFirst');
     return;
   }
+  if (estimateInvalid.value) {
+    launcherError.value = t('agents.launcher.estimateInvalid');
+    return;
+  }
   const draft = {
     name: draftName.value.trim(),
     task: draftTask.value.trim(),
@@ -3126,6 +3342,7 @@ async function submitLauncher(asTask: boolean): Promise<void> {
     autoRun: draftAutoRun.value,
     baseBranch: draftBaseBranch.value || undefined,
     branchSlug: draftBranchSlug.value,
+    estimate: draftEstimate.value,
   };
   const images = launchImages.value.map((i) => ({ data: i.data, mimeType: i.mimeType }));
   launcherError.value = null;
@@ -3396,6 +3613,10 @@ async function onRestart(): Promise<void> {
   if (s && !sessionBlocked(s)) await restartAction.run(s);
 }
 
+async function onMinion(s: Session): Promise<void> {
+  if (!sessionBlocked(s)) await minionAction.run(s);
+}
+
 // The composer's effort chip and model picker, save-on-change: the chip shows the pick (and a
 // spinner) at once and holds it until the session row reports it. omp refuses a level or a
 // model its provider cannot run, and the api reports that refusal rather than writing the row
@@ -3474,10 +3695,13 @@ async function onAnswer(res: RpcExtensionUIResponse): Promise<void> {
   if (s && !answering.value) await answerAction.run(s, res);
 }
 
-// Independent review can be requested on a settled (non-active, non-merged) agent that
-// owns a branch to audit. The API re-checks (refuses a mid-turn or non-agent session).
-function canReview(s: Session): boolean {
-  return s.kind === 'agent' && !!s.branch && s.status !== 'merged' && !ACTIVE_STATUSES.includes(s.status);
+// ⚖ in the ⋯ menu (and ⌘D): independent review of a settled (non-active, non-merged) agent that
+// owns a branch to audit; the API re-checks (refuses a mid-turn or non-agent session). A native
+// agent with a branch shows it blocked with the reason whatever its turn is doing — Ревізор is
+// «Керманич»-only.
+function reviewShown(s: Session): boolean {
+  if (s.kind !== 'agent' || !s.branch || s.status === 'merged') return false;
+  return !!s.native || !ACTIVE_STATUSES.includes(s.status);
 }
 
 // ── Archive / unarchive ────────────────────────────────────────────────────
@@ -3495,7 +3719,7 @@ async function onUnarchive(s: Session): Promise<void> {
 }
 
 // ── Finish (retire the worktree; the branch stays for its PR) ──────────────
-// The sheet itself is components/agents/FinishSheet.vue, shared with Дизайн; it reads the
+// The sheet itself is components/agents/FinishSheet.vue; it reads the
 // branch on open. `finishFor` is the session as it was when ✓ was pressed.
 const finishOpen = ref(false);
 const finishFor = ref<Session | null>(null);
@@ -4077,6 +4301,18 @@ function openDocTask(path: string): void {
   white-space: nowrap;
 }
 
+// A «Керманич»-only header control on a native session (🎤): KIconButton's own disabled look,
+// kept on an aria-disabled button so its tooltip stays reachable.
+.agents__blocked-btn.k-icon-btn {
+  opacity: 0.45;
+  cursor: default;
+
+  &:hover {
+    border-color: var(--k-line);
+    color: var(--k-muted);
+  }
+}
+
 // The house 28px glyph box (KIconButton's size), so this ✕ centres on the same column as the
 // panel controls; borderless, because a title bar is not an actions cluster.
 .agents__close {
@@ -4133,9 +4369,11 @@ function openDocTask(path: string): void {
   cursor: pointer;
   transition: background 0.12s, color 0.12s;
 
-  &:hover:not(:disabled) { background: var(--k-surface2); }
+  &:hover:not(:disabled):not(.agents__menu-item--blocked) { background: var(--k-surface2); }
   // The session is pending a result (or another action is out): the row stays, unpressable.
-  &:disabled { opacity: 0.45; cursor: default; }
+  // `--blocked`: «Керманич»-only on a native agent — the same look, focusable for its tooltip.
+  &:disabled,
+  &.agents__menu-item--blocked { opacity: 0.45; cursor: default; }
   &:focus-visible { outline: 1px solid var(--k-accent); outline-offset: -1px; }
 }
 
@@ -4374,15 +4612,33 @@ function openDocTask(path: string): void {
 
   &:hover { text-decoration: underline; }
 }
+// «Скопіювати шлях»: a bare muted mark beside every path, so the row keeps its height and the
+// accent stays on «Задача →».
+.agents__docs-copy {
+  flex: none;
+  display: flex;
+  padding: 2px;
+  border: none;
+  border-radius: var(--k-r-sm);
+  background: transparent;
+  color: var(--k-muted);
+  --k-icon-size: var(--k-icon-sm);
+  cursor: pointer;
+
+  &:hover { color: var(--k-text); }
+  &:focus-visible { outline: 1px solid var(--k-accent); outline-offset: 1px; }
+}
 .agents__docs-read-item {
   padding: 6px 0;
   border-bottom: 1px solid var(--k-line);
   display: flex;
-  flex-direction: column;
-  gap: 2px;
+  align-items: center;
+  gap: 8px;
   font-size: 12.5px;
 }
 .agents__docs-read-path {
+  flex: 1;
+  min-width: 0;
   color: var(--k-text);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -4592,20 +4848,22 @@ function openDocTask(path: string): void {
   display: grid;
   grid-template-columns: 1fr 320px;
 }
+// Tight gutters: both columns stack a growing set of blocks, and every pixel here decides
+// whether the form fits a laptop window without scrolling its body.
 .agents-launcher__main {
   min-width: 0;
   display: flex;
   flex-direction: column;
-  gap: 18px;
-  padding: 22px 24px;
+  gap: 14px;
+  padding: 18px 24px;
   border-right: 1px solid var(--k-line);
 }
 .agents-launcher__side {
   display: flex;
   min-width: 0;
   flex-direction: column;
-  gap: 20px;
-  padding: 22px 24px;
+  gap: 16px;
+  padding: 18px 24px;
   background: var(--k-surface);
 }
 
@@ -4695,12 +4953,15 @@ function openDocTask(path: string): void {
   font-size: 12px;
   cursor: pointer;
 }
-.agents-launcher__attach-btn:hover:not(:disabled) {
+.agents-launcher__attach-btn:hover:not(:disabled):not(.agents-launcher__attach-btn--blocked) {
   border-color: var(--k-accent);
   color: var(--k-text);
 }
 // «@ Файл» without a local checkout to read: shown, so the feature is findable, but inert.
-.agents-launcher__attach-btn:disabled {
+// `--blocked`: a «Керманич»-only control in a native «Режим» — the same look, but focusable
+// (aria-disabled), so its tooltip still shows.
+.agents-launcher__attach-btn:disabled,
+.agents-launcher__attach-btn--blocked {
   opacity: 0.5;
   cursor: default;
 }
@@ -4719,6 +4980,15 @@ function openDocTask(path: string): void {
 .agents-launcher__run {
   border-top: 1px solid var(--k-line);
   padding-top: 16px;
+}
+// Native «Режим»: the selects are disabled and take no pointer events, so hover and click land
+// on the block, which carries the reason.
+.agents-launcher__run--blocked .k-select {
+  pointer-events: none;
+}
+.agents-launcher__run--blocked:focus-visible {
+  outline: 1px solid var(--k-accent);
+  outline-offset: 2px;
 }
 .agents-launcher__duo {
   display: grid;
@@ -4748,6 +5018,9 @@ function openDocTask(path: string): void {
   font-size: 11.5px;
   line-height: 1.6;
   color: var(--k-muted);
+}
+.agents-launcher__hint--error {
+  color: var(--k-danger);
 }
 
 .agents-launcher__branch {
@@ -4799,14 +5072,12 @@ function openDocTask(path: string): void {
   border-radius: var(--k-r);
   overflow: hidden;
 }
-.agents-launcher__seg--grid2 {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-}
-/* Labels of uneven length (`Керманич` beside `omp`): each button starts at its own width, so
-   the long one is not cut to a quarter of the row. */
+/* Labels of uneven length (`Керманич` beside `omp`, `refactoring` beside `fix`): each button
+   starts at its own width, so the long one is not cut to a quarter of the row, and the set
+   stays one row — a row that runs out of room (a design card adds `design` to «Тип») wraps
+   rather than truncating a label. */
 .agents-launcher__seg--fit .agents-launcher__seg-btn {
-  flex: 1 1 auto;
+  flex: 1 0 auto;
 }
 .agents-launcher__seg-btn {
   flex: 1;
@@ -4823,8 +5094,13 @@ function openDocTask(path: string): void {
   text-overflow: ellipsis;
   cursor: pointer;
 }
-.agents-launcher__seg-btn:hover {
+.agents-launcher__seg-btn:hover:not(.agents-launcher__seg-btn--blocked) {
   color: var(--k-text);
+}
+// A native mode for a design card: shown with its reason (aria-disabled), not pickable.
+.agents-launcher__seg-btn--blocked {
+  opacity: 0.5;
+  cursor: default;
 }
 .agents-launcher__seg-btn--active {
   background: var(--k-accent);

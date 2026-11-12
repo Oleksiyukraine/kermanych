@@ -9,6 +9,7 @@ import { platformHasBrowser } from '@kermanych/core';
 import { defineStore } from 'pinia';
 import { ref, watch } from 'vue';
 import { loadPicksTray, savePicksTray, type TrayPick } from '../lib/browser-picks';
+import { setTipKeepOut } from '../lib/tip';
 import { globalTr } from '../boot/i18n';
 import { useOrchestrator } from './orchestrator';
 
@@ -28,8 +29,10 @@ export const useSessionBrowser = defineStore('sessionBrowser', () => {
   const agentLive = ref(new Set<string>());
   const liveTimers = new Map<string, number>();
   // Where the shown view is painted (viewport px), null while every view is parked. The view
-  // sits above the whole DOM, so KToast reads this to keep its stack beside it, not under it.
+  // sits above the whole DOM, so KToast reads this to keep its stack beside it, not under it,
+  // and v-tip (lib/tip.ts) to keep its bubble off it.
   const shownRect = ref<KermanychBrowserBounds | null>(null);
+  watch(shownRect, (r) => setTipKeepOut(r));
   const split = ref(localStorage.getItem(SPLIT_KEY) === '1');
   // Kept here, not in the pane, so the tray survives tab switches and session hops; restored
   // from sessionStorage so it survives a renderer reload too (lib/browser-picks.ts).
@@ -205,6 +208,15 @@ export const useSessionBrowser = defineStore('sessionBrowser', () => {
     notes.value = nextNotes;
     persistPicks();
   }
+
+  // «Синергія», decision 8: what a Синергія request carries — the page shown and the tray —
+  // handed to the orchestrator's sendMessage, which cannot import this store back.
+  orchestrator.provideSynergyContext((sessionId) => ({
+    page: states.value[sessionId]?.url,
+    picks: picks.value[sessionId] ?? [],
+    note: notes.value[sessionId],
+    clear: () => clearPicks(sessionId),
+  }));
 
   return {
     available: !!bridge,

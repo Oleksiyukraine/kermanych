@@ -24,7 +24,7 @@
 // per machine by the api (`/machine/resources`); so does the voice conversation's OpenAI key
 // («Голос», stored per machine by the api, `/voice/key`).
 
-import { DESIGN_SAVE_AGENT_ID, DESIGNER_AGENT_ID, MINION_AGENT_ID, PLATFORMS, TESTER_AGENT_ID, type AgentDef, type EnvEntry, type MachineResources, type Platform, type RepoSkill, type ResourceLimits, type ResourcesUpdate, type SkillView } from '@kermanych/core';
+import { MINION_AGENT_ID, PLATFORMS, SYNERGY_AGENT_ID, SYNERGY_IMPLEMENT_AGENT_ID, TESTER_AGENT_ID, type AgentDef, type EnvEntry, type MachineResources, type Platform, type RepoSkill, type ResourceLimits, type ResourcesUpdate, type SkillView } from '@kermanych/core';
 import type { AiAgentSkill, TriggerSource } from '@kermanych/cloud';
 
 export type SettingsScope = 'project' | 'workspace' | 'app';
@@ -321,12 +321,17 @@ export function triggerActionOptions(source: TriggerSource): { value: 'prompt' |
  *
  * «Посіпака» is an exception by id: it carries an instruction, but it runs a CARD, not a
  * message, and runTriggerAgent refuses it (docs/specs/2026-10-23-minion-auto-run.md, decision 11).
- * «Дизайнер» and «Зберегти дизайн» likewise: the first opens a design from a design card, the
- * second runs only in a design session (docs/specs/2026-10-29-design-tab.md), and
- * runTriggerAgent knows neither. «Тестувальник» needs a doer session and a scope, which a
+ * «Тестувальник» needs a doer session and a scope, which a
  * trigger does not give (docs/specs/2026-11-04-qa-tester-agent.md, decision 15).
  */
-const NOT_TRIGGERABLE: readonly string[] = [MINION_AGENT_ID, DESIGNER_AGENT_ID, DESIGN_SAVE_AGENT_ID, TESTER_AGENT_ID];
+const NOT_TRIGGERABLE: readonly string[] = [
+  MINION_AGENT_ID,
+  // «Синергія» (docs/specs/2026-11-06-synergy.md) starts from its own page; its handoff from
+  // «Імплементувати» only.
+  SYNERGY_AGENT_ID,
+  SYNERGY_IMPLEMENT_AGENT_ID,
+  TESTER_AGENT_ID,
+];
 export function triggerAgentOptions(agents: readonly AgentDef[]): { value: string; labelKey: string }[] {
   return agents.filter((a) => a.instruction && !NOT_TRIGGERABLE.includes(a.id)).map((a) => ({ value: a.id, labelKey: a.labelKey }));
 }

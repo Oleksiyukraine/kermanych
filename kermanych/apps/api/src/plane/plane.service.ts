@@ -35,7 +35,7 @@ import {
   upsertPlaneIssues,
 } from "@kermanych/cloud";
 import type { PlaneIntegration, PlaneIssue } from "@kermanych/cloud";
-import type { ImageInput, Session } from "@kermanych/core";
+import type { ImageInput, NativeHarness, Session } from "@kermanych/core";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { AuthService } from "../auth/auth.service";
 import { RegistryService } from "../registry/registry.service";
@@ -983,9 +983,15 @@ export class PlaneService {
     userId: string,
     transitionId?: string,
     images?: ImageInput[],
+    native?: NativeHarness,
   ): Promise<PlaneLaunchResult> {
     const c = await this.withIntegration(integrationId, userId);
     const raw = await c.client.getIssueByKey(key);
+    // A time estimate travels onto the shadow card, and from there onto the session
+    // (docs/specs/2026-11-09-task-estimate.md, decision 4). mapIssue reads it as the mirror does
+    // and gives 0 for a points or categories estimate, which is not hours. The context is cached.
+    const ctx = await this.mapContext(c, await this.projectMeta(c));
+    const estimateMinutes = Math.round(mapIssue(ctx, raw).originalEstimateSeconds / 60);
 
     // The shadow task: the whole existing pipeline (worktree, outbox, force-stop,
     // tasks_guard) runs on this ordinary row; `planeKey` is what keeps it off «Задачі».
@@ -998,9 +1004,10 @@ export class PlaneService {
       assigneeId: userId,
       createdBy: userId,
       planeKey: key,
+      ...(estimateMinutes > 0 ? { estimateMinutes } : {}),
     });
 
-    const session = await this.supervisor.createSessionFromTask(task.id, userId, images);
+    const session = await this.supervisor.createSessionFromTask(task.id, userId, images, native);
     await patchPlaneIssueBinding(c.cloud, c.integration.id, raw.id, { kermanychProjectId: projectId, taskId: task.id });
 
     if (!transitionId) return { session };

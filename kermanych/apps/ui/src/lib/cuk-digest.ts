@@ -1,8 +1,9 @@
 // apps/ui/src/lib/cuk-digest.ts
-// What ЦУК is told about the app every turn, pure: the session and board rows of the context
-// block, and how the executor finds a session the model named by its `ref`
-// (docs/specs/2026-11-04-cuk-control-console.md, decision 5).
-import type { CukBoardRow, CukSessionRow, Session } from '@kermanych/core';
+// What ЦУК is told about the app every turn, pure: the session, board and scheduled-task rows of
+// the context block, and how the executor finds a session the model named by its `ref`
+// (docs/specs/2026-11-04-cuk-control-console.md, decision 5;
+// docs/specs/2026-11-06-scheduled-tasks.md, «Defaults → Skills»).
+import { describeSchedule, formatZonedWall, type CukBoardRow, type CukScheduleRow, type CukSessionRow, type ScheduledTask, type Session } from '@kermanych/core';
 import type { Task } from '@kermanych/cloud';
 import { boardTasks } from './tasks-view';
 
@@ -40,7 +41,7 @@ export function cukSessionRows(
       ref: sessionRef(s.id),
       project: projectName(s.projectId),
       name: s.name,
-      kind: s.designDir ? 'design' : s.kind,
+      kind: s.synergy ? 'synergy' : s.kind,
       status: s.status,
       waiting: waiting(s),
       archived: !!s.archived,
@@ -66,6 +67,24 @@ export function cukBoardRows(
     })),
     omitted: Math.max(0, open.length - CUK_MAX_BOARD),
   };
+}
+
+// Every scheduled task, enabled or paused — «увімкни вітаміни» must find a paused one. `when` is
+// in Ukrainian whatever the screen's language: it is the model's reading, like the prompt. `next`
+// is the wall clock in the task's own zone.
+export function cukScheduleRows(tasks: readonly ScheduledTask[], projectName: (projectId: string) => string): CukScheduleRow[] {
+  return tasks.map((t) => {
+    const project = t.projectId ? projectName(t.projectId) : '';
+    return {
+      ref: sessionRef(t.id),
+      name: t.name,
+      type: t.kind,
+      ...(project ? { project } : {}),
+      when: describeSchedule(t.schedule, 'uk'),
+      ...(t.nextAt ? { next: formatZonedWall(new Date(t.nextAt), t.timeZone) } : {}),
+      enabled: t.enabled,
+    };
+  });
 }
 
 // The session a `ref` names: an exact id, or the one session whose id starts with it. Two

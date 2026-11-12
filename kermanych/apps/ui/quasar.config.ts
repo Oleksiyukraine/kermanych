@@ -98,8 +98,10 @@ export default defineConfig((ctx) => {
         productName: 'Kermanych',
         // Signed, notarized releases (docs/specs/2026-10-12-desktop-releases-and-updates.md).
         // The release workflow hands electron-builder the Developer ID certificate (CSC_LINK,
-        // CSC_KEY_PASSWORD) and an App Store Connect API key (APPLE_API_KEY*); without them a
-        // local `pnpm build:app` skips both steps and comes out unsigned, as it always did.
+        // CSC_KEY_PASSWORD) and an App Store Connect API key (APPLE_API_KEY*). A local
+        // `pnpm build:app` signs with a Developer ID identity it finds in the login keychain (none →
+        // unsigned; CSC_IDENTITY_AUTO_DISCOVERY=false forces unsigned) and notarizes only when the
+        // APPLE_API_* variables are set.
         // The zip is what Squirrel.Mac installs on update; the dmg is for the first install.
         // Apple Silicon only (decision 6).
         mac: {

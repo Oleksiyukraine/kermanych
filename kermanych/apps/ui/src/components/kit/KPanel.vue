@@ -178,7 +178,7 @@
     </div>
 
     <!-- plan lane — present only while the agent keeps a todo list -->
-    <KTodoLane v-if="session.todoPhases?.length && session.runtime !== 'claude-code'" :phases="session.todoPhases" />
+    <KTodoLane v-if="session.todoPhases?.length" :phases="session.todoPhases" />
 
     <!-- live lane — what the agent is doing right now; absent while idle. Everything
          countable (model, effort, isolation, context, spend) is printed once, in the

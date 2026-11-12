@@ -4,6 +4,7 @@
 // managed is spawned, managed-only actions answer `native_unsupported`, and the live overlay
 // comes from NativeSessionService.
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { setImmediate as nextMacrotask } from "node:timers/promises";
 import { join } from "node:path";
@@ -69,7 +70,7 @@ function make() {
     changedFiles: vi.fn().mockResolvedValue([]),
   };
   const auth = { current: () => ({ userId: USER, accessToken: "t" }), cloudClient: () => ({}) } as unknown as AuthService;
-  const models = { validModel: async (_r: string, m: string | undefined) => m } as unknown as ModelsService;
+  const models = { validModel: async (m: string | undefined) => m } as unknown as ModelsService;
   const events$ = new Subject<TerminalEvent>();
   const terminal = {
     events$,
@@ -100,7 +101,6 @@ function card(over: Partial<Task> = {}): Task {
     createdAt: "",
     updatedAt: "",
     worktree: true,
-    design: false,
     model: "claude-opus-4-8",
     effort: "high",
     ...over,
@@ -115,6 +115,19 @@ beforeEach(() => {
 });
 
 describe("a native launch", () => {
+  it("refuses a «Синергія» card before claiming it", async () => {
+    const { sup, registry, terminal, worktree } = make();
+    card({ synergyBranch: "synergy/orders" });
+
+    await expect(sup.createSessionFromTask("task-1", USER, undefined, "claude-code")).rejects.toMatchObject({ code: "native_unsupported" });
+
+    expect(cloudTasks.get("task-1")?.status).toBe("backlog");
+    expect(cloudTasks.get("task-1")?.assigneeId).toBeUndefined();
+    expect(registry.listSessions()).toEqual([]);
+    expect(worktree.addWorktree).not.toHaveBeenCalled();
+    expect(terminal.openSession).not.toHaveBeenCalled();
+  });
+
   it("starts the harness in the new worktree with the card's text and nothing else", async () => {
     const { sup, terminal, worktree, out } = make();
     card();
@@ -124,7 +137,7 @@ describe("a native launch", () => {
     expect(s).toMatchObject({ native: true, runtime: "claude-code", status: "queued", terminalId: "t1" });
     expect(s.model).toBeUndefined();
     expect(s.effort).toBeUndefined();
-    const wt = join(process.env.HOME ?? "", ".kermanych", "worktrees", s.id);
+    const wt = join("/tmp/proj", ".gitworktree", ...s.branch.split("/"));
     // No base on the card or the project: the branch the project checkout is on (decision 4).
     expect(worktree.addWorktree).toHaveBeenCalledWith("/tmp/proj", wt, s.branch, "main");
     expect(terminal.openSession).toHaveBeenCalledTimes(1);
@@ -154,19 +167,6 @@ describe("a native launch", () => {
     const opts = terminal.openSession.mock.calls[0][0] as { args: string[] };
     expect(opts.args.at(-2)).toBe("--");
     expect(opts.args.at(-1)).toBe(deepAnalysisPrompt("wire GitHub OAuth"));
-  });
-
-  // A design card opened natively: the harness starts on the design branch with the Дизайнер's
-  // instruction naming the stamped folder (docs/specs/2026-10-29-design-tab.md).
-  it("a design card opens the harness with the Дизайнер instruction", async () => {
-    const { sup, terminal } = make();
-    card({ design: true });
-    const s = await sup.createSessionFromTask("task-1", USER, undefined, "omp");
-    expect(s.branch).toBe("design/add-login");
-    expect(s.designDir).toMatch(/^docs\/design\/\d{4}-\d{2}-\d{2}-add-login$/);
-    const opts = terminal.openSession.mock.calls[0][0] as { args: string[] };
-    expect(opts.args.at(-1)).toMatch(/^You are «Дизайнер»/);
-    expect(opts.args.at(-1)).toContain(`${s.designDir}/README.md`);
   });
 
   // docs/specs/2026-10-14-create-pr-base-sync.md, decision 6: the harness stopped with the tree
@@ -330,5 +330,33 @@ describe("a native chat (docs/specs/2026-10-06-native-chats.md)", () => {
     await sup.resume(agent.id);
     await sup.setArchived(agent.id, true);
     expect(terminal.kill).not.toHaveBeenCalled();
+  });
+});
+
+describe("deleting a native session", () => {
+  // A native agent's `ompSessionFile` is the harness's own transcript (claude's, codex's): the
+  // operator can still resume it outside Kermanych, so deleting the row leaves it. A managed
+  // agent's omp conversation goes with its row.
+  it("keeps a native agent's harness transcript and removes a managed agent's conversation", async () => {
+    const { sup, registry } = make();
+    const dir = mkdtempSync(join(tmpdir(), "kmq-native-del-"));
+    try {
+      const harness = join(dir, "claude.jsonl");
+      const omp = join(dir, "omp.jsonl");
+      writeFileSync(harness, "{}\n");
+      writeFileSync(omp, "{}\n");
+      const nativeAgent = registry.createSession({ projectId: PROJECT, name: "n", task: "t", worktreePath: "", branch: "", worktree: false, runtime: "claude-code", native: true, status: "stopped" });
+      registry.updateSession(nativeAgent.id, { ompSessionFile: harness });
+      const managed = registry.createSession({ projectId: PROJECT, name: "m", task: "t", worktreePath: "", branch: "", worktree: false, status: "done" });
+      registry.updateSession(managed.id, { ompSessionFile: omp });
+
+      await sup.deleteSession(nativeAgent.id);
+      await sup.deleteSession(managed.id);
+
+      expect(existsSync(harness)).toBe(true);
+      expect(existsSync(omp)).toBe(false);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });

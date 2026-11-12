@@ -2,8 +2,7 @@
 // omp reads MCP servers only from config FILES (.omp/mcp.json in the working directory, or the
 // user's profile), and the Менеджмент chat's working directory is the operator's own
 // repository — writing a server into it would put a per-conversation secret into their tree.
-// So the omp runtime is handed the same HTTP MCP server the claude runtime gets natively, via
-// this tiny extension (`omp -e`): at load it asks the server for its tools and registers each
+// So omp is handed the HTTP MCP server through this tiny extension (`omp -e`): at load it asks the server for its tools and registers each
 // as an omp tool whose execute is one `tools/call`. The URL and bearer arrive in the child's
 // environment, never on disk.
 //

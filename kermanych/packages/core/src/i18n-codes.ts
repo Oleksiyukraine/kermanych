@@ -29,6 +29,8 @@ export type NoticeCode =
   // supervisor.service.ts — the transcript notices the /compact command appends:
   | "context_compacted" // supervisor.service.ts — /compact succeeded, context was compacted (params: none)
   | "context_compact_failed" // supervisor.service.ts — /compact failed (params: { reason })
+  // supervisor.service.ts handToMinion — /minion (docs/specs/2026-11-09-minion-takeover.md):
+  | "minion_takeover_started" // the session was handed to «Посіпака» (params: none)
   // supervisor.service.ts — the base-sync notices (docs/specs/2026-10-14-create-pr-base-sync.md):
   | "base_fetch_failed" // supervisor.service.ts launch — origin/<base> could not be refreshed; forked from the last-known base (params: { base, ref })
   | "pr_behind_base" // supervisor.service.ts after a PR/commit turn — the PR head lacks commits of origin/<base> (params: { base, count })
@@ -37,8 +39,6 @@ export type NoticeCode =
   // machine fault is a thrown error when it stops a session from starting, and a transcript
   // notice when it kills one already running. They are also `Session.errorCode`, set from the
   // runtime's exit cause (supervisor.service.ts wireLive).
-  | "claude_not_authenticated" // claude-code-runtime.ts — the claude CLI is signed out (params: none)
-  | "claude_binary_missing" // claude-code-runtime.ts — the SDK's platform binary is absent (params: none)
   | "omp_not_authenticated" // rpc-session.ts exit cause — the omp CLI is signed out (params: none)
   | "omp_binary_missing" // rpc-session.ts exit cause — omp is not on PATH (params: none)
   // supervisor.service.ts — the machine resource profile (docs/specs/2026-10-21-machine-resource-profile.md):
@@ -118,17 +118,21 @@ export type ApiErrorCode =
   | "omp_exited_during_generation" // release-notes.service.ts:110 — the omp child died mid-generation (params: { reason })
   | "generation_timeout" // release-notes.service.ts:122 — generation did not finish in time (params: { seconds })
   | "model_no_text" // release-notes.service.ts:139 — the model returned no text (params: none)
-  // runtime/*-runtime.ts via supervisor.service.ts — a session that could NOT START because
-  // the machine's agent backend is unusable. Distinct from the NoticeCode twins above: these
-  // abort the launch, so the operator gets a thrown error naming the one command that fixes
-  // it rather than a session that exists but can never answer.
-  | "runtime_claude_not_authenticated" // claude-code-runtime.ts start() — claude CLI signed out (params: none)
-  | "runtime_claude_binary_missing" // claude-code-runtime.ts start() — SDK platform binary absent (params: none)
+  // rpc/rpc-session.ts via supervisor.service.ts — a session that could NOT START because
+  // omp on this machine is unusable. Distinct from the NoticeCode twins above: these abort the
+  // launch, so the operator gets a thrown error naming the one command that fixes it rather
+  // than a session that exists but can never answer.
   | "runtime_omp_not_authenticated" // rpc-session.ts start() — omp CLI signed out (params: none)
   | "runtime_omp_binary_missing" // rpc-session.ts start() — omp not on PATH (params: none)
   // native/native-session.service.ts via supervisor.service.ts — a native session refusing:
   | "native_busy" // a helper prompt while the native harness is mid-turn or waiting on the operator (params: none)
   | "native_unsupported" // an action only a managed session supports (model, effort, branch, review, images…) (params: none)
+  // supervisor.service.ts — a managed spawn of a row stamped with a runtime other than omp: a
+  // leftover of the removed managed claude-code (docs/specs/2026-11-05-remove-managed-claude-code.md)
+  | "managed_claude_removed" // (params: none)
+  // supervisor.service.ts handToMinion — /minion refused (docs/specs/2026-11-09-minion-takeover.md):
+  | "minion_takeover_unsupported" // not an open agent session with a branch, or a design / «Синергія» / scheduled run (params: none)
+  | "minion_takeover_running" // the session already runs as «Посіпака» on its own (params: none)
   // supervisor.service.ts resolveLaunchParams — an in-place (non-worktree) launch refused:
   | "inplace_tree_dirty" // the project checkout has uncommitted changes (params: { count, files } — files: the first few paths, comma-joined, `…` when cut)
   | "inplace_already_active" // another in-place agent already owns the project checkout (params: none)
@@ -158,10 +162,9 @@ export const NOTICE_CODES = [
   "session_dormant_inactive",
   "context_compacted",
   "context_compact_failed",
+  "minion_takeover_started",
   "base_fetch_failed",
   "pr_behind_base",
-  "claude_not_authenticated",
-  "claude_binary_missing",
   "omp_not_authenticated",
   "omp_binary_missing",
   "slot_wait",
@@ -231,12 +234,13 @@ export const API_ERROR_CODES = [
   "omp_exited_during_generation",
   "generation_timeout",
   "model_no_text",
-  "runtime_claude_not_authenticated",
-  "runtime_claude_binary_missing",
   "runtime_omp_not_authenticated",
   "runtime_omp_binary_missing",
   "native_busy",
   "native_unsupported",
+  "managed_claude_removed",
+  "minion_takeover_unsupported",
+  "minion_takeover_running",
   "inplace_tree_dirty",
   "inplace_already_active",
   "inplace_detached_head",
@@ -353,6 +357,25 @@ export type ManagementRejectionCode =
   | "cuk_project_missing" // a task.create / agent.start without a project name (params: { kind })
   | "cuk_task_missing" // a task.create / agent.start without the task text (params: { kind })
   | "cuk_message_missing" // a session.message without the message text (params: none)
+  // validateCukAction's schedule.* blocks and ./schedules' validators — «Задачі за розкладом»
+  // (docs/specs/2026-11-06-scheduled-tasks.md):
+  | "schedule_ref_missing" // a schedule.update/pause/resume/run/delete without the task ref (params: { kind })
+  | "schedule_name_missing" // a scheduled task without a name (params: none)
+  | "schedule_name_too_long" // a name longer than SCHEDULE_NAME_MAX (params: { max })
+  | "schedule_text_missing" // a scheduled task without its reminder text / agent task (params: none)
+  | "schedule_type_invalid" // a task kind other than reminder|agent, or an unknown schedule type (params: { value })
+  | "schedule_when_invalid" // the schedule is absent or not an object (params: { value })
+  | "schedule_time_invalid" // a time that is not HH:MM, or an hourly minute outside 0–59 (params: { value })
+  | "schedule_days_invalid" // weekly days not a non-empty list of 1–7 (params: none)
+  | "schedule_day_invalid" // a monthly day outside 1–31 (params: none)
+  | "schedule_every_invalid" // an hourly interval outside 1–12 (params: none)
+  | "schedule_at_invalid" // a once date-time that is not YYYY-MM-DDTHH:MM or not a real date (params: { value })
+  | "schedule_in_invalid" // «через N хв» outside 1–10080 minutes (params: none)
+  | "schedule_agent_only" // a reminder carrying project/skills/model (params: { field })
+  | "schedule_timezone_invalid" // a time zone Intl does not know (params: { value })
+  | "schedule_project_unknown" // apps/api schedules — a projectId not in the local registry (params: { value })
+  | "schedule_skill_unknown" // apps/api schedules — skill names that resolve nowhere (params: { value } — comma-joined names)
+  | "schedule_at_past" // apps/api schedules — a «once» whose date and time has already passed, on create, reschedule or resume (params: { value })
   // parseManagementReply — the block never parsed as JSON:
   | "block_unreadable"; // the fenced block was not readable JSON (params: { message })
 
@@ -417,6 +440,23 @@ export const MANAGEMENT_REJECTION_CODES = [
   "cuk_project_missing",
   "cuk_task_missing",
   "cuk_message_missing",
+  "schedule_ref_missing",
+  "schedule_name_missing",
+  "schedule_name_too_long",
+  "schedule_text_missing",
+  "schedule_type_invalid",
+  "schedule_when_invalid",
+  "schedule_time_invalid",
+  "schedule_days_invalid",
+  "schedule_day_invalid",
+  "schedule_every_invalid",
+  "schedule_at_invalid",
+  "schedule_in_invalid",
+  "schedule_agent_only",
+  "schedule_timezone_invalid",
+  "schedule_project_unknown",
+  "schedule_skill_unknown",
+  "schedule_at_past",
   "block_unreadable",
 ] as const satisfies readonly ManagementRejectionCode[];
 

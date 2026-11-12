@@ -7,12 +7,12 @@
     ".": "./dist/main.js"
   },
   "scripts": {
-    "//deps": "`dist/` is gitignored, so a fresh clone or worktree has no @kermanych/core or @kermanych/cloud build output and `nest build` fails with TS2307. `<pkg>^...` is pnpm's dependencies-of-pkg-excluding-pkg selector: it builds them in topological order and cannot recurse into this package.",
+    "//deps": "`dist/` is gitignored, so a fresh clone or worktree has no @kermanych/core or @kermanych/cloud build output: `nest build` fails with TS2307 and vitest with «Failed to resolve entry for package». `<pkg>^...` is pnpm's dependencies-of-pkg-excluding-pkg selector: it builds them in topological order and cannot recurse into this package. Extra pnpm args (`--maxWorkers=4`) land on the LAST command, i.e. on vitest.",
     "build": "pnpm --filter '@kermanych/api^...' build && nest build",
     "typecheck": "tsc --noEmit",
     "start": "node dist/main.js",
     "start:dev": "pnpm --filter '@kermanych/api^...' build && nest start --watch",
-    "test": "vitest run"
+    "test": "pnpm --filter '@kermanych/api^...' build && vitest run"
   },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.3.259",

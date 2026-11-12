@@ -323,7 +323,37 @@ export function renderRuleFile(t: AiTrigger, body: string): string {
 // `stale` means "the library on disk may not reflect the cloud": a failed cloud read, a failed
 // repo scan, an unreadable `skills.customDirectories`, or a filesystem failure. It is never a
 // reason to refuse a launch. `configPath` is set only once the overlay write succeeded.
-export type Materialized = { configPath?: string; view: SkillView[]; stale?: boolean };
+// `handed` is each library skill's text as this launch wrote it; absent when stale, because the
+// files on disk may then be an older launch's.
+export type Materialized = { configPath?: string; view: SkillView[]; stale?: boolean; handed?: Map<string, string> };
+
+/**
+ * The library text each session's latest launch was handed, so `improve_skill` can tell an agent
+ * that the skill changed under it (docs/specs/2026-11-07-skill-improvement-review.md, decision 3).
+ * In memory: an api restart forgets it, and then no call is refused as stale.
+ */
+@Injectable()
+export class HandedSkills {
+  private bySession = new Map<string, { at: number; bodies: Map<string, string> }>();
+
+  /** A launch: `bodies` replaces what the session held; none (a stale library) forgets it. */
+  launched(sessionId: string, bodies: Map<string, string> | undefined): void {
+    if (bodies) this.bySession.set(sessionId, { at: Date.now(), bodies: new Map(bodies) });
+    else this.bySession.delete(sessionId);
+  }
+
+  /** The text the session holds for `name`, and when its launch was. */
+  get(sessionId: string, name: string): { at: number; body: string } | undefined {
+    const s = this.bySession.get(sessionId);
+    const body = s?.bodies.get(name);
+    return s && body !== undefined ? { at: s.at, body } : undefined;
+  }
+
+  /** The session now holds `body` for `name`: its own change, or a refusal that showed it. */
+  set(sessionId: string, name: string, body: string): void {
+    this.bySession.get(sessionId)?.bodies.set(name, body);
+  }
+}
 
 // How long one library read serves the launch-time callers. Every row carries its full text,
 // and one launch used to read it once in materialize, once per trigger in materializeTriggers
@@ -632,7 +662,9 @@ export class SkillsService {
       // EACCES, ENOSPC, EROFS, or a plain file where the library should be.
       stale = true;
     }
-    return { ...(configPath !== undefined ? { configPath } : {}), view, ...(stale ? { stale: true } : {}) };
+    if (stale) return { ...(configPath !== undefined ? { configPath } : {}), view, stale: true };
+    const handed = new Map(resolved.filter(({ def }) => !repo.has(def.name)).map(({ def }) => [def.name, def.body] as const));
+    return { ...(configPath !== undefined ? { configPath } : {}), view, handed };
   }
 
   // The triggers Kermanych itself matches, in the order it tries them. The UNION of every

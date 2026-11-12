@@ -4,13 +4,12 @@ import type { WorktreeService } from "../src/worktree/worktree.service";
 import type { AuthService } from "../src/auth/auth.service";
 import type { ModelsService } from "../src/models/models.service";
 import type { CloudProject, Task } from "@kermanych/cloud";
-import { DEFAULT_DOCS_POLICY, DEFAULT_HELPERS, docsPolicyAppend, deepAnalysisPrompt, designDirFor } from "@kermanych/core";
-import { todayIso } from "../src/management/management-prompt";
+import { DEFAULT_DOCS_POLICY, DEFAULT_HELPERS, docsPolicyAppend, deepAnalysisPrompt } from "@kermanych/core";
 
-// The runtime-aware model guard (ModelsService.validModel) is not under test here; an identity
+// The model guard (ModelsService.validModel) is not under test here; an identity
 // stub returns the wanted model unchanged so createSessionFromTask keeps task.model as before.
 function stubModels(): ModelsService {
-  return { validModel: async (_r: string, w: string | undefined) => w } as unknown as ModelsService;
+  return { validModel: async (w: string | undefined) => w } as unknown as ModelsService;
 }
 
 // Capture every spawned RpcSession so a test can prove whether a launch happened.
@@ -95,6 +94,7 @@ function make(branchNames?: BranchNameService) {
     checkout: vi.fn(),
     currentBranch: vi.fn().mockResolvedValue("main"),
     forkStart: vi.fn(async (_repo: string, base: string) => ({ ref: base, stale: false })),
+    attachRemoteBranch: vi.fn().mockResolvedValue(undefined),
     hasUncommitted: vi.fn().mockResolvedValue(false),
   };
   // The launch path only forwards this client to @kermanych/cloud, which is mocked above.
@@ -133,7 +133,6 @@ function task(over: Partial<Task> = {}): Task {
     updatedAt: NOW,
     worktree: true,
     autoRun: false,
-    design: false,
     ...over,
   };
   cloudTasks.set(t.id, t);
@@ -366,6 +365,21 @@ describe("createSessionFromTask", () => {
     expect(session.branch).toBe("fix/kan-42-login-2");
   });
 
+  // «Оцінка vs факт» compares the estimate the card carried at launch
+  // (docs/specs/2026-11-09-task-estimate.md, decision 3); «Аналітика» reads it from the local row.
+  it("stamps the card's estimate on the local session, and leaves an unestimated one without it", async () => {
+    const { sup, registry } = make();
+    bind(registry);
+    task({ assigneeId: USER, estimateMinutes: 150 });
+    const estimated = await sup.createSessionFromTask("task-1", USER);
+    task({ id: "task-2", assigneeId: USER });
+    const plain = await sup.createSessionFromTask("task-2", USER);
+
+    const rows = registry.analyticsRows(undefined, "2000-01-01T00:00:00.000Z", new Date().toISOString()).sessions;
+    expect(rows.find((r) => r.id === estimated.id)?.estimateMinutes).toBe(150);
+    expect(rows.find((r) => r.id === plain.id)).not.toHaveProperty("estimateMinutes");
+  });
+
   it("falls back to the task title and safe launch defaults", async () => {
     const { sup, registry } = make();
     bind(registry);
@@ -481,27 +495,37 @@ describe("createSessionFromTask", () => {
     expect(first).toMatchObject({ kind: "user_text", text: "wire GitHub OAuth" });
   });
 
-  // «Дизайн» (docs/specs/2026-10-29-design-tab.md): a design card is always a `design/` branch,
-  // whatever prefix it carries; the row is stamped with its folder (launch day + branch slug),
-  // and the model's opening turn is the Дизайнер's instruction naming that folder and the card.
-  it("opens a design card on a design branch with its folder and the Дизайнер instruction", async () => {
-    const { sup, registry } = make();
+  // «Задача →» from «Синергія» (docs/specs/2026-11-09-merge-design-into-synergy.md, decision 5): the
+  // card continues the prototype's pushed branch in a worktree, whatever prefix and in-place choice
+  // it carries; its base stays the card's, so the pull request targets it; the opening turn is the
+  // «Імплементувати Синергію» instruction around the card's brief.
+  it("continues a «Синергія» card on its pushed branch with the implement instruction", async () => {
+    const { sup, registry, worktree } = make();
     bind(registry);
-    task({ assigneeId: USER, createdBy: USER, design: true, prefix: "feature" });
+    task({ assigneeId: USER, createdBy: USER, synergyBranch: "synergy/orders", branch: "dev", prefix: "fix", worktree: false, description: "1. Додай фільтр" });
 
     const session = await sup.createSessionFromTask("task-1", USER);
 
     const row = registry.listSessions().find((s) => s.id === session.id)!;
-    expect(row.branch).toBe("design/add-login");
-    expect(row.prefix).toBe("design");
-    expect(row.designDir).toBe(designDirFor(todayIso(), "add-login"));
+    expect(row).toMatchObject({ branch: "synergy/orders", baseBranch: "dev", prefix: "synergy", worktree: true });
+    expect(worktree.attachRemoteBranch).toHaveBeenCalledWith("/tmp/proj", expect.any(String), "synergy/orders");
+    expect(worktree.addWorktree).not.toHaveBeenCalled();
+    expect(worktree.createBranchHere).not.toHaveBeenCalled();
     const [text] = prompts.at(-1) as [string];
-    expect(text).toMatch(/^You are «Дизайнер»/);
-    expect(text).toContain(`${row.designDir}/README.md`);
-    expect(text).toContain("## Design\nAdd login\n\nwire GitHub OAuth");
-    expect(text).toMatch(/Co-Authored-By: Kermanych </);
-    const first = sup.getTranscript(session.id).find((e) => e.kind === "user_text");
-    expect(first).toMatchObject({ kind: "user_text", text: "wire GitHub OAuth" });
+    expect(text).toMatch(/^You are taking over a prototype the operator built with «Синергія» on this branch, `synergy\/orders`, forked from `dev`/);
+    expect(text).toContain("## The prototype\n1. Додай фільтр");
+  });
+
+  it("refuses a «Синергія» card that names a branch outside synergy/ and frees the card", async () => {
+    const { sup, registry, worktree } = make();
+    bind(registry);
+    task({ assigneeId: USER, createdBy: USER, synergyBranch: "feature/orders" });
+
+    await expect(sup.createSessionFromTask("task-1", USER)).rejects.toThrow(/invalid «Синергія» branch/);
+
+    expect(cloudTasks.get("task-1")?.status).toBe("backlog");
+    expect(registry.listSessions()).toEqual([]);
+    expect(worktree.attachRemoteBranch).not.toHaveBeenCalled();
   });
 
   // A Хелпер picked in the launcher or the board editor sits at the head of the card's text;
@@ -556,7 +580,6 @@ describe("createSessionFromTask", () => {
 
     const plain = registry.listSessions().find((s) => s.id === session.id)!;
     expect("deepAnalysis" in plain).toBe(false);
-    expect("designDir" in plain).toBe(false);
     expect((prompts.at(-1) as [string])[0]).toMatch(/^wire GitHub OAuth\n\n/);
   });
 

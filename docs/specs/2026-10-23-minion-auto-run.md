@@ -1,5 +1,7 @@
 # «Посіпака»: an agent that runs its author's auto-run cards to a pull request
 
+> Superseded in part by docs/specs/2026-11-05-remove-managed-claude-code.md: Посіпака always runs on omp and its preflight checks omp only.
+
 - **Date:** 2026-10-23
 - **Branch:** `feature/tech-ai-agent`
 - **Scope:** `supabase/migrations` (two card columns, `tasks_guard`), `packages/cloud` (card fields,

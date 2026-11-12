@@ -1,6 +1,8 @@
 // apps/ui/src/lib/api.ts
 // Typed REST helpers against the Kermanych API (NestJS, global prefix "api").
 import type {
+  AnalyticsPeriod,
+  AnalyticsReport,
   CukChatAsk,
   CukChatReply,
   DirListing,
@@ -29,9 +31,9 @@ import type {
   ModelOption,
   ApiErrorCode,
   ApiErrorParams,
-  AgentRuntimeKind,
   NativeHarness,
   AgentLanguage,
+  SkillImprovementLevel,
   DocsWriteKind,
   DocsGate,
   DocsGateFailure,
@@ -51,6 +53,12 @@ import type {
   PrCheck,
   QaRunScope,
   TesterSettings,
+  SynergyStepsView,
+  ScheduledTask,
+  ScheduleDraft,
+  SchedulePatch,
+  ScheduleRun,
+  ScheduleSlip,
 } from '@kermanych/core';
 import type {
   CloudProject,
@@ -200,6 +208,10 @@ async function getBlob(path: string): Promise<Blob> {
 
 async function put<T>(path: string, body: unknown): Promise<T> {
   return (await (await send('PUT', path, { json: body })).json()) as T;
+}
+
+async function patch<T>(path: string, body: unknown): Promise<T> {
+  return (await (await send('PATCH', path, { json: body })).json()) as T;
 }
 
 async function del(path: string): Promise<void> {
@@ -497,16 +509,18 @@ export const api = {
   jiraDownloadAttachment: (integrationId: string, attachmentId: string): Promise<Blob> =>
     getBlob(`/jira/attachments/${integrationId}/${attachmentId}`),
 
+  // `native` launches the harness's own TUI in a pty instead of a managed session.
   jiraLaunch: (
     integrationId: string,
     key: string,
     projectId: string,
     transitionId?: string,
     images?: ImageInput[],
+    native?: NativeHarness,
   ): Promise<{ session: Session; transitionError?: string }> =>
     post<{ session: Session; transitionError?: string }>(
       `/jira/issues/${integrationId}/${encodeURIComponent(key)}/launch`,
-      { projectId, transitionId, images },
+      native ? { projectId, transitionId, images, native } : { projectId, transitionId, images },
     ),
 
   // ── Linear. The acting user comes from the guard's token; their Linear API key from the
@@ -554,10 +568,11 @@ export const api = {
     projectId: string,
     transitionId?: string,
     images?: ImageInput[],
+    native?: NativeHarness,
   ): Promise<{ session: Session; transitionError?: string }> =>
     post<{ session: Session; transitionError?: string }>(
       `/linear/issues/${workspaceId}/${encodeURIComponent(key)}/launch`,
-      { projectId, transitionId, images },
+      native ? { projectId, transitionId, images, native } : { projectId, transitionId, images },
     ),
 
   // ── Plane. The acting user comes from the guard's token; their Plane API token from the
@@ -653,10 +668,11 @@ export const api = {
     projectId: string,
     transitionId?: string,
     images?: ImageInput[],
+    native?: NativeHarness,
   ): Promise<{ session: Session; transitionError?: string }> =>
     post<{ session: Session; transitionError?: string }>(
       `/plane/issues/${integrationId}/${encodeURIComponent(key)}/launch`,
-      { projectId, transitionId, images },
+      native ? { projectId, transitionId, images, native } : { projectId, transitionId, images },
     ),
 
   // ── Slack. Tokens are per workspace (one Slack app per Kermanych workspace), so every
@@ -765,6 +781,46 @@ export const api = {
   cukChat: (ask: CukChatAsk): Promise<CukChatReply> => post<CukChatReply>('/cuk/chat', ask),
 
   resetCukChat: (): Promise<{ ok: boolean }> => post<{ ok: boolean }>('/cuk/chat/reset', {}),
+
+  // «Задачі за розкладом» (docs/specs/2026-11-06-scheduled-tasks.md, decision 1): personal and
+  // machine-local, so only this api has them. A refused draft or patch is a 400 with the core
+  // rejection's `code`+`params`, which ApiError localizes. The list also arrives whole with every
+  // `schedules_update`, slips one by one with `schedule_slip`.
+  schedules: (): Promise<{ tasks: ScheduledTask[] }> => get<{ tasks: ScheduledTask[] }>('/schedules'),
+
+  createSchedule: (draft: ScheduleDraft): Promise<ScheduledTask> => post<ScheduledTask>('/schedules', draft),
+
+  patchSchedule: (id: string, p: SchedulePatch): Promise<ScheduledTask> =>
+    patch<ScheduledTask>(`/schedules/${encodeURIComponent(id)}`, p),
+
+  deleteSchedule: (id: string): Promise<void> => del(`/schedules/${encodeURIComponent(id)}`),
+
+  runSchedule: (id: string): Promise<{ run: ScheduleRun }> =>
+    post<{ run: ScheduleRun }>(`/schedules/${encodeURIComponent(id)}/run`, {}),
+
+  // Newest first, at most SCHEDULE_RUNS_KEEP.
+  scheduleRuns: (id: string): Promise<{ runs: ScheduleRun[] }> =>
+    get<{ runs: ScheduleRun[] }>(`/schedules/${encodeURIComponent(id)}/runs`),
+
+  // Newest first; a snoozed slip is left out until its time, then re-sent as `schedule_slip`.
+  scheduleSlips: (): Promise<{ slips: ScheduleSlip[] }> => get<{ slips: ScheduleSlip[] }>('/schedules/slips'),
+
+  // `ids` absent marks every slip seen.
+  markScheduleSlipsSeen: (ids?: readonly string[]): Promise<{ ok: true }> =>
+    post<{ ok: true }>('/schedules/slips/seen', ids ? { ids } : {}),
+
+  snoozeScheduleSlip: (id: string, minutes: 10 | 60): Promise<{ ok: true }> =>
+    post<{ ok: true }>(`/schedules/slips/${encodeURIComponent(id)}/snooze`, { minutes }),
+
+  // «Аналітика» (docs/specs/2026-11-07-developer-analytics.md): personal and machine-local
+  // (decision 1), aggregated in the api from this machine's ledger (decision 9). `projectIds`
+  // absent = every project on this machine; `tz` sets the day boundaries and the heat map's
+  // weekday/hour, so the browser's zone is the one the operator reads in.
+  analytics: (params: { period: AnalyticsPeriod; projectIds?: readonly string[] | undefined; tz: string }): Promise<AnalyticsReport> => {
+    const q = new URLSearchParams({ period: params.period, tz: params.tz });
+    if (params.projectIds) q.set('projectIds', params.projectIds.join(','));
+    return get<AnalyticsReport>(`/analytics?${q.toString()}`);
+  },
 
   // Write release notes from the bound repo's git history — local-only for the same
   // reason as the chat above. Generation only: the document comes back to the browser,
@@ -995,9 +1051,38 @@ export const api = {
   // «Написати запит на API» / «Написати хендоф»: the agent writes that one document now, mid-task.
   writeDoc: (id: string, kind: DocsWriteKind): Promise<{ sent: true }> => post(`/sessions/${id}/docs/write`, { kind }),
 
-  // «Зберегти дизайн»: one Kermanych prompt asking the Дизайнер to screenshot every listed state,
-  // bring the README in line and commit; 400 for a session that is not a design.
-  saveDesign: (id: string): Promise<{ sent: true }> => post(`/sessions/${id}/design/save`, {}),
+
+  // «Синергія» (docs/specs/2026-11-06-synergy.md). A launch with no card (decision 5): the api
+  // creates the `synergy/<slug>` worktree, starts the preview on `page` and spawns the child idle.
+  createSynergy: (body: {
+    projectId: string;
+    topic?: string;
+    page?: string;
+    base?: string;
+    model?: string;
+    effort?: ThinkingLevel;
+  }): Promise<Session> => post<Session>('/sessions/synergy', body),
+
+  // The checkpoint strip, read from `git log <base>..HEAD` (decision 4).
+  synergySteps: (id: string): Promise<SynergyStepsView> => get<SynergyStepsView>(`/sessions/${id}/synergy/steps`),
+
+  // «Повернутися сюди»: a restore commit of `sha`'s tree; refused while a turn runs.
+  restoreSynergy: (id: string, sha: string): Promise<SynergyStepsView> =>
+    post<SynergyStepsView>(`/sessions/${id}/synergy/restore`, { sha }),
+
+  // «Імплементувати» (decision 6): the card the UI filed becomes the session's task and a fresh
+  // agent starts on the brief in the same worktree.
+  implementSynergy: (id: string, taskId: string): Promise<Session> =>
+    post<Session>(`/sessions/${id}/synergy/implement`, { taskId }),
+
+  // «Задача →» (docs/specs/2026-11-09-merge-design-into-synergy.md): the screenshots of the pages
+  // the prototype touched, shot by the session browser ([] without one), and the push of its
+  // branch that «Створити» makes before filing the card.
+  synergyScreens: (id: string): Promise<{ page: string; data: string; mimeType: 'image/png' }[]> =>
+    get<{ page: string; data: string; mimeType: 'image/png' }[]>(`/sessions/${id}/synergy/screens`),
+
+  pushSynergy: (id: string): Promise<{ branch: string; base: string }> =>
+    post<{ branch: string; base: string }>(`/sessions/${id}/synergy/push`, {}),
 
   archiveSession: (id: string): Promise<{ ok: boolean }> =>
     post<{ ok: boolean }>(`/sessions/${id}/archive`, {}),
@@ -1053,37 +1138,25 @@ export const api = {
 
   clearAuthSession: (): Promise<void> => del('/auth/session'),
 
-  // Account-level runtime preference. GET reads the cached choice; POST refreshes it
+  // Is omp usable on THIS machine (installed and signed in)? omp runs «Керманич» and every
+  // headless AI function, whatever the provider. `code` is a NoticeCode the caller localizes;
+  // `reason` is raw prose for a failure we could not classify.
+  checkAccountRuntime: (): Promise<{ ok: boolean; code?: string; reason?: string }> =>
+    get<{ ok: boolean; code?: string; reason?: string }>('/account/runtime/check'),
+
+  // Account-level communication language. GET reads the cached choice; POST refreshes it
   // (stores/auth.ts writes to the cloud, then pings this to keep the cache current).
-  getAccountRuntime: (): Promise<{ runtime: AgentRuntimeKind | null }> =>
-    get<{ runtime: AgentRuntimeKind | null }>('/account/runtime'),
-
-  setAccountRuntime: (runtime: AgentRuntimeKind): Promise<void> =>
-    post<void>('/account/runtime', { runtime }),
-
-  // Is this backend usable on THIS machine (installed and signed in)? Asked when the operator
-  // picks one, so a signed-out CLI is named right there instead of surfacing later as a session
-  // that never answers. `code` is a NoticeCode the caller localizes; `reason` is raw prose for a
-  // failure we could not classify.
-  checkAccountRuntime: (
-    runtime: AgentRuntimeKind,
-  ): Promise<{ ok: boolean; code?: string; reason?: string }> =>
-    get<{ ok: boolean; code?: string; reason?: string }>(
-      `/account/runtime/check?runtime=${encodeURIComponent(runtime)}`,
-    ),
-
-  // Account-level communication language. Same cache-refresh pattern as the runtime above.
   getAccountLanguage: (): Promise<{ language: AgentLanguage | null }> =>
     get<{ language: AgentLanguage | null }>('/account/language'),
 
   setAccountLanguage: (language: AgentLanguage): Promise<void> =>
     post<void>('/account/language', { language }),
 
-  // «Вдосконалювати навички» (docs/specs/2026-11-04-skill-self-improvement.md). Same pattern:
-  // the cloud profile is written first, then the api's cache, which decides whether sessions
-  // launched afterwards get the `improve_skill` tool.
-  setAccountSkillImprovement: (on: boolean): Promise<void> =>
-    post<void>('/account/skill-improvement', { on }),
+  // «Вдосконалювати навички» (docs/specs/2026-11-06-skill-improvement-reflection.md). Same
+  // pattern: the cloud profile is written first, then the api's cache, which decides whether
+  // sessions get the `improve_skill` tool and Kermanych's turns the reflection step.
+  setAccountSkillImprovementLevel: (level: SkillImprovementLevel): Promise<void> =>
+    post<void>('/account/skill-improvement', { level }),
 
   // ── Voice conversation (docs/specs/2026-11-02-voice-conversation.md) ──────────────────
   // The OpenAI key stays in the api: the window only learns where it comes from and its last

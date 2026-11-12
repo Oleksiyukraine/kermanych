@@ -1,5 +1,7 @@
 # Native chats: `omp` / `claude` TUI on the «Чат» page
 
+> Superseded in part by docs/specs/2026-11-05-remove-managed-claude-code.md: the «Чат» chip defaults to the provider instead of remembering the last pick, and ▶ on a native thread is shown blocked.
+
 ## Goal
 
 Native sessions (`docs/specs/2026-10-05-native-sessions.md`) let a task run in the harness's

@@ -97,12 +97,12 @@ export {
 } from "./status";
 
 export {
-  getMyAgentRuntime,
-  setMyAgentRuntime,
+  getMyAgentProvider,
+  setMyAgentProvider,
   getMyAgentLanguage,
   setMyAgentLanguage,
-  getMySkillImprovement,
-  setMySkillImprovement,
+  getMySkillImprovementLevel,
+  setMySkillImprovementLevel,
 } from "./account";
 export { getMinAppVersion } from "./app-release";
 

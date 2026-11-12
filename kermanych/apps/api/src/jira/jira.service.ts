@@ -27,7 +27,7 @@ import {
   upsertJiraIssues,
 } from "@kermanych/cloud";
 import type { JiraIntegration, JiraIssue } from "@kermanych/cloud";
-import type { ImageInput, Session } from "@kermanych/core";
+import type { ImageInput, NativeHarness, Session } from "@kermanych/core";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { AuthService } from "../auth/auth.service";
 import { RegistryService } from "../registry/registry.service";
@@ -648,9 +648,14 @@ export class JiraService {
     userId: string,
     transitionId?: string,
     images?: ImageInput[],
+    native?: NativeHarness,
   ): Promise<JiraLaunchResult> {
     const { cloud, integration, client } = await this.withIntegration(integrationId, userId);
     const raw = await client.getIssue(key);
+    // The ticket's own estimate travels onto the shadow card, and from there onto the session
+    // (docs/specs/2026-11-09-task-estimate.md, decision 4). Jira sends it in seconds.
+    const estimateSeconds = (raw.fields.timetracking as { originalEstimateSeconds?: unknown } | undefined)?.originalEstimateSeconds;
+    const estimateMinutes = typeof estimateSeconds === "number" && estimateSeconds > 0 ? Math.round(estimateSeconds / 60) : 0;
 
     // The shadow task: the whole existing pipeline (worktree, outbox, force-stop,
     // tasks_guard) runs on this ordinary row; `jiraKey` is what keeps it off «Задачі».
@@ -664,9 +669,10 @@ export class JiraService {
       assigneeId: userId,
       createdBy: userId,
       jiraKey: key,
+      ...(estimateMinutes > 0 ? { estimateMinutes } : {}),
     });
 
-    const session = await this.supervisor.createSessionFromTask(task.id, userId, images);
+    const session = await this.supervisor.createSessionFromTask(task.id, userId, images, native);
     await patchJiraIssueBinding(cloud, integration.id, raw.id, {
       kermanychProjectId: projectId,
       taskId: task.id,

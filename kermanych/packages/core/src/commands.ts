@@ -4,9 +4,10 @@
 // fs, no cloud, no omp process knowledge.
 //
 // A command is NOT a helper. A helper (see helpers.ts) prepends prose to what the operator wrote
-// and the model reads it as part of the turn. A command never reaches the model as text: the
-// leading token is consumed and mapped to an RPC call against the live omp child. That is why it
-// lives in its own table here, with no `body` and no `kind` — there is nothing to inject.
+// and the model reads it as part of the turn. A command never reaches the model as the operator's
+// text: the leading token is consumed and mapped to an action of Kermanych's — an RPC call against
+// the live omp child (`/compact`), or a change of the session's mode with Kermanych's own prompt
+// (`/minion`). That is why it lives in its own table here, with no `body` and no `kind`.
 
 export type CommandDef = {
   // The token after the slash the operator types (`/compact`).
@@ -27,6 +28,12 @@ export const DEFAULT_COMMANDS: readonly CommandDef[] = [
     name: "compact",
     label: "Ущільнити контекст",
     hint: "стиснути історію діалогу й звільнити ліміт токенів без втрати сенсу",
+  },
+  {
+    // docs/specs/2026-11-09-minion-takeover.md: the session becomes a «Посіпака» run.
+    name: "minion",
+    label: "Передати Посіпаці",
+    hint: "агент сам ухвалить рішення, що лишились, і відкриє ПР — без питань до вас",
   },
 ];
 

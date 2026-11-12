@@ -48,8 +48,7 @@ import {
 // file tool.
 export const MANAGEMENT_TOOLS = ["read", "grep", "glob"] as const;
 
-// The name the tracker tool server is given in the child. claude shows the tools as
-// `mcp__kermanych__jira_*` / `mcp__kermanych__plane_*`; omp shows them bare.
+// The name the tracker tool server is given in the child; omp shows its tools bare.
 const MCP_SERVER_NAME = "kermanych";
 
 // Documentation turns answer from passages the browser retrieved before the turn, and the
@@ -173,8 +172,8 @@ export class ManagementChatService implements OnModuleDestroy {
     });
   }
 
-  onModuleDestroy(): void {
-    this.pool.dropAll();
+  async onModuleDestroy(): Promise<void> {
+    await this.pool.dropAll();
   }
 
   private async turn(

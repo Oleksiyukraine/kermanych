@@ -4,6 +4,16 @@
        the draft, the pending files, the Хелпери picker — and hands a finished message to its host
        through `submit`; the host's store owns the conversation. -->
   <div class="acomp" :class="{ 'acomp--dense': dense }">
+    <!-- OMP MISSING OR SIGNED OUT — both assistants run on omp whatever the provider
+         (docs/specs/2026-11-05-remove-managed-claude-code.md, decision 8): the note names the fix
+         before a send that could only fail, and sending stays off until a check says omp works.
+         The verdict is the shared one (stores/omp-check.ts); an unknown answer blocks nothing. -->
+    <div v-if="ompBlock" class="acomp__omp" role="alert">
+      <p class="acomp__omp-text">{{ ompBlock }}</p>
+      <button type="button" class="acomp__omp-recheck mono" @click="ompCheck.recheck()">
+        {{ t('common.omp.recheck') }}
+      </button>
+    </div>
     <!-- Pending attachments, ABOVE the pill rather than inside it: in the dock the strip
          grows upward over the section like the transcript does, and the capsule below keeps
          its one-row shape. -->
@@ -37,7 +47,7 @@
         v-model="draft"
         class="acomp__input"
         rows="1"
-        :disabled="locked"
+        :disabled="locked || !!ompBlock"
         :placeholder="placeholder"
         :aria-label="inputLabel"
         @input="autoGrow"
@@ -49,7 +59,7 @@
         class="acomp__tool mono"
         type="button"
         :aria-label="t('management.assistant.helpers')"
-        :disabled="locked"
+        :disabled="locked || !!ompBlock"
         @click="pickerOpen = !pickerOpen"
       >/</button>
       <button
@@ -57,7 +67,7 @@
         class="acomp__tool"
         type="button"
         :aria-label="attachTip"
-        :disabled="locked"
+        :disabled="locked || !!ompBlock"
         @click="attachInput?.click()"
       >📎</button>
       <input
@@ -109,6 +119,7 @@ import { useSubscriptionUsage } from '../../composables/useSubscriptionUsage';
 import { useFileAttach } from '../../composables/useFileAttach';
 import { ATTACH_ACCEPT, type AttachedFile } from '../../lib/files';
 import { SUPPORTED_IMAGE_TYPES } from '../../lib/images';
+import { useOmpCheck } from 'stores/omp-check';
 
 const props = defineProps<{
   // A turn is in flight: the send disc breathes.
@@ -176,7 +187,17 @@ function onAttachPick(e: Event): void {
   input.value = '';
 }
 
-const canSend = computed(() => (draft.value.trim().length > 0 || attachFiles.value.length > 0) && !props.locked);
+// The blocking note's sentence, or '' while omp works or its state is unknown.
+const ompCheck = useOmpCheck();
+const ompBlock = computed(() => {
+  if (ompCheck.code === 'omp_binary_missing') return t('common.omp.missing');
+  if (ompCheck.code === 'omp_not_authenticated') return t('common.omp.signedOut');
+  return '';
+});
+
+const canSend = computed(
+  () => (draft.value.trim().length > 0 || attachFiles.value.length > 0) && !props.locked && !ompBlock.value,
+);
 
 function submit(): void {
   if (!canSend.value) return;
@@ -224,7 +245,15 @@ function onKeydown(e: KeyboardEvent): void {
 function focus(): void {
   void nextTick(() => fieldEl.value?.focus());
 }
-defineExpose({ focus, send });
+
+// Put text into the field without sending it — «Обговорити в ЦУК» on a scheduled run's answer:
+// the operator adds the question and sends it himself.
+function setDraft(text: string): void {
+  draft.value = text;
+  void nextTick(autoGrow);
+  focus();
+}
+defineExpose({ focus, send, setDraft });
 
 // PLAN SPEND — the same figure the sidebar shows, folded to the single tightest window.
 // The composer has room for one number, and the number that matters before spending a turn
@@ -266,6 +295,46 @@ const planChip = computed(() => {
 .acomp {
   display: flex;
   flex-direction: column;
+}
+
+// ── omp missing or signed out — the blocking note above the pill ─────────────
+// The attachment strip's frost, with the danger rule: it is the reason nothing can be sent.
+.acomp__omp {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--k-sp-3);
+  margin-bottom: var(--k-sp-2);
+  padding: var(--k-sp-2) var(--k-sp-3);
+  background: color-mix(in srgb, var(--k-surface) 74%, transparent);
+  -webkit-backdrop-filter: blur(22px) saturate(150%);
+  backdrop-filter: blur(22px) saturate(150%);
+  border: var(--k-rule-thin) solid var(--k-danger);
+  border-radius: var(--k-r-lg);
+  box-shadow: var(--k-shadow-toast);
+}
+
+.acomp__omp-text {
+  flex: 1;
+  margin: 0;
+  font-size: var(--k-fs-sm);
+  line-height: 1.5;
+  color: var(--k-text);
+}
+
+.acomp__omp-recheck {
+  flex: none;
+  padding: 3px var(--k-sp-2);
+  background: transparent;
+  border: var(--k-rule-thin) solid var(--k-line-strong);
+  border-radius: var(--k-r-sm);
+  color: var(--k-text);
+  font-size: var(--k-fs-xs);
+  cursor: pointer;
+}
+
+.acomp__omp-recheck:hover {
+  border-color: var(--k-accent);
+  color: var(--k-accent);
 }
 
 // ── Pending attachments — the strip above the pill ───────────────────────────

@@ -36,7 +36,7 @@ export type KIconName =
   | 'minion'
   | 'decision'
   | 'notNeeded'
-  | 'design'
+  | 'synergy'
   | 'viewSource'
   | 'viewSplit'
   | 'viewPreview'
@@ -45,18 +45,20 @@ export type KIconName =
   | 'fullscreenExit'
   | 'chevronDown'
   | 'chevronRight'
+  | 'copy'
   | 'coins'
   | 'mic'
   | 'micOff'
   | 'agentPromote'
-  | 'agentDesignSave'
+  | 'agentSynergyImplement'
   | 'agentReview'
   | 'agentPullRequest'
   | 'agentCommit'
   | 'agentResolveConflict'
   | 'agentFinish'
   | 'agentSummary'
-  | 'agentTester';
+  | 'agentTester'
+  | 'clock';
 </script>
 
 <script setup lang="ts">
@@ -163,13 +165,10 @@ const ICONS: Record<KIconName, readonly string[]> = {
   // «Не потрібно» — a slashed disc (Lucide's ban): the run found nothing to change and closed
   // the card (KNotNeededMark).
   notNeeded: ['M3 12a9 9 0 1 0 18 0a9 9 0 1 0-18 0', 'm4.9 4.9 14.2 14.2'],
-  // «Дизайн» — a pen nib (Lucide's pen-tool): a design session and its card (KDesignMark), the
-  // agent that drafts screens rather than code.
-  design: [
-    'M15.707 21.293a1 1 0 0 1-1.414 0l-1.586-1.586a1 1 0 0 1 0-1.414l5.586-5.586a1 1 0 0 1 1.414 0l1.586 1.586a1 1 0 0 1 0 1.414z',
-    'm18 13-1.375-6.874a1 1 0 0 0-.746-.776L3.235 2.028a1 1 0 0 0-1.207 1.207L5.35 15.879a1 1 0 0 0 .776.746L13 18',
-    'm2.3 2.3 7.286 7.286',
-    'M9 11a2 2 0 1 0 4 0a2 2 0 1 0-4 0',
+  // «Синергія» — a lightning bolt (Lucide's zap): fast prototyping on the live app
+  // (docs/specs/2026-11-06-synergy.md), the «ШІ-команда» mark of its instruction.
+  synergy: [
+    'M4 14a1 1 0 0 1-.78-1.63l9.9-10.2a.5.5 0 0 1 .86.46l-1.92 6.02A1 1 0 0 0 13 10h7a1 1 0 0 1 .78 1.63l-9.9 10.2a.5.5 0 0 1-.86-.46l1.92-6.02A1 1 0 0 0 11 14z',
   ],
 
   // The file viewer's three modes (KViewModeToggle): source lines, source beside a page, the
@@ -195,6 +194,9 @@ const ICONS: Record<KIconName, readonly string[]> = {
   // KCodeView's fold gutter: an open block points down, a folded one points at its summary.
   chevronDown: ['m6 9 6 6 6-6'],
   chevronRight: ['m9 18 6-6-6-6'],
+  // «Скопіювати шлях» beside a path in the session's «Документація» tab: Lucide's copy, two
+  // overlapping sheets.
+  copy: ['M10 8h10a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H10a2 2 0 0 1-2-2V10a2 2 0 0 1 2-2z', 'M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2'],
   // A session card's spend (KSessionCard): Lucide's coins. The model, tokens and cost live in
   // its tooltip; the mark has to say «what it cost is in here» before anyone hovers it.
   coins: ['M2 8a6 6 0 1 0 12 0a6 6 0 1 0-12 0', 'M18.09 10.37A6 6 0 1 1 10.34 18', 'M7 6h1v4', 'm16.71 13.88.7.71-2.82 2.82'],
@@ -204,8 +206,7 @@ const ICONS: Record<KIconName, readonly string[]> = {
   micOff: ['m2 2 20 20', 'M18.89 13.23A7.12 7.12 0 0 0 19 12v-2', 'M5 10v2a7 7 0 0 0 12 5', 'M15 9.34V5a3 3 0 0 0-5.68-1.33', 'M9 9v3a3 3 0 0 0 5.12 2.12', 'M12 19v3'],
 
   // «ШІ-команда → Агенти» (docs/specs/2026-11-03-ai-team-agent-pages.md, decision 6): one mark per
-  // built-in agent, in a disc on its list row and its page. «Посіпака» is `minion` and «Дизайнер»
-  // is `design` above; the rest are Lucide's. Not the magnifier or the rocket: those already mean
+  // built-in agent, in a disc on its list row and its page. «Посіпака» is `minion` above; the rest are Lucide's. Not the magnifier or the rocket: those already mean
   // «Глибокий аналіз» and «Розпочати».
   // Промоутер — a hammer (Lucide's): from talking it over to building it.
   agentPromote: [
@@ -213,11 +214,9 @@ const ICONS: Record<KIconName, readonly string[]> = {
     'm18 15 4-4',
     'm21.5 11.5-1.914-1.914A2 2 0 0 1 19 8.172V7l-2.26-2.26a6 6 0 0 0-4.202-1.756L9 2.96l.92.82A6.18 6.18 0 0 1 12 8.4V10l2 2h1.172a2 2 0 0 1 1.414.586L18.5 14.5',
   ],
-  // Зберегти дизайн — a floppy (Lucide's save).
-  agentDesignSave: [
-    'M15.2 3a2 2 0 0 1 1.4.6l3.8 3.8a2 2 0 0 1 .6 1.4V19a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z',
-    'M17 21v-7a1 1 0 0 0-1-1H8a1 1 0 0 0-1 1v7',
-    'M7 3v4a1 1 0 0 0 1 1h7',
+  // Імплементувати Синергію — a wrench (Lucide's): the prototype rebuilt properly.
+  agentSynergyImplement: [
+    'M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z',
   ],
   // Ревізор — a shield with a tick (Lucide's shield-check): an independent audit.
   agentReview: [
@@ -254,6 +253,9 @@ const ICONS: Record<KIconName, readonly string[]> = {
     'M6.453 15h11.094',
     'M8.5 2h7',
   ],
+  // «Розклад» — a clock (Lucide's): a scheduled task's row and the mark on the session its run
+  // became (KScheduleMark, docs/specs/2026-11-06-scheduled-tasks.md, decision 5).
+  clock: ['M3 12a9 9 0 1 0 18 0a9 9 0 1 0-18 0', 'M12 6v6l4 2'],
 };
 
 const props = defineProps<{ name: KIconName }>();

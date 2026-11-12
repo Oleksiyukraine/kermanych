@@ -22,7 +22,7 @@ import { AuthService } from "./auth/auth.service";
 import { SupabaseAuthGuard } from "./auth/auth.guard";
 import { CloudController } from "./cloud/cloud.controller";
 import { CloudSyncService } from "./cloud/cloud-sync.service";
-import { SkillsService } from "./skills/skills.service";
+import { HandedSkills, SkillsService } from "./skills/skills.service";
 import { SkillImprovementService } from "./skills/skill-improvement.service";
 import { ManagementChatService } from "./management/management-chat.service";
 import { ReleaseNotesService } from "./management/release-notes.service";
@@ -63,20 +63,28 @@ import { DeviceService } from "./device/device.service";
 import { DEVICE_API } from "./device/device.contract";
 import { DeviceController } from "./http/device.controller";
 import { DeviceGateway } from "./ws/device.gateway";
+import { SchedulesController } from "./http/schedules.controller";
+import { ScheduleService } from "./schedules/schedule.service";
+import { AnalyticsController } from "./analytics/analytics.controller";
+import { AnalyticsService } from "./analytics/analytics.service";
+import { StartupGcService } from "./gc/startup-gc.service";
 
 @Module({
-  controllers: [AuthController, ProjectsController, SessionsController, FsController, UsageController, CloudController, SkillsController, SkillImportController, ManagementController, ManagementMcpController, CukController, ModelsController, JiraController, LinearController, PlaneController, SlackController, AccountController, DocsController, NativeController, BrowserMcpController, MachineController, MinionController, TesterController, VoiceController, DeviceController],
+  controllers: [AuthController, ProjectsController, SessionsController, FsController, UsageController, CloudController, SkillsController, SkillImportController, ManagementController, ManagementMcpController, CukController, ModelsController, JiraController, LinearController, PlaneController, SlackController, AccountController, DocsController, NativeController, BrowserMcpController, MachineController, MinionController, TesterController, VoiceController, DeviceController, SchedulesController, AnalyticsController],
   providers: [
     RegistryService, WorktreeService, SupervisorService, PreviewService, EnvFileService, EventsGateway,
     UsageService,
     AuthService,
     SkillsService,
-    // The improve_skill tool's work (docs/specs/2026-11-04-skill-self-improvement.md).
+    // The improve_skill tool's work (docs/specs/2026-11-04-skill-self-improvement.md), and what
+    // each launch handed the agent of the library, for its staleness check
+    // (docs/specs/2026-11-07-skill-improvement-review.md, decision 3).
     SkillImprovementService,
+    HandedSkills,
     // The local omp model catalog (`omp models --json`), read by GET /models and by the
     // supervisor when a running session's model is changed by provider + id.
     ModelsService,
-    // The "is this backend usable on this machine?" preflight behind GET
+    // The "is omp usable on this machine?" preflight behind GET
     // /account/runtime/check. Distinct from ModelsService on purpose: that one degrades every
     // failure to an empty catalog so a picker always renders, which is precisely the swallowing
     // this check exists to undo.
@@ -94,15 +102,15 @@ import { DeviceGateway } from "./ws/device.gateway";
     ManagementMcpService,
     // ЦУК, the console behind the avatar (docs/specs/2026-11-04-cuk-control-console.md): one
     // tool-less child per user on the same chat pool as the Менеджмент assistant. Knows only
-    // the runtime preference (RegistryService) and the renice (MachineResourcesService).
+    // the language preference (RegistryService) and the renice (MachineResourcesService).
     CukChatService,
     // The Release Notes generator: one one-shot omp child per request, reading the bound
     // repo's git history through { RegistryService, WorktreeService }. Like the chat it
     // knows nothing about SupervisorService — a generation has no session and no worktree.
     ReleaseNotesService,
     // Names a new agent's branch from its task (docs/specs/2026-10-26-branch-name-from-task.md):
-    // one tool-less one-shot child on the runtime's fast model. The supervisor depends on it;
-    // it knows nothing back, only the runtime preference (RegistryService).
+    // one tool-less one-shot omp child on its fast model. The supervisor depends on it;
+    // it knows nothing back.
     BranchNameService,
     // The voice conversation (docs/specs/2026-11-02-voice-conversation.md): the operator's OpenAI
     // key (RegistryService) and the SDP exchange with GPT-Live. The bridge to the agent runs in
@@ -162,6 +170,15 @@ import { DeviceGateway } from "./ws/device.gateway";
     // supervisor (launchMinion) and counts its runs' results (minionResult$); the supervisor
     // never knows it, and its `minion_update` rides the supervisor's `events$` to the socket.
     MinionService,
+    // «Задачі за розкладом» (docs/specs/2026-11-06-scheduled-tasks.md): the local tasks, the
+    // minute tick, reminders, and the agent runs — a project run through the supervisor
+    // (launchScheduled, scheduleRunEnd$), a run without a project on its own chat pool. The
+    // supervisor never knows it; its events ride the supervisor's `events$` to the socket.
+    ScheduleService,
+    // «Аналітика» (docs/specs/2026-11-07-developer-analytics.md): the activity spans off the
+    // supervisor's `events$` and the one-time history import through NativeSessionService's file
+    // resolver and parsers. A pure subscriber like CloudSyncService; nothing depends back.
+    AnalyticsService,
     // The session's virtual device (docs/specs/2026-11-03-mobile-device-preview.md): clones of the
     // machine's iOS simulators / AVDs, booted for the preview's `device` step. PreviewService,
     // BrowserMcpService and the supervisor depend on the DeviceApi interface under DEVICE_API, so
@@ -170,6 +187,11 @@ import { DeviceGateway } from "./ws/device.gateway";
     DeviceService,
     { provide: DEVICE_API, useExisting: DeviceService },
     DeviceGateway,
+    // The startup sweep of what a long uptime leaves on disk: orphaned and interrupted-launch
+    // worktrees (RegistryService rows against WorktreeService's git), the older
+    // `~/.kermanych/worktrees/` leftovers and native sessions' MCP configs. Runs once, awaited in
+    // its onModuleInit, so it ends before the api listens; nothing depends on it.
+    StartupGcService,
     // Global by design: the api binds 127.0.0.1 but was previously drivable by
     // anything on the machine, including GET /fs/list (arbitrary local directory
     // enumeration). Opt out per route with @Public(), never per module.

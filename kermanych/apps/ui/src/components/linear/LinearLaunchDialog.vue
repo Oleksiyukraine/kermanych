@@ -55,6 +55,8 @@ import { api } from '../../lib/api';
 import { errorText, useAsyncAction } from '../../composables/useAsyncAction';
 import { useLoadPhase } from '../../composables/useLoadPhase';
 import { launchDefaults, type LinearTransitionView, type LaunchDefaults } from '../../lib/linear-view';
+import { defaultLaunchMode, nativeRuntimeFor } from '../../lib/native-session';
+import { useAuth } from 'stores/auth';
 import { useOrchestrator } from 'stores/orchestrator';
 import { useProjects } from 'stores/projects';
 import { useI18n } from 'vue-i18n';
@@ -67,6 +69,7 @@ const emit = defineEmits<{
 
 const cloud = useProjects();
 const local = useOrchestrator();
+const auth = useAuth();
 const { t } = useI18n();
 
 const projectPick = ref('');
@@ -137,6 +140,9 @@ const { run: launch, busy } = useAsyncAction(
       props.issue.key,
       projectPick.value,
       defaults.value.askStatus && transitionPick.value ? transitionPick.value : undefined,
+      undefined,
+      // The provider's default mode: «Керманич» for omp, the harness's own TUI otherwise.
+      nativeRuntimeFor(defaultLaunchMode(auth.provider)),
     );
     emit('update:modelValue', false);
     emit('launched', res.session, res.transitionError);

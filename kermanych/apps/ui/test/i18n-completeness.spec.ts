@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { NOTICE_CODES, API_ERROR_CODES, STE_RULES } from '@kermanych/core';
+import { NOTICE_CODES, API_ERROR_CODES, MANAGEMENT_REJECTION_CODES, STE_RULES } from '@kermanych/core';
+import { SCHEDULE_RUN_REASONS } from '../src/lib/schedules';
 import { uk } from '../src/i18n/uk';
 import { en } from '../src/i18n/en';
 
@@ -20,17 +21,27 @@ describe('i18n completeness', () => {
   // uk/en message — the completeness test in the message catalogs fails otherwise") was not
   // actually enforced anywhere: the check above only compares the two locales to EACH OTHER,
   // so a code added to the union with no message in either locale passed silently and rendered
-  // as its own raw fallback prose forever. These two pin the promise to the catalogs.
-  const catalogue = (locale: typeof uk, group: 'notices' | 'errors'): Set<string> =>
+  // as its own raw fallback prose forever. These pin the promise to the catalogs.
+  const catalogue = (locale: typeof uk, group: 'notices' | 'errors' | 'rejections'): Set<string> =>
     new Set(Object.keys((locale as unknown as Record<string, Record<string, unknown>>)[group] ?? {}));
 
   it.each([
     ['notices', NOTICE_CODES, 'notices'] as const,
     ['errors', API_ERROR_CODES, 'errors'] as const,
+    ['rejections', MANAGEMENT_REJECTION_CODES, 'rejections'] as const,
   ])('every %s code has a message in both locales', (_label, codes, group) => {
     const missingUk = codes.filter((c) => !catalogue(uk, group).has(c));
     const missingEn = codes.filter((c) => !catalogue(en, group).has(c));
     expect({ missingUk, missingEn }).toEqual({ missingUk: [], missingEn: [] });
+  });
+
+  // A skipped or failed scheduled run is worded by its reason (lib/schedules.ts reasonText); a
+  // reason without a message would put its raw key in «Центр сповіщень».
+  it.each([
+    ['uk', uk],
+    ['en', en],
+  ] as const)('every scheduled-run reason has a sentence in %s', (_name, locale) => {
+    expect(SCHEDULE_RUN_REASONS.filter((r) => !(r in locale.cuk.schedule.reason))).toEqual([]);
   });
 
   // The ASD-STE100 table on the settings page (components/settings/SteGuide.vue) renders core's

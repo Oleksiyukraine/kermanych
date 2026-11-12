@@ -162,6 +162,28 @@ test("every step gets PREVIEW_DIR and every service's port; a service gets its o
   await vi.waitFor(() => expect(openPreview).toHaveBeenCalledWith({ sessionId: "s1", projectId: "p1" }, state.url));
 }, 30_000);
 
+test("the directory's .env reaches every step under Kermanych's variables; overlay, $-referring and NODE_ENV keys stay out", async () => {
+  const { svc: s, dir } = make({
+    config: {
+      setup: 'echo "setup $BASE_URL"',
+      services: [{ name: "web", open: true, command: node(), env: { SAY: "from config" } }],
+    },
+  });
+  writeFileSync(
+    join(dir, ".env"),
+    ["# api", "BASE_URL=https://dev.example.com/api/", 'QUOTED="a b"', "PORT=3000", "SAY=from env", "NODE_ENV=production", "IN_LOCAL=env", "IN_DEV=env", "REF=${BASE_URL}x"].join("\n"),
+  );
+  writeFileSync(join(dir, ".env.local"), "IN_LOCAL=local\n");
+  writeFileSync(join(dir, ".env.development"), "IN_DEV=dev\n");
+  s.start("s1");
+  const state = await running(s);
+  const env = await envOf(state.url!);
+  expect(env).toMatchObject({ BASE_URL: "https://dev.example.com/api/", QUOTED: "a b", PORT: String(state.services[0]!.port), SAY: "from config" });
+  for (const key of ["IN_LOCAL", "IN_DEV", "REF"]) expect(env[key]).toBeUndefined();
+  expect(env.NODE_ENV).not.toBe("production");
+  expect(s.logs("s1", "setup", 0).lines.map((l) => l.text)).toEqual(["setup https://dev.example.com/api/"]);
+}, 30_000);
+
 test("the open service is also ready when stderr announces a URL whose port accepts", async () => {
   const { svc: s } = make({ config: { services: [{ name: "web", open: true, command: node(), env: { LISTEN: "0", BANNER: "1" } }] } });
   // LISTEN 0 binds a random port other than PORT; only the banner tells which.

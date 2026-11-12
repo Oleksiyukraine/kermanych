@@ -96,20 +96,9 @@ test("a required handoff must be present", () => {
 
 test("every failure kind of an ordinary branch comes back in display order", () => {
   // An API request is never `required` in a stored policy (docsPolicy drops it); the gate
-  // itself treats every kind alike. `design-readme` belongs to a design session alone.
+  // itself treats every kind alike.
   const strict: DocsPolicy = { spec: "required", plan: "required", schemas: "required", handoff: "required", apiRequest: "required", design: "optional" };
-  expect(docsGateFailures({ policy: strict, paths: [CODE], specBodies: [] })).toEqual(DOCS_GATE_FAILURES.filter((f) => f !== "design-readme"));
-});
-
-test("a design branch is judged by its own README alone", () => {
-  const designDir = "docs/design/2026-10-29-orders";
-  const design = (paths: string[]) => docsGateFailures({ policy: DEFAULT_DOCS_POLICY, paths, specBodies: [], designDir });
-  // The default policy requires a task document and living docs; a design branch needs neither.
-  expect(design([`${designDir}/README.md`, `${designDir}/screens/list-data@390.png`, "src/__design/orders/List.vue"])).toEqual([]);
-  expect(design([`${designDir}/screens/list-data@390.png`, "src/__design/orders/List.vue"])).toEqual(["design-readme"]);
-  // Another design's README does not count.
-  expect(design(["docs/design/2026-10-28-other/README.md", "src/x.ts"])).toEqual(["design-readme"]);
-  expect(design([])).toEqual([]);
+  expect(docsGateFailures({ policy: strict, paths: [CODE], specBodies: [] })).toEqual(DOCS_GATE_FAILURES);
 });
 
 test("a design folder on an ordinary branch is neither a task document nor living documentation", () => {
@@ -171,5 +160,4 @@ test("the completion prompt asks only for the failing items", () => {
 test("the completion skills follow the failures, none for docs-impact", () => {
   expect(docsFailureSkills(["docs-impact"])).toEqual([]);
   expect(docsFailureSkills(["api-request", "task-spec", "plan", "handoff"])).toEqual(["task-spec", "task-plan", "frontend-handoff", "api-request"]);
-  expect(docsFailureSkills(["design-readme"])).toEqual(["design-spec"]);
 });

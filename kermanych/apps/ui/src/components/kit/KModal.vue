@@ -32,7 +32,12 @@ const emit = defineEmits<{ 'update:modelValue': [value: boolean] }>();
 </script>
 
 <style scoped lang="scss">
+// A column capped by QDialog's own max-height (the viewport less its margin): the head and the
+// controls stay put and only the body scrolls, so a form taller than the window still shows
+// its title and its «Скасувати» / «Зберегти» instead of scrolling them out of reach.
 .k-modal {
+  display: flex;
+  flex-direction: column;
   width: 440px;
   max-width: 92vw;
   background: var(--k-grad-raise), var(--k-bg);
@@ -43,6 +48,7 @@ const emit = defineEmits<{ 'update:modelValue': [value: boolean] }>();
 }
 
 .k-modal__head {
+  flex: none;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -58,9 +64,15 @@ const emit = defineEmits<{ 'update:modelValue': [value: boolean] }>();
   font-size: 17px;
   font-weight: 800;
   letter-spacing: -0.01em;
+  // Quasar's h3 carries a 50px line box; the head is a single 17px line and every pixel of
+  // it is taken from the body a tall form scrolls in.
+  line-height: 1.3;
 }
 
 .k-modal__body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
   padding: 22px;
   font-family: var(--k-font-ui);
   font-size: 13px;
@@ -78,6 +90,7 @@ const emit = defineEmits<{ 'update:modelValue': [value: boolean] }>();
 }
 
 .k-modal__controls {
+  flex: none;
   display: flex;
   justify-content: flex-end;
   gap: 10px;

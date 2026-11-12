@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { nextTick, reactive } from 'vue';
 import { createPinia, setActivePinia } from 'pinia';
 import type { SkillImprovementChange } from '@kermanych/cloud';
-import type { SkillImprovement, SkillImprovementEntry } from '@kermanych/core';
+import type { ScheduleSlip, SkillImprovement, SkillImprovementEntry } from '@kermanych/core';
 import { useNotificationCenter } from '../src/stores/notification-center';
 
 // ЦУК's «Центр сповіщень» (docs/specs/2026-11-04-skill-self-improvement.md). What a consumer would
@@ -53,6 +53,27 @@ vi.mock('../src/lib/preview', () => ({ IS_PREVIEW: false, PREVIEW_USER_ID: 'prev
 vi.mock('../src/boot/i18n', () => ({
   globalTr: { t: (k: string, p?: Record<string, unknown>) => (p ? `${k} ${JSON.stringify(p)}` : k) },
 }));
+const bounceDock = vi.fn();
+vi.mock('../src/lib/dock', () => ({ bounceDock: () => bounceDock() }));
+// This machine's schedule slips (stores/schedules.ts), the feed's second source.
+let slipListener: ((slip: ScheduleSlip) => void) | undefined;
+const markSlipsSeen = vi.fn<(ids: readonly string[]) => Promise<void>>();
+const schedules = reactive<{ slips: ScheduleSlip[] | undefined }>({ slips: [] });
+vi.mock('../src/stores/schedules', () => ({
+  useSchedules: () =>
+    Object.assign(schedules, {
+      start: () => undefined,
+      onSlip: (fn: (slip: ScheduleSlip) => void) => {
+        slipListener = fn;
+        return () => undefined;
+      },
+      markSlipsSeen: (ids: readonly string[]) => markSlipsSeen(ids),
+    }),
+}));
+
+function slip(id: string, at: string, over: Partial<ScheduleSlip> = {}): ScheduleSlip {
+  return { id, kind: 'reminder', scheduleId: 'sch1', scheduleName: 'Вітаміни', at, text: 'Випити вітаміни', late: false, seen: false, ...over };
+}
 
 function entry(id: string, over: Partial<SkillImprovementEntry> = {}): SkillImprovementEntry {
   return {
@@ -102,6 +123,8 @@ describe('notification center', () => {
     order.length = 0;
     onChange = undefined;
     auth.user = { id: 'u1' };
+    schedules.slips = [];
+    slipListener = undefined;
   });
 
   it('binds Realtime before the first read, lists newest first and raises no toast for old records', async () => {
@@ -193,6 +216,50 @@ describe('notification center', () => {
       });
       expect(setSkillImprovementState).toHaveBeenCalledWith(auth.client, ['i2'], 'rolled_back');
       expect(store.items.map((i) => i.entry.state)).toEqual(['rolled_back', 'applied']);
+    });
+  });
+
+  // docs/specs/2026-11-06-scheduled-tasks.md, decision 6: one feed by time, one «new» count, one
+  // «Позначити все прочитаним» for both sources.
+  describe('schedule slips', () => {
+    it('merge into the feed by time and count as new until seen', async () => {
+      schedules.slips = [slip('s2', '2026-11-04T10:00:05Z'), slip('s1', '2026-11-04T09:00:00Z', { seen: true })];
+      const store = await started([entry('i3'), entry('i1', { seenAt: '2026-11-04T11:00:00Z' })]);
+      expect(store.feed.map((i) => (i.kind === 'skill-improvement' ? i.entry.id : i.kind === 'schedule-slip' ? i.slip.id : i.update.id))).toEqual(['s2', 'i3', 'i1', 's1']);
+      expect(store.unread).toBe(2);
+    });
+
+    it('«Позначити все прочитаним» marks the unseen improvements and the unseen slips', async () => {
+      schedules.slips = [slip('s2', '2026-11-04T10:00:05Z'), slip('s1', '2026-11-04T09:00:00Z', { seen: true })];
+      const store = await started([entry('i3')]);
+      markSkillImprovementsSeen.mockResolvedValue();
+      markSlipsSeen.mockResolvedValue();
+      await store.markAllSeen();
+      expect(markSkillImprovementsSeen).toHaveBeenCalledWith(auth.client, ['i3']);
+      expect(markSlipsSeen).toHaveBeenCalledWith(['s2']);
+    });
+
+    it('an arriving slip toasts and bounces; «Переглянути» opens a run answer over the console', async () => {
+      const store = await started([]);
+      slipListener!(slip('r1', '2026-11-04T12:00:00Z', { kind: 'run', status: 'done', text: 'Звіт готовий', body: 'Звіт готовий\n…' }));
+      expect(notify).toHaveBeenCalledTimes(1);
+      expect(bounceDock).toHaveBeenCalledTimes(1);
+      const [text, kind, , action] = notify.mock.calls[0]!;
+      expect(text).toContain('Звіт готовий');
+      expect(kind).toBe('info');
+      markSlipsSeen.mockResolvedValue();
+      action.run();
+      expect(store.openSlipId).toBe('r1');
+      expect(store.openId).toBeUndefined();
+      expect(show).toHaveBeenCalled();
+    });
+
+    it('a skipped run toasts as an error with its reason', async () => {
+      await started([]);
+      slipListener!(slip('r2', '2026-11-04T12:00:00Z', { kind: 'run', status: 'skipped', reason: 'overlap', text: 'raw' }));
+      const [text, kind] = notify.mock.calls[0]!;
+      expect(text).toContain('cuk.schedule.reason.overlap');
+      expect(kind).toBe('error');
     });
   });
 });

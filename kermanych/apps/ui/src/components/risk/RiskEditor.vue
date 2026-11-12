@@ -159,7 +159,7 @@
                 </strong>
               </p>
               <p class="rform__hint">{{ t('risk.editor.residualGain', { n: inherentExposure - residualExposure }) }}</p>
-              <KBtn variant="ghost" @click="clearResidual">{{ t('risk.editor.clearResidual') }}</KBtn>
+              <KBtn class="rform__clear" variant="ghost" @click="clearResidual">{{ t('risk.editor.clearResidual') }}</KBtn>
             </template>
           </div>
         </div>
@@ -554,6 +554,13 @@ watch(
   margin: 0;
   font-size: var(--k-fs-sm);
   color: var(--k-muted);
+}
+
+// The anchors grid's first column is 42px for the P/I marks; the button spans the row like the
+// hints above it so its label is not squeezed into that column.
+.rform__clear {
+  grid-column: 1 / -1;
+  justify-self: start;
 }
 
 .rform__exposure {

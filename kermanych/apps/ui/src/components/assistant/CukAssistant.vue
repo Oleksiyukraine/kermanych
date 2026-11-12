@@ -33,16 +33,27 @@
       <div v-show="!folded" ref="logEl" class="cuk__body">
         <div v-if="!chat.hasConversation" class="cuk__hello">
           <p class="cuk__hello-text">{{ t('cuk.hello') }}</p>
-          <div class="cuk__examples">
-            <button
-              v-for="ex in examples"
-              :key="ex"
-              class="cuk__example"
-              type="button"
-              :disabled="chat.busy || chat.resetting"
-              @click="composerEl?.send(ex)"
-            >{{ ex }}</button>
-          </div>
+          <p class="cuk__hello-note">{{ t('cuk.helloNote') }}</p>
+          <section class="cuk__templates" :aria-label="t('cuk.templates.title')">
+            <header class="cuk__templates-head">
+              <span class="cuk__templates-title mono">{{ t('cuk.templates.title') }}</span>
+              <span class="cuk__templates-hint">{{ t('cuk.templates.hint') }}</span>
+            </header>
+            <div v-for="g in templateGroups" :key="g.key" class="cuk__group">
+              <span class="cuk__group-label mono">{{ g.label }}</span>
+              <div class="cuk__examples">
+                <button
+                  v-for="tpl in g.items"
+                  :key="tpl.key"
+                  class="cuk__example"
+                  :class="{ 'cuk__example--fill': tpl.fill }"
+                  type="button"
+                  :disabled="chat.busy || chat.resetting || ompCheck.blocked"
+                  @click="pickTemplate(tpl)"
+                >{{ tpl.label }}</button>
+              </div>
+            </div>
+          </section>
         </div>
 
         <template v-for="e in chat.entries" :key="e.id">
@@ -68,6 +79,16 @@
             <button v-if="e.session" class="cuk__res-link" type="button" @click="chat.openSession(e.session)">
               {{ t('cuk.openSession') }}
             </button>
+            <!-- An at-once schedule action (scheduled-tasks decision 7): one step back. -->
+            <button
+              v-if="e.undo === 'ready'"
+              class="cuk__res-link"
+              type="button"
+              :disabled="undo.busyFor(e.id)"
+              :aria-busy="undo.busyFor(e.id) || undefined"
+              @click="undo.run(e.id)"
+            >{{ t('cuk.result.undo') }}</button>
+            <span v-else-if="e.undo === 'done'" class="cuk__res-undone">{{ t('cuk.result.undone') }}</span>
           </p>
         </template>
         <p v-if="chat.busy" class="cuk__think" aria-live="polite">{{ thinkingLabel }}</p>
@@ -94,12 +115,13 @@
 import { computed, nextTick, onUnmounted, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { useCukChat } from 'stores/cuk-chat';
+import { useOmpCheck } from 'stores/omp-check';
 import KChatMessage from 'components/kit/KChatMessage.vue';
 import KSpinner from 'components/kit/KSpinner.vue';
 import AssistantComposer from './AssistantComposer.vue';
 import CukActionCard from './CukActionCard.vue';
 import { confirmAction } from '../../lib/confirm';
-import { useAsyncAction } from '../../composables/useAsyncAction';
+import { useAsyncAction, useKeyedAction } from '../../composables/useAsyncAction';
 import { renderMarkdown } from '../../lib/markdown';
 
 defineProps<{
@@ -111,10 +133,42 @@ const emit = defineEmits<{ toggle: [] }>();
 
 const { t } = useI18n();
 const chat = useCukChat();
+// omp missing or signed out: the composer shows why, and the example chips cannot send either.
+const ompCheck = useOmpCheck();
 const composerEl = ref<InstanceType<typeof AssistantComposer> | null>(null);
 const logEl = ref<HTMLElement | null>(null);
 
-const examples = computed(() => [t('cuk.examples.waiting'), t('cuk.examples.launch'), t('cuk.examples.settings')]);
+// The empty console's «Шаблони» (decision 7), grouped by what ЦУК does. A complete question is
+// asked on click. A template with a blank — the chip ends in «…» — only fills the composer and
+// leaves the caret after it, because the operator has to name the task, the time or the text
+// before it means anything.
+type CukTemplate = { key: string; text: string; label: string; fill: boolean };
+const TEMPLATE_GROUPS: { key: string; items: { key: string; fill?: boolean }[] }[] = [
+  { key: 'state', items: [{ key: 'waiting' }, { key: 'failed' }, { key: 'running' }, { key: 'board' }] },
+  {
+    key: 'agents',
+    items: [{ key: 'launch', fill: true }, { key: 'deepAnalysis', fill: true }, { key: 'backlog', fill: true }, { key: 'message', fill: true }],
+  },
+  { key: 'navigate', items: [{ key: 'settings' }, { key: 'analytics' }, { key: 'switchProject', fill: true }] },
+  { key: 'schedule', items: [{ key: 'remind', fill: true }, { key: 'daily', fill: true }, { key: 'scheduled' }] },
+  { key: 'notes', items: [{ key: 'note', fill: true }, { key: 'notes' }] },
+];
+const templateGroups = computed(() =>
+  TEMPLATE_GROUPS.map((g) => ({
+    key: g.key,
+    label: t(`cuk.templates.groups.${g.key}`),
+    items: g.items.map((i): CukTemplate => {
+      const text = t(`cuk.templates.items.${i.key}`);
+      const fill = i.fill === true;
+      return { key: i.key, text, label: fill ? `${text} …` : text, fill };
+    }),
+  })),
+);
+
+function pickTemplate(tpl: CukTemplate): void {
+  if (tpl.fill) composerEl.value?.setDraft(`${tpl.text} `);
+  else composerEl.value?.send(tpl.text);
+}
 
 function focus(): void {
   composerEl.value?.focus();
@@ -122,6 +176,15 @@ function focus(): void {
 defineExpose({ focus });
 
 const resetChat = useAsyncAction(() => chat.reset());
+const undo = useKeyedAction((id: string) => chat.undo(id));
+
+// «Обговорити в ЦУК» from a scheduled run's answer: the text lands in the draft, not sent.
+watch(
+  () => chat.draftRequest,
+  (req) => {
+    if (req) composerEl.value?.setDraft(req.text);
+  },
+);
 async function newChat(): Promise<void> {
   if (resetChat.busy.value) return;
   if (chat.hasConversation) {
@@ -305,14 +368,15 @@ onUnmounted(() => clearInterval(thinkTimer));
   padding: var(--k-sp-3);
 }
 
-// The empty console: a greeting and three questions it answers, each one click from asked.
+// The empty console: a greeting, what waits for «Виконати», and the templates, each one click
+// from asked or from the composer.
 .cuk__hello {
   margin: auto 0;
   display: flex;
   flex-direction: column;
   align-items: flex-start;
   gap: var(--k-sp-3);
-  max-width: 560px;
+  max-width: 640px;
   padding: var(--k-sp-3);
 }
 
@@ -321,6 +385,50 @@ onUnmounted(() => clearInterval(thinkTimer));
   font-size: var(--k-fs-md);
   line-height: 1.55;
   color: var(--k-text);
+}
+
+.cuk__hello-note {
+  margin: 0;
+  font-size: var(--k-fs-sm);
+  line-height: 1.5;
+  color: var(--k-muted);
+}
+
+.cuk__templates {
+  display: flex;
+  flex-direction: column;
+  gap: var(--k-sp-3);
+  width: 100%;
+}
+
+.cuk__templates-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--k-sp-2);
+}
+
+.cuk__templates-title {
+  font-size: var(--k-fs-xs);
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--k-accent);
+}
+
+.cuk__templates-hint {
+  font-size: var(--k-fs-xs);
+  color: var(--k-muted);
+}
+
+.cuk__group {
+  display: flex;
+  flex-direction: column;
+  gap: var(--k-sp-2);
+}
+
+.cuk__group-label {
+  font-size: var(--k-fs-xs);
+  color: var(--k-muted);
 }
 
 .cuk__examples {
@@ -350,6 +458,11 @@ onUnmounted(() => clearInterval(thinkTimer));
     cursor: not-allowed;
     opacity: 0.5;
   }
+}
+
+// A template with a blank only fills the composer: a dashed edge says «допиши».
+.cuk__example--fill {
+  border-style: dashed;
 }
 
 .cuk__files {
@@ -400,6 +513,16 @@ onUnmounted(() => clearInterval(thinkTimer));
   &:hover {
     text-decoration: underline;
   }
+
+  &:disabled {
+    cursor: progress;
+    opacity: 0.6;
+  }
+}
+
+.cuk__res-undone {
+  margin-left: var(--k-sp-2);
+  color: var(--k-muted);
 }
 
 .cuk__think {

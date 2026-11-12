@@ -2,21 +2,21 @@
 import { GoneException, Injectable, Optional, type OnModuleDestroy, type OnModuleInit } from "@nestjs/common";
 import { HttpAdapterHost } from "@nestjs/core";
 import { spawn } from "node:child_process";
-import { rm } from "node:fs/promises";
-import { join, posix } from "node:path";
+import { rm, rmdir, unlink } from "node:fs/promises";
+import { dirname, join, posix } from "node:path";
 import { Observable, Subject } from "rxjs";
 import { RegistryService } from "../registry/registry.service";
 import { WorktreeService, type ChangedFile } from "../worktree/worktree.service";
+import { StartupGcService } from "../gc/startup-gc.service";
 import type { SplitDiff } from "../worktree/split-diff";
 import { createRuntime, type AgentRuntime, type RuntimeLaunchOpts } from "../runtime/agent-runtime";
 import { BrowserMcpService } from "../browser/browser-mcp.service";
 import { browserHost } from "../browser/browser-host";
-import { resolveRuntime } from "../runtime/resolve-runtime";
 import { languageAppendFor } from "../runtime/resolve-language";
 import { messagesToTranscript } from "./messages-to-transcript";
 import { reduceRpcEvents, toolRowMatches, type SkillLabel, type SkillSource } from "./transcript-reducer";
 import { ToolDetailCache } from "./tool-detail-cache";
-import { SkillsService, skillsRoot, type AiScopeSet } from "../skills/skills.service";
+import { HandedSkills, SkillsService, skillsRoot, type AiScopeSet } from "../skills/skills.service";
 import { copyCarryFiles } from "../env/carry-files";
 import {
   PR_CONVENTIONS_FALLBACK,
@@ -47,8 +47,6 @@ import {
   parseCommand,
   type ParsedCommand,
   INITIAL_STATUS,
-  isAgentRuntime,
-  managedRuntime,
   reduceStatus,
   ACTIVE_STATUSES,
   slugify,
@@ -61,6 +59,20 @@ import {
   DEEP_ANALYSIS_SKILL,
   BRANCH_PREFIXES,
   platformHasDevice,
+  platformHasBrowser,
+  KERMANYCH_COAUTHOR,
+  SYNERGY_AGENT_ID,
+  SYNERGY_IMPLEMENT_AGENT_ID,
+  SYNERGY_DEFAULT_MODEL,
+  SYNERGY_DEFAULT_EFFORT,
+  synergyRequestOf,
+  synergyCheckpointMessage,
+  synergyRestoreMessage,
+  synergySteps,
+  synergyChronology,
+  synergyBrief,
+  synergyHandoffPages,
+  type SynergyStepsView,
   type BranchPrefix,
   type StatusState,
   type Project,
@@ -74,7 +86,6 @@ import {
   type ThinkingLevel,
   type ToolLine,
   type TranscriptEntry,
-  type AgentRuntimeKind,
   type NativeHarness,
   type Notice,
   type SubagentInfo,
@@ -89,6 +100,8 @@ import {
   MINION_PR_TITLE_RULE,
   MINION_FINDINGS_SKILL,
   minionFindingLine,
+  minionTakeoverAllowed,
+  minionTakeoverPrompt,
   MINION_TIME_CAP_MS,
   MINION_GRACE_MS,
   type MinionResult,
@@ -97,11 +110,6 @@ import {
   type PrCheckState,
   DEFAULT_SKILLS,
   type SkillView,
-  DESIGNER_AGENT_ID,
-  DESIGN_SAVE_AGENT_ID,
-  DESIGN_SPEC_SKILL,
-  designDirFor,
-  designCommitMessage,
   voiceMessagePrompt,
   TESTER_AGENT_ID,
   testerRefusal,
@@ -124,6 +132,8 @@ import { AuthService } from "../auth/auth.service";
 import { ModelsService } from "../models/models.service";
 import { NativeSessionService, nativeUnsupported } from "../native/native-session.service";
 import { CodedError } from "../management/coded-error";
+import { limit } from "../runtime/limit";
+import { removeMcpConfig } from "../native/native-hooks";
 import { todayIso } from "../management/management-prompt";
 import { firstPrUrl } from "./pr-url";
 import { launchAppendFor, launchToolsFor } from "./chat-tools";
@@ -131,6 +141,7 @@ import { MachineResourcesService } from "../machine/machine-resources.service";
 import { WatchdogService } from "../machine/watchdog.service";
 import { BranchNameService, type BranchContext } from "./branch-name.service";
 import { noAskOverlay } from "../minion/ask-overlay";
+import { scheduledRunPrompt } from "../schedules/schedule-prompt";
 import { EnvFileService } from "../env/env-file.service";
 import { GithubClient, GithubHttpError, parseGithubPrUrl, parseGithubRemote, type GithubPull } from "../github/github-client";
 import { PreviewService } from "../preview/preview.service";
@@ -160,6 +171,17 @@ function prCheckFailure(err: unknown): PrCheck {
   const name = (err as { name?: unknown } | null)?.name;
   if (err instanceof TypeError || name === "TimeoutError" || name === "AbortError") return { state: "offline" };
   return { state: "error" };
+}
+
+// A session's omp conversation: the `<stamp>_<id>.jsonl` file, and beside it the folder of the
+// same name that holds its subagents' conversations. omp keeps one folder per working
+// directory, so the folder goes too once this was its last conversation (a retired worktree's
+// folder has nothing else). Best effort: a file already gone is the goal, not an error — and then
+// nothing beside it is touched, since a path no omp wrote says nothing about its neighbours.
+async function removeOmpSessionFiles(file: string): Promise<void> {
+  if (!(await unlink(file).then(() => true, () => false))) return;
+  if (file.endsWith(".jsonl")) await rm(file.slice(0, -".jsonl".length), { recursive: true, force: true }).catch(() => {});
+  await rmdir(dirname(file)).catch(() => {});
 }
 
 type Live = {
@@ -209,8 +231,6 @@ type Live = {
   subagentsSig?: string;
   // The child's pid (RuntimeLaunchOpts.onSpawn), for the memory watchdog's process tree.
   pid?: number;
-  // The watchdog's baseline was re-taken on the child's `ready` (onRpcEvent).
-  baselined?: boolean;
   // A message just went to this idle child and its turn has not reported yet: the child holds
   // an agent slot from the write, not from its first event, or a second waiting session could
   // slip into the same slot in between. Cleared by the first status change (onRpcEvent).
@@ -270,6 +290,9 @@ type MinionRun = {
   // The launch has not returned yet: a child that dies now is the launch's failure, which
   // launchTask undoes and MinionService counts — not a run to fail a second time.
   starting?: boolean;
+  // The operator handed the session over with `/minion` (docs/specs/2026-11-09-minion-takeover.md):
+  // the poll did not start this run, so its result counts toward neither the failures nor the pause.
+  takeover?: boolean;
   capTimer?: NodeJS.Timeout;
   graceTimer?: NodeJS.Timeout;
 };
@@ -287,6 +310,30 @@ export type MinionRunResult = {
   signedOut?: boolean;
 };
 
+// A scheduled run in a project (docs/specs/2026-11-06-scheduled-tasks.md), kept like MinionRun
+// beside the Live map. Memory-only: after an api restart ScheduleService fails what was running.
+type ScheduledRun = {
+  scheduleId: string;
+  // The launch has not returned yet: a child that dies now is the launch's failure, which
+  // ScheduleService records from the launch's own throw.
+  starting?: boolean;
+  capTimer?: NodeJS.Timeout;
+};
+
+// How a scheduled run ended, told once on scheduleRunEnd$. `done`: its first turn settled, and
+// `answer` is the last assistant text of that turn. `failed`: the child died, the launch failed
+// after waiting for a slot, or the operator stopped, finished or deleted the session (`detail`
+// says which; `byOperator` then, and the session is left as the operator made it). `timeout`:
+// «Посіпака»'s time cap ran out.
+export type ScheduleRunEnd = {
+  sessionId: string;
+  scheduleId: string;
+  outcome: "done" | "failed" | "timeout";
+  answer?: string;
+  detail?: string;
+  byOperator?: boolean;
+};
+
 // The transcript badge for a library skill: where the text the agent read comes from. A
 // library row names its owner scope, and one that replaces a Kermanych default says so too —
 // that is the row to delete to get the default back, and without the scope the operator has
@@ -302,6 +349,28 @@ function skillStat(v: Pick<SkillView, "name" | "source">): string {
   const stat = SKILL_SOURCE_STAT[v.source];
   if (v.source === "default" || !DEFAULT_SKILLS.some((d) => d.name === v.name)) return stat;
   return `${stat} · замість дефолту`;
+}
+
+// The start path of «Змінити сторінку» (docs/specs/2026-11-06-synergy.md, decision 5), as the
+// preview opens it: a path from the app's root with its query and hash. A full URL is accepted
+// (an operator pastes one from the address bar) and keeps only that part, because the preview
+// runs on its own port. Garbage is refused rather than opened: whitespace, control characters,
+// a protocol-relative `//host`, or another scheme.
+export function synergyPagePath(raw: string): string {
+  const value = raw.trim();
+  let path = value.startsWith("/") ? value : `/${value}`;
+  if (/^[a-z][a-z0-9+.-]*:/i.test(value)) {
+    let url: URL;
+    try {
+      url = new URL(value);
+    } catch {
+      throw new Error(`invalid start page ${JSON.stringify(raw)}`);
+    }
+    if (url.protocol !== "http:" && url.protocol !== "https:") throw new Error(`invalid start page ${JSON.stringify(raw)}: only a path or an http(s) URL`);
+    path = `${url.pathname}${url.search}${url.hash}`;
+  }
+  if (path.startsWith("//") || path.length > 2048 || /[\s\u0000-\u001f\u007f]/.test(path)) throw new Error(`invalid start page ${JSON.stringify(raw)}`);
+  return path;
 }
 
 @Injectable()
@@ -337,6 +406,18 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
   private minionRuns = new Map<string, MinionRun>();
   private minionResults = new Subject<MinionRunResult>();
   readonly minionResult$: Observable<MinionRunResult> = this.minionResults.asObservable();
+  // «Синергія» (docs/specs/2026-11-06-synergy.md, decision 4). `synergyAsks`: the operator's
+  // requests of the turn now running, by session, for its checkpoint's message (a steer adds a
+  // second). `synergyGit`: the tail of each session's checkpoint/restore chain, so two git
+  // writes of one worktree never interleave.
+  private synergyAsks = new Map<string, { request: string; page?: string }[]>();
+  private synergyGit = new Map<string, Promise<unknown>>();
+  // Scheduled runs in a project on this machine, by session id (docs/specs/2026-11-06-scheduled-
+  // tasks.md): in flight from the launch until their end is told on scheduleRunEnd$, which
+  // ScheduleService records. The supervisor never knows ScheduleService either.
+  private scheduleRuns = new Map<string, ScheduledRun>();
+  private scheduleEnds = new Subject<ScheduleRunEnd>();
+  readonly scheduleRunEnd$: Observable<ScheduleRunEnd> = this.scheduleEnds.asObservable();
 
   // A finished session's omp child stays resident so a follow-up resumes instantly — but a
   // live `omp --mode rpc` process is by far the largest thing this service keeps alive (a big
@@ -348,6 +429,15 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
   // omp already persisted, so nothing is lost. Same tradeoff as ManagementChatService.IDLE_TTL_MS.
   private static readonly CHILD_IDLE_TTL_MS = 15 * 60_000;
   private reaper?: NodeJS.Timeout;
+  // How long a managed child may take to greet (`ready`). omp loads its config, skill library,
+  // triggers and provider client first — seconds on a laptop. Past a minute it is wedged or
+  // missing, and without a bound it held its agent slot and its `resuming` entry forever. The
+  // chat pool's bound is half this: an agent's launch carries more overlays than a chat's.
+  private static readonly START_TIMEOUT_MS = 60_000;
+  // Set by onModuleDestroy. From then on a child's exit is the app quitting, not the run failing,
+  // and nothing new starts: a slot freed by a stopping child would otherwise launch the next
+  // waiting session into an api that is going away, and that child would outlive it.
+  private destroyed = false;
 
   constructor(
     private registry: RegistryService,
@@ -382,6 +472,13 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     // rides the snapshot and `events$`, and the session lifecycle stops it. Optional so specs
     // construct the supervisor without it — then no session has a preview.
     @Optional() private preview?: PreviewService,
+    // What each launch handed the agent of the library, for improve_skill's staleness check
+    // (docs/specs/2026-11-07-skill-improvement-review.md, decision 3). Optional so specs construct
+    // the supervisor without it — then nothing is remembered and no call is refused as stale.
+    @Optional() private handedSkills?: HandedSkills,
+    // The startup GC gives an interrupted launch its worktree back before the slot queue is
+    // restored from the rows. Optional so specs construct the supervisor without it.
+    @Optional() private gc?: StartupGcService,
   ) {
     this.native?.events$.subscribe((e) => {
       if (e.type === "changed") {
@@ -432,7 +529,8 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
   // Never throws: a library failure must degrade to "no library", never to a failed launch.
   private async ompSkills(projectId: string, cwd: string, sessionId: string): Promise<string | undefined> {
     try {
-      const { configPath, view, stale } = await this.skills.materialize(this.aiScope(projectId), cwd);
+      const { configPath, view, stale, handed } = await this.skills.materialize(this.aiScope(projectId), cwd);
+      this.handedSkills?.launched(sessionId, handed);
       const labels = new Map<string, SkillLabel>();
       for (const v of view) {
         // A shadowed name means the agent will read the REPOSITORY's file, so the badge
@@ -453,6 +551,7 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
       // programming error (a missing dependency) as readily as an expected degradation
       // (offline cloud, invalid project id, EACCES on the skills root).
       console.warn(`[supervisor] no skill library for session ${sessionId}: ${(err as Error).message}`);
+      this.handedSkills?.launched(sessionId, undefined);
       return undefined;
     }
   }
@@ -512,7 +611,7 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
 
   private skillSource = (sessionId: string): SkillSource => (name) => this.skillLabels.get(sessionId)?.get(name);
 
-  onModuleInit(): void {
+  async onModuleInit(): Promise<void> {
     // A minute is far finer than the 15-minute TTL, so a child is reaped within a minute of
     // crossing it. Unref'd: the janitor must never hold the app open — a clean quit runs
     // onModuleDestroy, which stops the children anyway. ManagementChatService sweeps on-use
@@ -520,16 +619,27 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     // on-use sweep never reaches, so this one rides a timer.
     this.reaper = setInterval(() => this.reapIdleChildren(), 60_000);
     this.reaper.unref();
+    // From rows the GC has repaired: a `queued` launch is replayed only once its row names its
+    // worktree again (restoreSlotQueue skips one without), so restoring first would leave it
+    // waiting until the next start.
+    if (this.gc) await this.gc.ready();
     this.restoreSlotQueue();
   }
 
-  onModuleDestroy(): void {
+  // Waits for every child: Electron quits as soon as this resolves, and a stop() still waiting on
+  // its SIGTERM/SIGKILL timers would die with the process, leaving a child that ignored the EOF
+  // (mid-way through a long command, say) running with nobody to stop it.
+  async onModuleDestroy(): Promise<void> {
+    this.destroyed = true;
     clearInterval(this.reaper);
     for (const run of this.minionRuns.values()) this.clearMinionClock(run);
-    for (const live of this.map.values()) {
-      this.stopPoll(live);
-      void live.rpc.stop();
-    }
+    for (const run of this.scheduleRuns.values()) clearTimeout(run.capTimer);
+    await Promise.allSettled(
+      [...this.map.values()].map((live) => {
+        this.stopPoll(live);
+        return live.rpc.stop();
+      }),
+    );
   }
 
   // Stop the resident omp child of every SETTLED session ("done" or "in_review") that has been
@@ -590,11 +700,19 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
   // holding a slot, and a «Тестувальник» run (docs/specs/2026-11-04-qa-tester-agent.md, decision
   // 12: it drives a browser and a preview like an agent). Not counted: chats, other reviews,
   // discussions — their tools cannot run a test suite, and making them queue behind agents would
-  // stall a conversation for nothing.
+  // stall a conversation for nothing — and a «Синергія» prototype (countsForSlot).
   slotCounts(): { running: number; waiting: number } {
     let running = 0;
-    for (const s of this.registry.listSessions()) if ((s.kind === "agent" || s.tester === true) && !this.waiting.has(s.id) && this.holdsSlot(s)) running++;
+    for (const s of this.registry.listSessions()) if (this.countsForSlot(s) && !this.waiting.has(s.id) && this.holdsSlot(s)) running++;
     return { running, waiting: this.waiting.size };
+  }
+
+  // Whether a session takes an agent slot. A «Синергія» session is an agent that neither counts
+  // nor waits (docs/specs/2026-11-06-synergy.md, decision 9): the operator is watching it change
+  // the app request by request, and a busy machine must not make each request wait minutes. Its
+  // narrow toolset runs no test suites. «Імплементувати» clears the marker, and it counts again.
+  private countsForSlot(s: Session): boolean {
+    return (s.kind === "agent" && !s.synergy) || s.tester === true;
   }
 
   // «Посіпака» (docs/specs/2026-10-23-minion-auto-run.md, decision 8): a minion run starts only
@@ -651,15 +769,15 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
 
   // Run `op` — what starts an agent's turn or its native TUI — in an agent slot, or park
   // `replay` until one frees up; false when parked. A session that already holds a slot (its turn
-  // runs, or this is the replay that was granted one) keeps it across `op`. Other kinds (but a
-  // tester run) are never counted, and with no limit (decision `declined`) nothing waits.
+  // runs, or this is the replay that was granted one) keeps it across `op`. Sessions that take no
+  // slot (countsForSlot) are never counted, and with no limit (decision `declined`) nothing waits.
   private async withSlot(
     s: Session,
     op: () => Promise<unknown>,
     replay: () => Promise<unknown>,
     message?: { text: string; images?: ImageInput[] },
   ): Promise<boolean> {
-    if (s.kind !== "agent" && s.tester !== true) {
+    if (!this.countsForSlot(s)) {
       await op();
       return true;
     }
@@ -744,7 +862,7 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
   // up — a settled turn, a dead child or TUI, a stop, a delete, a finish, a start that ran no
   // turn — and when the limit changes.
   private drainSlots(): void {
-    if (!this.waiting.size) return;
+    if (this.destroyed || !this.waiting.size) return;
     const limit = this.resources?.active()?.agents;
     let { running } = this.slotCounts();
     for (const [id] of [...this.waiting].sort(([, a], [, b]) => a.at - b.at)) {
@@ -791,7 +909,7 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     const queuedAt = this.registry.slotQueuedAt();
     const at = (s: Session) => queuedAt.get(s.id) ?? Date.parse(s.createdAt);
     const rows = this.registry.listSessions().filter((s) => {
-      if ((s.kind !== "agent" && s.tester !== true) || this.waiting.has(s.id)) return false;
+      if (!this.countsForSlot(s) || this.waiting.has(s.id) || this.managedClaude(s)) return false;
       // A «Тестувальник» run waits with its whole opening prompt on the row (runTester parks it
       // with it); without one there is nothing to start it with.
       if (s.tester === true) return s.status === "queued" && !!s.pendingPrompt?.trim();
@@ -802,8 +920,7 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
         return false;
       }
       if (s.pendingPrompt !== undefined) return true;
-      const handle = managedRuntime(s.runtime) === "claude-code" ? s.ompSessionId : s.ompSessionFile;
-      return !s.native && s.status === "queued" && !handle && (!s.worktree || !!s.worktreePath);
+      return !s.native && s.status === "queued" && !s.ompSessionFile && (!s.worktree || !!s.worktreePath);
     });
     for (const s of rows.sort((a, b) => at(a) - at(b))) {
       const text = s.pendingPrompt ?? s.task;
@@ -825,21 +942,19 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
 
   // The profile's part of one managed spawn, spread into createRuntime opts at every site like
   // systemAppendOpts: the omp overlays (the project's skill library, then the machine limits —
-  // later wins), claude's CLAUDE_CODE_* limits, and right after the spawn the renice plus the pid
-  // the watchdog will follow. Every kind gets it, chats included; only agents count for slots.
-  // A «Посіпака» run also loses its ask tool here, on its first spawn and on every wake alike
-  // (docs/specs/2026-10-23-minion-auto-run.md, decision 9): omp through a third overlay,
-  // claude through `disallowedTools`.
-  private async spawnOpts(id: string, runtime: AgentRuntimeKind, cwd: string, skillsConfig: string | undefined): Promise<Pick<RuntimeLaunchOpts, "configPaths" | "env" | "onSpawn" | "disallowedTools">> {
-    const minion = this.registry.listSessions().find((x) => x.id === id)?.minion === true;
-    const overlay = runtime === "omp" ? await this.resources?.ompOverlay(cwd) : undefined;
-    const noAsk = minion && runtime === "omp" ? await noAskOverlay() : undefined;
+  // later wins), and right after the spawn the renice plus the pid the watchdog will follow.
+  // Every kind gets it, chats included; only agents count for slots. A «Посіпака» run also loses
+  // its ask tool here through a third overlay, on its first spawn and on every wake alike
+  // (docs/specs/2026-10-23-minion-auto-run.md, decision 9), and so does a scheduled run while it
+  // is in flight (docs/specs/2026-11-06-scheduled-tasks.md, «Unattended») — once it ended and the
+  // operator reopened it, it is an ordinary conversation again.
+  private async spawnOpts(id: string, cwd: string, skillsConfig: string | undefined): Promise<Pick<RuntimeLaunchOpts, "configPaths" | "onSpawn">> {
+    const unattended = this.registry.listSessions().find((x) => x.id === id)?.minion === true || this.scheduleRuns.has(id);
+    const overlay = await this.resources?.ompOverlay(cwd);
+    const noAsk = unattended ? await noAskOverlay() : undefined;
     const configPaths = [skillsConfig, overlay, noAsk].filter((p): p is string => !!p);
-    const env = runtime === "claude-code" ? this.resources?.claudeEnv() : undefined;
     return {
       ...(configPaths.length ? { configPaths } : {}),
-      ...(env ? { env } : {}),
-      ...(minion && runtime === "claude-code" ? { disallowedTools: ["AskUserQuestion"] } : {}),
       onSpawn: (pid) => {
         this.resources?.renice(pid);
         // wireLive ran before start(), so this is the Live of the child just spawned.
@@ -849,18 +964,35 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     };
   }
 
+  // A row the removed managed claude-code backend ran: it cannot be continued in «Керманич».
+  private managedClaude(s: Session): boolean {
+    return !s.native && s.runtime !== undefined && s.runtime !== "omp";
+  }
+
+  // Called first in every managed spawn of an existing row, before any side effect.
+  private refuseManagedClaude(s: Session): void {
+    if (this.managedClaude(s))
+      throw new CodedError("managed_claude_removed", "керований claude-code прибрано з Керманича — цю сесію не можна продовжити в режимі «Керманич»");
+  }
+
   // start() plus the watchdog's baseline: what the child runs once it is ready (MCP servers,
-  // workers, the Python kernel) is never a victim; what it starts later is a candidate.
+  // workers, the Python kernel) is never a victim; what it starts later is a candidate. Bounded
+  // like the chat pool's start: `limit` only abandons the promise, so every caller's catch stops
+  // the child — the same catch that handles a failed start.
   private async startChild(id: string, rpc: AgentRuntime): Promise<void> {
-    await rpc.start();
+    if (this.destroyed) throw new Error("Kermanych is quitting");
+    const seconds = SupervisorService.START_TIMEOUT_MS / 1000;
+    await limit(
+      rpc.start(),
+      SupervisorService.START_TIMEOUT_MS,
+      new CodedError("omp_launch_timeout", `не вдалося запустити omp за ${seconds} с — перевірте, що команда omp доступна в PATH`, { seconds }),
+    );
     const pid = this.map.get(id)?.pid;
     if (pid !== undefined) this.trackChild(id, pid);
   }
 
-  // `again`: the same child, now initialised — the watchdog takes its baseline anew, so what
-  // it started since (claude's MCP servers come up only with its first turn) is never a victim.
-  private trackChild(id: string, pid: number, again = false): void {
-    if (!this.watchdog || (!again && this.tracked.get(id) === pid)) return;
+  private trackChild(id: string, pid: number): void {
+    if (!this.watchdog || this.tracked.get(id) === pid) return;
     this.tracked.set(id, pid);
     this.watchdog.track(id, this.registry.listSessions().find((x) => x.id === id)?.name ?? id, pid);
   }
@@ -1084,6 +1216,9 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     const task = await getTask(client, taskId);
     if (!task) throw new Error("task not found");
     if (task.assigneeId && task.assigneeId !== userId) throw new Error("task assigned to someone else");
+    // A card that continues a «Синергія» prototype runs only in «Керманич»: its opening prompt is
+    // the «Імплементувати Синергію» instruction (docs/specs/2026-11-09-merge-design-into-synergy.md).
+    if (native && task.synergyBranch) throw nativeUnsupported();
 
     // A second launch of a running card mints a second worktree and a second omp child
     // bound to the same taskId; both would then mirror status for it and the board would
@@ -1124,10 +1259,29 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     return this.launchTask(task, userId, { minion: true });
   }
 
-  // The one launch of a claimed card, shared by the operator's ▶ and the minion: the binding,
-  // the project refresh, the launch parameters, the row, and its removal when the launch fails.
-  private async launchTask(task: Task, userId: string, opts: { images?: ImageInput[]; native?: NativeHarness; minion?: boolean }): Promise<Session> {
-    const { images, native, minion } = opts;
+  // A scheduled agent run in a project (docs/specs/2026-11-06-scheduled-tasks.md): ScheduleService
+  // filed and claimed the hidden card and deletes it when this throws. The ordinary task launch
+  // with these differences: the row is stamped with its task, it always gets a worktree, it is
+  // never native, deep analysis or a «Синергія» continuation, its opening prompt is the scheduled-run instruction
+  // (openingPrompt), and it runs without the ask tool under the minion's time cap. Unlike the
+  // minion it takes a slot like any launch and waits in the queue when none is free.
+  launchScheduled(task: Task, userId: string, schedule: { id: string; name: string }): Promise<Session> {
+    return this.launchTask(task, userId, { schedule });
+  }
+
+  // The one launch of a claimed card, shared by the operator's ▶, the minion and the scheduler:
+  // the binding, the project refresh, the launch parameters, the row, and its removal when the
+  // launch fails.
+  private async launchTask(
+    task: Task,
+    userId: string,
+    opts: { images?: ImageInput[]; native?: NativeHarness; minion?: boolean; schedule?: { id: string; name: string } },
+  ): Promise<Session> {
+    const { images, schedule } = opts;
+    const native = schedule ? undefined : opts.native;
+    // Everything a minion run leaves out, a scheduled run leaves out too.
+    const minion = opts.minion === true;
+    const unattended = minion || !!schedule;
     const client = this.auth.cloudClient();
     const local = this.registry.listProjects().find((p) => p.id === task.projectId);
     if (!local?.localRepoPath) throw new Error("project not bound");
@@ -1154,11 +1308,17 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
 
     // The board stores launch params as free text; validate them against the local
     // vocabularies instead of casting, so a bad card cannot produce a bogus branch prefix.
-    // A design card is always a `design/` branch, whatever the card says
-    // (docs/specs/2026-10-29-design-tab.md); a minion never runs one (its queries skip them).
-    const design = task.design && !minion;
-    const prefix: BranchPrefix = design
-      ? "design"
+    // A card «Задача →» filed from «Синергія» (docs/specs/2026-11-09-merge-design-into-synergy.md,
+    // decision 5) continues the prototype's pushed branch: always in a worktree, no new branch and
+    // no naming call, the base the card names for the pull request. Never unattended: «Посіпака»
+    // skips such cards, and an unattended run of one would be an ordinary launch.
+    const synergyBranch = unattended ? undefined : task.synergyBranch?.trim() || undefined;
+    if (synergyBranch && (!synergyBranch.startsWith("synergy/") || !isGitBranchName(synergyBranch)))
+      throw new Error(`the card names an invalid «Синергія» branch: ${synergyBranch}`);
+    if (synergyBranch && this.registry.listSessions().some((x) => x.projectId === project.id && x.branch === synergyBranch))
+      throw new Error(`branch ${synergyBranch} is already open in another session on this machine`);
+    const prefix: BranchPrefix = synergyBranch
+      ? "synergy"
       : (BRANCH_PREFIXES as readonly string[]).includes(task.prefix ?? "")
         ? (task.prefix as BranchPrefix)
         : "feature";
@@ -1166,28 +1326,39 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     // A shared card must never commandeer another developer's checkout, which is what the
     // hardcoded `true` here used to guarantee. The in-place option is personal, so it
     // survives exactly for the person who filed the card — for anybody else the card is
-    // isolated, whatever it says. A minion run is always isolated: the operator works in that
-    // checkout.
-    const inPlace = !minion && task.worktree === false && task.createdBy === userId;
+    // isolated, whatever it says. A minion or scheduled run is always isolated: the operator
+    // works in that checkout.
+    const inPlace = !synergyBranch && !unattended && task.worktree === false && task.createdBy === userId;
     const worktree = !inPlace;
 
-    const { branch, baseBranch } = await this.resolveLaunchParams(
-      project,
-      { title: task.title, description: task.description, branchSlug: task.branchSlug },
-      prefix,
-      worktree,
-      undefined,
-      task.branch ?? project.defaultBranch,
-    );
-    const runtime = native ?? this.runtimeFor();
-    // A model chosen under a different runtime (e.g. a claude model left selected after the
-    // operator switches to omp) is dropped so the spawned backend uses its own default rather
-    // than running the wrong provider's model; an unreadable catalog keeps the id untouched.
-    // A native session carries neither model nor effort: the harness's own `/model` owns them.
-    const model = native ? undefined : await this.models.validModel(this.runtimeFor(), task.model);
-    // The design's folder is named once, from the launch day and the branch's own slug (already
-    // made unique), and stays on the row: a resume or a slot replay reads it back, never re-derives.
-    const designDir = design ? designDirFor(todayIso(), branch.slice("design/".length)) : undefined;
+    const { branch, baseBranch } = synergyBranch
+      ? {
+          branch: synergyBranch,
+          baseBranch: task.branch || project.defaultBranch || (await this.worktree.currentBranch(project.localRepoPath)) || undefined,
+        }
+      : await this.resolveLaunchParams(
+          project,
+          { title: task.title, description: task.description, branchSlug: task.branchSlug },
+          prefix,
+          worktree,
+          undefined,
+          task.branch ?? project.defaultBranch,
+        );
+    const runtime = native ?? "omp";
+    // A model the omp catalog no longer offers is dropped so omp uses its own default; an
+    // unreadable catalog keeps the id untouched. A native session carries neither model nor
+    // effort: the harness's own `/model` owns them.
+    const model = native ? undefined : await this.models.validModel(task.model);
+    // The «Імплементувати Синергію» instruction around the card's text (the brief «Задача →»
+    // wrote, perhaps edited), rendered here and sent as the whole first prompt, so a launch parked
+    // for a slot replays it as is. Skills resolve from the operator's checkout: the worktree does
+    // not exist yet.
+    let firstPrompt: string | undefined;
+    if (synergyBranch) {
+      const { template, block } = await this.agentPrompt(project.id, SYNERGY_IMPLEMENT_AGENT_ID, project.localRepoPath);
+      const brief = task.description?.trim() || task.title;
+      firstPrompt = renderInstruction(agentById(SYNERGY_IMPLEMENT_AGENT_ID)!, { branch, base: baseBranch ?? "HEAD", brief }, template).trimEnd() + block;
+    }
     const session = this.registry.createSession({
       projectId: project.id,
       taskId: task.id,
@@ -1198,29 +1369,38 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
       worktree,
       baseBranch,
       model,
-      // Unvalidated free-text, exactly like `effort`: omp clamps what it accepts. The only
-      // clamp here is cross-runtime (validModel above), so an omp task never inherits a claude
-      // model left selected from a previous session.
+      // Unvalidated free-text, exactly like `effort`: omp clamps what it accepts.
       effort: native ? undefined : task.effort,
       prefix,
       runtime,
       ...(native ? { native: true } : {}),
       // A «Глибокий аналіз» card opens with the wrapped prompt (launch → openingPrompt). The
       // minion never takes one: that agent interviews a person.
-      ...(task.deepAnalysis && !minion ? { deepAnalysis: true } : {}),
-      ...(designDir ? { designDir } : {}),
+      ...(task.deepAnalysis && !unattended ? { deepAnalysis: true } : {}),
       ...(minion ? { minion: true } : {}),
       // A minion run of a finding card carries the kind for its opening prompt (decision 14).
       ...(minion && task.findingKind ? { findingKind: task.findingKind } : {}),
+      ...(schedule ? { schedule } : {}),
+      // «Оцінка vs факт» compares the estimate that stood before the agent started
+      // (docs/specs/2026-11-09-task-estimate.md, decision 3), so it is taken from the card now.
+      ...(task.estimateMinutes ? { estimateMinutes: task.estimateMinutes } : {}),
     });
     if (minion) this.minionRuns.set(session.id, { phase: "work", starting: true });
+    if (schedule) this.scheduleRuns.set(session.id, { scheduleId: schedule.id, starting: true });
     try {
-      const launched = await this.launch(session, project, { images, ...(minion ? { direct: true } : {}) });
+      const launched = await this.launch(session, project, {
+        images,
+        ...(minion ? { direct: true } : {}),
+        ...(synergyBranch ? { continueBranch: true, firstPrompt } : {}),
+      });
       const run = this.minionRuns.get(session.id);
       if (run) run.starting = false;
+      const scheduled = this.scheduleRuns.get(session.id);
+      if (scheduled) scheduled.starting = false;
       return launched;
     } catch (err) {
       this.forgetMinionRun(session.id);
+      this.forgetScheduleRun(session.id);
       this.browser?.revoke(session.id);
       this.registry.removeSession(session.id);
       this.events.next({ type: "session_removed", sessionId: session.id });
@@ -1240,13 +1420,12 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     if (native) return this.createNativeChat(projectId, `чат ${n}`, native);
     const session = this.registry.createSession({
       projectId, name: `чат ${n}`, task: "", worktreePath: "", branch: "",
-      worktree: false, kind: "chat", status: "queued", runtime: this.runtimeFor(),
+      worktree: false, kind: "chat", status: "queued", runtime: "omp",
     });
     const configPath = await this.ompSkills(project.id, project.localRepoPath, session.id);
     const extensionPath = await this.ompTriggers(project.id, project.localRepoPath, session.id);
     const browserMcp = this.browser?.bindingFor(session.id);
-    const runtime = managedRuntime(session.runtime);
-    const rpc = createRuntime(runtime, { cwd: project.localRepoPath, ...launchToolsFor("chat"), ...(await this.spawnOpts(session.id, runtime, project.localRepoPath, configPath)), ...(extensionPath ? { extensionPath } : {}), ...(browserMcp ? { mcp: browserMcp } : {}), ...this.systemAppendOpts(project.id, "chat") });
+    const rpc = createRuntime({ cwd: project.localRepoPath, ...launchToolsFor({ kind: "chat" }), ...(await this.spawnOpts(session.id, project.localRepoPath, configPath)), ...(extensionPath ? { extensionPath } : {}), ...(browserMcp ? { mcp: browserMcp } : {}), ...this.systemAppendOpts(project.id, "chat") });
     const live = this.wireLive(session.id, rpc, "queued");
     try {
       await this.startChild(session.id, rpc);
@@ -1304,18 +1483,14 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     if (chat.kind !== "chat") throw new Error("not a chat session");
     // Promotion forks the conversation into a new worktree; a native harness has no fork.
     if (chat.native) throw nativeUnsupported();
+    this.refuseManagedClaude(chat);
     const project = this.boundProject(chat.projectId);
 
-    // The fork continues on the chat's own backend (R1/R2), the same per-backend handle
-    // branchSession reads: omp forks the session FILE, claude the session UUID (stored in
-    // ompSessionId — claude never reports a file). launch spawns on session.runtime, which
-    // the promotion leaves as the chat's.
-    const chatRuntime = managedRuntime(chat.runtime);
-    let forkHandle = chatRuntime === "claude-code" ? chat.ompSessionId : chat.ompSessionFile;
+    // The fork reads the chat's omp session FILE, the same handle branchSession reads.
+    let forkHandle = chat.ompSessionFile;
     if (!forkHandle) {
       await this.refreshState(chatId);
-      const fresh = this.registry.listSessions().find((x) => x.id === chatId);
-      forkHandle = chatRuntime === "claude-code" ? fresh?.ompSessionId : fresh?.ompSessionFile;
+      forkHandle = this.registry.listSessions().find((x) => x.id === chatId)?.ompSessionFile;
     }
     if (!forkHandle)
       throw new Error("chat has no omp session yet — send a message before starting implementation");
@@ -1428,25 +1603,37 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     return { branch, baseBranch };
   }
 
-  // Per-user preference (Inc 2): env override → cached cloud preference → omp.
-  private runtimeFor(_session?: Session): AgentRuntimeKind {
-    return resolveRuntime(process.env.KERMANYCH_RUNTIME, this.registry.getAuthSession()?.agentRuntime);
-  }
-
   // The system-prompt append for one spawn, shaped for a spread into any createRuntime() opts:
   // the user's agent communication language, then — when the project's documentation switch is
   // on — the policy built from its per-kind rules (docsPolicyAppend), then what the session
   // kind's tool restriction means for the model (launchAppendFor). Every createRuntime site
-  // passes it, so the policy reaches chats, agents, discussions, reviews and resumes alike on
-  // both runtimes. Empty object when nothing applies, so the agent keeps its own default. Read
+  // passes it, so the policy reaches chats, agents, discussions, reviews and resumes alike.
+  // Empty object when nothing applies, so the agent keeps its own default. Read
   // fresh per spawn: a preference or setting change takes on the next spawn without a restart.
-  private systemAppendOpts(projectId: string, kind: Session["kind"]): { appendSystemPrompt?: string } {
+  // `synergy`: a «Синергія» child's rendered instruction (synergyInstruction), which takes the
+  // docs-policy line's place (docs/specs/2026-11-06-synergy.md, decision 7): the prototype writes
+  // no docs, and the child starts with no opening prompt, so its role must live here to survive
+  // resumes and `/compact`.
+  private systemAppendOpts(projectId: string, kind: Session["kind"], synergy?: string): { appendSystemPrompt?: string } {
     const language = languageAppendFor(this.registry.getAuthSession()?.agentLanguage);
     const project = this.registry.listProjects().find((p) => p.id === projectId);
-    const docs = project?.docsRequired ? docsPolicyAppend(docsPolicy(project.docsPolicy)) : undefined;
+    const docs = synergy ? undefined : project?.docsRequired ? docsPolicyAppend(docsPolicy(project.docsPolicy)) : undefined;
     // The machine resource paragraph (test workers, no watch mode) while limits apply.
-    const append = [language, docs, this.resources?.promptParagraph(), launchAppendFor(kind)].filter(Boolean).join("\n\n");
+    const append = [language, docs, this.resources?.promptParagraph(), launchAppendFor(kind), synergy].filter(Boolean).join("\n\n");
     return append ? { appendSystemPrompt: append } : {};
+  }
+
+  // The «Синергія» instruction for the system append: the «ШІ-команда» override when the team
+  // edited it, else the default. Read without the skills block — this child runs no skills — and
+  // never throws, like agentPrompt: an unreadable library degrades to the default text.
+  private async synergyInstruction(projectId: string): Promise<string> {
+    let template: string | undefined;
+    try {
+      template = await this.skills.instructionFor(this.aiScope(projectId), SYNERGY_AGENT_ID);
+    } catch (err) {
+      console.warn(`[supervisor] no project instruction for ${SYNERGY_AGENT_ID}: ${(err as Error).message}`);
+    }
+    return renderInstruction(agentById(SYNERGY_AGENT_ID)!, {}, template).trimEnd();
   }
 
   // Create the git isolation (worktree or in-place branch), spawn the omp child, and kick off
@@ -1462,10 +1649,11 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
   private async launch(
     session: Session,
     project: Project,
-    opts: { images?: ImageInput[]; fork?: string; firstPrompt?: string; direct?: boolean } = {},
+    opts: { images?: ImageInput[]; fork?: string; firstPrompt?: string; direct?: boolean; continueBranch?: boolean } = {},
   ): Promise<Session> {
     const { id, branch, worktree, baseBranch, task } = session;
     if (!project.localRepoPath) throw new Error("project not bound");
+    this.refuseManagedClaude(session);
     const { images, fork } = opts;
     const firstPrompt = opts.firstPrompt ?? task;
     let wtDir = "";
@@ -1473,8 +1661,15 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     // Origin could not be asked before the fork: the transcript says the base may be stale.
     let staleFrom = "";
     try {
-      if (worktree) {
-        wtDir = worktreeDir(id);
+      if (worktree && opts.continueBranch) {
+        // A «Синергія» card (launchTask): the prototype's branch from origin. Whatever the local
+        // branch held is on origin too (attachRemoteBranch), so a failed launch may delete it.
+        wtDir = worktreeDir(project.localRepoPath, branch);
+        await this.worktree.attachRemoteBranch(project.localRepoPath, wtDir, branch);
+        branchCreated = true;
+        await copyCarryFiles(project.localRepoPath, wtDir, project.carryFiles ?? [".env"]);
+      } else if (worktree) {
+        wtDir = worktreeDir(project.localRepoPath, branch);
         // docs/specs/2026-10-14-create-pr-base-sync.md, decision 4: the fresher of `<base>` and
         // `origin/<base>`, after asking origin.
         const start = baseBranch ? await this.worktree.forkStart(project.localRepoPath, baseBranch) : undefined;
@@ -1535,11 +1730,13 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
       return this.merge(this.registry.listSessions().find((x) => x.id === id) ?? saved);
     }
 
-    const configPath = await this.ompSkills(project.id, cwd, id);
-    const extensionPath = await this.ompTriggers(project.id, cwd, id);
+    // A «Синергія» child (docs/specs/2026-11-06-synergy.md, decision 7) gets no skills overlay
+    // and no triggers, its narrow toolset without LSP, and its instruction in the append.
+    const synergy = saved.synergy ? await this.synergyInstruction(project.id) : undefined;
+    const configPath = saved.synergy ? undefined : await this.ompSkills(project.id, cwd, id);
+    const extensionPath = saved.synergy ? undefined : await this.ompTriggers(project.id, cwd, id);
     const browserMcp = this.browser?.bindingFor(id);
-    const runtime = managedRuntime(saved.runtime);
-    const rpc = createRuntime(runtime, { cwd, model, ...(effort ? { thinking: effort } : {}), ...(fork ? { fork } : {}), ...(await this.spawnOpts(id, runtime, cwd, configPath)), ...(extensionPath ? { extensionPath } : {}), ...(browserMcp ? { mcp: browserMcp } : {}), ...this.systemAppendOpts(project.id, saved.kind) });
+    const rpc = createRuntime({ cwd, model, ...(effort ? { thinking: effort } : {}), ...(fork ? { fork } : {}), ...launchToolsFor(saved), ...(await this.spawnOpts(id, cwd, configPath)), ...(extensionPath ? { extensionPath } : {}), ...(browserMcp ? { mcp: browserMcp } : {}), ...this.systemAppendOpts(project.id, saved.kind, synergy) });
     const live = this.wireLive(id, rpc, "queued");
     try {
       await this.startChild(id, rpc);
@@ -1572,11 +1769,16 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
         // keeps the slash, a notice says what was added, the model reads the instruction.
         const helped = expandHelpers(firstPrompt);
         if (helped.used.length) this.appendEntry(id, this.noticeEntry(helperNotice(helped.used)));
-        const directives = saved.taskId ? `${COAUTHOR_DIRECTIVE}\n\n${DOC_MAINTAIN_DIRECTIVE}` : COAUTHOR_DIRECTIVE;
+        // A scheduled run commits nothing (docs/specs/2026-11-06-scheduled-tasks.md, decision 2),
+        // so neither the co-author trailer nor the doc-maintain line applies to it.
+        const scheduled = this.scheduleRuns.has(id);
+        const directives = scheduled ? "" : saved.taskId ? `${COAUTHOR_DIRECTIVE}\n\n${DOC_MAINTAIN_DIRECTIVE}` : COAUTHOR_DIRECTIVE;
         const modelPrompt = await this.openingPrompt(saved, helped.text, cwd);
-        rpc.prompt(`${modelPrompt}\n\n${directives}`, images);
-        // A minion run's time cap counts from this spawn to its first verdict (decision 9).
+        rpc.prompt(directives ? `${modelPrompt}\n\n${directives}` : modelPrompt, images);
+        // A minion run's time cap counts from this spawn to its first verdict (decision 9); a
+        // scheduled run's from this spawn to its end.
         if (saved.minion) this.startMinionClock(id);
+        if (scheduled) this.startScheduleClock(id);
       } else {
         // No opening message (a forked agent continuing the chat) — sit idle, ready for input.
         live.live.status = "done";
@@ -1596,15 +1798,19 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
   }
 
   // A launch replayed after waiting for a slot has nobody awaiting it, so a failure lands on the
-  // row: `error`, with the worktree kept — the next message starts the agent there.
+  // row: `error`, with the worktree kept — the next message starts the agent there. A scheduled
+  // run that fails so has ended: ScheduleService records it and retires the worktree.
   private async deferredLaunch(id: string, spawn: () => Promise<unknown>): Promise<void> {
     try {
       await spawn();
     } catch (err) {
       console.warn(`[supervisor] launch of session ${id} failed after waiting for a slot: ${(err as Error).message}`);
-      if (!this.registry.listSessions().some((x) => x.id === id)) return;
+      // A launch cut short by the app quitting is not a failure: the row still waits, and the
+      // next start replays it.
+      if (this.destroyed || !this.registry.listSessions().some((x) => x.id === id)) return;
       this.registry.updateSession(id, { status: "error" });
       this.pushUpdate(id);
+      this.endScheduleRun(id, { outcome: "failed", detail: (err as Error).message });
     }
   }
 
@@ -1614,8 +1820,9 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
   private async relaunch(id: string, firstPrompt: string): Promise<void> {
     const s = this.registry.listSessions().find((x) => x.id === id);
     if (!s) return;
+    this.refuseManagedClaude(s);
     const project = this.boundProject(s.projectId);
-    const fork = s.native ? undefined : managedRuntime(s.runtime) === "claude-code" ? s.ompSessionId : s.ompSessionFile;
+    const fork = s.native ? undefined : s.ompSessionFile;
     await this.deferredLaunch(id, () => this.spawnLaunched(s, project, { firstPrompt, staleFrom: "", ...(fork ? { fork } : {}) }, false));
   }
 
@@ -1630,21 +1837,27 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
   // `minion-findings` skill after the assigned ones (decision 14): a repository, project,
   // workspace or user skill of that name wins, and a team that switched it off gets the line alone.
   private async openingPrompt(session: Session, firstPrompt: string, cwd: string): Promise<string> {
+    // A scheduled run (docs/specs/2026-11-06-scheduled-tasks.md, «Unattended»): the run's rules,
+    // the task's skills — resolved here, in the worktree, so a repository skill wins — and the
+    // task's prompt, which is the card's description. No «ШІ-команда» role around it: the
+    // operator's prompt is the whole assignment.
+    if (session.schedule && this.scheduleRuns.has(session.id) && firstPrompt.trim()) {
+      const names = this.registry.getSchedule(session.schedule.id)?.skills ?? [];
+      let block = "";
+      if (names.length)
+        try {
+          block = (await this.skills.assignedForNames(this.aiScope(session.projectId), names, cwd)).block;
+        } catch (err) {
+          console.warn(`[supervisor] no skills for scheduled run ${session.id}: ${(err as Error).message}`);
+        }
+      return scheduledRunPrompt({ name: session.schedule.name, prompt: firstPrompt, skillsBlock: block, project: true });
+    }
     if (session.minion && firstPrompt.trim()) {
       const kind = session.findingKind;
       const { template, block } = await this.agentPrompt(session.projectId, MINION_AGENT_ID, cwd, kind ? [MINION_FINDINGS_SKILL] : []);
       const card = firstPrompt.trim() === session.name.trim() ? session.name : `${session.name}\n\n${firstPrompt}`;
       const about = kind ? `\n\n${minionFindingLine(kind)}` : "";
       return `${renderInstruction(agentById(MINION_AGENT_ID)!, { task: card }, template)}${about}${block}\n\n${MINION_OUTCOME_CONTRACT}`;
-    }
-    // A «Дизайн» session (docs/specs/2026-10-29-design-tab.md) opens with the Дизайнер's
-    // instruction around the card — its folder, topic and description — plus the `design-spec`
-    // skill after the assigned ones, like the minion's extra. Native sessions take it too: the
-    // instruction is the task the operator chose, as with deep analysis.
-    if (session.designDir && firstPrompt.trim()) {
-      const { template, block } = await this.agentPrompt(session.projectId, DESIGNER_AGENT_ID, cwd, [DESIGN_SPEC_SKILL]);
-      const description = firstPrompt.trim() === session.name.trim() ? "" : firstPrompt.trim();
-      return renderInstruction(agentById(DESIGNER_AGENT_ID)!, { designDir: session.designDir, topic: session.name, description }, template).trimEnd() + block;
     }
     if (!session.deepAnalysis || !firstPrompt.trim()) return firstPrompt;
     let block = "";
@@ -1675,15 +1888,13 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     const g = this.boundProject(s.projectId);
     if (s.kind !== "agent") throw new Error("can only branch an agent session");
     if (s.native) throw nativeUnsupported();
+    this.refuseManagedClaude(s);
 
-    // A fork can only continue on the parent's backend (R1/R2): omp resumes from the parent's
-    // session FILE, claude resumes from the parent's session UUID (stored in ompSessionId).
-    const parentRuntime = managedRuntime(s.runtime);
-    let forkHandle = parentRuntime === "claude-code" ? s.ompSessionId : s.ompSessionFile;
+    // The fork resumes from the parent's omp session FILE.
+    let forkHandle = s.ompSessionFile;
     if (!forkHandle) {
       await this.refreshState(parentId);
-      const fresh = this.registry.listSessions().find((x) => x.id === parentId);
-      forkHandle = parentRuntime === "claude-code" ? fresh?.ompSessionId : fresh?.ompSessionFile;
+      forkHandle = this.registry.listSessions().find((x) => x.id === parentId)?.ompSessionFile;
     }
     if (!forkHandle) throw new Error("agent has no omp session yet — send a first message before branching");
 
@@ -1699,17 +1910,16 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
       worktree: false,
       kind: "discussion",
       parentSessionId: parentId,
-      runtime: parentRuntime,
+      runtime: "omp",
     });
 
     const configPath = await this.ompSkills(s.projectId, cwd, child.id);
     const extensionPath = await this.ompTriggers(s.projectId, cwd, child.id);
-    const rpc = createRuntime(parentRuntime, { cwd, fork: forkHandle, ...launchToolsFor("discussion"), ...(await this.spawnOpts(child.id, parentRuntime, cwd, configPath)), ...(extensionPath ? { extensionPath } : {}), ...this.systemAppendOpts(s.projectId, "discussion") });
+    const rpc = createRuntime({ cwd, fork: forkHandle, ...launchToolsFor({ kind: "discussion" }), ...(await this.spawnOpts(child.id, cwd, configPath)), ...(extensionPath ? { extensionPath } : {}), ...this.systemAppendOpts(s.projectId, "discussion") });
     const childLive = this.wireLive(child.id, rpc, "queued");
     try {
       await this.startChild(child.id, rpc);
-      // Both backends now re-render the parent transcript: omp forks the session file, claude
-      // forks the session UUID, and getAllMessages() reads either back through the same seam.
+      // The fork re-renders the parent transcript: getAllMessages() reads the forked file back.
       this.rehydrate(childLive, child.id, await rpc.getAllMessages());
       this.events.next({ type: "transcript_reset", sessionId: child.id, entries: childLive.transcript });
       await this.refreshState(child.id);
@@ -1767,7 +1977,7 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
       worktree: false,
       kind: "review",
       parentSessionId: parentId,
-      runtime: this.runtimeFor(),
+      runtime: "omp",
     });
 
     const { template, block } = await this.agentPrompt(s.projectId, "review", cwd);
@@ -1776,8 +1986,7 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
 
     const configPath = await this.ompSkills(s.projectId, cwd, child.id);
     const extensionPath = await this.ompTriggers(s.projectId, cwd, child.id);
-    const childRuntime = managedRuntime(child.runtime);
-    const rpc = createRuntime(childRuntime, { cwd, ...launchToolsFor("review"), ...(await this.spawnOpts(child.id, childRuntime, cwd, configPath)), ...(extensionPath ? { extensionPath } : {}), ...this.systemAppendOpts(s.projectId, "review") });
+    const rpc = createRuntime({ cwd, ...launchToolsFor({ kind: "review" }), ...(await this.spawnOpts(child.id, cwd, configPath)), ...(extensionPath ? { extensionPath } : {}), ...this.systemAppendOpts(s.projectId, "review") });
     const childLive = this.wireLive(child.id, rpc, "queued");
     try {
       await this.startChild(child.id, rpc);
@@ -1871,7 +2080,7 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
       worktree: false,
       kind: "review",
       parentSessionId: parentId,
-      runtime: this.runtimeFor(),
+      runtime: "omp",
       tester: true,
     });
     // Run now in a free slot, or replayed by the queue when one frees up.
@@ -1893,9 +2102,8 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     if (!this.registry.listSessions().some((x) => x.id === child.id)) return; // discarded while it waited
     const configPath = await this.ompSkills(child.projectId, cwd, child.id);
     const extensionPath = await this.ompTriggers(child.projectId, cwd, child.id);
-    const childRuntime = managedRuntime(child.runtime);
     const browserMcp = this.browser?.bindingFor(child.id);
-    const rpc = createRuntime(childRuntime, { cwd, ...launchToolsFor("review"), ...(await this.spawnOpts(child.id, childRuntime, cwd, configPath)), ...(extensionPath ? { extensionPath } : {}), ...(browserMcp ? { mcp: browserMcp } : {}), ...this.systemAppendOpts(child.projectId, "review") });
+    const rpc = createRuntime({ cwd, ...launchToolsFor({ kind: "review" }), ...(await this.spawnOpts(child.id, cwd, configPath)), ...(extensionPath ? { extensionPath } : {}), ...(browserMcp ? { mcp: browserMcp } : {}), ...this.systemAppendOpts(child.projectId, "review") });
     const childLive = this.wireLive(child.id, rpc, "queued");
     try {
       await this.startChild(child.id, rpc);
@@ -2116,13 +2324,6 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     l.state = reduceStatus(l.state, e);
     // The child reported on the turn it was sent: its status alone says whether it holds a slot.
     if (l.state.status !== before) l.turnPending = false;
-    // claude reports `ready` only with its first turn, when its MCP servers have started: the
-    // watchdog re-takes its baseline then (omp's comes before start() resolves, same effect).
-    // Once per child — a later baseline would spare the very commands the watchdog is for.
-    if (e.type === "ready" && l.pid !== undefined && !l.baselined) {
-      l.baselined = true;
-      this.trackChild(id, l.pid, true);
-    }
     // One reducer for the live stream and for rehydrated history, so a session that
     // streamed and the same session after a reload produce identical entries.
     const reduced = reduceRpcEvents([e], {
@@ -2154,6 +2355,15 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
         } catch {
           /* never let a bookkeeping write break the event stream */
         }
+        // The same turn into «Аналітика»'s hourly ledger (docs/specs/2026-11-07-developer-analytics.md,
+        // decision 5), by the hour it ended in. Managed omp prices every turn.
+        try {
+          const hour = new Date(Math.floor(Date.now() / 3_600_000) * 3_600_000).toISOString();
+          const model = entry.model ?? l.live.model ?? this.registry.listSessions().find((x) => x.id === id)?.model ?? "unknown";
+          this.registry.addUsageHour(id, { hour, model, calls: 1, modelMs: entry.ms ?? 0, ...entry.usage }, true);
+        } catch {
+          /* same rule as above */
+        }
       }
     }
     // A PR-requested session records the moment its branch actually gets a pull request: a
@@ -2170,7 +2380,7 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
         l.prOpened = true;
         l.live.prOpened = true;
         l.live.prUrl = prUrl;
-        this.registry.updateSession(id, { prOpened: true, prUrl });
+        this.registry.updateSession(id, { prOpened: true, prUrl, prOpenedAt: new Date().toISOString() });
       }
     }
     // Task artifacts an agent attaches to its card via the shared kermanych-action mechanism —
@@ -2233,6 +2443,8 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
       this.registry.updateSession(id, { status: settled });
       // …and then records the result, or sends the docs or PR turn the verdict leads to.
       minionStep?.after();
+      // A scheduled run ends with its turn: what it answered is the run's result.
+      if (row?.schedule) this.onScheduleTurnEnd(id, l.transcript);
       this.refreshState(id);
       this.stopPoll(l);
       // A turn cannot end with a tool still running, so anything left here belongs to a call
@@ -2242,6 +2454,14 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
       void this.checkTurnEnd(id, settled, review).catch((err: unknown) =>
         console.warn(`[supervisor] turn-end check skipped for session ${id}: ${(err as Error).message}`),
       );
+      // «Синергія»: what the turn changed becomes one checkpoint (docs/specs/2026-11-06-synergy.md,
+      // decision 4). Its requests are taken now, so a message that starts the next turn while
+      // git runs lands in the next checkpoint.
+      if (row?.synergy) {
+        const asks = this.synergyAsks.get(id) ?? [];
+        this.synergyAsks.delete(id);
+        void this.synergySerial(id, () => this.checkpointSynergy(id, asks)).catch((err: unknown) => this.synergyCheckpointFailed(id, asks, err));
+      }
       // A settled turn frees its agent slot.
       this.drainSlots();
     }
@@ -2397,6 +2617,7 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
       await this.withSlot(s, () => this.requireNative().start(s, { resume: true }), () => this.resume(id));
       return { ok: true };
     }
+    if (s) this.refuseManagedClaude(s);
     await this.liveOrResume(id);
     return { ok: true };
   }
@@ -2405,9 +2626,73 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
   // `sendAsKermanych`, which is the same delivery with the operator's own affordances off.
   // `voice`: said in a voice conversation (docs/specs/2026-11-02-voice-conversation.md, decision 6).
   async sendMessage(id: string, text: string, mode: "prompt" | "follow_up" | "steer", images?: ImageInput[], opts: { voice?: boolean } = {}) {
+    // `/minion` hands the session to «Посіпака» instead of taking it back: it must not attend the
+    // run first. A voice transcript is never a command (deliverNow).
+    const cmd = opts.voice ? null : parseCommand(text);
+    if (cmd?.name === "minion") return this.handToMinion(id, text, cmd.args);
     // The operator took over a «Посіпака» run: it works again, with no clock from here on.
     this.attendMinionRun(id);
     await this.deliver(id, text, mode, images, true, undefined, opts);
+  }
+
+  // `/minion` (docs/specs/2026-11-09-minion-takeover.md): the operator hands a session to
+  // «Посіпака» and leaves. From here it is a minion run at `work`, like one the poll started: no
+  // ask tool, a `report_outcome` verdict, then the docs and PR turns (onMinionTurnEnd). omp reads
+  // the ask overlay (spawnOpts) and the MCP tool list only when it starts, so a live child is
+  // stopped — a turn in progress is cut, like ■ — and woken on the same conversation before the
+  // hand-over prompt goes in. A refusal is thrown, so the composer gets the text back.
+  private async handToMinion(id: string, text: string, note: string): Promise<void> {
+    const row = this.registry.listSessions().find((x) => x.id === id);
+    if (!row) throw new Error("session not found");
+    if (row.native) throw nativeUnsupported();
+    this.refuseManagedClaude(row);
+    if (!minionTakeoverAllowed(row))
+      throw new CodedError(
+        "minion_takeover_unsupported",
+        "Посіпаці можна передати лише відкриту сесію агента з гілкою — не чат, обговорення, ревізію, «Синергію» чи запуск за розкладом.",
+      );
+    const current = this.minionRuns.get(id);
+    if (row.minion && current && !current.attended && current.phase !== "idle")
+      throw new CodedError("minion_takeover_running", "Посіпака вже веде цю сесію сам.");
+
+    this.forgetMinionRun(id);
+    const l = this.map.get(id);
+    if (l) {
+      // Stopped on purpose: its exit is neither an `error` nor a failed run.
+      l.live.status = "stopped";
+      this.stopPoll(l);
+      await l.rpc.stop().catch(() => {});
+      this.map.delete(id);
+      this.toolDetails.dropSession(id);
+      this.skillLabels.delete(id);
+    }
+    // A result of an earlier run (its «потрібне рішення») is over: this run has none yet.
+    this.registry.updateSession(id, { minion: true, minionResult: undefined });
+    const run: MinionRun = { phase: "work", takeover: true };
+    this.minionRuns.set(id, run);
+    try {
+      await this.liveOrResume(id);
+      this.appendEntry(id, this.userEntry(text));
+      this.appendEntry(id, this.noticeEntry({ text: "сесію передано Посіпаці: агент сам ухвалить рішення, що лишились, і відкриє ПР", code: "minion_takeover_started" }));
+      this.pushUpdate(id);
+      await this.sendAsKermanych(id, `${minionTakeoverPrompt(note)}\n\n${MINION_OUTCOME_CONTRACT}`, "prompt");
+    } catch (err) {
+      // Nothing went in: the session goes back to what it was, and a child woken in the minion's
+      // mode is dropped, so the operator's next message respawns it as before.
+      this.registry.updateSession(id, { minion: row.minion, minionResult: row.minionResult });
+      if (row.minion) Object.assign(run, { phase: "idle", attended: true });
+      else this.forgetMinionRun(id);
+      const woken = this.map.get(id);
+      if (woken) {
+        woken.live.status = "stopped";
+        this.stopPoll(woken);
+        await woken.rpc.stop().catch(() => {});
+        this.map.delete(id);
+      }
+      this.pushUpdate(id);
+      throw err;
+    }
+    this.startMinionClock(id);
   }
 
   // Kermanych's own prompt into a session: a fired trigger's agent, a PR request, a merged
@@ -2442,6 +2727,8 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     // Refused now, not after a wait: a parked message the harness cannot take would vanish on
     // replay with nobody left to tell (deliverNative's own check).
     if (row.native && (images?.length || (fromOperator && parseCommand(text)))) throw nativeUnsupported();
+    // Refused before it could park: a removed managed claude-code row never spawns again.
+    this.refuseManagedClaude(row);
     const parked = replay ?? (() => this.deliver(id, text, mode === "prompt" && this.turnRunning(row) ? "follow_up" : mode, images, fromOperator, undefined, opts));
     return this.withSlot(row, () => this.deliverNow(row, text, mode, images, fromOperator, opts), parked, { text, images });
   }
@@ -2480,11 +2767,18 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     // agent and its branch after the thing being built, and so review/PR prompts have a task.
     if (text.trim() && s?.kind === "chat" && !s.task.trim()) this.registry.updateSession(id, { task: text.trim() });
     if (text.trim() || images?.length) this.appendEntry(id, this.userEntry(text, images, opts.voice));
+    // «Синергія» (docs/specs/2026-11-06-synergy.md, decision 4): the operator's words — without
+    // the page/picks block the UI appends — name the checkpoint this turn will end with.
+    if (s?.synergy && fromOperator) {
+      const ask = synergyRequestOf(text);
+      if (ask.request || ask.page) this.synergyAsks.set(id, [...(this.synergyAsks.get(id) ?? []), ask]);
+    }
 
     // Operator-sourced triggers run BEFORE the message reaches the child: Kermanych is the
     // only party that sees the operator's text, and an `agent` action has to be Kermanych's
     // to perform — a child cannot call back into us.
-    const fired = fromOperator && s ? await this.matchOperatorTriggers(s, id, text) : undefined;
+    // A «Синергія» prototype runs no triggers (decision 7), the operator's own included.
+    const fired = fromOperator && s && !s.synergy ? await this.matchOperatorTriggers(s, id, text) : undefined;
     if (fired?.trigger.action === "agent" && (await this.runTriggerAgent(id, fired.trigger))) return;
     // Хелпери are expanded AFTER the trigger match, and the match runs on the operator's raw
     // text on purpose: a pattern that happens to appear inside a helper's instruction must not
@@ -2798,6 +3092,9 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     // A «Посіпака» session's PR is told apart by its title (docs/specs/2026-10-23-minion-auto-run.md,
     // decision 10); appended like the sync, so neither an override nor the repo's conventions drop it.
     const title = s.minion ? `\n\n${MINION_PR_TITLE_RULE}` : "";
+    // The reflection step (docs/specs/2026-11-06-skill-improvement-reflection.md) goes last, after
+    // every other Kermanych block, so it still applies whatever the instruction says.
+    const reflect = this.browser?.skillReflection(id) ?? "";
     const prompt =
       renderInstruction(
         agentById("pull-request")!,
@@ -2807,7 +3104,7 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
           baseLine,
         },
         template,
-      ) + sync + title + block + artifacts;
+      ) + sync + title + block + artifacts + reflect;
 
     // A send parked for an agent slot replays this whole call later, so the flags below are armed
     // for the turn that call starts, not now on a child that is not running it.
@@ -2869,7 +3166,7 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
           conventions: (g.conventions || "").trim() || PR_CONVENTIONS_FALLBACK,
         },
         template,
-      ) + (base ? `\n\n${baseSyncBlock(base)}` : "") + block;
+      ) + (base ? `\n\n${baseSyncBlock(base)}` : "") + block + (this.browser?.skillReflection(id) ?? "");
 
     // Parked for an agent slot: replayed whole later, flags included (see createPullRequest).
     if (!(await this.sendAsKermanych(id, prompt, "prompt", () => this.commitChanges(id)))) return { ok: true };
@@ -2885,23 +3182,265 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     return { ok: true };
   }
 
-  // «Зберегти дизайн» (docs/specs/2026-10-29-design-tab.md): one Kermanych prompt into the
-  // Дизайнер — screenshots of every listed screen and state, the README brought in line with the
-  // prototype, one commit `design: <topic>`. Ungated, like «Написати хендоф»: saving is how the
-  // README the gate wants gets written. Nothing is armed: the agent commits on its own branch, so
-  // the turn settles like any other.
-  async saveDesign(id: string): Promise<{ sent: true }> {
+  // ── «Синергія» (docs/specs/2026-11-06-synergy.md) ─────────────────────────────────────────────
+
+  // «Нова фіча» / «Змінити сторінку» (decision 5): an agent session with no card, on a
+  // `synergy/<slug>` branch in its own worktree, whose child spawns idle — the operator's first
+  // request is its first turn. The slug is typed-in (topic, else path, else the time), so no
+  // model call is spent naming the branch; the launch takes no slot (decision 9). A failed
+  // launch leaves no row, like launchTask.
+  async createSynergy(input: { projectId: string; topic?: string; page?: string; base?: string; model?: string; effort?: ThinkingLevel }): Promise<Session> {
+    const project = this.boundProject(input.projectId);
+    if (!platformHasBrowser(project.platform))
+      throw new Error(`«Синергія» needs an app that runs in a browser; this project's platform is ${project.platform}`);
+    const topic = input.topic?.trim() ?? "";
+    const page = input.page?.trim() ? synergyPagePath(input.page) : undefined;
+    const now = new Date();
+    const pad = (n: number) => String(n).padStart(2, "0");
+    const day = `${pad(now.getDate())}.${pad(now.getMonth() + 1)} ${pad(now.getHours())}:${pad(now.getMinutes())}`;
+    const stamp = `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}-${pad(now.getHours())}${pad(now.getMinutes())}`;
+    const name = topic || (page ? `Синергія: ${page}` : `Синергія ${day}`);
+    const slug = topic || (page && page !== "/" ? page : "") || `synergy-${stamp}`;
+    const { branch, baseBranch } = await this.resolveLaunchParams(project, { title: name, branchSlug: slug }, "synergy", true, undefined, input.base?.trim() || undefined);
+    // Decision 3: the chosen model, else the fast default; one the catalogue lacks falls back to
+    // the project's default (and with neither, omp's own).
+    const model = (await this.models.validModel(input.model?.trim() || SYNERGY_DEFAULT_MODEL)) ?? (await this.models.validModel(project.defaultModel));
+    const session = this.registry.createSession({
+      projectId: project.id,
+      name,
+      task: topic || name,
+      worktreePath: "",
+      branch,
+      worktree: true,
+      baseBranch,
+      model,
+      effort: input.effort ?? SYNERGY_DEFAULT_EFFORT,
+      prefix: "synergy",
+      runtime: "omp",
+      synergy: page ? { page } : {},
+    });
+    try {
+      return await this.launch(session, project, { firstPrompt: "", direct: true });
+    } catch (err) {
+      this.browser?.revoke(session.id);
+      this.registry.removeSession(session.id);
+      this.events.next({ type: "session_removed", sessionId: session.id });
+      throw err;
+    }
+  }
+
+  // The row of a «Синергія» session and its worktree, or the refusal every Синергія action shares.
+  private synergyRow(id: string): { s: Session & { synergy: NonNullable<Session["synergy"]> }; dir: string } {
     const s = this.registry.listSessions().find((x) => x.id === id);
     if (!s) throw new Error("session not found");
-    if (s.kind !== "agent" || !s.designDir) throw new Error(`only design sessions can save a design (this is ${s.kind === "agent" ? "an ordinary agent" : `a ${s.kind}`})`);
-    const dir = s.worktreePath || this.project(s.projectId).localRepoPath;
-    const { template, block } = await this.agentPrompt(s.projectId, DESIGN_SAVE_AGENT_ID, dir);
-    const prompt =
-      renderInstruction(agentById(DESIGN_SAVE_AGENT_ID)!, { designDir: s.designDir, branch: s.branch, message: designCommitMessage(s.name) }, template) + block;
-    // Parked for an agent slot: replayed whole later, like commitChanges.
-    await this.sendAsKermanych(id, prompt, "prompt", () => this.saveDesign(id));
-    return { sent: true };
+    if (!s.synergy) throw new Error("not a «Синергія» session");
+    if (!s.worktreePath) throw new Error("the «Синергія» session has no worktree");
+    return { s: { ...s, synergy: s.synergy }, dir: s.worktreePath };
   }
+
+  // One git write of a session's worktree at a time: a turn's checkpoint, a restore and the
+  // handoff's last checkpoint queue behind each other (the same chain as WorktreeService's
+  // serialRemote). A failed write does not stop the next.
+  private synergySerial<T>(id: string, run: () => Promise<T>): Promise<T> {
+    const next = (this.synergyGit.get(id) ?? Promise.resolve()).then(run, run);
+    this.synergyGit.set(id, next);
+    const release = () => {
+      if (this.synergyGit.get(id) === next) this.synergyGit.delete(id);
+    };
+    next.then(release, release);
+    return next;
+  }
+
+  // Decision 4: commit everything the worktree holds as one checkpoint named after `asks`, with
+  // the co-author trailer every Kermanych commit carries. No changes, no checkpoint. False when
+  // nothing was committed — the row is gone or no longer a Синергія, or the tree is clean.
+  // Throws git's failure; run it inside synergySerial.
+  private async checkpointSynergy(id: string, asks: readonly { request: string; page?: string }[]): Promise<boolean> {
+    const s = this.registry.listSessions().find((x) => x.id === id);
+    if (!s?.synergy || !s.worktreePath) return false;
+    if (!(await this.worktree.hasUncommitted(s.worktreePath))) return false;
+    await this.worktree.checkpointAll(s.worktreePath, `${synergyCheckpointMessage(asks)}\n\nCo-Authored-By: ${KERMANYCH_COAUTHOR}`);
+    this.events.next({ type: "synergy_steps", sessionId: id });
+    return true;
+  }
+
+  // A turn's checkpoint failed: the turn itself stands, the operator reads why in the log, and
+  // its requests ride on to the next checkpoint, which commits these changes too.
+  private synergyCheckpointFailed(id: string, asks: readonly { request: string; page?: string }[], err: unknown): void {
+    const reason = (err as Error)?.message ?? String(err);
+    console.warn(`[supervisor] «Синергія» checkpoint of session ${id} failed: ${reason}`);
+    if (!this.registry.listSessions().some((x) => x.id === id)) return;
+    this.synergyAsks.set(id, [...asks, ...(this.synergyAsks.get(id) ?? [])]);
+    if (this.map.has(id)) this.appendEntry(id, this.noticeEntry(`Не вдалося зберегти крок «Синергії»: ${reason}`, "warn"));
+  }
+
+  // Before a restore or the handoff: whatever is still uncommitted becomes a normal checkpoint,
+  // so nothing the agent wrote is lost. Inside synergySerial; a failure refuses the action.
+  private async flushSynergy(id: string): Promise<void> {
+    const asks = this.synergyAsks.get(id) ?? [];
+    this.synergyAsks.delete(id);
+    try {
+      await this.checkpointSynergy(id, asks);
+    } catch (err) {
+      this.synergyAsks.set(id, [...asks, ...(this.synergyAsks.get(id) ?? [])]);
+      throw err;
+    }
+  }
+
+  // The strip, read from git alone (decision 4). Step 0 is where the branch left its base —
+  // the merge-base with `<base>` / `origin/<base>`; with no base (or one gone) the parent of the
+  // oldest checkpoint, and with no checkpoint yet HEAD itself.
+  private async readSynergySteps(s: Session, dir: string): Promise<SynergyStepsView> {
+    const base = s.baseBranch ?? "";
+    // core synergy.ts's subject prefix: every checkpoint and restore starts with it.
+    const startSha = (await this.worktree.forkPoint(dir, base)) || (await this.worktree.parentOfOldest(dir, "synergy: ")) || (await this.worktree.revParse(dir, "HEAD"));
+    return { base, startSha, steps: synergySteps(await this.worktree.commitsSince(dir, startSha)) };
+  }
+
+  // `GET /sessions/:id/synergy/steps`.
+  async synergyStepsView(id: string): Promise<SynergyStepsView> {
+    const { s, dir } = this.synergyRow(id);
+    return this.readSynergySteps(s, dir);
+  }
+
+  // «Повернутися сюди» (decision 4): bring back the tree of the start or of a step as a NEW
+  // commit — history is never rewritten, so a restore can itself be undone from the strip.
+  // Refused while a turn runs: the agent would be editing the tree under the checkout.
+  async restoreSynergy(id: string, sha: string): Promise<SynergyStepsView> {
+    const { s, dir } = this.synergyRow(id);
+    if (this.turnRunning(s)) throw new Error("wait for the agent to finish its turn before going back to a step");
+    return this.synergySerial(id, async () => {
+      await this.flushSynergy(id);
+      const view = await this.readSynergySteps(s, dir);
+      const n = sha === view.startSha ? 0 : view.steps.find((x) => x.sha === sha)?.n;
+      if (n === undefined) throw new Error(`${sha} is not a step of this «Синергія» session`);
+      await this.worktree.restoreTreeCommit(dir, sha, `${synergyRestoreMessage(n, sha)}\n\nCo-Authored-By: ${KERMANYCH_COAUTHOR}`);
+      this.events.next({ type: "synergy_steps", sessionId: id });
+      return this.readSynergySteps(s, dir);
+    });
+  }
+
+  // «Імплементувати» (decision 6): the same row, branch and worktree become an ordinary agent
+  // with a FRESH conversation — the prototyping one is full of tries and rollbacks the
+  // implementer must not resurrect. The UI has filed the card (`taskId`) with the same brief.
+  // The marker, the conversation handles, the fast model and effort go in the SAME write that
+  // stamps the card (CloudSyncService mirrors a row once it carries a taskId, as in
+  // promoteChatToAgent); the child spawns in the existing worktree through the slot queue like
+  // any agent (no worktree add, no setup; the preview keeps running). A spawn that fails puts
+  // the row back as it was.
+  async implementSynergy(id: string, taskId: string): Promise<Session> {
+    const { s, dir } = this.synergyRow(id);
+    const card = taskId.trim();
+    if (!card) throw new Error("taskId is required");
+    this.refuseManagedClaude(s);
+    if (this.turnRunning(s)) throw new Error("wait for the agent to finish its turn before «Імплементувати»");
+    const project = this.boundProject(s.projectId);
+    const view = await this.synergySerial(id, async () => {
+      await this.flushSynergy(id);
+      return this.readSynergySteps(s, dir);
+    });
+    if (!view.steps.some((x) => x.kind === "change")) throw new Error("nothing to implement yet: the prototype has no checkpoint");
+    const brief = synergyBrief({ startPage: s.synergy.page, requests: synergyChronology(view.steps, view.startSha) });
+    const { template, block } = await this.agentPrompt(s.projectId, SYNERGY_IMPLEMENT_AGENT_ID, dir);
+    const prompt = renderInstruction(agentById(SYNERGY_IMPLEMENT_AGENT_ID)!, { branch: s.branch, base: view.base || view.startSha, brief }, template).trimEnd() + block;
+
+    // The prototyping child must die before the implementer takes over this row's event stream.
+    const live = this.map.get(id);
+    if (live) {
+      this.stopPoll(live);
+      await live.rpc.stop().catch(() => {});
+      this.map.delete(id);
+      this.toolDetails.dropSession(id);
+      this.skillLabels.delete(id);
+    }
+    this.synergyAsks.delete(id);
+    const session = this.registry.updateSession(id, {
+      synergy: undefined,
+      taskId: card,
+      ompSessionFile: undefined,
+      ompSessionId: undefined,
+      model: await this.models.validModel(project.defaultModel),
+      effort: project.defaultEffort,
+      status: "queued",
+    });
+    // The log starts over with the implementer's own conversation.
+    this.events.next({ type: "transcript_reset", sessionId: id, entries: [] });
+    const plan = { firstPrompt: prompt, staleFrom: "" };
+    try {
+      await this.withSlot(
+        session,
+        () => this.spawnLaunched(session, project, plan, false),
+        () => this.deferredLaunch(id, () => this.spawnLaunched(this.registry.listSessions().find((x) => x.id === id) ?? session, project, plan, false)),
+        { text: prompt },
+      );
+    } catch (err) {
+      // Back to the prototype, unlinked: the next request resumes its conversation.
+      this.registry.updateSession(id, {
+        synergy: s.synergy, taskId: s.taskId, ompSessionFile: s.ompSessionFile, ompSessionId: s.ompSessionId, model: s.model, effort: s.effort, status: "done",
+      });
+      this.pushUpdate(id);
+      throw err;
+    }
+    // The prototyping conversation is never resumed again.
+    if (s.ompSessionFile) await rm(s.ompSessionFile, { force: true }).catch(() => {});
+    this.pushUpdate(id);
+    return this.merge(this.registry.listSessions().find((x) => x.id === id) ?? session);
+  }
+
+  // «Задача →» (docs/specs/2026-11-09-merge-design-into-synergy.md, decision 2): the prototype's
+  // branch goes to origin, so whoever launches the card, on any machine, continues it. Refused
+  // while a turn runs and before the first checkpoint, like «Імплементувати»; what the agent left
+  // uncommitted becomes a checkpoint first. Pushing again is harmless: origin is then up to date.
+  // `base` is what the card stores as its base, the pull request's target.
+  async pushSynergy(id: string): Promise<{ branch: string; base: string }> {
+    const { s, dir } = this.synergyRow(id);
+    if (this.turnRunning(s)) throw new Error("wait for the agent to finish its turn before «Задача →»");
+    const project = this.boundProject(s.projectId);
+    const view = await this.synergySerial(id, async () => {
+      await this.flushSynergy(id);
+      return this.readSynergySteps(s, dir);
+    });
+    if (!view.steps.some((x) => x.kind === "change")) throw new Error("nothing to hand over yet: the prototype has no checkpoint");
+    await this.worktree.pushBranch(project.localRepoPath, s.branch, await this.gitToken(project.localRepoPath));
+    return { branch: s.branch, base: view.base };
+  }
+
+  // The card's screenshots (decision 3): the start page and every page a surviving request was
+  // made on (core synergyHandoffPages), each loaded in the session browser on the running
+  // preview and shot at the pane's width. No model is involved. The pane visibly walks the pages
+  // and goes back to where it was. A page that fails to load or shoot is left out; with no
+  // session browser (web build, standalone api) or no running preview there are none.
+  async synergyScreens(id: string): Promise<{ page: string; data: string; mimeType: "image/png" }[]> {
+    const { s, dir } = this.synergyRow(id);
+    const host = browserHost();
+    const origin = this.preview?.urlOf(id)?.replace(/\/+$/, "");
+    if (!host || !origin) return [];
+    const view = await this.readSynergySteps(s, dir);
+    const pages = synergyHandoffPages(s.synergy.page, synergyChronology(view.steps, view.startSha));
+    const target = { sessionId: id, projectId: s.projectId };
+    let back: string | undefined;
+    try {
+      const href: unknown = JSON.parse(await host.evaluate(target, "location.href"));
+      if (typeof href === "string" && href.startsWith("http")) back = href;
+    } catch {
+      // No page open yet, or the agent's control is paused: nothing to go back to.
+    }
+    // Nothing recorded where the requests were made: the page on screen is the prototype.
+    if (!pages.length) pages.push(back ? synergyHandoffPages(back, [])[0]! : "/");
+    const shots: { page: string; data: string; mimeType: "image/png" }[] = [];
+    for (const page of pages) {
+      try {
+        await host.navigate(target, `${origin}${page}`);
+        const shot = await host.screenshot(target, { fullPage: false });
+        shots.push({ page, ...shot });
+      } catch (err) {
+        console.warn(`[supervisor] «Задача →» skipped ${page} of session ${id}: ${(err as Error).message}`);
+      }
+    }
+    if (back) await host.navigate(target, back).catch(() => {});
+    return shots;
+  }
+
   answerUi(id: string, res: RpcExtensionUIResponse) {
     if (this.registry.listSessions().find((x) => x.id === id)?.native) throw nativeUnsupported();
     this.map.get(id)?.rpc.answerUi(res);
@@ -2909,6 +3448,8 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
   async stopSession(id: string) {
     // The operator's stop ends a «Посіпака» run; the result is written while the turn still runs.
     await this.endMinionRun(id);
+    // …and a scheduled run in flight ends failed; the session is the operator's from here.
+    this.endScheduleRun(id, { outcome: "failed", detail: "stopped by the operator", byOperator: true });
     // A session waiting for a slot has nothing running: stopping it takes it off the queue and
     // drops its pending message. A parked launch never got a child, so its row rests `stopped`.
     if (this.unpark(id)) {
@@ -2964,6 +3505,7 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     // Off the slot queue first, so nothing starts it while it is being torn down.
     this.unpark(id);
     await this.endMinionRun(id);
+    this.endScheduleRun(id, { outcome: "failed", detail: "deleted by the operator", byOperator: true });
     // Before the worktree goes: the preview runs in it. PREVIEW_DIR goes too (decision 3), and
     // the device's clone (mobile decision 4).
     await this.preview?.forget(id);
@@ -2978,10 +3520,15 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
       this.toolDetails.dropSession(id);
       this.skillLabels.delete(id);
     }
-    if (s && s.kind !== "agent") {
-      // No git: the child owns no branch/worktree; its cwd is the parent's.
-      if (s.ompSessionFile) await rm(s.ompSessionFile, { force: true }).catch(() => {});
-    } else if (s) {
+    // The conversation file goes with the row: nothing reads it once the row is gone, and a big
+    // run's file (with its subagents' beside it) is tens of megabytes. Not a native agent's: its
+    // file is the harness's own transcript (claude's, codex's), which the operator can still
+    // resume outside Kermanych. A native chat's has always gone with it.
+    if (s?.ompSessionFile && !(s.native && s.kind === "agent")) await removeOmpSessionFiles(s.ompSessionFile);
+    // A native session's MCP config holds its bearer, which dies with the session.
+    if (s?.native) await removeMcpConfig(id);
+    // Only an agent has git to undo: any other kind owns no branch/worktree (its cwd is the parent's).
+    if (s?.kind === "agent") {
       const g = this.registry.listProjects().find((x) => x.id === s.projectId);
       if (g?.localRepoPath) {
         if (s.worktree) {
@@ -3000,15 +3547,18 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     this.browser?.revoke(id);
     this.registry.removeSession(id);
     this.forgetMinionRun(id);
+    this.synergyAsks.delete(id);
     this.events.next({ type: "session_removed", sessionId: id });
     this.untrackChild(id);
     this.drainSlots();
   }
 
-  // Archive/unarchive is a pure hide flag: it never touches the worktree or the omp
-  // process. Archiving an active agent is refused (the UI also pre-checks and toasts). The one
-  // exception is a native chat's harness: an archived thread leaves the «Чат» page, so its TUI
-  // would keep running with no terminal anywhere — it is stopped (and resumed on demand later).
+  // Archive/unarchive is a pure hide flag: it never touches the worktree. Archiving an active
+  // agent is refused (the UI also pre-checks and toasts). The process does go: an archived thread
+  // leaves the board, so a native chat's TUI would keep running with no terminal anywhere, and a
+  // managed session's Live — its whole rendered transcript and tool output, kept in memory for
+  // the life of the api — would be held for a session nobody looks at. Opening it again wakes it
+  // like any dormant session after a restart: the history is re-read from omp's own file.
   async setArchived(id: string, archived: boolean): Promise<void> {
     const s = this.registry.listSessions().find((x) => x.id === id);
     if (!s) throw new Error("session not found");
@@ -3016,6 +3566,16 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
       throw new Error("cannot archive an active agent");
     }
     if (archived && s.native && s.kind === "chat") await this.native?.stop(id);
+    const l = archived ? this.map.get(id) : undefined;
+    if (l) {
+      // Off the map first, so nothing hands this child out while it stops; its exit reads as a
+      // clean end because the row is not active (checked above).
+      this.map.delete(id);
+      this.stopPoll(l);
+      await l.rpc.stop().catch(() => {});
+      this.toolDetails.dropSession(id);
+      this.skillLabels.delete(id);
+    }
     // An archived session leaves the board, and its preview with it (decision 7): the device
     // shuts down and keeps its clone (mobile decision 11).
     if (archived) await this.preview?.stop(id);
@@ -3079,7 +3639,7 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     const dirty = await this.worktree.hasUncommitted(dir);
     const conflicts = await this.worktree.unmergedFiles(dir);
     const files = await this.worktree.changedFiles(dir, from);
-    const docsGate = await this.evaluateDocsGate(g, dir, files, s.designDir);
+    const docsGate = await this.evaluateDocsGate(g, dir, files);
     if (!conflicts.length) this.clearConflict(s);
     return { branch: s.branch, target, ahead, behind, dirty, conflicts, files, docsGate };
   }
@@ -3134,25 +3694,22 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     const g = this.boundProject(s.projectId);
     if (s.worktree && !s.worktreePath) throw new Error("session has no worktree — reopen it to continue");
     const { dir, from } = await this.branchBase(s, g);
-    return this.evaluateDocsGate(g, dir, await this.worktree.changedFiles(dir, from), s.designDir);
+    return this.evaluateDocsGate(g, dir, await this.worktree.changedFiles(dir, from));
   }
 
   // The pure gate (core docsGateFailures) over an already-listed change set. Only the changed
   // task documents are read — for their `## Documentation impact` declaration; a deleted or
-  // unreadable one reads as empty, so it can never declare `None`. A design session
-  // (`designDir`) is checked for its own folder's README only (docs/specs/2026-10-29-design-tab.md).
-  private async evaluateDocsGate(project: Project, dir: string, files: readonly ChangedFile[], designDir?: string): Promise<DocsGate> {
+  // unreadable one reads as empty, so it can never declare `None`.
+  private async evaluateDocsGate(project: Project, dir: string, files: readonly ChangedFile[]): Promise<DocsGate> {
     if (!project.docsRequired) return { enabled: false, failures: [] };
     const policy = docsPolicy(project.docsPolicy);
     const paths = files.map((f) => f.path);
-    const specBodies = designDir
-      ? []
-      : await Promise.all(
-          paths
-            .filter((p) => docsLayoutKind(p) === "spec" && isMarkupPath(p))
-            .map((p) => this.worktree.readFileContent(dir, p).then((f) => f.content, () => "")),
-        );
-    return { enabled: true, failures: docsGateFailures({ policy, paths, specBodies, ...(designDir ? { designDir } : {}) }) };
+    const specBodies = await Promise.all(
+      paths
+        .filter((p) => docsLayoutKind(p) === "spec" && isMarkupPath(p))
+        .map((p) => this.worktree.readFileContent(dir, p).then((f) => f.content, () => "")),
+    );
+    return { enabled: true, failures: docsGateFailures({ policy, paths, specBodies }) };
   }
 
   // PR, commit-to-PR and finish refuse while the gate fails — right after each action's own
@@ -3183,10 +3740,7 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
         console.warn(`[supervisor] no documentation skills for ${id}: ${(err as Error).message}`);
       }
     }
-    // The core ask says "the design folder your instruction names"; the folder is named here too,
-    // because the instruction may be far back in a long conversation.
-    const folder = failures.includes("design-readme") && s.designDir ? `\n\nThe design folder is \`${s.designDir}\`.` : "";
-    await this.sendAsKermanych(id, docsCompletionPrompt(failures) + folder + block, "prompt");
+    await this.sendAsKermanych(id, docsCompletionPrompt(failures) + block, "prompt");
     return { sent: true, failures };
   }
 
@@ -3334,6 +3888,7 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     // the card keeps the ones earlier turns sent.
     // A «Посіпака» run still in flight ends `stopped`; one that already ended keeps its result.
     await this.endMinionRun(id);
+    this.endScheduleRun(id, { outcome: "failed", detail: "finished by the operator", byOperator: true });
     // A «Тестувальник» run of this session stops before the worktree it tests in goes
     // (docs/specs/2026-11-04-qa-tester-agent.md, decision 13). closeMerged finishes through here.
     for (const t of this.registry.listSessions().filter((x) => x.parentSessionId === id && x.tester === true && x.status !== "merged"))
@@ -3460,7 +4015,7 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     const { branch, baseBranch } = kept
       ? { branch: s.branch, baseBranch: s.baseBranch }
       : await this.resolveLaunchParams(g, { title: s.name, description: s.task }, s.prefix ?? "feature", true, id, s.baseBranch);
-    const wtDir = worktreeDir(id);
+    const wtDir = worktreeDir(g.localRepoPath, branch);
     // The row owns no worktree, so anything at its path is what the retirement left behind — a
     // tree from before removeWorktree cleaned up after itself, or one a stray process (a dev
     // server the agent started) wrote back into. `git worktree add` refuses an existing path.
@@ -3583,11 +4138,9 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
       });
   }
 
-  // Merge a runtime's subagent snapshot into the tree. The omp registry carries id/index/
-  // status/agent; the claude runtime's snapshot additionally carries tokens/duration/tool
-  // count (read from the SDK task lifecycle), so those are picked up here when present — omp
-  // fills the same fields later from the `task` tool details instead. `parentId` comes from a
-  // dotted id (`Parent.Child`).
+  // Merge the omp registry's subagent snapshot (id/index/status/agent, and whatever else a row
+  // carries) into the tree; tokens/duration/tool count arrive later from the `task` tool
+  // details. `parentId` comes from a dotted id (`Parent.Child`).
   private mergeRegistry(l: Live, rows: SubagentInfo[]): void {
     const map = l.subagents ?? (l.subagents = new Map());
     for (const r of rows) {
@@ -3628,6 +4181,74 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
       if (typeof r.exitCode === "number") node.status = r.exitCode === 0 ? (r.aborted === true ? "aborted" : "done") : "error";
       map.set(r.id, node);
     }
+  }
+
+  // ── Scheduled runs (docs/specs/2026-11-06-scheduled-tasks.md) ───────────────────────────────
+  //
+  // A scheduled run in a project analyses and answers in one turn (decision 2). Its end — the
+  // turn settling, the child dying, the time cap, the operator stepping in — is told once on
+  // scheduleRunEnd$; ScheduleService records it and calls retireScheduledRun (decision 10).
+
+  private forgetScheduleRun(id: string): void {
+    const run = this.scheduleRuns.get(id);
+    if (run) clearTimeout(run.capTimer);
+    this.scheduleRuns.delete(id);
+  }
+
+  // Once per run: whatever comes second (the child's exit after the cap, a stop after the end)
+  // finds nothing. A run whose launch has not returned yet ends through the launch's throw.
+  private endScheduleRun(id: string, end: Omit<ScheduleRunEnd, "sessionId" | "scheduleId">): void {
+    const run = this.scheduleRuns.get(id);
+    if (!run || run.starting) return;
+    this.forgetScheduleRun(id);
+    this.scheduleEnds.next({ sessionId: id, scheduleId: run.scheduleId, ...end });
+  }
+
+  // The turn settled: its last assistant text is the answer, whose first line is the summary.
+  private onScheduleTurnEnd(id: string, transcript: readonly TranscriptEntry[]): void {
+    const answer = transcript.findLast((e): e is Extract<TranscriptEntry, { kind: "assistant_text" }> => e.kind === "assistant_text");
+    this.endScheduleRun(id, { outcome: "done", ...(answer ? { answer: answer.text } : {}) });
+  }
+
+  // «Посіпака»'s time cap, from the spawn: past it the run has failed, and its retirement stops
+  // the child.
+  private startScheduleClock(id: string): void {
+    const run = this.scheduleRuns.get(id);
+    if (!run) return;
+    clearTimeout(run.capTimer);
+    run.capTimer = setTimeout(() => this.endScheduleRun(id, { outcome: "timeout" }), MINION_TIME_CAP_MS);
+    run.capTimer.unref();
+  }
+
+  // Decision 10: the run committed nothing, so its worktree and temporary branch go, and the
+  // session keeps its row and transcript, retired as after «Завершити» — reopenSession forks a
+  // fresh worktree off the base for a follow-up. No commit and no documentation gate: there is
+  // nothing to keep. Never throws; a tree git refuses to remove is logged and left.
+  async retireScheduledRun(id: string): Promise<void> {
+    const s = this.registry.listSessions().find((x) => x.id === id);
+    if (!s) return;
+    this.forgetScheduleRun(id);
+    this.unpark(id);
+    await this.queueTaskReport(id, this.map.get(id)?.transcript);
+    await this.preview?.retire(id).catch(() => {});
+    const l = this.map.get(id);
+    if (l) {
+      l.live.status = "stopped";
+      this.stopPoll(l);
+      await l.rpc.stop().catch(() => {});
+      this.map.delete(id);
+      this.toolDetails.dropSession(id);
+      this.skillLabels.delete(id);
+    }
+    const g = this.registry.listProjects().find((p) => p.id === s.projectId);
+    if (g?.localRepoPath && s.worktree) {
+      const warn = (err: unknown) => console.warn(`[supervisor] retiring scheduled run ${id}: ${(err as Error).message}`);
+      if (s.worktreePath) await this.worktree.removeWorktree(g.localRepoPath, s.worktreePath).catch(warn);
+      if (s.branch) await this.worktree.removeBranch(g.localRepoPath, s.branch).catch(warn);
+    }
+    if (this.registry.listSessions().some((x) => x.id === id)) this.registry.updateSession(id, { status: "merged", worktreePath: "" });
+    this.pushUpdate(id);
+    this.drainSlots();
   }
 
   // ── «Посіпака» runs (docs/specs/2026-10-23-minion-auto-run.md, decisions 9-10) ─────────────
@@ -3891,7 +4512,8 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     this.drainSlots();
   }
 
-  // Persist a run's result, show it, send it to the card, and tell MinionService how it counts.
+  // Persist a run's result, show it, send it to the card, and tell MinionService how it counts —
+  // a run the operator handed over with `/minion` counts neither way: the pause guards the poll.
   private async recordMinionResult(id: string, result: MinionResult, effect: MinionRunResult["effect"], signedOut = false): Promise<void> {
     const row = this.registry.listSessions().find((x) => x.id === id);
     if (!row?.minion) return;
@@ -3899,7 +4521,8 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     if (run) this.clearMinionClock(run);
     this.registry.updateSession(id, { minionResult: result });
     this.pushUpdate(id);
-    this.minionResults.next({ sessionId: id, title: row.name, result, effect, ...(signedOut ? { signedOut } : {}) });
+    const counted = run?.takeover ? { effect: "neutral" as const } : { effect, ...(signedOut ? { signedOut } : {}) };
+    this.minionResults.next({ sessionId: id, title: row.name, result, ...counted });
     await this.queueTaskReport(id, this.map.get(id)?.transcript);
   }
 
@@ -3938,15 +4561,22 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     this.map.set(sessionId, live);
     rpc.onExit((_code, reason, cause) => {
       this.stopPoll(live);
+      // The app is quitting and stopped this child itself: not a failure, and the row keeps the
+      // status it had — the next start wakes a session caught mid-turn the way it wakes one after
+      // a crash (doResume settles it). No slot is handed on either: nothing may start now.
+      if (this.destroyed) {
+        this.untrackChild(sessionId, live.pid);
+        return;
+      }
       // A sign-out is never a clean end, whatever the row said a moment ago: a chat sits at
       // `done` between turns, so its first turn on a signed-out CLI died «done» and the operator
       // saw nothing. Only `stopped` (the operator's own stop) outranks it.
-      const signedOut = cause === "claude_not_authenticated" || cause === "omp_not_authenticated";
+      const signedOut = cause === "omp_not_authenticated";
       // A minion child that dies before its launch returned is that launch's failure: launchTask
       // removes the row and MinionService puts the card back in the backlog. An `error` pushed
       // from here would race that release to the card (and lose to tasks_guard once the card is
       // unassigned again), so the row is left for the launch to remove.
-      const launchFailure = this.minionRuns.get(sessionId)?.starting === true;
+      const launchFailure = this.minionRuns.get(sessionId)?.starting === true || this.scheduleRuns.get(sessionId)?.starting === true;
       // `in_review` counts as ended cleanly: the PR turn finished, and the reaper stops that
       // child on purpose (a review takes as long as a human takes). Without it here, every
       // reaped review session would flip to `error` on its own child's exit.
@@ -3959,6 +4589,8 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
         this.pushUpdate(sessionId);
         // A minion run that dies is a failed run; a signed-out one also pauses the minion.
         this.onMinionDeath(sessionId, reason, signedOut);
+        // A scheduled run that dies has ended, failed.
+        this.endScheduleRun(sessionId, { outcome: "failed", detail: reason });
       }
       live.turnPending = false;
       this.untrackChild(sessionId, live.pid);
@@ -3987,6 +4619,7 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
   private async doResume(id: string): Promise<Live> {
     const s = this.registry.listSessions().find((x) => x.id === id);
     if (!s) throw new Error("session not found");
+    this.refuseManagedClaude(s);
     const g = this.boundProject(s.projectId);
     if (s.kind === "agent" && s.worktree && !s.worktreePath)
       throw new Error("session was merged and its worktree retired — reopen it to continue");
@@ -4001,31 +4634,21 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     const dir = s.worktreePath || parent?.worktreePath || g.localRepoPath;
     if (s.kind === "agent" && !s.worktree && (await this.worktree.currentBranch(g.localRepoPath)) !== s.branch)
       throw new Error(`project is not on ${s.branch} — switch to it or delete the agent`);
-    // A fork can only continue on its own backend (R1/R2): omp reloads its saved session FILE
-    // through switch_session; claude resumes the same session UUID (stored in ompSessionId) in
-    // place via opts.resume at start(), where switch_session is a no-op. One resume handle,
-    // read per backend, so both re-render their prior transcript on wake.
-    const runtimeKind = managedRuntime(s.runtime);
-    const resumeHandle = runtimeKind === "claude-code" ? s.ompSessionId : s.ompSessionFile;
-    // The SDK mints a claude fork's own id only on its first turn, so a discussion woken before
-    // the operator wrote to it has nothing to resume. Fork the parent again, as branchSession
-    // did — a blank session would lose the parent's transcript and the agent's context.
-    const refork = runtimeKind === "claude-code" && s.kind === "discussion" && !resumeHandle ? parent?.ompSessionId : undefined;
-    if (refork && parent) this.assertTurnEnded(parent.id, "waking this branch");
-    const configPath = await this.ompSkills(s.projectId, dir, id);
-    const extensionPath = await this.ompTriggers(s.projectId, dir, id);
+    // omp reloads the saved session FILE through switch_session, re-rendering its transcript.
+    const resumeHandle = s.ompSessionFile;
+    // A «Синергія» child wakes as it was born (spawnLaunched): no skills, no triggers.
+    const synergy = s.synergy ? await this.synergyInstruction(s.projectId) : undefined;
+    const configPath = s.synergy ? undefined : await this.ompSkills(s.projectId, dir, id);
+    const extensionPath = s.synergy ? undefined : await this.ompTriggers(s.projectId, dir, id);
     // Forks (discussion/review) never get the session browser; agents, chats and a «Тестувальник»
     // run (docs/specs/2026-11-04-qa-tester-agent.md, decision 8) do.
     const browserMcp = (s.kind === "discussion" || s.kind === "review") && s.tester !== true ? undefined : this.browser?.bindingFor(id);
-    const handle = refork ? { fork: refork } : runtimeKind === "claude-code" && resumeHandle ? { resume: resumeHandle } : {};
-    const rpc = createRuntime(runtimeKind, { cwd: dir, ...launchToolsFor(s.kind), ...handle, ...(await this.spawnOpts(id, runtimeKind, dir, configPath)), ...(extensionPath ? { extensionPath } : {}), ...(browserMcp ? { mcp: browserMcp } : {}), ...this.systemAppendOpts(s.projectId, s.kind) });
+    const rpc = createRuntime({ cwd: dir, ...launchToolsFor(s), ...(await this.spawnOpts(id, dir, configPath)), ...(extensionPath ? { extensionPath } : {}), ...(browserMcp ? { mcp: browserMcp } : {}), ...this.systemAppendOpts(s.projectId, s.kind, synergy) });
     const live = this.wireLive(id, rpc, s.status);
     try {
       await this.startChild(id, rpc);
-      if (resumeHandle || refork) {
-        // omp loads the saved file into the freshly spawned child; claude already resumed (or
-        // forked) at start(), and a fork with no id of its own reads the parent's history.
-        if (runtimeKind !== "claude-code" && resumeHandle) await rpc.switchSession(resumeHandle);
+      if (resumeHandle) {
+        await rpc.switchSession(resumeHandle);
         this.rehydrate(live, id, await rpc.getAllMessages());
       }
       // Re-assert the chosen effort AFTER switch_session: the reloaded session file carries its
@@ -4042,8 +4665,11 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
       this.map.delete(id);
       this.toolDetails.dropSession(id);
       this.skillLabels.delete(id);
-      this.registry.updateSession(id, { status: "error" });
-      this.pushUpdate(id);
+      // A wake cut short by the app quitting leaves the row as it was, for the next start.
+      if (!this.destroyed) {
+        this.registry.updateSession(id, { status: "error" });
+        this.pushUpdate(id);
+      }
       throw err;
     }
     // A wake settles transient in-flight states (a run that crashed mid-turn must not stay

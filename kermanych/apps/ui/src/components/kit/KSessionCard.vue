@@ -50,12 +50,12 @@
           <KStatusDot :status="status" />
           <span v-if="statusLine" v-tip.overflow="statusTip" class="k-session-card__status-line">{{ statusLine }}</span>
         </span>
-        <span v-if="harness || deepAnalysis || design || minion || autoRun || needsDecision || notNeeded" class="k-session-card__marks mono">
+        <span v-if="harness || deepAnalysis || minion || schedule || autoRun || needsDecision || notNeeded" class="k-session-card__marks mono">
           <KHarnessMark v-if="harness" :harness="harness" />
           <KAnalysisMark v-if="deepAnalysis" />
-          <KDesignMark v-if="design" />
           <KMinionMark v-if="minion" kind="running" />
           <KMinionMark v-else-if="autoRun" kind="allowed" />
+          <KScheduleMark v-if="schedule" :name="schedule" />
           <KDecisionMark v-if="needsDecision" :reason="needsDecision" />
           <KNotNeededMark v-else-if="notNeeded" :reason="notNeeded" />
         </span>
@@ -88,8 +88,8 @@ import type { SessionStatus, Usage } from '@kermanych/core';
 import KStatusDot from './KStatusDot.vue';
 import KHarnessMark from './KHarnessMark.vue';
 import KAnalysisMark from './KAnalysisMark.vue';
-import KDesignMark from './KDesignMark.vue';
 import KMinionMark from './KMinionMark.vue';
+import KScheduleMark from './KScheduleMark.vue';
 import KDecisionMark from './KDecisionMark.vue';
 import KNotNeededMark from './KNotNeededMark.vue';
 import KSpinner from './KSpinner.vue';
@@ -135,13 +135,13 @@ import type { LaunchMode } from '../../lib/native-session';
 //
 // `deepAnalysis` marks a «Глибокий аналіз» card (KAnalysisMark) in the status row, right
 // after the harness: it is HOW this agent works, and it never clips — the status does.
-// `design` marks a «Дизайн» session or card (KDesignMark) beside it, for the same reason.
 //
 // `minion` marks a session «Посіпака» runs, `autoRun` a card it may take (KMinionMark, the same
 // shape, a different tooltip); `needsDecision` is the worded reason of a run that stopped on a
 // choice for the operator (KDecisionMark), `notNeeded` the evidence of a run that found nothing
 // to change (KNotNeededMark; never together with `needsDecision`). All sit with the analysis
-// mark, for the same reason: they say how this agent works.
+// mark, for the same reason: they say how this agent works. `schedule` names the scheduled task
+// whose run this session is (KScheduleMark, docs/specs/2026-11-06-scheduled-tasks.md, decision 5).
 //
 // `pending` — an action on this session is waiting for its result (stopped, deleted,
 // archived, forked…; stores/pending): the card dims, spins before the time, and its ✕ is blocked.
@@ -160,10 +160,10 @@ const props = withDefaults(
     harness?: LaunchMode | undefined;
     // A «Глибокий аналіз» task or session: the agent interviews before it codes.
     deepAnalysis?: boolean | undefined;
-    // A «Дизайн» session (`designDir`) or card (`task.design`).
-    design?: boolean | undefined;
     // Run by «Посіпака».
     minion?: boolean | undefined;
+    // A scheduled task's run: the task's name.
+    schedule?: string | undefined;
     // A card with «Дозволити автовиконання».
     autoRun?: boolean | undefined;
     // «Потрібне рішення», worded (lib/minion.ts minionReasonText); absent when nothing waits.
@@ -504,18 +504,21 @@ const spend = computed(() => {
 // The one row under the name: status, marks, coins. Only the status line may shrink — the
 // marks say how the agent works and the coins are a single glyph, so neither clips. The row
 // is as tall as a mark chip (an xs icon in 2px padding) whether or not the card has one, so
-// every card of a kind is the same height.
+// every card of a kind is the same height. The status starts from zero width and fills what
+// is left, so the row breaks only when the marks alone outgrow a narrow card — they drop to a
+// second line instead of running past its edge.
 .k-session-card__row {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: var(--k-sp-2);
+  gap: var(--k-sp-1) var(--k-sp-2);
   min-width: 0;
   min-height: calc(var(--k-icon-xs) + 4px);
 }
 
 .k-session-card__status {
   display: flex;
-  flex: 1 1 auto;
+  flex: 1 1 0;
   align-items: center;
   gap: var(--k-sp-2);
   min-width: 0;

@@ -371,14 +371,13 @@ describe("watchdog baseline", () => {
     return { watchdog, tracks };
   }
 
-  it("a managed child is tracked when started and re-baselined once on its first `ready`", async () => {
+  it("a managed child is tracked once, when started", async () => {
     const { watchdog, tracks } = fakeWatchdog();
     const { launch } = make(undefined, { watchdog });
     const a = await launch("a");
     expect(tracks).toEqual([{ id: a.id, pid: CHILD_PID }]);
     instances[0].emit({ type: "ready" } as RpcEvent);
-    instances[0].emit({ type: "ready" } as RpcEvent);
-    expect(tracks).toEqual([{ id: a.id, pid: CHILD_PID }, { id: a.id, pid: CHILD_PID }]);
+    expect(tracks).toEqual([{ id: a.id, pid: CHILD_PID }]);
   });
 
   it("a native harness is tracked on its first report after the spawn, not on the spawn", () => {
@@ -391,5 +390,24 @@ describe("watchdog baseline", () => {
     expect(tracks).toEqual([]);
     events$.next({ type: "changed", sessionId: n.id });
     expect(tracks).toEqual([{ id: n.id, pid: 77 }]);
+  });
+});
+
+describe("quitting", () => {
+  // Electron quits once onModuleDestroy resolves. A child stopped by the quit is not a failed run,
+  // and the slot it frees must not start the next waiting session into an api that is going away.
+  it("stops every child, leaves a mid-turn row unfailed and starts nothing that waits", async () => {
+    const { launch, sup, registry } = make();
+    const a = await launch("a");
+    instances[0].emit({ type: "agent_start" } as RpcEvent);
+    const b = await launch("b");
+    expect(b.status).toBe("queued");
+
+    await sup.onModuleDestroy();
+
+    expect(instances[0].alive).toBe(false);
+    expect(instances).toHaveLength(1);
+    expect(registry.listSessions().find((s) => s.id === a.id)?.status).not.toBe("error");
+    expect(registry.listSessions().find((s) => s.id === b.id)?.status).toBe("queued");
   });
 });

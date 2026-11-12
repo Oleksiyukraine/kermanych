@@ -1,8 +1,8 @@
 // apps/api/src/worktree/worktree.service.ts
 import { Injectable } from "@nestjs/common";
 import { spawn } from "node:child_process";
-import { readdir, readFile, rm, stat } from "node:fs/promises";
-import { join, resolve } from "node:path";
+import { readdir, readFile, rm, rmdir, stat } from "node:fs/promises";
+import { basename, dirname, join, resolve } from "node:path";
 import { addedFileDiff, splitDiff, type SplitDiff } from "./split-diff";
 import { isGitBranchName, type TreeEntry, type FileContent, type ReleaseCommit } from "@kermanych/core";
 
@@ -35,6 +35,10 @@ const FETCH_TIMEOUT_MS = 30_000;
 // Ceiling on a single-branch fetch the api makes on its own — before a worktree forks and
 // after a pull-request turn. Shorter than the footer's: a launch waits on this one.
 const BRANCH_FETCH_TIMEOUT_MS = 15_000;
+
+// Ceiling on the api's own push of a «Синергія» branch: a prototype is small, but the operator
+// waits on it in the «Задача →» dialog.
+const PUSH_TIMEOUT_MS = 60_000;
 
 // A small extension→MIME table for the docs raw route. Anything not listed streams as
 // application/octet-stream, which a browser downloads rather than mis-renders.
@@ -134,6 +138,46 @@ export class WorktreeService {
     if (!r.ok) throw new Error(`git worktree add failed: ${r.out}`);
   }
 
+  // A «Синергія» card (docs/specs/2026-11-09-merge-design-into-synergy.md, decision 5): the
+  // prototype's pushed branch, fetched from origin and checked out into a new worktree tracking
+  // it. A local branch of that name is reset to origin's only when origin already holds all of it;
+  // one with commits origin lacks is refused, so nothing local is overwritten and a launch that
+  // fails later may delete the local branch.
+  async attachRemoteBranch(repoDir: string, wtDir: string, branch: string): Promise<void> {
+    const fetched = await this.fetchBranch(repoDir, branch);
+    if (fetched === "skipped") throw new Error(`cannot take ${branch}: the repository has no origin remote`);
+    if (fetched === "absent") throw new Error(`origin has no branch ${branch}: it was deleted or never pushed`);
+    if (fetched === "failed") throw new Error(`could not fetch ${branch} from origin`);
+    const remote = `refs/remotes/origin/${branch}`;
+    if ((await this.refExists(repoDir, `refs/heads/${branch}`)) && !(await this.isAncestor(repoDir, `refs/heads/${branch}`, remote)))
+      throw new Error(`the local branch ${branch} has commits origin does not have: push or delete it first`);
+    const r = await git(repoDir, ["worktree", "add", "-B", branch, wtDir, remote]);
+    if (!r.ok) throw new Error(`git worktree add failed: ${r.out}`);
+  }
+
+  // Push a local branch to origin and set its upstream (docs/specs/2026-11-09-merge-design-into-
+  // synergy.md, decision 2). `token`, the project's GIT_TOKEN, reaches git as a credential helper
+  // through the environment, never the command line or the output, so an https origin
+  // authenticates as the project's account; without one, and over SSH, the machine's own
+  // credentials do. No prompt, a timeout; git's own message on failure.
+  async pushBranch(repoDir: string, branch: string, token: string): Promise<void> {
+    if (!isGitBranchName(branch)) throw new Error(`not a branch name: ${branch}`);
+    const env: NodeJS.ProcessEnv = { ...process.env, GIT_TERMINAL_PROMPT: "0" };
+    if (token)
+      Object.assign(env, {
+        KERMANYCH_GIT_TOKEN: token,
+        GIT_CONFIG_COUNT: "2",
+        GIT_CONFIG_KEY_0: "credential.helper",
+        GIT_CONFIG_VALUE_0: "",
+        GIT_CONFIG_KEY_1: "credential.helper",
+        GIT_CONFIG_VALUE_1: '!f() { test "$1" = get && echo username=x-access-token && echo "password=$KERMANYCH_GIT_TOKEN"; }; f',
+      });
+    const r = await this.serialRemote(repoDir, () =>
+      git(repoDir, ["push", "--quiet", "--set-upstream", "origin", `refs/heads/${branch}:refs/heads/${branch}`], { env, timeoutMs: PUSH_TIMEOUT_MS }),
+    );
+    if (!r.ok) throw new Error(`git push of ${branch} failed: ${r.out.trim() || "timed out"}`);
+  }
+
   // Local branch names (refs/heads), for choosing a worktree's fork base. Empty on a
   // non-repo or error so callers can degrade to "no branches to pick from".
   async listBranches(repoDir: string): Promise<string[]> {
@@ -156,10 +200,58 @@ export class WorktreeService {
     const dotGit = await stat(join(wtDir, ".git")).catch(() => undefined);
     if (!dotGit?.isDirectory()) await rm(wtDir, { recursive: true, force: true, maxRetries: 3 }).catch(() => {});
     await git(repoDir, ["worktree", "prune"]);
+    await this.dropEmptyParents(wtDir);
+  }
+
+  // A branch-named worktree nests (`.gitworktree/feature/x`, worktreeDir): the prefix folders it
+  // leaves behind go too once empty, up to — never including — `.gitworktree` itself. rmdir
+  // removes only an empty folder, so a sibling worktree under the same prefix stops the walk.
+  private async dropEmptyParents(wtDir: string): Promise<void> {
+    if (!resolve(wtDir).split(/[\\/]/).includes(".gitworktree")) return;
+    for (let dir = dirname(resolve(wtDir)); basename(dir) !== ".gitworktree" && dir !== dirname(dir); dir = dirname(dir)) {
+      if (!(await rmdir(dir).then(() => true, () => false))) return;
+    }
   }
 
   async removeBranch(repoDir: string, branch: string): Promise<void> {
     await git(repoDir, ["branch", "-D", branch]);
+  }
+
+  // Forgets every registration whose tree is gone from disk, so a later listing names only
+  // trees that are really there.
+  async pruneWorktrees(repoDir: string): Promise<void> {
+    await git(repoDir, ["worktree", "prune"]);
+  }
+
+  // Every worktree git has registered for the repo, the main checkout first: its path as git
+  // stores it, the branch it has checked out ("" on a detached HEAD) and whether someone locked
+  // it. Empty on a non-repo or any git failure. stdout only, like the other parsed listings.
+  async listWorktrees(repoDir: string): Promise<{ path: string; branch: string; locked: boolean }[]> {
+    const r = await gitStdout(repoDir, ["worktree", "list", "--porcelain"]);
+    if (!r.ok) return [];
+    const trees: { path: string; branch: string; locked: boolean }[] = [];
+    for (const block of r.out.split("\n\n")) {
+      let path = "";
+      let branch = "";
+      let locked = false;
+      for (const line of block.split("\n")) {
+        if (line.startsWith("worktree ")) path = line.slice("worktree ".length);
+        else if (line.startsWith("branch refs/heads/")) branch = line.slice("branch refs/heads/".length);
+        else if (line === "locked" || line.startsWith("locked ")) locked = true;
+      }
+      if (path) trees.push({ path, branch, locked });
+    }
+    return trees;
+  }
+
+  // The main checkout a linked worktree belongs to: the parent of the repository's shared
+  // `.git` directory. Empty when `dir` is no worktree, or when the repository is bare (its git
+  // directory is not a `.git` folder inside a checkout).
+  async mainCheckout(dir: string): Promise<string> {
+    const r = await gitStdout(dir, ["rev-parse", "--git-common-dir"]);
+    if (!r.ok) return "";
+    const common = resolve(dir, r.out.trim());
+    return basename(common) === ".git" ? dirname(common) : "";
   }
 
   // Empty string on a detached HEAD (symbolic-ref fails) so callers can treat it as "no branch".
@@ -239,6 +331,52 @@ export class WorktreeService {
     await git(dir, ["add", "-A"]);
     const r = await git(dir, ["commit", "-m", message]);
     if (!r.ok) throw new Error(`git commit failed: ${r.out}`);
+  }
+
+  // «Синергія» (docs/specs/2026-11-06-synergy.md, decision 4): a checkpoint commits everything,
+  // untracked files included. `--no-verify`: a target project's hooks would cost the seconds
+  // this mode exists for. Throws with git's own words, so the caller can put them in a notice.
+  async checkpointAll(dir: string, message: string): Promise<void> {
+    const add = await git(dir, ["add", "-A"]);
+    if (!add.ok) throw new Error(`git add failed: ${add.out}`);
+    const r = await git(dir, ["commit", "--no-verify", "-m", message]);
+    if (!r.ok) throw new Error(`git commit failed: ${r.out}`);
+  }
+
+  // «Повернутися сюди»: the tree of `sha` becomes the working tree and the index — files added
+  // since are deleted too, which a plain `checkout <sha> -- .` would keep — and lands as a NEW
+  // commit, so history is never rewritten. The caller checkpoints first, so nothing uncommitted
+  // is lost. `--allow-empty`: going back to the step the tree is already at is still the
+  // operator's step on the strip.
+  async restoreTreeCommit(dir: string, sha: string, message: string): Promise<void> {
+    const read = await git(dir, ["read-tree", "-u", "--reset", sha]);
+    if (!read.ok) throw new Error(`git read-tree failed: ${read.out}`);
+    const r = await git(dir, ["commit", "--no-verify", "--allow-empty", "-m", message]);
+    if (!r.ok) throw new Error(`git commit failed: ${r.out}`);
+  }
+
+  // The commits after `from` up to HEAD, oldest first, with their full messages: the steps
+  // strip parses them (core synergySteps). NUL-framed records with unit-separator fields, like
+  // logRange, because a message is free text; stdout only, for the same reason.
+  async commitsSince(dir: string, from: string): Promise<{ sha: string; at: string; message: string }[]> {
+    const r = await gitStdout(dir, ["log", "--reverse", "--format=%x00%H%x1f%cI%x1f%B", `${from}..HEAD`]);
+    if (!r.ok) return [];
+    return r.out
+      .split("\0")
+      .filter((rec) => rec.length > 0)
+      .map((rec) => {
+        const [sha = "", at = "", ...message] = rec.split("\x1f");
+        return { sha, at, message: message.join("\x1f").trim() };
+      });
+  }
+
+  // The parent of the oldest commit on HEAD with a line starting with `prefix` (plain text, no
+  // regex characters): the fork point of a branch whose base is unknown or gone. "" when there is
+  // no such commit (or it is a root commit).
+  async parentOfOldest(dir: string, prefix: string): Promise<string> {
+    const r = await gitStdout(dir, ["log", "--format=%H", `--grep=^${prefix}`, "HEAD"]);
+    const oldest = r.ok ? r.out.trim().split("\n").filter(Boolean).at(-1) : undefined;
+    return oldest ? this.revParse(dir, `${oldest}^`) : "";
   }
 
   // The session's own commits: on the branch, in neither `<base>` nor `origin/<base>`. A merge

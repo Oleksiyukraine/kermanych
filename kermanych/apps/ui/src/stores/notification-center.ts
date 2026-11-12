@@ -1,9 +1,16 @@
 // apps/ui/src/stores/notification-center.ts
 // ЦУК's «Центр сповіщень» (docs/specs/2026-11-04-skill-self-improvement.md, decision 6): what the
-// operator should hear about, in the avatar window's left column. One kind today — a skill an
-// agent improved in the operator's personal layer — read from the cloud (`skill_improvements`)
-// once after sign-in and kept current by a Realtime binding on the operator's own rows. A change
-// an agent made on another machine (a «Посіпака» box) therefore arrives here too, with its toast.
+// operator should hear about, in the avatar window's left column. Two sources, one feed by time
+// (docs/specs/2026-11-06-scheduled-tasks.md, decision 6):
+// - a skill an agent improved in the operator's personal layer, read from the cloud
+//   (`skill_improvements`) once after sign-in and kept current by a Realtime binding on the
+//   operator's own rows. A change an agent made on another machine (a «Посіпака» box) therefore
+//   arrives here too, with its toast;
+// - this machine's schedule slips (stores/schedules.ts): a reminder fired, an agent run ended, a
+//   run skipped or failed. Each that arrives gets a toast, a Dock bounce and, while the window is
+//   unfocused, a system notification.
+// The column's head also switches to «Розклад», the task list; what the column opens over the
+// console (an improvement, a slip's full answer, a task) is held here, one at a time.
 //
 // Egress is the hosted project's scarce resource (docs/specs/2026-11-03-board-egress-and-lag.md):
 // the list and the binding carry light columns; a record's text is read only when its entry is
@@ -33,6 +40,7 @@ import {
   copyOrigin,
   rollbackPlan,
   shareTarget,
+  type ScheduleSlip,
   type SkillImprovement,
   type SkillImprovementEntry,
   type SkillImprovementState,
@@ -42,19 +50,21 @@ import {
 import { useAuth } from './auth';
 import { useOrchestrator } from './orchestrator';
 import { useAssistantOverlay } from './assistant-overlay';
+import { useSchedules } from './schedules';
 import { IS_PREVIEW } from '../lib/preview';
 import { globalTr } from '../boot/i18n';
-import { useAppUpdate, type AppUpdateEntry } from './app-update';
+import { bounceDock } from '../lib/dock';
+import { reasonText } from '../lib/schedules';
+import { isUnseen, mergeFeed, type NotificationItem } from '../lib/notification-feed';
+import { useAppUpdate } from './app-update';
 
-/**
- * One row of the column (decision 6: a column for several kinds). Skill improvements come from
- * the cloud; app updates are this machine's own (stores/app-update.ts,
- * docs/specs/2026-10-12-desktop-releases-and-updates.md, decision 2).
- */
-export type NotificationItem =
-  | { kind: 'skill-improvement'; entry: SkillImprovementEntry }
-  | { kind: 'app-update'; entry: AppUpdateEntry };
-type SkillItem = Extract<NotificationItem, { kind: 'skill-improvement' }>;
+export type { NotificationItem };
+
+/** One cloud row of the column. */
+export type SkillImprovementItem = Extract<NotificationItem, { kind: 'skill-improvement' }>;
+
+/** The column's two tabs: the feed, and the scheduled tasks. */
+export type NotificationTab = 'feed' | 'schedule';
 
 export type NotificationPhase = 'idle' | 'loading' | 'ready' | 'error';
 
@@ -80,24 +90,29 @@ export const useNotificationCenter = defineStore('notification-center', () => {
   const auth = useAuth();
   const ui = useOrchestrator();
   const overlay = useAssistantOverlay();
+  const schedules = useSchedules();
   const appUpdate = useAppUpdate();
 
-  // Newest first, at most SKILL_IMPROVEMENTS_KEEP: the cloud keeps no more, so neither does the column.
-  const items = ref<SkillItem[]>([]);
+  // The cloud rows. Newest first, at most SKILL_IMPROVEMENTS_KEEP: the cloud keeps no more, so
+  // neither does the column.
+  const items = ref<SkillImprovementItem[]>([]);
   const phase = ref<NotificationPhase>('idle');
   const error = ref('');
-  // The entry the view over the console shows; undefined while it is closed.
+  // The improvement the view over the console shows; undefined while it is closed.
   const openId = ref<string | undefined>(undefined);
+  // A slip's full answer (a run without a project, decision 9), or a scheduled task, shown over
+  // the console instead. At most one of the three views is open.
+  const openSlipId = ref<string | undefined>(undefined);
+  const openTaskId = ref<string | undefined>(undefined);
+  const viewOpen = computed(() => !!(openId.value || openSlipId.value || openTaskId.value));
+  // Which tab the column's head shows.
+  const tab = ref<NotificationTab>('feed');
   // Opened entries, by id. A record's text never changes; its state is patched from Realtime.
   const details = ref<Record<string, SkillImprovementDetail>>({});
 
-  // What the column lists: both kinds, newest first. ISO timestamps compare as text.
-  const feed = computed<NotificationItem[]>(() =>
-    [...items.value, ...appUpdate.updates.map((entry) => ({ kind: 'app-update' as const, entry }))].sort((a, b) =>
-      a.entry.createdAt === b.entry.createdAt ? 0 : a.entry.createdAt < b.entry.createdAt ? 1 : -1,
-    ),
-  );
-  const unread = computed(() => items.value.filter((i) => !i.entry.seenAt).length + appUpdate.unseenUpdates);
+  // The one feed: cloud improvements, local slips and local app updates by time (lib/notification-feed.ts).
+  const feed = computed(() => mergeFeed(items.value.map((i) => i.entry), schedules.slips ?? [], appUpdate.updates));
+  const unread = computed(() => feed.value.filter(isUnseen).length);
 
   let started = false;
   // Bumped by every (re)bind, so a read that lands after a sign-out or a user switch is dropped.
@@ -128,6 +143,42 @@ export const useNotificationCenter = defineStore('notification-center', () => {
     );
   }
 
+  // A slip that arrived (spec «Defaults → Notifications»): the toast with «Переглянути», a Dock
+  // bounce, and a system notification while the window is unfocused or hidden — the pair the
+  // watchdog and «Посіпака» use. An unsigned build, where macOS refuses the notification, keeps
+  // the rest.
+  function announceSlip(slip: ScheduleSlip): void {
+    const t = globalTr.t.bind(globalTr);
+    const failed = slip.status === 'skipped' || slip.status === 'failed';
+    const body = failed ? reasonText(t, slip.reason, slip.text) : slip.text;
+    const message =
+      slip.kind === 'reminder'
+        ? t('cuk.notifications.slip.toastReminder', { text: body })
+        : t(failed ? 'cuk.notifications.slip.toastFailed' : 'cuk.notifications.slip.toastRun', { name: slip.scheduleName, text: body });
+    ui.notify(message, failed ? 'error' : 'info', TOAST_MS, { label: t('cuk.notifications.view'), run: () => viewSlip(slip) });
+    bounceDock();
+    if (typeof document !== 'undefined' && (!document.hasFocus() || document.hidden) && typeof Notification !== 'undefined') {
+      const title = slip.kind === 'reminder' ? t('cuk.schedule.kind.reminder') : slip.scheduleName;
+      const n = new Notification(title, { body });
+      n.onclick = () => {
+        window.kermanych?.focus();
+        viewSlip(slip);
+      };
+    }
+  }
+
+  // «Переглянути» on a slip: a run without a project opens its full answer; any other slip opens
+  // the window on the feed, where it sits on top.
+  function viewSlip(slip: ScheduleSlip): void {
+    if (slip.body && !slip.sessionId) {
+      openSlip(slip.id);
+      return;
+    }
+    close();
+    tab.value = 'feed';
+    overlay.show();
+  }
+
   // A Realtime change. An INSERT is news: it joins the column and raises the toast. An UPDATE is
   // a state or seen change made elsewhere (another machine, or this window's own write echoing).
   function onChange(change: SkillImprovementChange): void {
@@ -147,7 +198,7 @@ export const useNotificationCenter = defineStore('notification-center', () => {
     stopChannel = undefined;
     items.value = [];
     details.value = {};
-    openId.value = undefined;
+    close();
     error.value = '';
     // A preview signs itself in against a cloudless api: there is nothing to read, and the empty
     // column is the answer, not a pending one.
@@ -184,6 +235,8 @@ export const useNotificationCenter = defineStore('notification-center', () => {
       (uid) => void bind(uid),
       { immediate: true },
     );
+    schedules.start();
+    schedules.onSlip(announceSlip);
   }
 
   /** Read the list again after a failed read («Спробувати ще»). */
@@ -209,21 +262,42 @@ export const useNotificationCenter = defineStore('notification-center', () => {
     }
   }
 
-  function markAllSeen(): Promise<void> {
+  // Every source at once; a refusal is the action's error, and its rows stay new. The updates
+  // are this machine's own and cannot fail.
+  async function markAllSeen(): Promise<void> {
     appUpdate.markUpdatesSeen(appUpdate.updates.map((u) => u.id));
-    return markSeen(items.value.map((i) => i.entry.id));
+    const slips = (schedules.slips ?? []).filter((s) => !s.seen).map((s) => s.id);
+    await Promise.all([markSeen(items.value.map((i) => i.entry.id)), schedules.markSlipsSeen(slips)]);
   }
 
   /** Open the window on one entry — the toast's «Переглянути» and a click in the column. */
   function open(id: string): void {
+    close();
     openId.value = id;
     overlay.show();
     // Seen is a mark, not an action the operator waits for: a failed write leaves it new.
     void markSeen([id]).catch(() => undefined);
   }
 
+  /** Open a run's full answer over the console (a run without a project, decision 9). */
+  function openSlip(id: string): void {
+    close();
+    openSlipId.value = id;
+    overlay.show();
+    void schedules.markSlipsSeen([id]).catch(() => undefined);
+  }
+
+  /** Open one scheduled task over the console: its prompt, history and actions. */
+  function openTask(id: string): void {
+    close();
+    openTaskId.value = id;
+    overlay.show();
+  }
+
   function close(): void {
     openId.value = undefined;
+    openSlipId.value = undefined;
+    openTaskId.value = undefined;
   }
 
   // The text the skill resolves to without the personal layer, where the record says it came
@@ -321,7 +395,11 @@ export const useNotificationCenter = defineStore('notification-center', () => {
     feed,
     phase,
     error,
+    tab,
     openId,
+    openSlipId,
+    openTaskId,
+    viewOpen,
     details,
     unread,
     start,
@@ -329,6 +407,9 @@ export const useNotificationCenter = defineStore('notification-center', () => {
     markSeen,
     markAllSeen,
     open,
+    openSlip,
+    openTask,
+    viewSlip,
     close,
     inspect,
     planRollback,

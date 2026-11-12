@@ -22,6 +22,7 @@ import {
   MINION_PR_TITLE_RULE,
   agentById,
   minionFindingLine,
+  minionTakeoverPrompt,
   renderInstruction,
   type RpcEvent,
   type ServerEvent,
@@ -36,7 +37,7 @@ import type { DeviceApi } from "../src/device/device.contract";
 import type { MachineResourcesService } from "../src/machine/machine-resources.service";
 import type { RuntimeCheck, RuntimeCheckService } from "../src/runtime/runtime-check.service";
 
-// Every managed spawn, whatever the runtime: the kind, the launch options and the child.
+// Every managed spawn: the launch options and the child.
 type FakeChild = {
   opts: Record<string, unknown>;
   prompts: string[];
@@ -45,9 +46,9 @@ type FakeChild = {
   emit: (e: RpcEvent) => void;
   exit: (code: number | null, reason: string, cause?: string) => void;
 };
-const spawns: { kind: string; opts: Record<string, unknown>; child: FakeChild }[] = [];
-// The next child's start fails the way both runtimes fail it: the exit callbacks fire first
-// (omp's failAll, claude's death path), then start() rejects.
+const spawns: { opts: Record<string, unknown>; child: FakeChild }[] = [];
+// The next child's start fails the way omp fails it: the exit callbacks fire first
+// (omp's failAll), then start() rejects.
 const startFailure = vi.hoisted(() => ({ next: undefined as string | undefined }));
 vi.mock("../src/runtime/agent-runtime", () => {
   class FakeRuntime {
@@ -107,9 +108,9 @@ vi.mock("../src/runtime/agent-runtime", () => {
     }
   }
   return {
-    createRuntime: (kind: string, opts: Record<string, unknown>) => {
+    createRuntime: (opts: Record<string, unknown>) => {
       const child = new FakeRuntime(opts);
-      spawns.push({ kind, opts, child: child as unknown as FakeChild });
+      spawns.push({ opts, child: child as unknown as FakeChild });
       return child;
     },
   };
@@ -130,7 +131,7 @@ const eligible = (t: Task, projectIds: string[], userId: string) =>
   t.autoRun &&
   t.createdBy === userId &&
   !t.deepAnalysis &&
-  !t.design &&
+  !t.synergyBranch &&
   !t.jiraKey &&
   !t.linearKey &&
   !t.planeKey &&
@@ -225,7 +226,7 @@ function make() {
     cloudClient: () => ({}),
   } as unknown as AuthService;
   const skills = Object.assign(stubSkills(), { assignedForNames: async () => ({ block: "", view: [], missing: [] }) });
-  const models = { validModel: async (_r: string, w: string | undefined) => w } as unknown as ModelsService;
+  const models = { validModel: async (w: string | undefined) => w } as unknown as ModelsService;
   const browser = new BrowserMcpService(registry, { urlOf: () => undefined } as unknown as PreviewService, {} as DeviceApi, http);
   const sup = new SupervisorService(registry, worktree as unknown as WorktreeService, auth, skills, models, undefined, browser, resources);
   const runtimeCheck = { check: vi.fn(async () => preflight) };
@@ -261,7 +262,6 @@ function card(over: Partial<Task> & { id: string; projectId: string }): Task {
     worktree: true,
     hidden: false,
     deepAnalysis: false,
-    design: false,
     autoRun: true,
     ...over,
   };
@@ -343,25 +343,6 @@ describe("which card the minion takes", () => {
     // At the cap (1) the next poll takes nothing.
     await minion.poll();
     expect(claims).toEqual(["oldest"]);
-  });
-
-  it("gives a claude run disallowedTools instead of the overlay, on its first spawn and on a wake", async () => {
-    process.env.KERMANYCH_RUNTIME = "claude-code";
-    try {
-      const { minion, bindProject, minionSessions, sup } = make();
-      bindProject("p1");
-      card({ id: "a", projectId: "p1" });
-      await minion.poll();
-      expect(spawns[0]!.kind).toBe("claude-code");
-      expect(spawns[0]!.opts.disallowedTools).toEqual(["AskUserQuestion"]);
-
-      const [s] = minionSessions();
-      await sup.restartSession(s!.id);
-      expect(spawns).toHaveLength(2);
-      expect(spawns[1]!.opts.disallowedTools).toEqual(["AskUserQuestion"]);
-    } finally {
-      delete process.env.KERMANYCH_RUNTIME;
-    }
   });
 
   it("takes nothing while paused", async () => {
@@ -483,7 +464,7 @@ describe("the claim", () => {
     preflight = { ok: false, code: "omp_not_authenticated" };
 
     await minion.poll();
-    expect(runtimeCheck.check).toHaveBeenCalledWith("omp");
+    expect(runtimeCheck.check).toHaveBeenCalledWith();
     expect(claims).toEqual([]);
     expect(minion.state().pause).toMatchObject({ code: "signed_out" });
 
@@ -925,6 +906,77 @@ describe("the run protocol", () => {
 
     expect(child.steers).toEqual(["focus on the API first"]);
     expect(child.alive).toBe(true);
+  });
+});
+
+describe("`/minion` hands a session over (docs/specs/2026-11-09-minion-takeover.md)", () => {
+  it("respawns the session without the ask tool, runs it to the PR, and counts it neither way", async () => {
+    const { sup, bindProject, row, report, registry, minion } = make();
+    bindProject("p1", false);
+    card({ id: "a", projectId: "p1", autoRun: false });
+    registry.setMinionSettings({ cap: 1, failures: 1 });
+    vi.spyOn(sup, "docsGate").mockImplementation(async () => ({ enabled: false, failures: [] }));
+    const s = await sup.createSessionFromTask("a", USER);
+    const first = spawns[0]!.child;
+    first.emit({ type: "agent_start" } as RpcEvent);
+
+    await sup.sendMessage(s.id, "/minion keep the old endpoint", "steer");
+
+    // The operator's child is stopped mid-turn without failing the session; a fresh one gets the
+    // no-ask overlay and the hand-over prompt with the operator's parting words.
+    expect(first.alive).toBe(false);
+    expect(spawns).toHaveLength(2);
+    expect(row(s.id)).toMatchObject({ minion: true });
+    expect(row(s.id).status).not.toBe("error");
+    const { child, opts } = spawns[1]!;
+    expect(readFileSync((opts.configPaths as string[]).at(-1)!, "utf8")).toBe(NO_ASK_OVERLAY);
+    expect(child.prompts).toEqual([`${minionTakeoverPrompt("keep the old endpoint")}\n\n${MINION_OUTCOME_CONTRACT}`]);
+    expect(child.prompts[0]).toContain("keep the old endpoint");
+    expect(sup.getTranscript(s.id)).toContainEqual(expect.objectContaining({ kind: "notice", code: "minion_takeover_started" }));
+
+    child.emit({ type: "agent_start" } as RpcEvent);
+    expect((await report(s.id, { outcome: "ready", summary: "Done; kept the old endpoint." })).isError).toBeFalsy();
+    child.emit({ type: "agent_end" } as RpcEvent);
+    await vi.waitFor(() => expect(child.prompts.at(-1)).toMatch(/gh pr create/));
+    expect(child.prompts.at(-1)).toContain(MINION_PR_TITLE_RULE);
+    await flush();
+    turn(child, ...prReply);
+
+    await vi.waitFor(() => expect(row(s.id).minionResult).toEqual({ outcome: "pr" }));
+    expect(row(s.id).status).toBe("in_review");
+    // A person started this run: the poll's failure count is neither reset nor raised.
+    expect(minion.state().failures).toBe(1);
+  });
+
+  it("a hand-over run that ends without a verdict does not count toward the pause", async () => {
+    const { sup, bindProject, row, minion } = make();
+    bindProject("p1");
+    card({ id: "a", projectId: "p1", autoRun: false });
+    const s = await sup.createSessionFromTask("a", USER);
+    turn(spawns[0]!.child);
+
+    await sup.sendMessage(s.id, "/minion", "prompt");
+    turn(spawns[1]!.child);
+
+    await vi.waitFor(() => expect(row(s.id).minionResult).toEqual({ outcome: "needs_decision", code: "no_outcome" }));
+    expect(row(s.id).status).toBe("in_review");
+    expect(minion.state()).toMatchObject({ failures: 0 });
+    expect(minion.state().pause).toBeUndefined();
+  });
+
+  it("refuses a chat, and a run that already works on its own", async () => {
+    const { sup, bindProject, minion, minionSessions, registry } = make();
+    bindProject("p1");
+    const chat = await sup.createChat("p1");
+    await expect(sup.sendMessage(chat.id, "/minion", "prompt")).rejects.toMatchObject({ code: "minion_takeover_unsupported" });
+    expect(registry.listSessions().find((x) => x.id === chat.id)?.minion).toBeUndefined();
+
+    card({ id: "a", projectId: "p1" });
+    await minion.poll();
+    const [s] = minionSessions();
+    const spawned = spawns.length;
+    await expect(sup.sendMessage(s!.id, "/minion", "prompt")).rejects.toMatchObject({ code: "minion_takeover_running" });
+    expect(spawns).toHaveLength(spawned);
   });
 });
 

@@ -49,6 +49,8 @@ import {
 import { RegistryService } from "../registry/registry.service";
 import { browserHost } from "../browser/browser-host";
 import { DEVICE_API, type DeviceApi } from "../device/device.contract";
+import { childLedger } from "../runtime/child-ledger";
+import { previewDotenv } from "./preview-dotenv";
 
 // The waits of decision 3 and the stop of decision 7. Mutable so specs can shorten them; the
 // api never changes them.
@@ -409,6 +411,10 @@ export class PreviewService implements OnModuleInit, OnModuleDestroy {
       if (run.halted) return;
       const vars: Record<string, string> = { [PREVIEW_DIR_VAR]: previewDir };
       for (const p of services) vars[previewPortVar(p.name)] = String(p.port);
+      // Read on every start, so ↻ applies a «Змінні» save. Not part of `vars`: a service's `env`
+      // may refer to Kermanych's variables only (parsePreviewConfig refuses other names).
+      const dotenv = await previewDotenv(dir);
+      if (run.halted) return;
 
       if (config.device) {
         starting(PREVIEW_DEVICE_STEP, services);
@@ -450,7 +456,7 @@ export class PreviewService implements OnModuleInit, OnModuleDestroy {
 
       if (config.setup) {
         starting(PREVIEW_SETUP_STEP, services);
-        const proc = this.spawnStep(run, step, config.setup, dir, vars, false);
+        const proc = this.spawnStep(run, step, config.setup, dir, { ...dotenv, ...vars }, false);
         await this.waitSetup(run, proc);
       }
       let url = "";
@@ -458,7 +464,7 @@ export class PreviewService implements OnModuleInit, OnModuleDestroy {
         if (run.halted) return;
         starting(svc.name, services);
         const own: Record<string, string> = { ...vars, PORT: String(ports[i]) };
-        const env: Record<string, string> = { ...own };
+        const env: Record<string, string> = { ...dotenv, ...own };
         for (const [k, v] of Object.entries(svc.env)) env[k] = expandPreviewEnv(v, own);
         const proc = this.spawnStep(run, step, svc.command, dir, env, svc.open, id);
         // A `"device": true` service installs and launches the app itself (mobile decision 5).
@@ -474,7 +480,7 @@ export class PreviewService implements OnModuleInit, OnModuleDestroy {
         const target = config.device[run.platform!]!;
         if (target.install) {
           starting(PREVIEW_INSTALL_STEP, services);
-          const proc = this.spawnStep(run, step, target.install, dir, vars, false);
+          const proc = this.spawnStep(run, step, target.install, dir, { ...dotenv, ...vars }, false);
           await this.waitSetup(run, proc);
         }
         starting(PREVIEW_DEVICE_STEP, services);
@@ -490,12 +496,16 @@ export class PreviewService implements OnModuleInit, OnModuleDestroy {
       }
 
       this.update(id, run, { phase: "running", url, services });
-      // The session page goes to the preview (decision 6). A standalone api has no host.
+      // The session page goes to the preview (decision 6). A standalone api has no host. A
+      // «Синергія» session started on «Змінити сторінку» opens on its start path instead
+      // (docs/specs/2026-11-06-synergy.md, decision 5); every other session on the root.
       const host = browserHost();
+      const page = this.registry.listSessions().find((x) => x.id === id)?.synergy?.page;
+      const open = page ? `${url.replace(/\/+$/, "")}${page}` : url;
       if (host)
         void Promise.resolve()
-          .then(() => host.openPreview({ sessionId: id, projectId: run.projectId }, url))
-          .catch((err: unknown) => console.warn(`[preview] could not open ${url} for session ${id}: ${(err as Error).message}`));
+          .then(() => host.openPreview({ sessionId: id, projectId: run.projectId }, open))
+          .catch((err: unknown) => console.warn(`[preview] could not open ${open} for session ${id}: ${(err as Error).message}`));
     } catch (err) {
       if (run.halted) return; // stopped mid-start: not a failure
       const failed = err instanceof StepFailure ? err.step : step;
@@ -635,6 +645,13 @@ export class PreviewService implements OnModuleInit, OnModuleDestroy {
   private spawnStep(run: Run, step: string, command: string, cwd: string, env: Record<string, string>, open: boolean, sessionId?: string): Proc {
     run.logs.set(step, []);
     const child = spawn("sh", ["-c", command], { cwd, env: { ...process.env, ...env }, detached: true, stdio: ["ignore", "pipe", "pipe"] });
+    // Written down while it runs: an api that dies first leaves the group (and its port) to the
+    // next api's sweep instead of to nobody.
+    const pid = child.pid;
+    if (pid !== undefined) {
+      childLedger()?.add(pid, `preview ${step}`);
+      child.once("exit", () => childLedger()?.remove(pid));
+    }
     const { promise: exited, resolve } = Promise.withResolvers<void>();
     const proc: Proc = { step, child, exited, done: false, reason: "", code: null, signal: null, banner: open ? new Set() : null };
     run.procs.push(proc);

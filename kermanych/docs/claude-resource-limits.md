@@ -13,13 +13,13 @@ what that process starts:
   again for **every** claude session. A server started with `npx` is two `node` processes.
 
 None of the settings below need Kermanych. They live in Claude Code's own settings, so they
-apply everywhere claude runs: your terminal, your IDE, and both Kermanych modes («Керманич»
-and `claude`). Kermanych passes no `settingSources` to the Agent SDK, so its claude sessions
-read the same settings files as a claude you start yourself.
+apply everywhere claude runs: your terminal, your IDE, and Kermanych's native `claude`
+sessions and chats (Kermanych's own «Керманич» mode runs omp, not claude). A native session is
+the plain `claude` CLI, so it reads the same settings files as a claude you start yourself.
 
 Kermanych also has its own limits (Settings → Застосунок → «Ресурси машини», see the README):
 once you apply them, it passes `CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS` and
-`CLAUDE_CODE_DISABLE_BACKGROUND_TASKS` to its claude sessions and runs them at nice 10. The `env`
+`CLAUDE_CODE_DISABLE_BACKGROUND_TASKS` to its native claude sessions and runs them at nice 10. The `env`
 block in your `settings.json` still wins over what Kermanych passes.
 
 ## 1. Run everything claude starts at a lower priority
@@ -93,7 +93,10 @@ server is not a process on your machine.
 
 The biggest bursts come from test runners. Set a worker limit in the project you work on:
 
-- vitest: `test.maxWorkers` in `vitest.config.*`, for example `maxWorkers: 2`.
+- vitest: `test.maxWorkers` in `vitest.config.*`, for example `maxWorkers: 2`. On vitest 2 also set
+  `minWorkers: 1` (or pass `--minWorkers=1` next to `--maxWorkers`): its default minimum is the
+  CPU count minus one, and a smaller maximum fails with `options.minThreads and options.maxThreads
+  must not conflict` before any test runs.
 - jest: `maxWorkers` in the jest config, or `--maxWorkers=50%`.
 
 ## For the whole team
@@ -126,8 +129,7 @@ ps -axo pid,ppid,rss,etime,command | grep -iE 'claude|node|npm|npx' | grep -v gr
 
 - **Memory.** On macOS claude has no memory cap for its commands
   (`CLAUDE_CODE_TOOL_MEMORY_LIMIT` works only on Linux and WSL).
-- **The number of claude sessions.** Each open Kermanych session, chat, discussion or review
-  is its own claude process with its own MCP servers. Kermanych stops a finished session's
-  process after 15 minutes without activity.
+- **The number of claude sessions.** Each open native claude session or chat in Kermanych is
+  its own claude process with its own MCP servers.
 - `ulimit -u` and `launchctl limit maxproc` do limit process count, but for your whole user
   account or system, including the browser and the IDE. Do not use them for this.

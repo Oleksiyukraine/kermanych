@@ -1,6 +1,6 @@
 // apps/ui/src/composables/useVoicePanel.ts
 // What a page hosting KPanel needs for the voice conversation (docs/specs/2026-11-02-voice-conversation.md):
-// the bar state for the panel's session and the three handlers. «Агенти», «Чат» and «Дизайн»
+// the bar state for the panel's session and the three handlers. «Агенти», «Чат» and «Синергія»
 // share it so the three panels behave identically.
 import { computed, type ComputedRef } from 'vue';
 import type { Session } from '@kermanych/core';

@@ -9,6 +9,7 @@
 // whatever that instruction says, so a rewritten instruction cannot break it.
 
 import type { FindingKind } from "./findings";
+import type { Session } from "./types";
 
 /** How often the api asks the cloud for the next card while the minion is on. */
 export const MINION_POLL_MS = 60_000;
@@ -183,3 +184,47 @@ export const MINION_TIME_CAP_PROMPT = [
   `Call \`${MINION_OUTCOME_TOOL}\` with \`outcome: "needs_decision"\` and a summary of where you stand — `,
   "what is done, what is left, and what slowed you down — then end your turn.",
 ].join("");
+
+/**
+ * `/minion` (docs/specs/2026-11-09-minion-takeover.md): whether a session can be handed to
+ * «Посіпака» mid-way — an agent with a branch the PR turn can push, still open, and none of the
+ * kinds with a protocol of their own (a «Синергія» prototype, a scheduled run). A native
+ * session is refused apart, like every command: the harness owns its tools.
+ */
+export function minionTakeoverAllowed(
+  s: Pick<Session, "kind" | "branch" | "status" | "archived" | "synergy" | "schedule">,
+): boolean {
+  return s.kind === "agent" && !!s.branch && s.status !== "merged" && !s.archived && !s.synergy && !s.schedule;
+}
+
+/**
+ * Sent into a session the operator handed to «Посіпака» with `/minion`, before
+ * MINION_OUTCOME_CONTRACT. Its own text rather than the minion's card instruction: the work and
+ * its scope were agreed in this conversation, so the card rules (re-check the card still applies,
+ * stop before a schema or API change) would undo what the operator already decided. `note` is
+ * what the operator typed after the command.
+ */
+export function minionTakeoverPrompt(note: string): string {
+  const parting = note.trim() ? `\n\nThe operator's last words before leaving:\n${note.trim()}` : "";
+  return [
+    "Kermanych: the operator has handed this session to «Посіпака» (Minion), Kermanych's unattended ",
+    "executor, and left. From this message on nobody is watching and nobody will answer: the ask tool is off.\n\n",
+    "- Finish the task this conversation has been working on. Everything the operator already decided ",
+    "or approved here stands; do not widen the scope.\n",
+    "- Make the decisions that are still open yourself. If you asked something that was not answered, ",
+    "answer it with the option you would recommend. Take the option that best fits the request, what ",
+    "the operator said earlier in this conversation and the repository's existing patterns, and write ",
+    "each choice down; if this work has a task document or plan, record the decisions there too.\n",
+    "- Follow the repository's own instructions (CLAUDE.md / AGENTS.md, conventions, documentation ",
+    "rules) exactly as before.\n",
+    "- Stop with `needs_decision` only for what you truly cannot decide: an option that contradicts what ",
+    "the operator said, missing access or data, or a destructive or irreversible step nobody approved.\n",
+    "- Before you call the work done, check it: go through what was asked one point at a time, and run ",
+    "the project's checks for what you changed (typecheck, tests) within the test worker limit you were given.\n",
+    "- Problems you notice outside the task go to `report_finding`, not into this branch.\n",
+    "- Commit on this branch as you go, but do not push and do not open the pull request yourself: ",
+    "Kermanych runs that step after you report the outcome. The pull request description then lists ",
+    "the decisions you took on your own under a `## Decisions` heading.",
+    parting,
+  ].join("");
+}

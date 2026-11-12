@@ -65,7 +65,6 @@ const taskRow = {
   hidden: false,
   deep_analysis: false,
   auto_run: false,
-  design: false,
   finding_kind: null,
   created_at: "2026-08-21T00:00:00.000Z",
   updated_at: "2026-08-21T00:10:00.000Z",
@@ -90,7 +89,6 @@ describe("listTasks", () => {
       hidden: false,
       deepAnalysis: false,
       autoRun: false,
-      design: false,
       createdAt: "2026-08-21T00:00:00.000Z",
       updatedAt: "2026-08-21T00:10:00.000Z",
     });
@@ -324,20 +322,22 @@ describe("deepAnalysis on a task", () => {
   });
 });
 
-// «Дизайн»: a NOT NULL boolean set on insert only. A design card read back as an ordinary one
-// would relaunch as an ordinary agent, without its design folder.
-describe("design on a task", () => {
-  it("maps the column when true", async () => {
-    const { client } = fakeClient({ data: { ...taskRow, design: true }, error: null });
-    expect((await getTask(client, "t1"))!.design).toBe(true);
+// «Задача →» from «Синергія»: the prototype's branch, set on insert only. A card read back without
+// it would relaunch as an ordinary agent forking a fresh branch, without the prototype's code.
+describe("synergyBranch on a task", () => {
+  it("maps the column when set and omits it otherwise", async () => {
+    const { client } = fakeClient({ data: { ...taskRow, synergy_branch: "synergy/orders" }, error: null });
+    expect((await getTask(client, "t1"))!.synergyBranch).toBe("synergy/orders");
+    const plain = fakeClient({ data: { ...taskRow, synergy_branch: null }, error: null });
+    expect(await getTask(plain.client, "t1")).not.toHaveProperty("synergyBranch");
   });
 
-  it("sends design:true on create and nothing for an ordinary card", async () => {
-    const { client, queries } = fakeClient({ data: { ...taskRow, design: true }, error: null });
-    await createTask(client, { projectId: "p1", title: "T", prefix: "design", design: true, createdBy: "u1" });
-    expect(queries[0]!.ops[0]).toEqual(["insert", { project_id: "p1", created_by: "u1", title: "T", prefix: "design", design: true }]);
+  it("sends synergy_branch on create and nothing for an ordinary card", async () => {
+    const { client, queries } = fakeClient({ data: taskRow, error: null });
+    await createTask(client, { projectId: "p1", title: "T", branch: "dev", synergyBranch: "synergy/orders", createdBy: "u1" });
+    expect(queries[0]!.ops[0]).toEqual(["insert", { project_id: "p1", created_by: "u1", title: "T", branch: "dev", synergy_branch: "synergy/orders" }]);
     const plain = fakeClient({ data: taskRow, error: null });
-    await createTask(plain.client, { projectId: "p1", title: "T", design: false, createdBy: "u1" });
+    await createTask(plain.client, { projectId: "p1", title: "T", createdBy: "u1" });
     expect(plain.queries[0]!.ops[0]).toEqual(["insert", { project_id: "p1", created_by: "u1", title: "T" }]);
   });
 });
@@ -361,6 +361,27 @@ describe("branchSlug on a task", () => {
     expect(queries[0]!.ops[0]).toEqual(["insert", { project_id: "p1", created_by: "u1", title: "T", branch_slug: "my-login" }]);
     await patchTask(client, "t1", { branchSlug: "  " });
     expect(queries[1]!.ops[0]).toEqual(["update", { branch_slug: null }]);
+  });
+});
+
+// «Оцінка vs факт» reads the estimate the launch stamps from the card, so the card must carry
+// it both ways, and an editor that blanks the field must be able to clear it.
+describe("estimateMinutes on a task", () => {
+  it("is selected and mapped, and absent while the column is null", async () => {
+    const { client, queries } = fakeClient({ data: [{ ...taskRow, estimate_minutes: 90 }, { ...taskRow, id: "t2", estimate_minutes: null }], error: null });
+    const [estimated, unestimated] = await listTasks(client, ["p1"]);
+    const [, columns] = queries[0]!.ops[0] as [string, string];
+    expect(columns.split(", ")).toContain("estimate_minutes");
+    expect(estimated!.estimateMinutes).toBe(90);
+    expect(unestimated).not.toHaveProperty("estimateMinutes");
+  });
+
+  it("sends the minutes on create and patches null to clear them", async () => {
+    const { client, queries } = fakeClient({ data: taskRow, error: null }, { data: taskRow, error: null });
+    await createTask(client, { projectId: "p1", title: "T", estimateMinutes: 120, createdBy: "u1" });
+    expect(queries[0]!.ops[0]).toEqual(["insert", { project_id: "p1", created_by: "u1", title: "T", estimate_minutes: 120 }]);
+    await patchTask(client, "t1", { estimateMinutes: null });
+    expect(queries[1]!.ops[0]).toEqual(["update", { estimate_minutes: null }]);
   });
 });
 
@@ -497,13 +518,13 @@ describe("releaseLaunchClaim", () => {
 
 describe("minion candidates and claim", () => {
   // Every condition is part of the trust rule: only the caller's own backlog cards that allow
-  // auto-run, never a deep analysis, a design, a Jira/Linear/Plane shadow card, or a colleague's assignment.
+  // auto-run, never a deep analysis, a «Синергія» prototype, a Jira/Linear/Plane shadow card, or a colleague's assignment.
   const predicate = (ops: Op[]) => [
     ["eq", "status", "backlog"],
     ["eq", "auto_run", true],
     ["eq", "created_by", "u1"],
     ["eq", "deep_analysis", false],
-    ["eq", "design", false],
+    ["is", "synergy_branch", null],
     ["is", "jira_key", null],
     ["is", "linear_key", null],
     ["is", "plane_key", null],

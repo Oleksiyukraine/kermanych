@@ -1,10 +1,11 @@
 <script setup lang="ts">
 // Global file-manager dock — a directory tree + a read-only viewer, lifted out of the Агенти
-// detail panel's old «Файли» tab so it can stand beside any view (VS Code / Zed style). It
-// reads the selection straight from the store: the session open in Агенти shows its
-// worktree; with no session selected, the selected project shows its own checkout. Shell-level
-// placement (which side, whether it is open) lives in the store; this component owns only
-// the tree.
+// detail panel's old «Файли» tab so it can stand beside any view (VS Code / Zed style). Which
+// folder it browses comes from useFileSource: the selected session's worktree; with no session
+// selected, the worktree of an agent at work in the project, else its checkout. When the
+// project has more than one tree, a selector under the header switches between them.
+// Shell-level placement (which side, whether it is open) lives in the store; this component
+// owns only the tree.
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { useOrchestrator } from 'stores/orchestrator';
@@ -12,41 +13,38 @@ import type { TreeEntry, FileContent } from '@kermanych/core';
 import type { FileDiff } from '../../lib/api';
 import { useFileTreeKeys } from '../../composables/useFileTreeKeys';
 import { useFullscreenPopover } from '../../composables/useFullscreenPopover';
+import { useFileSource, type FileSource } from '../../composables/useFileSource';
 import KFileTree from './KFileTree.vue';
 import KFileView from './KFileView.vue';
+import KSelect from './KSelect.vue';
 
 const store = useOrchestrator();
 const { t } = useI18n();
 
-const selectedSession = computed(() =>
-  store.sessions.find((s) => s.id === store.selectedSessionId),
-);
-const selectedProject = computed(() =>
-  store.projects.find((p) => p.id === store.selectedProjectId),
-);
-
-// A retired worktree keeps `worktree: true` but loses its `worktreePath`; there is then no
-// directory to read, so the panel shows a calm empty-state instead of an ENOENT error —
-// mirrors the Зміни pane's own worktree-gone guard.
-const worktreeGone = computed(
-  () => !!selectedSession.value?.worktree && !selectedSession.value.worktreePath,
-);
-// Without a session the project's checkout is read, which needs a local binding.
-const projectUnbound = computed(
-  () => !selectedSession.value && !!selectedProject.value && !selectedProject.value.localRepoPath,
-);
-
-// Where the tree comes from: the selected session wins, else the selected project. null
-// while nothing is selected or the directory is unreadable (worktree gone / unbound).
-type Source = { kind: 'session' | 'project'; id: string };
-const source = computed<Source | null>(() => {
-  if (selectedSession.value) {
-    return worktreeGone.value ? null : { kind: 'session', id: selectedSession.value.id };
-  }
-  if (selectedProject.value) {
-    return projectUnbound.value ? null : { kind: 'project', id: selectedProject.value.id };
-  }
-  return null;
+// A retired worktree (worktreeGone) or an unbound project has no directory to read: the panel
+// shows a calm empty-state instead of an ENOENT error — unless the selector points elsewhere.
+const {
+  selectedSession,
+  project: selectedProject,
+  worktreeGone,
+  projectUnbound,
+  options: sourceOptions,
+  currentKey: sourceCurrentKey,
+  current: currentSource,
+  source,
+  pick: pickSource,
+} = useFileSource();
+type Source = FileSource;
+// The selector earns its row only when there is a choice to make.
+const sourceSelectOptions = computed(() => sourceOptions.value.map((o) => ({ value: o.key, label: o.label })));
+const showSourceSelect = computed(() => sourceOptions.value.length > 1);
+// Without a selector the header names the one tree on show: its branch, or the checkout.
+const headLabel = computed(() => {
+  if (currentSource.value) return { text: currentSource.value.label, title: currentSource.value.path };
+  const s = selectedSession.value;
+  if (s) return { text: s.branch || s.name, title: s.name };
+  const p = selectedProject.value;
+  return p ? { text: p.name, title: p.localRepoPath || p.name } : null;
 });
 // A string key so the watcher reloads only on a real source change, not on every
 // sessions/projects push that rebuilds the object.
@@ -243,15 +241,10 @@ watch(
     <header class="k-fm__head">
       <span class="k-fm__title">{{ t('fileManager.title') }}</span>
       <span
-        v-if="selectedSession"
+        v-if="headLabel && !showSourceSelect"
         class="k-fm__session mono"
-        :title="selectedSession.name"
-      >{{ selectedSession.branch || selectedSession.name }}</span>
-      <span
-        v-else-if="selectedProject"
-        class="k-fm__session mono"
-        :title="selectedProject.localRepoPath || selectedProject.name"
-      >{{ selectedProject.name }}</span>
+        :title="headLabel.title"
+      >{{ headLabel.text }}</span>
       <span class="k-fm__spacer"></span>
       <button
         type="button"
@@ -261,6 +254,17 @@ watch(
         @click="store.toggleFileManager(store.fileManagerSide)"
       >✕</button>
     </header>
+    <!-- More than one tree in the project (its checkout, its agents' worktrees): pick which one
+         to browse. The pick is local and instant; the tree below shows its own loading line. -->
+    <div v-if="showSourceSelect" class="k-fm__source" :title="currentSource?.path">
+      <KSelect
+        class="k-fm__source-select"
+        :model-value="sourceCurrentKey ?? ''"
+        :options="sourceSelectOptions"
+        :label="t('fileManager.pickTree')"
+        @update:model-value="pickSource"
+      />
+    </div>
     <div class="k-fm__body">
       <!-- The open file: docked here, or — the default when a file is clicked — full screen
            over the whole window (useFullscreenPopover: the same viewer, so its mode, ± and
@@ -291,11 +295,11 @@ watch(
       <div v-if="!selectedSession && !selectedProject" class="k-fm__blank">
         <p class="k-fm__blank-text">{{ t('fileManager.noSelection') }}</p>
       </div>
-      <div v-else-if="worktreeGone" class="k-fm__blank">
+      <div v-else-if="worktreeGone && !source" class="k-fm__blank">
         <span class="k-fm__blank-eyebrow mono">{{ t('agents.changes.historyEyebrow') }}</span>
         <p class="k-fm__blank-text">{{ t('agents.files.gone') }}</p>
       </div>
-      <div v-else-if="projectUnbound" class="k-fm__blank">
+      <div v-else-if="projectUnbound && !source" class="k-fm__blank">
         <p class="k-fm__blank-text">{{ t('fileManager.notBound') }}</p>
       </div>
       <!-- The tree stays mounted (v-show) under an open file, so its expanded folders are
@@ -378,6 +382,27 @@ watch(
     background: var(--k-surface2);
     color: var(--k-text);
   }
+}
+
+.k-fm__source {
+  flex: none;
+  padding: 6px var(--k-sp-2);
+  border-bottom: 1px solid var(--k-line);
+}
+
+// The kit select at dock scale: one compact row. Its caption stays for screen readers only —
+// the dock's title already says what the row is.
+.k-fm__source-select :deep(.k-select__input) {
+  padding: 5px 9px;
+  font-size: var(--k-fs-xs);
+}
+.k-fm__source-select :deep(.k-select__label) {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
 }
 
 .k-fm__body {

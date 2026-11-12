@@ -34,13 +34,17 @@ async function check(): Promise<void> {
 // Wires the IPC the preload's `updates` bridge talks to. Registered in every run so a dev
 // renderer gets an answer (`idle`) rather than a rejected invoke; only a packaged app that the
 // updater can actually replace ever checks.
-export function startUpdater(): void {
+// `beforeInstall` runs right before a restart into a downloaded update, so main can let the
+// windows close (its background mode otherwise hides them instead).
+export function startUpdater({ beforeInstall }: { beforeInstall: () => void }): void {
   ipcMain.handle('kermanych:update:state', () => state);
   ipcMain.handle('kermanych:update:check', () => check());
   ipcMain.on('kermanych:update:install', () => {
     // isForceRunAfter: an AppImage relaunches only when asked (Squirrel.Mac always does).
     // The quit still runs before-quit, which stops the api and its children first.
-    if (state.phase === 'ready') autoUpdater.quitAndInstall(true, true);
+    if (state.phase !== 'ready') return;
+    beforeInstall();
+    autoUpdater.quitAndInstall(true, true);
   });
   // The banner's «What's new» before installing: the CHANGELOG.md as of the downloaded tag.
   // The renderer cuts out the versions between its own and that one (changelogBetween).

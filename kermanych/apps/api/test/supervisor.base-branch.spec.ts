@@ -4,10 +4,10 @@ import type { AuthService } from "../src/auth/auth.service";
 import type { ModelsService } from "../src/models/models.service";
 import type { CloudProject, Task } from "@kermanych/cloud";
 
-// The runtime-aware model guard (ModelsService.validModel) is not under test here; an identity
-// stub returns the wanted model unchanged so createSessionFromTask keeps task.model as before.
+// The model guard (ModelsService.validModel) is not under test here; an identity stub returns
+// the wanted model unchanged so createSessionFromTask keeps task.model as before.
 function stubModels(): ModelsService {
-  return { validModel: async (_r: string, w: string | undefined) => w } as unknown as ModelsService;
+  return { validModel: async (w: string | undefined) => w } as unknown as ModelsService;
 }
 
 // Capture spawned RpcSessions so a launch can be proven; no real omp child.
@@ -84,7 +84,6 @@ function cloudTask(over: Partial<Task> = {}): Task {
     updatedAt: NOW,
     worktree: true,
     autoRun: false,
-    design: false,
     ...over,
   };
   cloudTasks.set(t.id, t);

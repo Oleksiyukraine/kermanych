@@ -1,16 +1,24 @@
 // apps/api/test/skill-improvement.spec.ts
 // «Самовдосконалення скілів» (docs/specs/2026-11-04-skill-self-improvement.md): what
 // `improve_skill` writes to the operator's personal layer and records, every refusal the agent
-// can get, and who is handed the tool. Real registry, fake cloud calls.
+// can get, who is handed the tool at which level, and who gets the reflection step
+// (docs/specs/2026-11-06-skill-improvement-reflection.md). Real registry, fake cloud calls.
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { HttpAdapterHost } from "@nestjs/core";
-import { DEFAULT_SKILLS, type Session, type SkillImprovementInsert } from "@kermanych/core";
+import {
+  DEFAULT_SKILLS,
+  skillLessonRule,
+  skillReflectionBlock,
+  type Session,
+  type SkillImprovementInsert,
+  type SkillImprovementLevel,
+} from "@kermanych/core";
 import type { AiOwner, AiSkill, AiSkillInsert } from "@kermanych/cloud";
 import { RegistryService } from "../src/registry/registry.service";
-import type { SkillsService } from "../src/skills/skills.service";
+import { HandedSkills, type SkillsService } from "../src/skills/skills.service";
 import type { AuthService } from "../src/auth/auth.service";
 import type { PreviewService } from "../src/preview/preview.service";
 import { SkillImprovementService, type SkillImprovementCloud } from "../src/skills/skill-improvement.service";
@@ -32,7 +40,8 @@ const U: AiOwner = { scope: "user", id: "u1" };
 const P: AiOwner = { scope: "project", id: "p1" };
 const W: AiOwner = { scope: "workspace", id: "w1" };
 
-function make(opts: { rows?: AiSkill[]; kind?: Session["kind"]; native?: boolean; worktreePath?: string; signedIn?: boolean; count?: number } = {}) {
+type Applied = { sessionId: string; summary: string; createdAt: string };
+function make(opts: { rows?: AiSkill[]; kind?: Session["kind"]; native?: boolean; worktreePath?: string; signedIn?: boolean; count?: number; handed?: Record<string, string>; applied?: Applied[] } = {}) {
   const registry = new RegistryService(":memory:");
   registry.upsertProject({ id: "p1", name: "p", localRepoPath: "", workspaceId: "w1" });
   const s = registry.createSession({
@@ -44,7 +53,8 @@ function make(opts: { rows?: AiSkill[]; kind?: Session["kind"]; native?: boolean
   // The cloud's user rows, mutated by the fake upsert/delete so the re-read sees writes.
   const store = new Map<string, AiSkill>((opts.rows ?? []).filter((r) => r.owner.scope === "user").map((r) => [r.name, r]));
   const rows = opts.rows ?? [];
-  const skills = { readSkills: vi.fn(async () => rows), forgetLibrary: vi.fn() } as unknown as SkillsService;
+  const readSkills = vi.fn(async () => rows);
+  const skills = { readSkills, forgetLibrary: vi.fn() } as unknown as SkillsService;
   const auth = {
     current: () => (opts.signedIn === false ? undefined : { userId: "u1" }),
     cloudClient: () => ({}),
@@ -65,10 +75,14 @@ function make(opts: { rows?: AiSkill[]; kind?: Session["kind"]; native?: boolean
       return "rec-1";
     }),
     countSessionSkillImprovements: vi.fn(async () => opts.count ?? 0),
+    listAppliedSkillImprovements: vi.fn(async () => opts.applied ?? []),
   };
-  const service = new SkillImprovementService(registry, skills, auth, cloud as unknown as SkillImprovementCloud);
+  // What the session's launch materialised; none = an api that never launched it (a restart).
+  const handed = new HandedSkills();
+  if (opts.handed) handed.launched(s.id, new Map(Object.entries(opts.handed)));
+  const service = new SkillImprovementService(registry, skills, auth, cloud as unknown as SkillImprovementCloud, handed);
   const improve = (args: Record<string, unknown>) => service.improve(s.id, args);
-  return { registry, session: s, store, records, cloud, improve };
+  return { registry, session: s, store, records, cloud, readSkills, improve };
 }
 
 const edit = (skill: string, find = "Run the build.", replace = "Run the build with --frozen-lockfile.") => ({
@@ -168,9 +182,9 @@ describe("improve_skill", () => {
     );
   });
 
-  it("refuses with the switch off, signed out, or outside a managed agent/chat session", async () => {
+  it("refuses at level off, signed out, or outside a managed agent/chat session", async () => {
     const off = make({ rows: [row(P, "deploy")] });
-    off.registry.setAuthSession({ userId: "u1", accessToken: "t", skillImprovement: false });
+    off.registry.setAuthSession({ userId: "u1", accessToken: "t", skillImprovementLevel: "off" });
     expect((await off.improve(edit("deploy"))).text).toBe(
       "Not applied: the operator has turned skill improvement off. Mention the lesson in your reply instead.",
     );
@@ -213,13 +227,46 @@ describe("improve_skill", () => {
     expect(r.text).toContain("--- current text of deploy ---\n# Deploy\n\nRewritten.\n");
     expect(stale.cloud.upsertAiSkill).not.toHaveBeenCalled();
   });
+
+  // docs/specs/2026-11-07-skill-improvement-review.md, decision 3: two sessions launched together
+  // must not both write the same lesson.
+  it("refuses once when the skill changed after the session's launch, naming the other change", async () => {
+    const now = "# Deploy\n\nRun the build.\nThen ship it.\nCheck the remote first.\n";
+    const t = make({
+      rows: [row(P, "deploy"), row(U, "deploy", now)],
+      handed: { deploy: BODY },
+      applied: [
+        { sessionId: "other", summary: "check the remote", createdAt: new Date(Date.now() + 1000).toISOString() },
+        { sessionId: "other", summary: "older than this launch", createdAt: "2020-01-01T00:00:00.000000+00:00" },
+      ],
+    });
+    const first = await t.improve(edit("deploy"));
+    expect(first.ok).toBe(false);
+    expect(first.text).toContain('"deploy" changed after this session was launched («check the remote»)');
+    expect(first.text).not.toContain("older than this launch");
+    expect(first.text).toContain(`--- current text of deploy ---\n${now}`);
+    expect(t.cloud.upsertAiSkill).not.toHaveBeenCalled();
+
+    expect((await t.improve(edit("deploy"))).ok).toBe(true);
+  });
+
+  it("does not count the session's own change, nor refuse without a known launch", async () => {
+    const own = make({ rows: [row(P, "deploy")], handed: { deploy: BODY } });
+    // The library read sees this session's write, as the cloud would.
+    own.readSkills.mockImplementation(async () => [row(P, "deploy"), ...own.store.values()]);
+    expect((await own.improve(edit("deploy"))).ok).toBe(true);
+    expect((await own.improve(edit("deploy", "Then ship it.", "Then ship it to staging."))).ok).toBe(true);
+
+    const restarted = make({ rows: [row(P, "deploy"), row(U, "deploy", "# Deploy\n\nRun the build.\nMoved.\n")] });
+    expect((await restarted.improve(edit("deploy"))).ok).toBe(true);
+  });
 });
 
 describe("improve_skill in tools/list", () => {
   const http = { httpAdapter: { getHttpServer: () => ({ address: () => ({ port: 4317 }) }) } } as unknown as HttpAdapterHost;
   setBrowserHost(undefined);
 
-  async function listed(opts: { kind?: Session["kind"]; native?: boolean; switchOff?: boolean; tester?: boolean }) {
+  function setup(opts: { kind?: Session["kind"]; native?: boolean; level?: SkillImprovementLevel; tester?: boolean }) {
     const registry = new RegistryService(":memory:");
     registry.upsertProject({ id: "p1", name: "p", localRepoPath: "" });
     const s = registry.createSession({
@@ -228,19 +275,80 @@ describe("improve_skill in tools/list", () => {
       ...(opts.native ? { native: true } : {}),
       ...(opts.tester ? { tester: true } : {}),
     });
-    registry.setAuthSession({ userId: "u1", accessToken: "t", ...(opts.switchOff ? { skillImprovement: false } : {}) });
+    registry.setAuthSession({ userId: "u1", accessToken: "t", ...(opts.level ? { skillImprovementLevel: opts.level } : {}) });
     const improvements = {} as SkillImprovementService;
     const mcp = new BrowserMcpService(registry, {} as PreviewService, fakeDevice().device, http, undefined, improvements);
-    const reply = (await mcp.handle(s.id, { jsonrpc: "2.0", id: 1, method: "tools/list" })) as { result: { tools: { name: string }[] } };
-    return reply.result.tools.map((t) => t.name).includes("improve_skill");
+    const list = async () => {
+      const reply = (await mcp.handle(s.id, { jsonrpc: "2.0", id: 1, method: "tools/list" })) as {
+        result: { tools: { name: string; description: string }[] };
+      };
+      return reply.result.tools.find((t) => t.name === "improve_skill");
+    };
+    return { registry, mcp, session: s, list };
   }
+  const listed = async (opts: Parameters<typeof setup>[0]) => !!(await setup(opts).list());
 
-  it("is listed for a managed agent or chat session only, and not with the switch off", async () => {
+  it("is listed for a managed agent or chat session only, and not at level off", async () => {
     expect(await listed({})).toBe(true);
     expect(await listed({ kind: "chat" })).toBe(true);
     expect(await listed({ native: true })).toBe(false);
     expect(await listed({ kind: "review" })).toBe(false);
     expect(await listed({ kind: "review", tester: true })).toBe(false);
-    expect(await listed({ switchOff: true })).toBe(false);
+    expect(await listed({ level: "off" })).toBe(false);
+  });
+
+  it("describes when to call it at the operator's level, with no word that most sessions improve nothing", async () => {
+    for (const level of ["conservative", "moderate", "active"] as const) {
+      const tool = await setup({ level }).list();
+      expect(tool!.description).toContain(skillLessonRule(level));
+      expect(tool!.description).not.toMatch(/Most sessions improve nothing/);
+    }
+    expect((await setup({}).list())!.description).toContain(skillLessonRule("moderate"));
+  });
+});
+
+describe("the reflection step", () => {
+  const http = { httpAdapter: { getHttpServer: () => ({ address: () => ({ port: 4317 }) }) } } as unknown as HttpAdapterHost;
+
+  function setup(opts: { kind?: Session["kind"]; native?: boolean } = {}) {
+    const registry = new RegistryService(":memory:");
+    registry.upsertProject({ id: "p1", name: "p", localRepoPath: "" });
+    const s = registry.createSession({
+      projectId: "p1", name: "n", task: "t", worktreePath: "", branch: "b",
+      ...(opts.kind ? { kind: opts.kind } : {}),
+      ...(opts.native ? { native: true } : {}),
+    });
+    registry.setAuthSession({ userId: "u1", accessToken: "t" });
+    const mcp = new BrowserMcpService(registry, {} as PreviewService, fakeDevice().device, http, undefined, {} as SkillImprovementService);
+    const list = () => mcp.handle(s.id, { jsonrpc: "2.0", id: 1, method: "tools/list" });
+    const level = (l: SkillImprovementLevel) => registry.setAuthSession({ userId: "u1", accessToken: "t", skillImprovementLevel: l });
+    return { mcp, id: s.id, list, level };
+  }
+
+  it("follows the level at send time, also before the session's agent listed its tools", async () => {
+    const t = setup();
+    // A dormant session: its PR prompt is built before the respawn that lists the tools.
+    expect(t.mcp.skillReflection(t.id)).toBe(`\n\n${skillReflectionBlock("moderate")}`);
+    await t.list();
+    t.level("active");
+    expect(t.mcp.skillReflection(t.id)).toBe(`\n\n${skillReflectionBlock("active")}`);
+    t.level("off");
+    expect(t.mcp.skillReflection(t.id)).toBe("");
+  });
+
+  it("is withheld while the session's agent runs with a tool list that had no improve_skill", async () => {
+    const launchedOff = setup();
+    launchedOff.level("off");
+    await launchedOff.list();
+    launchedOff.level("moderate");
+    expect(launchedOff.mcp.skillReflection(launchedOff.id)).toBe("");
+    // Its relaunch lists the tool, and the step comes back.
+    await launchedOff.list();
+    expect(launchedOff.mcp.skillReflection(launchedOff.id)).toBe(`\n\n${skillReflectionBlock("moderate")}`);
+
+    const native = setup({ native: true });
+    expect(native.mcp.skillReflection(native.id)).toBe("");
+    const chat = setup({ kind: "chat" });
+    expect(chat.mcp.skillReflection(chat.id)).toBe(`\n\n${skillReflectionBlock("moderate")}`);
   });
 });

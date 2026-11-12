@@ -61,6 +61,10 @@ const context: CukContext = {
   boardOmitted: 0,
   places: [{ id: "settings-project", label: "Налаштування проєкту" }],
   notes: [{ text: "перевірити реліз", kind: "check", done: false }],
+  now: "2026-11-06T18:42+02:00",
+  timeZone: "Europe/Kyiv",
+  schedules: [{ ref: "1a2b3c4d", name: "Вітаміни", type: "reminder", when: "щодня о 19:00", next: "2026-11-06T19:00", enabled: true }],
+  skills: ["weekly-report"],
 };
 
 function ask(text: string, over: Partial<CukChatAsk> = {}): CukChatAsk {
@@ -109,6 +113,14 @@ describe("CukChatService", () => {
       expect(s.text).toContain("#1 [ ] перевірити реліз");
     }
     expect(sent[1]?.text).toContain("а що на дошці?");
+    // The schedule verbs ride the contract; the clock, the tasks and the skills ride every turn.
+    expect(sent[0]?.text).toContain('"kind": "schedule.create"');
+    expect(sent[0]?.text).toContain("ТІЛЬКИ аналізує");
+    for (const s of sent) {
+      expect(s.text).toContain("Зараз: 2026-11-06T18:42+02:00 · часовий пояс Europe/Kyiv");
+      expect(s.text).toContain("- 1a2b3c4d · «Вітаміни» · reminder · без проєкту · щодня о 19:00 · 2026-11-06T19:00 · увімкнена");
+      expect(s.text).toContain("- weekly-report");
+    }
   });
 
   it("hands validated actions to the browser and reports a refused one", async () => {

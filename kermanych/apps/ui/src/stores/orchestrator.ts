@@ -19,6 +19,7 @@ import type {
   DevicePlatform,
   QaRunScope,
   TesterSettings,
+  SynergyStepsView,
 } from '@kermanych/core';
 import { connectSocket } from '../lib/socket';
 import { api, type MessageMode } from '../lib/api';
@@ -31,6 +32,7 @@ import { PENDING_TIMEOUT_MS } from './pending';
 import { confirmAction } from '../lib/confirm';
 import { isYourTurnEvent } from '../lib/attention';
 import { bounceDock } from '../lib/dock';
+import { synergyOutgoing, type SynergyContext } from '../lib/synergy-outgoing';
 
 // The persisted selection (see `savedSelection` in the store). Guarded both ways: a missing
 // or unreadable value is simply «nothing selected».
@@ -64,6 +66,13 @@ function writeSelection(sel: { workspace: string | undefined; project: string | 
   }
 }
 
+// How many loaded transcripts stay in memory at once. The api broadcasts every session's output
+// to every window and an entry can carry base64 images of up to 20 MB, so an unbounded map grew
+// with every agent the operator ever opened. A dozen keeps flipping back and forth between the
+// agents in play instant (no reload), while a long day of opening sessions one after another
+// costs at most a dozen logs; one evicted is simply loaded again when it is opened next.
+export const TRANSCRIPT_CAP = 12;
+
 // `action`: one button on the toast (the watchdog's «Зупинити команду»); pressing it runs
 // `run` and dismisses the toast.
 export type Toast = {
@@ -89,7 +98,17 @@ export const useOrchestrator = defineStore('orchestrator', () => {
   // unbound). Cloud-side project metadata and membership live in stores/projects.ts.
   const projects = ref<Project[]>([]);
   const sessions = ref<Session[]>([]);
+  // The transcripts of the sessions the operator OPENED, keyed by session id; `undefined` means
+  // «not loaded» and the page loads the full history (`loadTranscript`). Live output is applied
+  // only to loaded ones, and at most TRANSCRIPT_CAP stay resident (see `evictTranscripts`).
   const transcripts = ref<Record<string, TranscriptEntry[]>>({});
+  // The loaded transcripts' ids, least recently used first (a Set keeps insertion order; a touch
+  // re-inserts). Plain, not reactive: only `transcripts` drives a view.
+  const transcriptRecency = new Set<string>();
+  // How many places show (or follow live) each session's transcript — the open pane of «Агенти»,
+  // «Чат», «Дизайн», «Синергія», the voice conversation. A held transcript is never evicted:
+  // the pane would drop to a skeleton under the operator's eyes. See `holdTranscript`.
+  const transcriptHolds = new Map<string, number>();
   // Messages sent from the composer that the transcript does not hold yet — rendered as the
   // «надсилаю…» bubble (lib/outgoing.ts). Keyed by session id, like `transcripts`.
   const outgoing = ref<Record<string, OutgoingMessage[]>>({});
@@ -114,6 +133,10 @@ export const useOrchestrator = defineStore('orchestrator', () => {
   // preview.md, decision 7): the snapshot carries it and `preview_update` keeps it fresh, so a
   // reloaded window shows what runs. No entry = not started since the api started.
   const previews = ref<Record<string, PreviewState>>({});
+  // «Синергія» (docs/specs/2026-11-06-synergy.md, decision 4): bumped per session on every
+  // `synergy_steps` (a checkpoint or a restore was committed), so the open strip re-reads the
+  // steps. The steps themselves are read on demand, never held here.
+  const synergyStepsRev = ref<Record<string, number>>({});
   const toasts = ref<Toast[]>([]);
   // The omp model catalog for THIS machine (see loadModels). Empty until it lands — and empty
   // for good if omp cannot be read — so every picker built on it degrades to «за замовчуванням».
@@ -149,6 +172,13 @@ export const useOrchestrator = defineStore('orchestrator', () => {
     localStorage.setItem('kermanych.fileManager.visible', fileManagerVisible.value ? '1' : '0');
     localStorage.setItem('kermanych.fileManager.side', fileManagerSide.value);
   }
+  // The tree the operator picked in the dock's worktree selector (composables/useFileSource),
+  // tagged with the selection it was made under: a different project or session drops it, and
+  // the dock follows the selection again.
+  const fileSourcePick = ref<{ scope: string; key: string } | undefined>();
+  function pickFileSource(scope: string, key: string): void {
+    fileSourcePick.value = { scope, key };
+  }
 
   let socket: Socket | undefined;
 
@@ -172,6 +202,12 @@ export const useOrchestrator = defineStore('orchestrator', () => {
       sessions.value = e.sessions;
       // The snapshot is the whole truth on (re)connect: trees of sessions gone meanwhile go too.
       subagents.value = e.subagents;
+      // So do their transcripts and «надсилаю…» bubbles: the `session_removed` that would have
+      // freed them was sent while this window was disconnected.
+      const known = new Set(e.sessions.map((x) => x.id));
+      dropTranscripts(Object.keys(transcripts.value).filter((id) => !known.has(id)));
+      const goneOutgoing = Object.keys(outgoing.value).filter((id) => !known.has(id));
+      if (goneOutgoing.length) outgoing.value = withoutKeys(outgoing.value, goneOutgoing);
       // A restored selection may name a project or agent deleted since (here or by a teammate).
       if (selectedProjectId.value && !e.projects.some((p) => p.id === selectedProjectId.value)) {
         selectedProjectId.value = undefined;
@@ -237,11 +273,7 @@ export const useOrchestrator = defineStore('orchestrator', () => {
       // Free the removed session's transcript too. Left behind, the map kept every
       // deleted/merged session's entries for the window's whole life, and a long-running board
       // only ever added to it.
-      if (transcripts.value[e.sessionId]) {
-        const next = { ...transcripts.value };
-        delete next[e.sessionId];
-        transcripts.value = next;
-      }
+      dropTranscripts([e.sessionId]);
       // Free the removed session's subagent tree too, exactly as the transcript above.
       if (subagents.value[e.sessionId]) {
         const next = { ...subagents.value };
@@ -249,19 +281,27 @@ export const useOrchestrator = defineStore('orchestrator', () => {
         subagents.value = next;
       }
     } else if (e.type === 'transcript_append') {
-      transcripts.value = {
-        ...transcripts.value,
-        [e.sessionId]: [...(transcripts.value[e.sessionId] ?? []), e.entry],
-      };
-      settleOutgoing(e.sessionId);
+      const list = transcripts.value[e.sessionId];
+      if (list) {
+        putTranscript(e.sessionId, [...list, e.entry]);
+        settleOutgoing(e.sessionId);
+      } else {
+        // Never loaded: the api broadcasts every session's output to every window, and keeping
+        // it built a transcript per session that ever spoke — one that, holding only what came
+        // since the window opened, then passed for loaded and hid the history when the session
+        // was opened. Opening it loads the whole log. A bubble the operator sent to it still
+        // settles on its own entry.
+        settleOutgoing(e.sessionId, [e.entry]);
+      }
     } else if (e.type === 'transcript_reset') {
-      transcripts.value = { ...transcripts.value, [e.sessionId]: e.entries };
+      // The whole log, unlike an append: storing it is correct even for a session not opened yet.
+      putTranscript(e.sessionId, e.entries);
       settleOutgoing(e.sessionId);
     } else if (e.type === 'transcript_update') {
       const list = transcripts.value[e.sessionId];
       if (list) {
         const next = applyTranscriptUpdate(list, e);
-        if (next !== list) transcripts.value = { ...transcripts.value, [e.sessionId]: next };
+        if (next !== list) putTranscript(e.sessionId, next);
       }
     } else if (e.type === 'subagents_update') {
       subagents.value = { ...subagents.value, [e.sessionId]: e.subagents };
@@ -269,6 +309,8 @@ export const useOrchestrator = defineStore('orchestrator', () => {
       onMachineAlert(e.alert);
     } else if (e.type === 'preview_update') {
       previews.value = e.state ? { ...previews.value, [e.sessionId]: e.state } : withoutKey(previews.value, e.sessionId);
+    } else if (e.type === 'synergy_steps') {
+      synergyStepsRev.value = { ...synergyStepsRev.value, [e.sessionId]: (synergyStepsRev.value[e.sessionId] ?? 0) + 1 };
     }
   }
 
@@ -276,6 +318,65 @@ export const useOrchestrator = defineStore('orchestrator', () => {
     const next = { ...map };
     delete next[key];
     return next;
+  }
+
+  function withoutKeys<T>(map: Record<string, T>, keys: readonly string[]): Record<string, T> {
+    const next = { ...map };
+    for (const key of keys) delete next[key];
+    return next;
+  }
+
+  // Every write of a loaded transcript goes through here, so recency and the cap follow it.
+  function putTranscript(id: string, entries: TranscriptEntry[]): void {
+    transcripts.value = { ...transcripts.value, [id]: entries };
+    touchTranscript(id);
+    evictTranscripts();
+  }
+
+  // Only loaded ids count: a fresh map for nothing would re-run every view that reads the map.
+  function dropTranscripts(ids: readonly string[]): void {
+    const loaded = ids.filter((id) => transcripts.value[id] !== undefined);
+    if (!loaded.length) return;
+    for (const id of loaded) transcriptRecency.delete(id);
+    transcripts.value = withoutKeys(transcripts.value, loaded);
+  }
+
+  function touchTranscript(id: string): void {
+    transcriptRecency.delete(id);
+    transcriptRecency.add(id);
+  }
+
+  // Past the cap, the least recently used transcripts that nothing holds go. The key is deleted,
+  // so the session reads as «not loaded» and its pane loads the history again when opened.
+  function evictTranscripts(): void {
+    let over = transcriptRecency.size - TRANSCRIPT_CAP;
+    if (over <= 0) return;
+    const evicted: string[] = [];
+    for (const id of transcriptRecency) {
+      if (over === 0) break;
+      if (transcriptHolds.has(id)) continue;
+      evicted.push(id);
+      over--;
+    }
+    dropTranscripts(evicted);
+  }
+
+  // Keep a session's transcript resident while it is on screen; returns the release (safe to
+  // call twice). Ref-counted: two panes on one session hold it independently. Holding and
+  // releasing count as use, so the log just looked at is the last to go.
+  function holdTranscript(id: string): () => void {
+    transcriptHolds.set(id, (transcriptHolds.get(id) ?? 0) + 1);
+    if (transcripts.value[id] !== undefined) touchTranscript(id);
+    let released = false;
+    return () => {
+      if (released) return;
+      released = true;
+      const left = (transcriptHolds.get(id) ?? 1) - 1;
+      if (left > 0) transcriptHolds.set(id, left);
+      else transcriptHolds.delete(id);
+      if (transcripts.value[id] !== undefined) touchTranscript(id);
+      evictTranscripts();
+    };
   }
 
   // A watchdog finding (spec decision 7): an in-app toast, plus a Dock bounce and a native
@@ -396,19 +497,31 @@ export const useOrchestrator = defineStore('orchestrator', () => {
     outgoing.value = next;
   }
 
-  // Drops the bubbles the transcript now shows as real entries.
-  function settleOutgoing(id: string): void {
+  // Drops the bubbles the transcript now shows as real entries. `entries`: what to settle
+  // against when the transcript is not loaded (the one entry just appended).
+  function settleOutgoing(id: string, entries: readonly TranscriptEntry[] = transcripts.value[id] ?? []): void {
     const list = outgoing.value[id];
     if (!list?.length) return;
-    const left = unsettledOutgoing(list, transcripts.value[id] ?? []);
+    const left = unsettledOutgoing(list, entries);
     if (left.length !== list.length) setOutgoing(id, left);
+  }
+
+  // «Синергія», decision 8: the picks tray and the session browser's URL live in
+  // stores/browser.ts, which imports this store; it hands them in here instead (the
+  // `onServerEvent` direction), so the decoration stays in the one send every path uses.
+  let synergyContextOf: ((id: string) => SynergyContext & { clear: () => void }) | undefined;
+  function provideSynergyContext(fn: (id: string) => SynergyContext & { clear: () => void }): void {
+    synergyContextOf = fn;
   }
 
   // The bubble shows at once; the real user entry replaces it when the transcript reports it.
   // A failed send removes the bubble and rethrows, so the caller can hand the text back to the
   // composer. A bubble the transcript never confirms (a native session pastes into its TUI and
-  // records nothing) is dropped after PENDING_TIMEOUT_MS.
+  // records nothing) is dropped after PENDING_TIMEOUT_MS. A Синергія session's message gets the
+  // current page and the picks tray (lib/synergy-outgoing.ts); the tray empties once it went.
   async function sendMessage(id: string, text: string, mode: MessageMode, images?: ImageInput[], opts: { voice?: boolean } = {}) {
+    const ctx = sessions.value.find((x) => x.id === id)?.synergy ? synergyContextOf?.(id) : undefined;
+    if (ctx) ({ text, images } = synergyOutgoing(text, images ?? [], ctx));
     const msg: OutgoingMessage = {
       id: `${Date.now()}-${Math.random().toString(36).slice(2)}`,
       text,
@@ -419,6 +532,7 @@ export const useOrchestrator = defineStore('orchestrator', () => {
     const drop = () => setOutgoing(id, (outgoing.value[id] ?? []).filter((m) => m.id !== msg.id));
     try {
       const res = await api.sendMessage(id, text, mode, images, opts.voice);
+      if (ctx?.picks.length) ctx.clear();
       settleOutgoing(id);
       if (outgoing.value[id]?.some((m) => m.id === msg.id)) setTimeout(drop, PENDING_TIMEOUT_MS);
       return res;
@@ -437,8 +551,8 @@ export const useOrchestrator = defineStore('orchestrator', () => {
   // Fetched once: the catalog only changes when omp is upgraded or a provider credential
   // appears, neither of which happens while the window is open. Failures are swallowed — the
   // list is a convenience over omp's own default, and a «за замовчуванням»-only picker is fine.
-  async function loadModels(force = false) {
-    if (models.value.length && !force) return;
+  async function loadModels() {
+    if (models.value.length) return;
     try {
       models.value = await api.models();
     } catch {
@@ -504,7 +618,7 @@ export const useOrchestrator = defineStore('orchestrator', () => {
 
   async function loadTranscript(id: string) {
     const entries = await api.loadTranscript(id);
-    transcripts.value = { ...transcripts.value, [id]: entries };
+    putTranscript(id, entries);
     settleOutgoing(id);
     return entries;
   }
@@ -663,8 +777,26 @@ export const useOrchestrator = defineStore('orchestrator', () => {
     return api.writeDoc(id, kind);
   }
 
-  function saveDesign(id: string) {
-    return api.saveDesign(id);
+  // «Синергія» (docs/specs/2026-11-06-synergy.md).
+  function createSynergy(body: Parameters<typeof api.createSynergy>[0]) {
+    return api.createSynergy(body);
+  }
+
+  function synergySteps(id: string): Promise<SynergyStepsView> {
+    return api.synergySteps(id);
+  }
+
+  function restoreSynergy(id: string, sha: string): Promise<SynergyStepsView> {
+    return api.restoreSynergy(id, sha);
+  }
+
+  // The row comes back without `synergy`: applied at once, as its `session_update` will be, so
+  // selecting it on «Агенти» right after does not bounce back to «Синергія» (MainLayout's
+  // redirect reads the row).
+  async function implementSynergy(id: string, taskId: string): Promise<Session> {
+    const session = await api.implementSynergy(id, taskId);
+    reduce({ type: 'session_update', session });
+    return session;
   }
 
   // Minimal transient notifications. notify() pushes a toast that auto-dismisses;
@@ -712,6 +844,8 @@ export const useOrchestrator = defineStore('orchestrator', () => {
     fileManagerVisible,
     fileManagerSide,
     toggleFileManager,
+    fileSourcePick,
+    pickFileSource,
     connect,
     onServerEvent,
     selectProject,
@@ -719,6 +853,7 @@ export const useOrchestrator = defineStore('orchestrator', () => {
     createChat,
     promoteChat,
     sendMessage,
+    provideSynergyContext,
     setEffort,
     models,
     loadModels,
@@ -734,10 +869,12 @@ export const useOrchestrator = defineStore('orchestrator', () => {
     putTesterSettings,
     reopenSession,
     loadTranscript,
+    holdTranscript,
     subagents,
     resumeSession,
     runSessionNow,
     previews,
+    synergyStepsRev,
     startPreview,
     stopPreview,
     previewInfo,
@@ -767,7 +904,10 @@ export const useOrchestrator = defineStore('orchestrator', () => {
     commitChanges,
     completeDocs,
     writeDoc,
-    saveDesign,
+    createSynergy,
+    synergySteps,
+    restoreSynergy,
+    implementSynergy,
     archiveSession,
     unarchiveSession,
     renameSession,

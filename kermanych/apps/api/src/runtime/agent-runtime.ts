@@ -1,12 +1,9 @@
 // apps/api/src/runtime/agent-runtime.ts
-import type { RpcEvent, RpcExtensionUIResponse, ImageInput, ThinkingLevel, TodoPhase, AgentRuntimeKind, SubagentSubscriptionLevel, SubagentInfo, SubagentMessagesPage } from "@kermanych/core";
+import type { RpcEvent, RpcExtensionUIResponse, ImageInput, ThinkingLevel, TodoPhase, SubagentSubscriptionLevel, SubagentInfo, SubagentMessagesPage } from "@kermanych/core";
 import { RpcSession } from "../rpc/rpc-session";
-import { ClaudeCodeRuntime } from "./claude-code-runtime";
 import type { AuthFailureCode } from "./auth-failure";
 
-// The state contract a runtime reports through getState(). Moved here from rpc-session.ts
-// because it is backend-neutral: omp fills it from its `get_state` frame, claude from
-// system/init + getContextUsage().
+// The state contract a runtime reports through getState(), filled from omp's `get_state` frame.
 export interface RpcStateData {
   isStreaming: boolean;
   contextUsage?: { percent: number };
@@ -17,46 +14,35 @@ export interface RpcStateData {
   todoPhases?: TodoPhase[];
 }
 
-// Normalized launch inputs. omp-only fields (configPaths/extensionPath = config overlays +
-// trigger package) are ignored by non-omp backends. `tools`/`noTools` restrict the toolset;
-// `fork` seeds a NEW session from a prior one (branch/discussion); `resume` continues an
-// existing session in place (claude reopen); `thinking` is the opening effort.
+// Normalized launch inputs. configPaths/extensionPath = config overlays + trigger package.
+// `tools`/`noTools` restrict the toolset; `fork` seeds a NEW session from a prior one
+// (branch/discussion); `thinking` is the opening effort.
 export interface RuntimeLaunchOpts {
   cwd: string;
   model?: string;
   thinking?: ThinkingLevel;
   fork?: string;
-  resume?: string;
   noTools?: boolean;
   tools?: string[];
-  // Built-in tools the child may not call at all, in the backend's own spelling. claude-only:
-  // a «Посіпака» run gets `AskUserQuestion` here (nobody is there to answer); omp turns its ask
-  // tool off through a `--config` overlay instead (configPaths).
-  disallowedTools?: string[];
-  // Extra text appended to the system prompt (backend-neutral). omp maps it to
-  // `--append-system-prompt`, claude to `systemPrompt.append`. Used to inject the user's
-  // agent communication language directive.
+  // `--no-lsp`: no LSP tools, formatting or diagnostics after an edit («Синергія»'s speed).
+  noLsp?: boolean;
+  // Extra text appended to the system prompt (`--append-system-prompt`). Used to inject the
+  // user's agent communication language directive.
   appendSystemPrompt?: string;
   commandTimeoutMs?: number;
-  // How long a claude child is watched for an immediate death before start() calls the launch
-  // a success. claude-only (omp's start() awaits its own `ready` frame and needs no window);
-  // overridden in tests so they never sleep the real default.
-  startGraceMs?: number;
   // omp `--config` overlays, applied in order (later wins): the project's skill library and the
   // machine resource limits (task.maxConcurrency, bash.autoBackground.enabled). omp-only.
   configPaths?: string[];
-  extensionPath?: string; // omp-only
-  // How much of omp's subagent activity to forward (omp defaults to "off"). Ignored by
-  // non-omp backends. Undefined lets the omp runtime pick its own default ("progress").
-  subagentSubscription?: SubagentSubscriptionLevel; // omp-only
+  extensionPath?: string;
+  // How much of omp's subagent activity to forward (omp defaults to "off"). Undefined lets
+  // the runtime pick its own default ("progress").
+  subagentSubscription?: SubagentSubscriptionLevel;
   // One HTTP MCP server whose tools the child gets beside its built-ins — the Менеджмент
-  // chat's Jira tools (management-mcp.service.ts). claude takes it as `mcpServers`; omp,
-  // which reads MCP only from config files, gets the omp-mcp-bridge.ts extension with the URL
-  // and bearer in its environment. Tool names: `name` is the server's name, so claude shows
-  // them as `mcp__<name>__<tool>` and omp as the bare `<tool>`.
+  // chat's Jira tools (management-mcp.service.ts). omp reads MCP only from config files, so it
+  // gets the omp-mcp-bridge.ts extension with the URL and bearer in its environment; the
+  // tools appear under their bare names.
   mcp?: { name: string; url: string; token: string };
-  // Extra environment merged over process.env for the child. The machine resource profile
-  // sends claude its CLAUDE_CODE_* limits this way (the operator's settings `env` still wins).
+  // Extra environment merged over process.env for the child.
   env?: Record<string, string>;
   // Called synchronously once the agent process exists, with its pid, before it reports
   // ready: the supervisor renices it then, so the MCP servers and workers it starts inherit
@@ -84,8 +70,7 @@ export interface AgentRuntime {
   compact(customInstructions?: string): Promise<void>;
   getAllMessages(): Promise<unknown[]>;
   // omp's subagent surface: the registry snapshot the agent map lists, and one subagent's
-  // transcript read incrementally. Non-omp backends have no subagent registry yet and return
-  // empty (claude linkage is via parent_agent_id, not surfaced this increment).
+  // transcript read incrementally.
   getSubagents(): Promise<SubagentInfo[]>;
   getSubagentMessages(sel: { subagentId?: string; sessionFile?: string; fromByte?: number }): Promise<SubagentMessagesPage>;
   stop(): Promise<void>;
@@ -95,7 +80,6 @@ export interface AgentRuntime {
   onExit(cb: (code: number | null, reason: string, cause?: AuthFailureCode) => void): void;
 }
 
-export function createRuntime(kind: AgentRuntimeKind, opts: RuntimeLaunchOpts): AgentRuntime {
-  if (kind === "omp") return new RpcSession(opts);
-  return new ClaudeCodeRuntime(opts);
+export function createRuntime(opts: RuntimeLaunchOpts): AgentRuntime {
+  return new RpcSession(opts);
 }

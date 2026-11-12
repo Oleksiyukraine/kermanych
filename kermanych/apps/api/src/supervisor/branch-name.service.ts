@@ -1,17 +1,15 @@
 // apps/api/src/supervisor/branch-name.service.ts
 // Names an agent's branch from what its task is about (docs/specs/2026-10-26-branch-name-from-task.md):
-// one tool-less one-shot child on the operator's runtime reads the task's title and description
+// one tool-less one-shot omp child reads the task's title and description
 // and answers with a short English slug. The prefix (`feature`, `fix`, …) stays the card's.
 //
-// Never a reason to refuse a launch: every failure — no runtime, a timeout, a model error, an
+// Never a reason to refuse a launch: every failure — no omp, a timeout, a model error, an
 // answer with no usable slug — is logged and answered with `undefined`, and the supervisor
 // falls back to the transliterated title.
 import { homedir } from "os";
 import { Injectable, Logger } from "@nestjs/common";
-import { slugify, type AgentRuntimeKind } from "@kermanych/core";
+import { slugify } from "@kermanych/core";
 import { runOneShot } from "../runtime/one-shot";
-import { resolveRuntime } from "../runtime/resolve-runtime";
-import { RegistryService } from "../registry/registry.service";
 
 export type BranchContext = { title: string; description?: string };
 
@@ -22,9 +20,8 @@ const TURN_TIMEOUT_MS = 15_000;
 // A long card body says nothing more about its branch than its first screens do.
 const MAX_DESCRIPTION_CHARS = 4_000;
 
-// The cheap model of each runtime. `pi/smol` is omp's configured smol role, whatever provider
-// the operator set it to; claude takes the `haiku` alias.
-const FAST_MODEL: Record<AgentRuntimeKind, string> = { omp: "pi/smol", "claude-code": "haiku" };
+// omp's configured smol role, whatever provider the operator set it to.
+const FAST_MODEL = "pi/smol";
 
 export function branchNamePrompt(ctx: BranchContext): string {
   const description = (ctx.description ?? "").trim().slice(0, MAX_DESCRIPTION_CHARS);
@@ -60,20 +57,16 @@ export function modelBranchSlug(text: string): string | undefined {
 export class BranchNameService {
   private readonly log = new Logger(BranchNameService.name);
 
-  constructor(private registry: RegistryService) {}
-
   async suggest(ctx: BranchContext): Promise<string | undefined> {
     if (!ctx.title.trim() && !ctx.description?.trim()) return undefined;
-    const kind = resolveRuntime(process.env.KERMANYCH_RUNTIME, this.registry.getAuthSession()?.agentRuntime);
     try {
       const { text } = await runOneShot({
-        kind,
         // No tools, so no repository: the home directory keeps the project's rules and
         // instructions out of a prompt that needs none of them.
         cwd: homedir(),
         prompt: branchNamePrompt(ctx),
         noTools: true,
-        model: FAST_MODEL[kind],
+        model: FAST_MODEL,
         startedAt: Date.now(),
         startTimeoutMs: START_TIMEOUT_MS,
         turnTimeoutMs: TURN_TIMEOUT_MS,

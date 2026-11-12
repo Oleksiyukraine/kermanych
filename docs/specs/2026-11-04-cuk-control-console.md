@@ -1,5 +1,7 @@
 # ЦУК: the avatar opens Kermanych's control console
 
+> Superseded in part by docs/specs/2026-11-05-remove-managed-claude-code.md: ЦУК runs on omp and launches agents with the provider's default mode, not a remembered one.
+
 - **Branch:** `feature/redesign-avatar-control-console`
 - **Scope:** `apps/ui` (the launcher window, a new ЦУК store and views, the shared composer, the
   notepad skin of «Список дій», settings labels, i18n `uk` / `en`), `apps/api` (a ЦУК chat
@@ -101,10 +103,15 @@ assistant stays available to managers in the same window, folded.
    things off).
 7. **Window: large and fixed.** `min(1200px, 92vw)` × `min(780px, 84vh)`, centred. Left column:
    the accordion and the composer. Right column: the notepad, ~300 px, full height from the
-   accordion's top to the composer's foot. An empty ЦУК does not collapse: a greeting and 3–4
-   clickable examples («Хто чекає на мою відповідь?», «Запусти агента в цьому проєкті…»,
-   «Відкрий налаштування проєкту») fill the transcript area. Below ~900 px of window width the
-   notepad hides behind a 📝 button in the window head and slides over ЦУК.
+   accordion's top to the composer's foot. An empty ЦУК does not collapse: a greeting, a line on
+   what waits for «Виконати», and «Шаблони» fill the transcript area — clickable templates in five
+   groups (Стан, Агенти й дошка, Навігація, Розклад, Записничок). A complete question («Хто чекає
+   на мою відповідь?», «Відкрий налаштування проєкту») is sent on click; a template with a blank,
+   its chip ending in «…» and drawn dashed («Запусти агента в цьому проєкті: …», «Нагадай через
+   20 хвилин …»), only fills the composer for the operator to finish. (Amended 2026-11-08,
+   `feature/add-more-template-examples`: the first build had three examples, all sent on click.)
+   Below ~900 px of window width the notepad hides behind a 📝 button in the window head and
+   slides over ЦУК.
    Rejected: height growing with content (the window jumps with every answer); near-full-screen.
 8. **The notepad looks like a small ringed notebook built from theme tokens.** Page on
    `--k-surface` with faint ruled lines (`--k-line`) the rows sit on, a thin `--k-accent` margin

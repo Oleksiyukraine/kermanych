@@ -1,3 +1,7 @@
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import Database from "better-sqlite3";
 import { expect, test } from "vitest";
 import { RegistryService } from "../src/registry/registry.service";
 
@@ -42,11 +46,10 @@ test("clearAuthSession removes the cached token", () => {
   expect(r.getAuthSession()).toBeUndefined();
 });
 
-test("auth_session round-trips agentRuntime and agentLanguage", () => {
+test("auth_session round-trips agentLanguage", () => {
   const r = new RegistryService(":memory:");
-  r.setAuthSession({ userId: "u-1", accessToken: "jwt-1", agentRuntime: "claude-code", agentLanguage: "uk" });
+  r.setAuthSession({ userId: "u-1", accessToken: "jwt-1", agentLanguage: "uk" });
   const cur = r.getAuthSession();
-  expect(cur?.agentRuntime).toBe("claude-code");
   expect(cur?.agentLanguage).toBe("uk");
 
   // A garbage stored value degrades to undefined rather than surfacing to the launch path.
@@ -54,12 +57,35 @@ test("auth_session round-trips agentRuntime and agentLanguage", () => {
   expect(r.getAuthSession()?.agentLanguage).toBeUndefined();
 });
 
-test("auth_session round-trips the skill self-improvement switch; never set stays unknown", () => {
+test("auth_session round-trips the skill improvement level; never set counts as the default", () => {
   const r = new RegistryService(":memory:");
   r.setAuthSession({ userId: "u-1", accessToken: "jwt-1" });
-  expect(r.getAuthSession()?.skillImprovement).toBeUndefined();
-  r.setAuthSession({ userId: "u-1", accessToken: "jwt-1", skillImprovement: false });
-  expect(r.getAuthSession()?.skillImprovement).toBe(false);
-  r.setAuthSession({ userId: "u-1", accessToken: "jwt-1", skillImprovement: true });
-  expect(r.getAuthSession()?.skillImprovement).toBe(true);
+  expect(r.getAuthSession()?.skillImprovementLevel).toBeUndefined();
+  expect(r.skillImprovementLevel()).toBe("moderate");
+  r.setAuthSession({ userId: "u-1", accessToken: "jwt-1", skillImprovementLevel: "off" });
+  expect(r.skillImprovementLevel()).toBe("off");
+  r.setAuthSession({ userId: "u-1", accessToken: "jwt-1", skillImprovementLevel: "active" });
+  expect(r.skillImprovementLevel()).toBe("active");
+});
+
+test("a cached «off» of the old on/off switch carries over to the level, and the old column goes", () => {
+  const dir = mkdtempSync(join(tmpdir(), "kermanych-auth-level-"));
+  const file = join(dir, "k.sqlite");
+  try {
+    new RegistryService(file).setAuthSession({ userId: "u-1", accessToken: "jwt-1" });
+    // The database as the previous version left it: the switch column, turned off.
+    const old = new Database(file);
+    old.exec(`ALTER TABLE auth_session ADD COLUMN skill_improvement INTEGER`);
+    old.exec(`UPDATE auth_session SET skill_improvement = 0, skill_improvement_level = NULL`);
+    old.close();
+
+    expect(new RegistryService(file).skillImprovementLevel()).toBe("off");
+    const db = new Database(file);
+    const cols = (db.prepare(`PRAGMA table_info(auth_session)`).all() as { name: string }[]).map((c) => c.name);
+    db.close();
+    expect(cols).toContain("skill_improvement_level");
+    expect(cols).not.toContain("skill_improvement");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });

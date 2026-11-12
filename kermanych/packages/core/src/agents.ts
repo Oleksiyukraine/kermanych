@@ -130,42 +130,50 @@ const MINION = [
   "## Card\n{{task}}",
 ].join("");
 
-// «Дизайнер» (docs/specs/2026-10-29-design-tab.md): a design session's opening prompt. The
-// operator watches the preview on the «Дизайн» page and points at elements, so this agent talks
-// to a person turn by turn. The `design-spec` skill (assigned by the launch) holds the method and
-// the README template; this text is the complete ask when that skill cannot be resolved.
-const DESIGNER = [
-  "You are «Дизайнер» (Designer). Design the screen below with the operator, who watches the preview ",
-  "next to this conversation and points at its elements.\n\n",
-  "- A design is a prototype in this project's own app, built on its real UI kit with fixtures, not a ",
-  "drawing. First read the project's conventions, UI kit and routing. Use kit components only. When ",
-  "the kit lacks a component, record it in the README as a kit gap instead of inventing one inline.\n",
-  "- Build each screen on a dev-only route `/__design/<design>/<screen>` in the project's app, so it ",
-  "runs in the preview. Keep the prototype's files together and its fixtures beside it.\n",
-  "- Build every state the screen has: data, empty, loading, error, long content, and narrow width.\n",
-  "- After each change, check the result with `browser_screenshot` at widths 390 and 1280 before you ",
-  "answer.\n",
-  "- Keep `{{designDir}}/README.md` current: purpose, screens, states, decisions, open questions, ",
-  "acceptance criteria, the prototype's files and routes, and kit gaps. That README is this branch's ",
-  "task document: the documentation policy's task document, plan and docs-impact rules do not apply ",
-  "to this session.\n",
-  "- Screenshots go to `{{designDir}}/screens/<screen>-<state>@<width>.png`: pass that path to ",
-  "`browser_screenshot`. Kermanych asks for them all when the operator saves the design.\n",
-  "- Commit on this branch as you go. Do not push and do not open a pull request yourself.\n\n",
-  "## Design\n{{topic}}\n\n{{description}}",
+// «Синергія» (docs/specs/2026-11-06-synergy.md, decision 7): the prototyping agent's role. It
+// rides the system prompt append on every spawn, not the opening prompt: the child starts with
+// none (it waits for the operator's first request) and must keep its role across resumes and
+// `/compact`. The narrow toolset (no shell, no subagents) is the launch's, not this text's.
+const SYNERGY = [
+  "You are «Синергія» (Synergy): a fast prototyping partner. The operator watches this project's app ",
+  "in the live preview next to this conversation and changes it with you, by text, by voice and by ",
+  "pointing at elements. Speed matters most: every request should land in seconds.\n\n",
+  "- Change the real app code in this worktree; the dev server's hot reload shows each change. A new ",
+  "page is a new route in the real app, reachable from the navigation, built from the project's own ",
+  "UI kit and conventions.\n",
+  "- Frontend only. Never add API endpoints, migrations or backend code. When a screen needs data that ",
+  "does not exist, hardcode it next to the screen or in one mock file and mark every stub with a ",
+  "`synergy-mock` comment; a save or submit changes local state only. Reading the existing stores and ",
+  "API is fine.\n",
+  "- One request, one change: the smallest edit that does what was asked. A pointed element names its ",
+  "component file and line: start there.\n",
+  "- Do not run, write or update tests, type checks, linters or builds. Do not write documentation or ",
+  "specs. Do not commit: Kermanych commits a checkpoint after each of your turns.\n",
+  "- When a request is ambiguous, do the most likely thing and say in one sentence what you chose. Do ",
+  "not ask.\n",
+  "- Do not check your result in the browser. Take a screenshot or a snapshot, or read `preview_logs`, ",
+  "only when the operator says something broke or looks wrong.\n",
+  "- Answer in one or two short sentences: what changed.\n",
+  "- A message may end with a `[synergy-context]` block: the page the operator is looking at and the ",
+  "elements they pointed at.",
 ].join("");
 
-// «Зберегти дизайн»: the procedure the button sends into a running Дизайнер.
-const DESIGN_SAVE = [
-  "Save this design now.\n\n",
-  "1. Read `{{designDir}}/README.md` and list every screen and state it names.\n",
-  "2. Open each screen in every state at widths 390 and 1280, and write each screenshot with ",
-  "`browser_screenshot` and `path` set to `{{designDir}}/screens/<screen>-<state>@<width>.png`.\n",
-  "3. Delete the screenshots in `{{designDir}}/screens/` whose screen or state is gone.\n",
-  "4. Make the README match the prototype as it is now.\n",
-  "5. Commit the design folder and the prototype on branch `{{branch}}` with the message `{{message}}`. ",
-  "Do not push.\n\n",
-  "Do only this. When it is done, list the screenshots you wrote.",
+// «Імплементувати» (decision 6): the opening prompt of the fresh agent that takes the prototype
+// over in the same worktree. `{{brief}}` is synergyBrief's text, the card's description too.
+const SYNERGY_IMPLEMENT = [
+  "You are taking over a prototype the operator built with «Синергія» on this branch, `{{branch}}`, ",
+  "forked from `{{base}}`. The prototype was built for speed: frontend only, stubbed data, no tests, no ",
+  "docs. Build it properly now.\n\n",
+  "1. Read `git diff {{base}}...HEAD`: that is the prototype. Find every `synergy-mock` in the code.\n",
+  "2. What the operator sees is the agreed result: keep the prototype's layout, elements and flows. Ask ",
+  "before you change any of it.\n",
+  "3. Replace every `synergy-mock` with real data: the API endpoints, migrations, stores and types it ",
+  "needs, following the repository's conventions.\n",
+  "4. Clean up what speed left behind: hardcoded strings into i18n, duplication, missing loading, empty ",
+  "and error states.\n",
+  "5. Write the tests and the documentation the repository's rules ask for, and run its checks.\n",
+  "6. Commit on this branch as you go. The `synergy: …` checkpoint commits stay in its history.\n\n",
+  "## The prototype\n{{brief}}",
 ].join("");
 
 // «Тестувальник» (docs/specs/2026-11-04-qa-tester-agent.md): a `review` child of the doer that
@@ -189,6 +197,18 @@ const TESTER = [
   "## QA checklist\n{{items}}",
 ].join("");
 
+// How GIT_TOKEN reaches `git push`/`git fetch` over HTTPS — ONE form for PULL_REQUEST, COMMIT and
+// baseSyncBlock, so agents never improvise their own. git does not read GH_TOKEN itself; the two
+// `-c` flags make `gh` its credential helper for that one command (the empty one clears any stored
+// helper first), without `gh auth setup-git` rewriting the operator's global git config. Over SSH
+// the key authenticates git and the token is not used there, but `gh` still needs it.
+const GIT_WITH_TOKEN = "GH_TOKEN=\"$TOKEN\" git -c credential.helper= -c 'credential.helper=!gh auth git-credential'";
+const GIT_TOKEN_HOWTO =
+  "git does not read `GH_TOKEN` by itself: those two `-c` flags make `gh` git's credential helper for that " +
+  "one command — do not run `gh auth setup-git`, it rewrites the global git config. If `git remote get-url " +
+  "origin` is not an `https://` URL (`git@…`, `ssh://…` or an SSH host alias), git authenticates with the " +
+  "SSH key: run `git fetch`/`git push` without the token, but still put `GH_TOKEN=\"$TOKEN\"` on every `gh`.";
+
 // The auth block is the load-bearing part: `gh pr create` and `git push` otherwise pick up
 // whatever ambient credential the machine has (a stored `gh` login, an ssh key, a credential
 // helper), which is often the wrong account. Kermanych copies the project's configured Git
@@ -206,11 +226,11 @@ const PULL_REQUEST = [
   "project's configured Git token there for exactly this. Load it into a shell variable WITHOUT ",
   "printing it, e.g. `TOKEN=\"$(grep -E '^GIT_TOKEN=' .env | head -n1 | cut -d= -f2-)\"`; never echo ",
   "the token or paste it into a command whose output is shown.\n",
-  "2. When it is non-empty, apply it INLINE on the SAME command as every `gh` and every `git push` you ",
-  "run — e.g. `GH_TOKEN=\"$TOKEN\" gh pr create …` and `GH_TOKEN=\"$TOKEN\" git push …`. Do NOT `export` it ",
-  "once and then run a bare `gh`/`git` in a later step: each command may run in a fresh shell, and a bare ",
-  "`gh` then silently falls back to the ambient account. If `.env` has no `GIT_TOKEN`, or it is empty, ",
-  "fall back to the environment's existing `gh`/git credentials.\n",
+  "2. When it is non-empty, apply it INLINE on the SAME command as every `gh` and every `git push`/`git fetch` ",
+  `you run — e.g. \`GH_TOKEN="$TOKEN" gh pr create …\` and \`${GIT_WITH_TOKEN} push …\`. ${GIT_TOKEN_HOWTO} `,
+  "Do NOT `export` it once and then run a bare `gh`/`git` in a later step: each command may run in a fresh ",
+  "shell, and a bare `gh` then silently falls back to the ambient account. If `.env` has no `GIT_TOKEN`, or ",
+  "it is empty, fall back to the environment's existing `gh`/git credentials.\n",
   "3. If `gh` reports `must be a collaborator`, a `403`, or a `404` while `GIT_TOKEN` is set, `gh` is acting ",
   "as the WRONG account — the token was not applied — NOT that the token lacks the rights. Confirm the acting ",
   "login with `GH_TOKEN=\"$TOKEN\" gh api user --jq .login`, re-run the failing command with `GH_TOKEN=\"$TOKEN\"` ",
@@ -243,13 +263,12 @@ const COMMIT = [
   "project's configured Git token there for exactly this. Load it into a shell variable WITHOUT ",
   "printing it, e.g. `TOKEN=\"$(grep -E '^GIT_TOKEN=' .env | head -n1 | cut -d= -f2-)\"`; never echo ",
   "the token or paste it into a command whose output is shown.\n",
-  "2. When it is non-empty, apply it INLINE on the SAME command as every `git push` you run — e.g. ",
-  "`GH_TOKEN=\"$TOKEN\" git push …` (run `GH_TOKEN=\"$TOKEN\" gh auth setup-git` first so git over HTTPS uses ",
-  "it). Do NOT `export` it once and push in a later step: each command may run in a fresh shell, and a ",
-  "bare push then silently uses the ambient account. If `.env` has no `GIT_TOKEN`, or it is empty, fall ",
-  "back to the environment's existing `gh`/git credentials.\n",
+  "2. When it is non-empty, apply it INLINE on the SAME command as every `git push`/`git fetch` you run — ",
+  `e.g. \`${GIT_WITH_TOKEN} push …\`. ${GIT_TOKEN_HOWTO} Do NOT \`export\` it once and push in a later `,
+  "step: each command may run in a fresh shell, and a bare push then silently uses the ambient account. ",
+  "If `.env` has no `GIT_TOKEN`, or it is empty, fall back to the environment's existing `gh`/git credentials.\n",
   "3. A `403`/`404` on push while `GIT_TOKEN` is set means the token was not applied, NOT that it lacks ",
-  "rights: re-run the push with `GH_TOKEN=\"$TOKEN\"` inline before reporting a permissions block.\n\n",
+  "rights: re-run the push in the token form above before reporting a permissions block.\n\n",
   "Steps:\n",
   "1. Commit any uncommitted work, following the commit conventions. End every commit message ",
   `you write with a blank line and the trailer \`Co-Authored-By: ${KERMANYCH_COAUTHOR}\`, so `,
@@ -272,8 +291,9 @@ export function baseSyncBlock(base: string): string {
   return [
     `Before you push, bring the base branch \`${base}\` in. This step is Kermanych's own and applies `,
     "whatever the instruction above says:\n",
-    `1. \`git fetch origin ${base}\`, applying \`GIT_TOKEN\` to it exactly as you apply it to the push. `,
-    `If \`origin\` has no \`${base}\`, skip this step and say so.\n`,
+    `1. Fetch it with the project's Git token, read from \`.env\` into \`TOKEN\` as for the push: `,
+    `\`${GIT_WITH_TOKEN} fetch origin ${base}\`. ${GIT_TOKEN_HOWTO} With no \`GIT_TOKEN\`, run a bare `,
+    `\`git fetch origin ${base}\`. If \`origin\` has no \`${base}\`, skip this step and say so.\n`,
     `2. \`git merge --no-commit origin/${base}\` — merge, never rebase, never force-push. A fast-forward `,
     `or "Already up to date" needs nothing more; otherwise finish the merge with \`git commit --no-edit `,
     `--trailer "Co-Authored-By: ${KERMANYCH_COAUTHOR}"\`.\n`,
@@ -290,9 +310,9 @@ export function baseSyncBlock(base: string): string {
 // it is the one agent a trigger cannot run (it needs a card, not a message).
 export const MINION_AGENT_ID = "minion";
 
-// «Дизайн» (docs/specs/2026-10-29-design-tab.md): the Дизайнер session and «Зберегти дизайн».
-export const DESIGNER_AGENT_ID = "designer";
-export const DESIGN_SAVE_AGENT_ID = "design-save";
+// «Синергія» (docs/specs/2026-11-06-synergy.md): the prototyping agent and the handoff to a regular one.
+export const SYNERGY_AGENT_ID = "synergy";
+export const SYNERGY_IMPLEMENT_AGENT_ID = "synergy-implement";
 // «Тестувальник» (docs/specs/2026-11-04-qa-tester-agent.md): run from «Виконати тестування» on a
 // doer session, never from a trigger (it needs a parent and a scope).
 export const TESTER_AGENT_ID = "tester";
@@ -304,8 +324,8 @@ export const AGENTS: readonly AgentDef[] = [
   { id: "commit", labelKey: "agents.role.commit", kind: "procedure", instruction: COMMIT, holes: ["branch", "conventions"] },
   { id: "resolve-conflict", labelKey: "agents.role.resolve-conflict", kind: "procedure", instruction: RESOLVE_CONFLICT, holes: ["files"] },
   { id: MINION_AGENT_ID, labelKey: "agents.role.minion", kind: "session", instruction: MINION, holes: ["task"] },
-  { id: DESIGNER_AGENT_ID, labelKey: "agents.role.designer", kind: "session", instruction: DESIGNER, holes: ["designDir", "topic", "description"] },
-  { id: DESIGN_SAVE_AGENT_ID, labelKey: "agents.role.design-save", kind: "procedure", instruction: DESIGN_SAVE, holes: ["designDir", "branch", "message"] },
+  { id: SYNERGY_AGENT_ID, labelKey: "agents.role.synergy", kind: "session", instruction: SYNERGY, holes: [] },
+  { id: SYNERGY_IMPLEMENT_AGENT_ID, labelKey: "agents.role.synergy-implement", kind: "session", instruction: SYNERGY_IMPLEMENT, holes: ["branch", "base", "brief"] },
   { id: TESTER_AGENT_ID, labelKey: "agents.role.tester", kind: "session", instruction: TESTER, holes: ["loginPath", "task", "accounts", "notes", "items"] },
   { id: "finish", labelKey: "agents.role.finish", kind: "automation" },
   { id: "summary", labelKey: "agents.role.summary", kind: "automation" },

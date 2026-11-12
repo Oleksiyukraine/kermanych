@@ -33,8 +33,8 @@ test('only instruction-bearing agents can be assigned to', () => {
     'commit',
     'resolve-conflict',
     'minion',
-    'designer',
-    'design-save',
+    'synergy',
+    'synergy-implement',
     'tester',
   ]);
 });

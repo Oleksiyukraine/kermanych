@@ -1,5 +1,5 @@
 import { Injectable, Optional } from "@nestjs/common";
-import { cloudEnv, createCloudClient, getMyAgentRuntime, getMyAgentLanguage, getMySkillImprovement } from "@kermanych/cloud";
+import { cloudEnv, createCloudClient, getMyAgentLanguage, getMySkillImprovementLevel } from "@kermanych/cloud";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { RegistryService, type AuthSessionRow } from "../registry/registry.service";
 
@@ -96,6 +96,10 @@ export class AuthService {
       };
     }
 
+    // A refreshed token of the same user keeps the cached level until the read below replaces it,
+    // so an «off» does not lapse into the default while the cloud is unreachable.
+    const kept = this.registry.getAuthSession();
+    if (kept?.userId === row.userId && kept.skillImprovementLevel) row = { ...row, skillImprovementLevel: kept.skillImprovementLevel };
     this.registry.setAuthSession(row);
     const prior = this.cached;
     // Re-presenting the cached token (a retried handoff) is no rotation: keep what it replaced.
@@ -109,19 +113,9 @@ export class AuthService {
     // the persisted row and a working cloudClient().
     for (const cb of this.tokenListeners) cb({ userId: row.userId, accessToken });
 
-    // Bring the user's cloud runtime preference into the local cache so the first launch
-    // on a new machine respects it without a network read on the hot path. Best-effort:
-    // a failure leaves the cache as-is (runtimeFor falls back to omp), never blocks sign-in.
-    try {
-      const runtime = await getMyAgentRuntime(this.cloudClient());
-      if (runtime) {
-        const cur = this.registry.getAuthSession();
-        if (cur) this.registry.setAuthSession({ ...cur, agentRuntime: runtime });
-      }
-    } catch { /* offline or profile unreadable — cache stays, omp default applies */ }
-
-    // Same best-effort hydration for the communication language, so the first launch on a new
-    // machine speaks the chosen language without a network read on the hot path.
+    // Bring the user's communication language into the local cache so the first launch on a
+    // new machine speaks it without a network read on the hot path. Best-effort: a failure
+    // leaves the cache as-is, never blocks sign-in.
     try {
       const language = await getMyAgentLanguage(this.cloudClient());
       if (language) {
@@ -130,15 +124,15 @@ export class AuthService {
       }
     } catch { /* offline or profile unreadable — cache stays, no directive is injected */ }
 
-    // And for the skill self-improvement switch (docs/specs/2026-11-04-skill-self-improvement.md),
-    // so the improve_skill gate reads it locally.
+    // And for the skill improvement level (docs/specs/2026-11-06-skill-improvement-reflection.md),
+    // so the improve_skill gate and the reflection step read it locally.
     try {
-      const on = await getMySkillImprovement(this.cloudClient());
-      if (on !== null) {
+      const level = await getMySkillImprovementLevel(this.cloudClient());
+      if (level !== null) {
         const cur = this.registry.getAuthSession();
-        if (cur) this.registry.setAuthSession({ ...cur, skillImprovement: on });
+        if (cur) this.registry.setAuthSession({ ...cur, skillImprovementLevel: level });
       }
-    } catch { /* offline or profile unreadable — cache stays; unknown counts as on */ }
+    } catch { /* offline or profile unreadable — cache stays; unknown counts as the default */ }
 
     return { userId: row.userId, githubUsername: row.githubUsername };
   }

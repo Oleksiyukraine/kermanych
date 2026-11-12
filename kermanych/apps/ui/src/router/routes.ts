@@ -55,7 +55,7 @@ const routes: RouteRecordRaw[] = [
       { path: 'board', name: 'board', component: () => import('pages/BoardPage.vue'), meta: { public: false } },
       { path: 'kit', name: 'kit', component: () => import('pages/KitGalleryPage.vue'), meta: { public: false } },
       { path: 'chat', name: 'chat', component: () => import('pages/ChatPage.vue'), meta: { public: false } },
-      { path: 'design', name: 'design', component: () => import('pages/DesignPage.vue'), meta: { public: false } },
+      { path: 'synergy', name: 'synergy', component: () => import('pages/SynergyPage.vue'), meta: { public: false } },
       // Налаштування is ONE record with the category in a param, not a nested
       // shell like Менеджмент below: all eleven categories share a single
       // component, because the save bar and the draft they queue into are one
@@ -81,6 +81,9 @@ const routes: RouteRecordRaw[] = [
         component: () => import('pages/AiTeamPage.vue'),
         meta: { public: false },
       },
+      // «Аналітика» (docs/specs/2026-11-07-developer-analytics.md, decision 2): one
+      // scrollable page with no rail, so one record and no params.
+      { path: 'analytics', name: 'analytics', component: () => import('pages/AnalyticsPage.vue'), meta: { public: false } },
       // Менеджмент is a nested shell: ManagementPage owns the section strip and
       // the «pick a project» gate, one child route per section. The named parent
       // is what the top nav matches on (route.matched in MainLayout), and the

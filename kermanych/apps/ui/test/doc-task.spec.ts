@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { canTaskFromDoc, docTaskScreensDir, docTaskTargets, docTaskTitle, isDesignReadme } from '../src/lib/doc-task';
+import { canTaskFromDoc, docTaskDeepAnalysis, docTaskFraming, docTaskScreensDir, docTaskTargets, docTaskTitle, isDesignReadme } from '../src/lib/doc-task';
 
 const README = 'docs/design/2026-10-29-orders-list/README.md';
 
@@ -51,4 +51,21 @@ describe('docTaskScreensDir', () => {
   it('is the folder screens/ for a design README', () =>
     expect(docTaskScreensDir(README)).toBe('docs/design/2026-10-29-orders-list/screens'));
   it('is undefined for any other document', () => expect(docTaskScreensDir('docs/handoffs/x.md')).toBeUndefined());
+});
+
+// What the other side is told binds it, and how it starts
+// (docs/specs/2026-11-07-cross-agent-request-handoff-framing.md, decisions 3–5).
+describe('docTaskFraming and docTaskDeepAnalysis', () => {
+  it('frames an API request and offers deep analysis ticked', () => {
+    expect(docTaskFraming('docs/api-requests/2026-10-01-orders.md')).toBe('apiRequest');
+    expect(docTaskDeepAnalysis('docs/api-requests/2026-10-01-orders.md')).toBe(true);
+  });
+  it('frames a handoff and offers deep analysis clear', () => {
+    expect(docTaskFraming('docs/handoffs/2026-10-01-orders.md')).toBe('handoff');
+    expect(docTaskDeepAnalysis('docs/handoffs/2026-10-01-orders.md')).toBe(false);
+  });
+  it('leaves a design README as it is: no framing, no checkbox', () => {
+    expect(docTaskFraming(README)).toBeUndefined();
+    expect(docTaskDeepAnalysis(README)).toBeUndefined();
+  });
 });

@@ -1,8 +1,8 @@
 // apps/api/src/browser/browser-mcp.service.ts
 // The session browser's agent side (docs/specs/2026-10-05-embedded-browser.md): the tools that
 // drive ONE session's embedded browser view, spoken as MCP over the local api — the same
-// four-method Streamable HTTP subset as management-mcp.service.ts, so claude consumes it
-// natively (SDK `mcpServers`, native `--mcp-config`) and omp through runtime/omp-mcp-bridge.ts.
+// four-method Streamable HTTP subset as management-mcp.service.ts, so native claude consumes it
+// natively (`--mcp-config`) and omp through runtime/omp-mcp-bridge.ts.
 //
 // The bearer is per SESSION, not per child: a session's managed child and its native harness
 // are relaunched freely (resume, reap, restart), and each relaunch must keep reaching the same
@@ -22,7 +22,9 @@
 // no host either, since the api drives the device. A back-end project has neither browser nor
 // preview (decision 9): the gate is here, in tools/list and in every call, not in bindingFor.
 // A managed agent or chat session also gets `improve_skill` (skills/improve-skill-tool.ts,
-// docs/specs/2026-11-04-skill-self-improvement.md) while the operator's switch is not off.
+// docs/specs/2026-11-04-skill-self-improvement.md) while the operator's level is not `off`; such a
+// session's PR and commit turns end with the reflection step (`skillReflection`,
+// docs/specs/2026-11-06-skill-improvement-reflection.md).
 import { Inject, Injectable, Optional } from "@nestjs/common";
 import { HttpAdapterHost } from "@nestjs/core";
 import { randomBytes } from "node:crypto";
@@ -61,6 +63,7 @@ import {
   platformHasBrowser,
   platformHasDevice,
   platformHasPreview,
+  skillReflectionBlock,
   type DeviceButton,
   type DeviceElement,
   type DeviceRect,
@@ -213,7 +216,7 @@ const TOOLS = [
     description:
       `${SHARED} A PNG of the visible viewport, the whole page (\`full_page\`) or one element (\`ref\`). Use it to check layout and visuals; ` +
       "to find elements or read text, browser_snapshot is cheaper and gives refs. With `path` the PNG is saved into this session's worktree " +
-      "instead of being shown to you — use it to keep a screenshot as a file, e.g. a design's screens as `<designDir>/screens/<screen>-<state>@<width>.png`.",
+      "instead of being shown to you — use it to keep a screenshot as a file, e.g. a design's screens as `docs/design/<date>-<topic>/screens/<screen>-<state>@<width>.png`.",
     inputSchema: {
       type: "object",
       properties: {
@@ -753,6 +756,11 @@ export class BrowserMcpService {
   // by tester session id: `starting` once its first preview_start asked for one, `done` once the
   // doer's preview ran after it. Until then the run's device tools are refused.
   private cleanStarts = new Map<string, "starting" | "done">();
+  // Sessions whose latest tools/list went out WITHOUT improve_skill (launched while the level was
+  // `off`): their running agent cannot call the tool, so their turns get no reflection step until
+  // a relaunch lists it. Not the reverse («handed»): a dormant session's PR prompt is built before
+  // the respawn that lists its tools.
+  private improveWithheld = new Set<string>();
 
   constructor(
     private registry: RegistryService,
@@ -789,6 +797,26 @@ export class BrowserMcpService {
     if (mark !== "starting" || this.preview.state(ownerId)?.phase !== "running") return false;
     this.cleanStarts.set(testerId, "done");
     return true;
+  }
+
+  // Only a managed agent or chat session improves skills: a native TUI or a review fork never read
+  // the library's skills through Kermanych.
+  private improvesSkills(session: Session | undefined): boolean {
+    // A «Синергія» child runs no skills (docs/specs/2026-11-06-synergy.md, decision 7).
+    return !!this.improvements && !!session && !session.native && !session.synergy && (session.kind === "agent" || session.kind === "chat") && !isTesterSession(session);
+  }
+
+  /**
+   * The reflection step Kermanych appends to its own turns («Створити ПР», «Закоміти», «Зберегти
+   * дизайн»), led by a blank line, or "" when the session does not improve skills, the level is
+   * `off`, or its running agent was listed no improve_skill. The level is read at send time, so a
+   * change applies to running sessions too.
+   */
+  skillReflection(sessionId: string): string {
+    const level = this.registry.skillImprovementLevel();
+    if (level === "off" || this.improveWithheld.has(sessionId)) return "";
+    if (!this.improvesSkills(this.registry.listSessions().find((s) => s.id === sessionId))) return "";
+    return `\n\n${skillReflectionBlock(level)}`;
   }
 
   tokenFor(sessionId: string): string {
@@ -861,20 +889,22 @@ export class BrowserMcpService {
         // are the doer's (docs/specs/2026-11-04-tester-mobile-device.md, decisions 1 and 7).
         const tester = isTesterSession(session);
         const device = platformHasDevice(platform);
-        // Only a managed agent or chat session improves skills: a native TUI or a review fork
-        // never read the library's skills through Kermanych, and the switch off means off.
-        const improve =
-          !!this.improvements && !!session && !session.native && (agent || session.kind === "chat") && !tester && authRow?.skillImprovement !== false;
+        const level = this.registry.skillImprovementLevel();
+        const improve = level !== "off" && this.improvesSkills(session) ? level : undefined;
+        if (improve) this.improveWithheld.delete(sessionId);
+        else this.improveWithheld.add(sessionId);
         const tools = [
           ...(browserHost() && platformHasBrowser(platform) ? TOOLS : []),
           ...(browserHost() && platformHasBrowser(platform) && tester ? [CREDENTIAL_TOOL_DEF] : []),
           ...((agent || tester) && platformHasPreview(platform) ? previewTools(device, tester) : []),
           ...((agent || tester) && device ? DEVICE_TOOLS : []),
           ...(tester && device ? [DEVICE_CREDENTIAL_TOOL_DEF] : []),
-          ...findings,
+          // A «Синергія» prototype gets the browser and the preview only (decision 7): findings
+          // belong to the agent that implements it.
+          ...(session?.synergy ? [] : findings),
           ...(session?.minion === true ? [OUTCOME_TOOL] : []),
           ...(tester ? [QA_RESULT_TOOL_DEF, QA_CHECKLIST_TOOL_DEF] : []),
-          ...(improve ? [improveSkillTool(language)] : []),
+          ...(improve ? [improveSkillTool(language, improve)] : []),
         ];
         return result({ tools });
       }

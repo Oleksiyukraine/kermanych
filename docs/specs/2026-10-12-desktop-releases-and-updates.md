@@ -113,7 +113,9 @@ that tell them what changed.
      (`autoDownload: true`).
    - When an update is downloaded, a non-blocking banner in the main layout shows
      «Version X is ready · What's new · Restart».
-   - A normal quit installs it (`autoInstallOnAppQuit: true`).
+   - A normal quit installs it (`autoInstallOnAppQuit: true`): ⌘Q, the app menu's Quit or the
+     menu-bar icon's «Завершити». With a scheduled task enabled, closing the window only hides it
+     (`dev`'s background mode), so that installs nothing until a real quit.
    - «Restart» with active agents (`ACTIVE_STATUSES`) first asks for confirmation: N agents are
      running, they will be stopped, their conversations can be continued. With none active it
      restarts at once (`quitAndInstall()`).
@@ -215,7 +217,7 @@ Every release:
 - **Core** `packages/core/src/app-release.ts`: `compareAppVersions`, `isBelowMinimumVersion`,
   `changelogEntries` / `changelogSection` / `changelogBetween` (shared by the app and the
   release script).
-- **Cloud** `supabase/migrations/20261105090000_app_release_policy.sql`;
+- **Cloud** `supabase/migrations/20261112090000_app_release_policy.sql`;
   `packages/cloud/src/app-release.ts` `getMinAppVersion` (null on any failure).
 - **UI** `stores/app-update.ts` (state, policy, last seen version in `localStorage`, bundled
   `CHANGELOG.md?raw`); `components/AppUpdateBanner.vue` in `MainLayout.vue` (restart
@@ -295,9 +297,10 @@ What `dev` brought that touches this plan, and how the merge handled it:
 - **The version label.** `dev` moved the version from the header into Settings → «Загальне» as a
   hard-coded `'v1.1.2'`. The merge keeps it there, shows the package version instead, and keeps
   «Що нового» beside it.
-- **Migration order.** `dev` has migrations up to `20261104110000`, and `supabase db push`
-  refuses a local migration older than the last remote one. The policy migration was renamed to
-  `20261105090000_app_release_policy.sql`.
+- **Migration order.** `supabase db push` refuses a local migration older than the last remote
+  one, and `dev` keeps adding migrations (up to `20261109100000` at the second merge). The policy
+  migration was renamed past them each time, now `20261112090000_app_release_policy.sql`. Push it
+  from `dev` after this branch is merged, or rename it again if `dev` has a newer one by then.
 - Checked after the merge: `pnpm build:app --publish never` (dmg + zip, `serve-sim` and `ws` in
   `app.asar.unpacked`, the microphone text in `Info.plist`); the packaged app started with
   launchd's `PATH` found `omp` and `xcrun simctl` and drew the app; tests (after the last 10 commits
@@ -309,6 +312,18 @@ What `dev` brought that touches this plan, and how the merge handled it:
   1.1.9» as new with the count 1; opening it showed «Що нового у 1.2.0» over ЦУК and cleared the
   count; after a reload there was no toast and the entry stayed, read. `apps/ui` tests 949 passed
   (`notification-center.spec.ts` stubs the update store), `vue-tsc` clean.
+- Second merge of `dev` (2026-11-12, 83 commits):
+  - **Background mode** (`docs/specs/2026-11-06-scheduled-tasks.md`, decision 4): with a
+    scheduled task enabled, closing the window hides it, and only `before-quit` lets the close
+    through. `quitAndInstall()` closes the windows before it emits `before-quit`, so «Перезапустити»
+    would have hidden the window and never restarted. `startUpdater({ beforeInstall })` now sets
+    main's `quitting` flag first.
+  - **«Центр сповіщень» got tabs and schedule slips** (`lib/notification-feed.ts`). App updates
+    became the feed's third kind (`{ kind: 'app-update'; update }`), merged by time and counted
+    as new like the others; «Позначити все прочитаним» marks them too.
+  - `dev` fixed the Android SDK path on Linux (`~/Android/Sdk`), the finding of the first merge.
+  - Checked: `vue-tsc` clean; tests `core` 469, `cloud` 206, `api` 1402, `ui` 1003 passed
+    (`test/schedules.spec.ts` covers the update kind in the merged order and the «new» count).
 
 ## Documentation impact
 

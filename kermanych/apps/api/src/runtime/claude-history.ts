@@ -2,13 +2,12 @@
 import type { SessionMessage } from "@anthropic-ai/claude-agent-sdk";
 import type { OmpMessage, OmpPart } from "../supervisor/messages-to-transcript";
 
-// Anthropic Messages API content-block shapes we read out of a SessionMessage. Cast loosely,
-// exactly as `claude-event-map.ts` does for the live stream — the SDK types the block union
-// as `unknown` inside `SessionMessage.message`.
+// Anthropic Messages API content-block shapes we read out of a SessionMessage. Cast loosely:
+// the SDK types the block union as `unknown` inside `SessionMessage.message`.
 type Block = Record<string, unknown> & { type?: string };
 
 // Join a tool_result block's `content` (string, or an array of text/other blocks) into the
-// plain text the transcript reducer renders — the same rule the live path applies.
+// plain text the transcript reducer renders.
 function resultText(raw: unknown): string {
   if (typeof raw === "string") return raw;
   if (Array.isArray(raw))
@@ -37,8 +36,8 @@ function usageOf(message: Record<string, unknown>): OmpMessage["usage"] | undefi
 
 // Convert claude's historical session transcript (as returned by the SDK's
 // `getSessionMessages`) into the omp `OmpMessage[]` seam `messagesToTranscript` consumes, so a
-// resumed/forked claude session re-renders identically to the live stream. Mirrors the block
-// handling in `claude-event-map.ts`: assistant text/thinking/tool_use parts on one `assistant`
+// native claude session renders through the same reducer as an omp one: assistant
+// text/thinking/tool_use parts on one `assistant`
 // message; each user `tool_result` block becomes its own `toolResult` message paired on the
 // tool_use id. `type:'system'` messages are skipped; `parent_agent_id`/`parent_tool_use_id`
 // linkage is not surfaced this increment (nested-subagent panes are out of scope).

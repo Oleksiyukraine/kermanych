@@ -1,4 +1,3 @@
-import { homedir } from "os";
 import { join } from "path";
 import { stripHelpers } from "./helpers";
 
@@ -35,8 +34,8 @@ export function taskNameFromText(text: string): string {
   const clean = firstLine.replace(/^[#>\-*\d.)\s]+/, "").replace(/[*_`]/g, "").trim();
   return (clean || firstLine).slice(0, 60);
 }
-// `design` is a «Дизайн» session's branch (docs/specs/2026-10-29-design-tab.md).
-export const BRANCH_PREFIXES = ["feature", "fix", "refactoring", "chore", "design"] as const;
+// `synergy` is a «Синергія» session's branch (docs/specs/2026-11-06-synergy.md).
+export const BRANCH_PREFIXES = ["feature", "fix", "refactoring", "chore", "synergy"] as const;
 export type BranchPrefix = (typeof BRANCH_PREFIXES)[number];
 
 export function branchName(slug: string, prefix: BranchPrefix = "feature"): string {
@@ -57,6 +56,12 @@ export function isGitBranchName(name: string): boolean {
   if (name.startsWith("/") || name.endsWith("/") || name.includes("//") || name.endsWith(".")) return false;
   return name.split("/").every((part) => !part.startsWith(".") && !part.endsWith(".lock"));
 }
-export function worktreeDir(sessionId: string): string {
-  return join(homedir(), ".kermanych", "worktrees", sessionId);
+// A session's worktree lives inside its project's repository at `.gitworktree/<branch>`, so the
+// folder reads as the work it holds. A slashed branch nests (`feature/x` → `.gitworktree/feature/x`),
+// which cannot collide: git refuses a branch `feature` beside `feature/x`, and refuses one branch
+// in two worktrees. The branch is a git-made name, so it has no `..` or leading-dot segment
+// (isGitBranchName) and cannot climb out of `.gitworktree/`.
+export function worktreeDir(repoRoot: string, branch: string): string {
+  if (!isGitBranchName(branch)) throw new Error(`not a branch name: ${branch}`);
+  return join(repoRoot, ".gitworktree", ...branch.split("/"));
 }

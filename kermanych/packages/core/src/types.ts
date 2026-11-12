@@ -9,6 +9,7 @@ import type { MachineAlert } from "./machine-profile";
 import type { MinionResult, MinionState } from "./minion";
 import type { FindingKind } from "./findings";
 import type { QaChecklist } from "./task-actions";
+import type { ScheduledTask, ScheduleRun, ScheduleSlip } from "./schedules";
 
 // `in_review` is the PR hand-off state: the operator asked for a pull request, the agent
 // pushed it, and the work now waits on a HUMAN reviewer. It is settled (nothing moves on
@@ -72,14 +73,15 @@ export type Session = {
   deepAnalysis?: boolean;
   // Run by «Посіпака» (docs/specs/2026-10-23-minion-auto-run.md): the minion took the card and
   // runs it with nobody watching — no ask tool, a `report_outcome` verdict, a PR at the end.
-  // Stamped when the session is created and never changed. Absent means a session a person
-  // started, even when its card allows auto-run.
+  // Stamped when the session is created, or set later when the operator hands the session to
+  // the minion with `/minion` (docs/specs/2026-11-09-minion-takeover.md); never cleared. Absent
+  // means a session a person drives, even when its card allows auto-run.
   minion?: boolean;
-  // A «Дизайн» session (docs/specs/2026-10-29-design-tab.md): the repository-relative folder
-  // its design lands in, e.g. `docs/design/2026-10-29-orders-list`. Stamped from a design card
-  // at launch (designDirFor) and never changed; its presence is what makes the session a design.
-  // Absent for every other session.
-  designDir?: string;
+  // A «Синергія» session (docs/specs/2026-11-06-synergy.md): fast prototyping on a
+  // `synergy/<slug>` branch with a narrow toolset and a checkpoint after every turn. `page` is
+  // the start path of «Змінити сторінку». Stamped at launch; «Імплементувати» clears it, turning
+  // the row into an ordinary agent. Absent for every other session.
+  synergy?: { page?: string };
   // A minion run of a card filed from a «Знахідка»: the finding's kind, stamped from the card
   // when the run is created, so its opening prompt — a relaunch's too — carries the per-kind rules
   // (docs/specs/2026-10-23-minion-auto-run.md, decision 14). Absent for every other session.
@@ -89,6 +91,10 @@ export type Session = {
   // preview and records a verdict per item. Stamped at creation, never changed. Absent for
   // every other session, including an ordinary «Ревізор» fork.
   tester?: boolean;
+  // A scheduled agent task's project run (docs/specs/2026-11-06-scheduled-tasks.md, decision 5):
+  // the task it ran for, as it was named then — «Розклад · <назва>» on its row in «Агенти».
+  // Stamped at creation, never changed. Absent for every other session.
+  schedule?: { id: string; name: string };
   // How the minion's run ended so far: `needs_decision` keeps the «потрібне рішення» mark until
   // a later turn ends differently. Persisted; absent until the first turn of a minion run ends.
   minionResult?: MinionResult;
@@ -118,8 +124,8 @@ export type Session = {
   ompSessionId?: string; ompSessionFile?: string;
   status: SessionStatus; currentTool?: string; error?: string;
   // The localizable cause of `error`, when the runtime recognised it — chiefly
-  // `claude_not_authenticated` / `omp_not_authenticated`, which the UI shows as «Login
-  // required». Live-only like `error`: cleared when the child respawns, absent after a restart.
+  // `omp_not_authenticated`, which the UI shows as «Login required». Live-only like `error`:
+  // cleared when the child respawns, absent after a restart.
   errorCode?: NoticeCode;
   // Durable "this session's branch already has an open pull request". Set once a PR URL
   // surfaces in a «Створити ПР» run and never cleared while the session lives. Distinct from
@@ -132,6 +138,10 @@ export type Session = {
   // sessions that opened their PR before it was stored; the merged-PR check then looks the PR up
   // by branch (docs/specs/2026-10-26-pr-merged-close-prompt.md, decision 4).
   prUrl?: string;
+  // When `prOpened` was first set (ISO), for «Аналітика»'s «PR відкрито» (docs/specs/2026-11-07-developer-analytics.md,
+  // decision 5). Absent on sessions that opened their PR before it was stored and whose harness
+  // file the history import could not date it from.
+  prOpenedAt?: string;
   todoPhases?: TodoPhase[]; contextPercent?: number; lastEventAt?: number;
   // Lifetime accounting: every assistant turn this session ran, summed. Persisted by the
   // api, so a dormant or finished agent still states what it spent. Absent means "never
@@ -257,10 +267,7 @@ export type RpcEvent =
   // omp's `emitNotice` forwards its own level verbatim: it spells a warning `"warning"` and
   // never `"warn"`. Left as an open string because the vocabulary is omp's, not ours — the
   // transcript reducer normalises it into `TranscriptEntry`'s closed `info | warn | error`.
-  // `code` is OURS, not omp's: a runtime that recognises a machine fault in its child's dying
-  // words tags the notice so the UI can print the fix in the operator's locale. omp never
-  // sends it, so it stays optional and `message` remains the only guaranteed prose.
-  | { type: "notice"; message?: string; level?: string; code?: NoticeCode }
+  | { type: "notice"; message?: string; level?: string }
   // omp subagent frames, gated by `set_subagent_subscription` (RpcSession sends "progress"
   // by default). omp documents only the frame `type`; the inner shape is undocumented, so
   // these stay open — the map reads identity via `subagentId` and pulls concrete rows from
@@ -301,11 +308,20 @@ export type ServerEvent =
   | { type: "minion_update"; state: MinionState }
   // A session's live preview changed state; `state: null` = it has none any more (session gone).
   | { type: "preview_update"; sessionId: string; state: PreviewState | null }
+  // A «Синергія» session's steps changed (docs/specs/2026-11-06-synergy.md): a checkpoint or a
+  // restore was committed. The UI re-reads `GET /sessions/:id/synergy/steps`.
+  | { type: "synergy_steps"; sessionId: string }
   // The api wrote a card's QA checklist (docs/specs/2026-11-04-qa-tester-agent.md): a tester
   // verdict, a checklist the tester or «Створити ПР» composed, or verdicts cleared at a run's
   // start. Carries the checklist as written, so an open QA tab updates without re-reading the
   // card (the board's Realtime binding leaves this column out).
-  | { type: "qa_checklist_update"; taskId: string; checklist: QaChecklist };
+  | { type: "qa_checklist_update"; taskId: string; checklist: QaChecklist }
+  // «Задачі за розкладом» (docs/specs/2026-11-06-scheduled-tasks.md): the whole task list after
+  // any change (with `nextAt` and `running` fresh), a «Центр сповіщень» slip written — or
+  // re-fired by a snooze — and one run's record as it starts and ends.
+  | { type: "schedules_update"; tasks: ScheduledTask[] }
+  | { type: "schedule_slip"; slip: ScheduleSlip }
+  | { type: "schedule_run_update"; run: ScheduleRun };
 
 // How much of omp's subagent activity a session subscribes to. "progress" streams lifecycle
 // + coalesced progress (enough for the agent map); "events" adds every subagent tool/message

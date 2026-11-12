@@ -65,8 +65,8 @@ export class CukChatService implements OnModuleDestroy {
     return { ok: true };
   }
 
-  onModuleDestroy(): void {
-    this.pool.dropAll();
+  async onModuleDestroy(): Promise<void> {
+    await this.pool.dropAll();
   }
 
   private async turn(key: string, input: CukChatAsk, startedAt: number): Promise<CukChatReply> {

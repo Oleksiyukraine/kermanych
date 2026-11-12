@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { join } from "node:path";
 import type { WorktreeService } from "../src/worktree/worktree.service";
 
 // The subset of RpcSession constructor options the tests assert on.
@@ -131,7 +132,7 @@ describe("promoteChatToAgent", () => {
     expect(registry.listSessions(g.id)).toHaveLength(1);
     expect(agent.kind).toBe("agent");
     expect(agent.worktree).toBe(true);
-    expect(agent.worktreePath).toContain(chat.id);
+    expect(agent.worktreePath).toBe(join("/tmp/proj", ".gitworktree", ...agent.branch.split("/")));
     expect(worktree.addWorktree).toHaveBeenCalledTimes(1);
   });
 

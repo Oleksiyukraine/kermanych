@@ -6,11 +6,11 @@
   "type": "module",
   "private": true,
   "scripts": {
-    "//deps": "The UI imports RUNTIME values from @kermanych/cloud (stores/projects.ts) and resolves it through `main: dist/index.js`, so a worktree with no build output serves a broken app. `<pkg>^...` builds this package's workspace deps in topological order, never itself. Extra pnpm args (`-m electron`) land on the LAST command, i.e. on quasar.",
+    "//deps": "The UI imports RUNTIME values from @kermanych/cloud (stores/projects.ts) and resolves it through `main: dist/index.js`, so a worktree with no build output serves a broken app and fails its tests with «Failed to resolve entry for package». `<pkg>^...` builds this package's workspace deps in topological order, never itself. Extra pnpm args (`-m electron`, `--maxWorkers=4`) land on the LAST command, i.e. on quasar or vitest.",
     "dev": "pnpm --filter '@kermanych/ui^...' build && quasar dev",
     "build": "pnpm --filter '@kermanych/ui^...' build && quasar build",
     "typecheck": "vue-tsc --noEmit",
-    "test": "vitest run",
+    "test": "pnpm --filter '@kermanych/ui^...' build && vitest run",
     "postinstall": "quasar prepare --silent || true"
   },
   "dependencies": {

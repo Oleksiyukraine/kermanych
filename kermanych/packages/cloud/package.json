@@ -4,7 +4,7 @@
   "exports": {
     ".": { "types": "./dist/index.d.ts", "default": "./dist/index.js" }
   },
-  "scripts": { "test": "vitest run", "build": "tsc -p tsconfig.json" },
+  "scripts": { "test": "pnpm --filter '@kermanych/cloud^...' build && vitest run", "build": "tsc -p tsconfig.json" },
   "dependencies": {
     "@kermanych/core": "workspace:*",
     "@supabase/supabase-js": "^2"

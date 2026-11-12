@@ -91,11 +91,26 @@
               @toggle="switchPanel"
             />
             <!-- One notification opened from the column or its toast: over the console, which
-                 keeps its conversation and draft underneath. -->
+                 keeps its conversation and draft underneath. A skill improvement, a scheduled
+                 run's full answer, or a scheduled task — one at a time. -->
             <SkillImprovementView
               v-if="notifications.openId"
               :id="notifications.openId"
               :key="notifications.openId"
+              class="asst-ovl__entry"
+              @close="closeEntry"
+            />
+            <ScheduleSlipView
+              v-else-if="notifications.openSlipId"
+              :id="notifications.openSlipId"
+              :key="`slip:${notifications.openSlipId}`"
+              class="asst-ovl__entry"
+              @close="closeEntry"
+            />
+            <ScheduleTaskView
+              v-else-if="notifications.openTaskId"
+              :id="notifications.openTaskId"
+              :key="`task:${notifications.openTaskId}`"
               class="asst-ovl__entry"
               @close="closeEntry"
             />
@@ -129,6 +144,8 @@ import CukAssistant from './CukAssistant.vue';
 import CukNotepad from './CukNotepad.vue';
 import CukNotifications from './CukNotifications.vue';
 import SkillImprovementView from './SkillImprovementView.vue';
+import ScheduleSlipView from './ScheduleSlipView.vue';
+import ScheduleTaskView from './ScheduleTaskView.vue';
 import { useCircleGesture } from '../../composables/useCircleGesture';
 
 const { t } = useI18n();
@@ -141,7 +158,7 @@ const notifications = useNotificationCenter();
 
 cuk.bindRouter(useRouter());
 // The column follows the signed-in user from app start, not from the first opening: a change an
-// agent makes must raise its toast even if the window was never opened.
+// agent makes, or a schedule slip, must raise its toast even if the window was never opened.
 notifications.start();
 
 const workspaceId = computed(() => orchestrator.selectedWorkspaceId);
@@ -202,8 +219,9 @@ watch(
       const ws = workspaceId.value;
       if (ws && !projects.members[ws]) void projects.loadMembers(ws).catch(() => {});
       await nextTick();
-      // An entry opened from a toast takes the keyboard itself (SkillImprovementView).
-      if (!notifications.openId) focusPanel();
+      // An entry opened from a toast takes the keyboard itself (SkillImprovementView and the
+      // schedule views).
+      if (!notifications.viewOpen) focusPanel();
       return;
     }
     // A closed window reopens on the console, not on the entry last looked at.
@@ -247,7 +265,7 @@ function onEscape(e: KeyboardEvent): void {
   if (e.key !== 'Escape' || e.defaultPrevented || !overlay.open) return;
   if (document.querySelector('.q-dialog')) return;
   e.preventDefault();
-  if (notifications.openId) closeEntry();
+  if (notifications.viewOpen) closeEntry();
   else overlay.close();
 }
 
