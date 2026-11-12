@@ -5,8 +5,11 @@
     width="560px"
     @update:model-value="(open: boolean) => { if (!open) upd.whatsNew = null; }"
   >
-    <p v-if="whatsNew?.entries === null">{{ t('appUpdate.notesLoading') }}</p>
-    <p v-else-if="whatsNew && whatsNew.entries.length === 0">
+    <!-- The downloaded version's notes are fetched from GitHub: skeleton, then the notes
+         (README «Design → Async states»). -->
+    <KSkeleton v-if="notesPhase === 'skeleton'" variant="rows" :rows="4" />
+    <template v-else-if="notesPhase === 'blank'"></template>
+    <p v-else-if="whatsNew?.entries?.length === 0">
       {{ t('appUpdate.notesUnavailable') }}
       <a :href="RELEASES_URL" target="_blank" rel="noopener">{{ t('appUpdate.openReleases') }}</a>
     </p>
@@ -32,12 +35,15 @@ import { storeToRefs } from 'pinia';
 import { useI18n } from 'vue-i18n';
 import KModal from 'components/kit/KModal.vue';
 import KBtn from 'components/kit/KBtn.vue';
+import KSkeleton from 'components/kit/KSkeleton.vue';
+import { useLoadPhase } from '../composables/useLoadPhase';
 import { renderReleaseNotes } from '../lib/markdown';
 import { RELEASES_URL, useAppUpdate } from '../stores/app-update';
 
 const { t } = useI18n();
 const upd = useAppUpdate();
 const { whatsNew } = storeToRefs(upd);
+const notesPhase = useLoadPhase(() => whatsNew.value?.entries === null);
 
 const title = computed(() => {
   const w = whatsNew.value;

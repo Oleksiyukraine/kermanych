@@ -1277,7 +1277,6 @@ export const en: MessageSchema = {
     notesInstalled: 'What’s new in {version}',
     notesReady: 'What’s new in {version}',
     notesAll: 'What’s new',
-    notesLoading: 'Loading the release notes…',
     notesUnavailable: 'The release notes could not be loaded.',
     noNotes: 'No notes for this version.',
     openReleases: 'Open the releases page',

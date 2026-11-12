@@ -1283,7 +1283,6 @@ export const uk = {
     notesInstalled: 'Що нового у {version}',
     notesReady: 'Що нового у {version}',
     notesAll: 'Що нового',
-    notesLoading: 'Завантажуємо реліз-ноти…',
     notesUnavailable: 'Не вдалося завантажити реліз-ноти.',
     noNotes: 'Для цієї версії нотаток немає.',
     openReleases: 'Відкрити сторінку релізів',
