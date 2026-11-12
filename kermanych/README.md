@@ -905,7 +905,9 @@ People who only use Kermanych install it from
 - **macOS** — `Kermanych-<version>-arm64.dmg`, a signed and notarized build. It needs a Mac
   with **Apple Silicon**; there is no Intel build. Open the dmg and drag Kermanych into
   Applications.
-- **Linux (x64)** — `Kermanych-<version>.AppImage`: `chmod +x` it and run it. AppImages need
+- **Linux (x64)** — `Kermanych-<version>.AppImage`: `chmod +x` it and run it. It needs glibc
+  2.34 or newer (Ubuntu 22.04, Debian 12, Fedora 35 and later): the native `node-pty` and
+  `better-sqlite3` modules are built against it. AppImages need
   FUSE 2, which recent Ubuntu does not install by default (`sudo apt install libfuse2t64` on
   24.04, `libfuse2` on 22.04). Ubuntu 24.04's AppArmor also blocks the Chromium sandbox of
   AppImages; if the app exits with a sandbox error, run it with `--no-sandbox` or give it an
