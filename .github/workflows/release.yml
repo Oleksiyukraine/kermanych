@@ -34,7 +34,9 @@ jobs:
       fail-fast: true
       matrix:
         include:
-          - os: macos-14
+          # Apple Silicon (decision 6). GitHub retired macos-14 on 2026-11-02: pick a current
+          # arm64 image when this one is announced for retirement.
+          - os: macos-15
             platform: mac
           # The oldest supported Ubuntu runner: an AppImage built against an older glibc runs
           # on more distributions.
