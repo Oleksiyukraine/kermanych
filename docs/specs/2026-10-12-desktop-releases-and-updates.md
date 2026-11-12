@@ -228,7 +228,7 @@ Every release:
   fixed `v1.0`; `i18n` en/uk `appUpdate.*`.
 - **Release tooling** `scripts/release.ts` (`prepare`, `notes`) with root scripts
   `release:prepare` / `release:notes` and `tsx` as a root dev dependency;
-  `kermanych/CHANGELOG.md`; `.github/workflows/release.yml` (matrix `macos-14` + `ubuntu-22.04`,
+  `kermanych/CHANGELOG.md`; `.github/workflows/release.yml` (matrix `macos-15` + `ubuntu-22.04`,
   then `release` on tags only).
 - **API build fix** `apps/api/src/http/jira.controller.ts`: the attachment download reads the
   web stream with a reader instead of `for await`. The `ReadableStream` type the build resolves
