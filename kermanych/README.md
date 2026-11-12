@@ -956,6 +956,11 @@ in English.
 Running the workflow by hand (Actions → Release → Run workflow) builds both platforms and
 attaches them to the run without publishing — use it to try a build before tagging.
 
+Notarization usually answers in minutes, but Apple holds the **first** submissions of a new
+Developer ID team for an in-depth check that can last a day or more («In Progress» in
+`xcrun notarytool history`). The build waits for the answer and a GitHub job stops after 6 hours,
+so tag the first release only after a notarization of this team has come back `Accepted`.
+
 The workflow signs with repository secrets: `CSC_LINK` (the Developer ID Application
 certificate as base64 `.p12`), `CSC_KEY_PASSWORD`, and for notarization an App Store Connect
 API key — `APPLE_API_KEY` (the `.p8` contents), `APPLE_API_KEY_ID`, `APPLE_API_ISSUER`. A tag
