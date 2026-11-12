@@ -266,14 +266,24 @@ Every release:
 - The migration in a throwaway Postgres 17 with `anon`/`authenticated` roles: `anon` reads
   `0.0.0`; `anon` update and `authenticated` insert are denied; a second row and a malformed
   version are rejected; a migration-style update to 0.4.0 is read back by `anon`.
-- Not verified, needs the operator's credentials or a second release: signing and notarization,
-  the workflow on GitHub, the Linux AppImage build, and a real update 1.2.0 → 1.2.1 (Squirrel.Mac
+- Signed and notarized locally (2026-11-12, the operator's Developer ID `RLTMZ9NAZT` and API key,
+  `pnpm build:app --publish never` from the operator's Terminal so macOS could ask for the key):
+  `notarization successful` — the team's first submission stayed «In Progress» for about 3 h
+  50 min. `Kermanych.app` and the app inside the zip: `spctl` «Notarized Developer ID», `stapler
+  validate` OK, hardened runtime, entitlements `allow-jit`, `allow-unsigned-executable-memory`,
+  `audio-input`. The five `serve-sim` binaries are re-signed with the team ID and the hardened
+  runtime. The dmg itself is unsigned (electron-builder's default `dmg.sign: false`); a
+  quarantined copy mounted and its app passed `spctl` and `syspolicy_check distribution` («ready
+  for distribution»). Under the hardened runtime, started with launchd's `PATH`: `omp` found,
+  `better-sqlite3` and `node-pty` load and work, `serve-sim --help` runs as Node from
+  `app.asar.unpacked`, the renderer draws, and the microphone is granted.
+- Not verified, needs a release: the workflow on GitHub, the Linux AppImage build, the iOS device
+  preview and a voice conversation by hand, and a real update 1.2.0 → 1.2.1 (Squirrel.Mac
   installing after `before-quit` has closed the api). Plan: the contributor tries a
-  `workflow_dispatch` AppImage; then tag `v1.2.0`, install from the dmg, check
-  `spctl -a -vv` («Notarized Developer ID»), start a session from a Finder launch, try the iOS
-  device preview and a voice conversation; then tag `v1.2.1` and check the banner, «Що нового»,
-  the restart confirmation, the restart into 1.2.1 with its «Що нового» once, and that a plain
-  quit also installs.
+  `workflow_dispatch` AppImage; then tag `v1.2.0`, install from the dmg, start a session from a
+  Finder launch; then tag `v1.2.1` and check the banner, «Що нового», the restart confirmation
+  (also with a scheduled task enabled), the restart into 1.2.1 with its «Що нового» once, and that
+  a plain quit also installs.
 
 ## After merging `dev` (2026-11-05, 231 commits)
 
