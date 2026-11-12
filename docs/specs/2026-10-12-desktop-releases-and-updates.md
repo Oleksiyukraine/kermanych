@@ -324,6 +324,13 @@ What `dev` brought that touches this plan, and how the merge handled it:
   - `dev` fixed the Android SDK path on Linux (`~/Android/Sdk`), the finding of the first merge.
   - Checked: `vue-tsc` clean; tests `core` 469, `cloud` 206, `api` 1402, `ui` 1003 passed
     (`test/schedules.spec.ts` covers the update kind in the merged order and the «new» count).
+    `CSC_IDENTITY_AUTO_DISCOVERY=false pnpm build:app --publish never` built the 1.2.0 dmg + zip;
+    started with launchd's `PATH`, the app found `omp` and drew its window. In the preview, after
+    «1.1.9 → 1.2.0»: the toast, then «Kermanych 1.2.0» as a new slip on the «Сповіщення» tab
+    (count 1); «Позначити все прочитаним» cleared it.
+  - Found on the way: with a Developer ID identity in the login keychain, a local
+    `pnpm build:app` signs by itself, and a shell that cannot show macOS's key-access prompt
+    fails with `errSecInternalComponent`. README and `quasar.config.ts` now say so.
 
 ## Documentation impact
 
