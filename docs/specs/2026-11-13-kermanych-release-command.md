@@ -87,8 +87,8 @@ breaks, it fixes what it is allowed to fix.
    - After every fix the agent reports what it changed, why, and the PR.
 
 7. **After publishing, automatic checks only. There is no manual checklist for the operator.**
-   - **GitHub Release:** `Latest`; the six assets (`.dmg`, `.zip`, `.AppImage`, two `.blockmap`
-     files, `latest-mac.yml`, `latest-linux.yml`); the body equal to the `CHANGELOG.md` section;
+   - **GitHub Release:** `Latest`; the seven assets (`.dmg`, `.zip`, `.AppImage`, the dmg's and
+     the zip's `.blockmap`, `latest-mac.yml`, `latest-linux.yml`); the body equal to the `CHANGELOG.md` section;
      the new version in both `latest-*.yml`.
    - **mac:** the dmg and the zip are downloaded and given the quarantine attribute. The app
      inside: `spctl` «Notarized Developer ID», `stapler validate`, `syspolicy_check distribution`
