@@ -660,6 +660,21 @@ shipped client still selects needs a window and an announcement:
 `20260827100000_workspaces.sql` is one of those, and
 [`docs/cutover-workspaces.md`](./docs/cutover-workspaces.md) is its runbook.
 
+Installed desktop apps update on their own schedule (see [Updates and «What's
+new»](#updates-and-whats-new)), so some users run older versions for days. **A migration that
+breaks older clients** — it renames or drops a table or column they read, or tightens a policy
+they rely on — **must raise the minimum app version in the same file**, to the first release
+that works with the new schema:
+
+```sql
+update public.app_release_policy set min_app_version = '1.4.0', updated_at = now();
+```
+
+Older apps then show «Потрібне оновлення» instead of failing screen by screen. Push such a
+migration only after that release is published. The table itself comes from
+`20261112090000_app_release_policy.sql` (one row, readable without signing in, written only
+by migrations); push it before the first release.
+
 `20261019090000_drop_routines.sql` removes the retired Routines feature: it drops
 `workspace_routines`, `workspace_routine_runs` and `workspace_routine_cloud` with every row,
 unschedules the `routines-cloud-tick` job and deletes the `routines_project_url` /
@@ -829,15 +844,10 @@ origin, list it in `KERMANYCH_UI_ORIGINS` (comma-separated) for the API.
 > **Note:** `better-sqlite3` v13 and `node-pty` 1.1 ship N-API prebuilt binaries, so
 > switching Node versions (≥22.12) needs no rebuild.
 
-## Desktop app (macOS)
+## Desktop app (macOS, Linux)
 
 Kermanych also runs as a desktop app (Electron via Quasar): one window that
 starts the API in-process — no browser, no separate dev servers.
-
-```bash
-pnpm dev:app      # run the desktop app in dev
-pnpm build:app    # build a macOS .dmg (unsigned)
-```
 
 The window opens as soon as the API's port is chosen, while the API is still starting. A
 splash shows the app mark and what is happening («Запускаю локальний сервіс…», then
@@ -858,8 +868,9 @@ switches the number and the bounce («Число на іконці», «Підс
 
 Pop-up notifications (an agent's turn, a memory warning, a «Посіпака» pause, while the window is
 not focused) need an app signed by an Apple team: since Electron 42 macOS refuses them otherwise.
-Neither `pnpm dev:app` (the stock `Electron.app` from `node_modules`) nor the unsigned dmg shows
-them; the «Сповіщення» settings page says whether the running build can.
+A release build (signed, see [Installing a release](#installing-a-release)) shows them; neither
+`pnpm dev:app` (the stock `Electron.app` from `node_modules`) nor a local unsigned `pnpm build:app`
+does. The «Сповіщення» settings page says whether the running build can.
 
 Links never open inside the desktop window: every `http(s)`/`mailto` link — Jira
 and Linear tickets, attachments, storage downloads and markdown links — opens in your
@@ -886,19 +897,126 @@ a page that refuses — GitHub, or a private Google Doc that redirects to Google
 which the app's window is not signed in to — gets **Відкрити в браузері** instead of a
 blank frame. That button always opens the stored URL in your default browser.
 
-The build is **unsigned**, so on first open macOS Gatekeeper blocks it. Open it
-with **right-click → Open** (once), or clear the quarantine flag:
+### Installing a release
+
+People who only use Kermanych install it from
+[the latest release](https://github.com/Oleksiyukraine/kermanych/releases/latest):
+
+- **macOS** — `Kermanych-<version>-arm64.dmg`, a signed and notarized build. It needs a Mac
+  with **Apple Silicon**; there is no Intel build. Open the dmg and drag Kermanych into
+  Applications.
+- **Linux (x64)** — `Kermanych-<version>.AppImage`: `chmod +x` it and run it. It needs glibc
+  2.34 or newer (Ubuntu 22.04, Debian 12, Fedora 35 and later): the native `node-pty` and
+  `better-sqlite3` modules are built against it. AppImages need
+  FUSE 2, which recent Ubuntu does not install by default (`sudo apt install libfuse2t64` on
+  24.04, `libfuse2` on 22.04). Ubuntu 24.04's AppArmor also blocks the Chromium sandbox of
+  AppImages; if the app exits with a sandbox error, run it with `--no-sandbox` or give it an
+  AppArmor profile that allows `userns`.
+
+`omp` or `claude`, `git` and the rest of the toolchain are still the user's own installs. The
+app takes `PATH` from the user's login shell when it starts (`src-electron/login-shell-path.ts`),
+so whatever the terminal finds — Homebrew, bun, nvm, `~/.local/bin` — agents find too, also
+when the app is opened from Finder, the Dock or the application menu.
+
+### Updates and «What's new»
+
+An installed app updates itself from GitHub Releases (`electron-updater`,
+`src-electron/updater.ts`). It checks at launch and every 4 hours and downloads a new version
+in the background. A banner then says «Версія X готова» with **Що нового** (the notes of every
+version between the running one and the new one) and **Перезапустити**. A real quit — ⌘Q, the app
+menu's Quit or the menu-bar icon's «Завершити» — installs the update too; with a scheduled task
+enabled, closing the window only hides it and installs nothing. The app never restarts on its own; «Перезапустити» while agents are working
+asks first, because the restart stops them (their conversations can be continued afterwards).
+On the first launch of a new version a toast «Kermanych оновлено до X» offers **Що нового**, and
+the update stays as an entry in ЦУК's «Центр сповіщень» (see [ЦУК](#цук--the-avatars-control-console))
+to reread later. Settings → Застосунок → «Загальне» shows the version and opens the whole changelog. On Linux
+only the AppImage updates itself. A dev run (`pnpm dev:app`) and the browser build never check.
+
+The cloud names the oldest version it still serves (`app_release_policy.min_app_version`, see
+[Applying a migration to the team's project](#applying-a-migration-to-the-teams-project)). An
+older packaged app shows a blocking «Потрібне оновлення» screen whose button installs the
+update as soon as it is downloaded. When the policy cannot be read (offline, cloud down), the
+app is not blocked.
+
+### Releasing a version
+
+Spec: `docs/specs/2026-10-12-desktop-releases-and-updates.md`. Versions are semver
+(`apps/ui/package.json`), tags are `v<version>`, notes live in [`CHANGELOG.md`](./CHANGELOG.md),
+in English.
+
+**The usual way: `/kermanych-release`.** Open a coding agent (omp or Claude Code) in the
+repository root — the folder that contains `kermanych/`, not `kermanych/` itself — and type
+`/kermanych-release`, or `/kermanych-release 1.4.0` to name the version. The agent:
+
+- proposes the version from the commits since the last tag (`feat` → minor, otherwise patch,
+  never a major on its own) and writes user-facing notes;
+- runs the typecheck and every test suite;
+- opens a `release/<version>` PR, then stops once and asks whether to publish.
+
+After «yes» it merges the PR, tags `v<version>`, watches the workflow, and checks the published
+release: the assets and their versions, the notarization of the dmg and zip downloaded as from
+the internet, and the native modules in the AppImage. It fixes release failures itself through
+PRs, at most twice. A published release that fails a check is put back to draft first, and the
+fix ships as the next patch. It works in a temporary worktree, so your own checkout is never
+touched. It reads `GIT_TOKEN` from `kermanych/.env`. The command is
+`.claude/commands/kermanych-release.md`; spec: `docs/specs/2026-11-13-kermanych-release-command.md`.
+
+What the command does, by hand:
+
+1. `pnpm release:prepare 1.3.0` — refuses a version that is not higher than the current one,
+   writes it into `apps/ui/package.json` and adds an empty `## 1.3.0 — <date>` section to
+   `CHANGELOG.md`. Write the notes there (Менеджмент → «Реліз-ноти» can draft them), open a
+   PR, merge it.
+2. `git tag v1.3.0 && git push origin v1.3.0`.
+3. `.github/workflows/release.yml` checks that the tag equals the package version and that the
+   section has notes (`pnpm release:notes 1.3.0`), builds the signed, notarized macOS dmg + zip
+   and the Linux AppImage, and publishes one GitHub Release with both and the notes. There is
+   no draft step: installed apps see it on their next check. If either build fails, nothing is
+   published.
+
+Running the workflow by hand (Actions → Release → Run workflow) builds both platforms and
+attaches them to the run without publishing — use it to try a build before tagging.
+
+Notarization usually answers in minutes, but Apple holds the **first** submissions of a new
+Developer ID team for an in-depth check that can last a day or more («In Progress» in
+`xcrun notarytool history`). The build waits for the answer and a GitHub job stops after 6 hours,
+so tag the first release only after a notarization of this team has come back `Accepted`.
+
+The workflow signs with repository secrets: `CSC_LINK` (the Developer ID Application
+certificate as base64 `.p12`), `CSC_KEY_PASSWORD`, and for notarization an App Store Connect
+API key — `APPLE_API_KEY` (the `.p8` contents), `APPLE_API_KEY_ID`, `APPLE_API_ISSUER`. A tag
+refuses to build without them: an unsigned build would reach every client and could not be
+installed by the updater.
+
+### Building locally
+
+```bash
+pnpm dev:app      # run the desktop app in dev
+pnpm build:app    # build the dmg + zip (macOS) or AppImage (Linux) under apps/ui/dist/electron/Packaged
+```
+
+A local build is signed only when a **Developer ID Application** identity is in your login
+keychain: electron-builder finds it by itself, and macOS asks once whether `codesign` may use the
+key (answer **Always Allow**; a shell that cannot show that prompt fails with
+`errSecInternalComponent`). `CSC_IDENTITY_AUTO_DISCOVERY=false pnpm build:app` builds unsigned on
+such a Mac. It is notarized only with the `APPLE_API_KEY` / `APPLE_API_KEY_ID` /
+`APPLE_API_ISSUER` variables set. An unsigned build is blocked by Gatekeeper on first open. Open
+it with **right-click → Open** (once), or clear the quarantine flag:
 
 ```bash
 xattr -cr /Applications/Kermanych.app
 ```
+
+An unsigned build cannot update itself (Squirrel.Mac refuses it); it only logs the failed check.
 
 Native module note: `better-sqlite3` is pinned to v13 (N-API) and `node-pty` to 1.1
 (N-API prebuilds for macOS and Windows); one prebuilt binary works under both the Node
 (≥22.12) and Electron ABIs, so no rebuild. Both are unpacked from the asar. `node-pty`
 1.1's tarball ships `spawn-helper` without the exec bit, which makes every terminal fail
 with `posix_spawnp failed`; the API restores it before the first shell and the app build
-sets it in the bundle.
+sets it in the bundle. There is no Linux prebuild of `node-pty`: on Linux the app build
+compiles it in the packaged tree (`node-gyp`, so it needs `python3`, `make` and a C++
+compiler) unless pnpm already left a build there.
 
 ## Integrated terminal
 
@@ -2215,7 +2333,7 @@ its left and a notepad on its right. (Specs: `docs/specs/2026-11-04-cuk-control-
   hides behind 📝.
 - **«Центр сповіщень» is the left column.** Built like the notepad — a clipboard with the
   notifications as slips on it, newest on top, and a second tab, «Розклад» (below). Besides
-  scheduled reminders and runs, it lists changes agents made to your
+  scheduled reminders and runs and the updates of Kermanych (below), it lists changes agents made to your
   skills (see «Agents improve your skills» above). A new one also raises a toast in the bottom-right
   corner, «Я вдосконалив навичку X: …», with «Переглянути», on every machine where your Kermanych
   is open; the character wears its dot until you look. Opening an entry shows over the console the
@@ -2226,6 +2344,10 @@ its left and a notepad on its right. (Specs: `docs/specs/2026-11-04-cuk-control-
   - **«Поширити на команду»** (the workspace owner only) writes your copy's text to the scope the
     skill came from — that project or that workspace; a default goes to the workspace — and deletes
     your copy. The confirmation warns when the team text changed after your copy was made.
+
+  Updates of Kermanych itself (see [Updates and «What's new»](#updates-and-whats-new)): one entry
+  per update this machine received, «Kermanych X · Оновлено з Y», kept in this machine's
+  `localStorage` (the last 10), not in the cloud. Opening it shows that update's «Що нового».
 
   Below ~1280 px of window width the column hides behind 🔔, which carries the count of new entries.
 - **The Менеджмент assistant is the second panel.** For the owner and managers of the current

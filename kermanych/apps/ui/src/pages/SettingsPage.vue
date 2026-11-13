@@ -527,7 +527,10 @@
                the project switcher, and «what am I running» is a settings-page question. -->
           <div class="set__group">
             <span class="set__label">{{ t('settings.appGeneral.version') }}</span>
-            <span class="set__note mono">{{ APP_VERSION }}</span>
+            <div class="set__row set__row--center">
+              <KTag>{{ APP_VERSION }}</KTag>
+              <KBtn variant="ghost" @click="appUpdate.openAllNotes()">{{ t('settings.appGeneral.whatsNew') }}</KBtn>
+            </div>
           </div>
         </div>
 
@@ -1049,11 +1052,13 @@ import KTag from 'components/kit/KTag.vue';
 import KLangToggle from 'components/kit/KLangToggle.vue';
 import KSkeleton from 'components/kit/KSkeleton.vue';
 import SteGuide from 'components/settings/SteGuide.vue';
+import { APP_VERSION, useAppUpdate } from 'stores/app-update';
 
 const store = useOrchestrator();
 const projects = useProjects();
 const { t } = useI18n();
 const auth = useAuth();
+const appUpdate = useAppUpdate();
 const route = useRoute();
 const router = useRouter();
 
@@ -1901,10 +1906,6 @@ const skillImprovementPick = reactive(
   ),
 );
 
-// The app version shown under «Загальне». The one place it is written: a release bumps it
-// here (it used to be the header's label, beside the logo).
-const APP_VERSION = 'v1.1.2';
-
 // Every binding the app actually listens to, and the file that owns it. A
 // read-only sheet is the honest shape: none of these is stored anywhere, so there
 // is nothing a remap could write to.
@@ -2466,6 +2467,11 @@ const badges = computed<Record<string, number | undefined>>(() => ({
   display: flex;
   align-items: flex-end;
   gap: var(--k-sp-2);
+}
+
+// A tag beside a button (Загальне → Версія): centred, not bottom-aligned like field rows.
+.set__row--center {
+  align-items: center;
 }
 
 .set__grow {

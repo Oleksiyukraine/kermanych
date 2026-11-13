@@ -15,3 +15,7 @@ dist/
 
 # Session git worktrees (packages/core worktreeDir): one folder per session, inside the project repo
 .gitworktree/
+
+# The landing page is its own repository (Oleksiyukraine/kermanych-landing), sometimes cloned
+# next to the product inside this checkout
+kermanych-landing/

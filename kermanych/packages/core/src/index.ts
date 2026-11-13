@@ -495,6 +495,15 @@ export {
   type TaskAction,
 } from "./task-actions";
 export {
+  isAppVersion,
+  compareAppVersions,
+  isBelowMinimumVersion,
+  changelogEntries,
+  changelogSection,
+  changelogBetween,
+  type ChangelogEntry,
+} from "./app-release";
+export {
   QA_RESULT_TOOL,
   QA_CHECKLIST_TOOL,
   CREDENTIAL_TOOL,

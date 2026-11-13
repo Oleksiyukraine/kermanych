@@ -14,6 +14,8 @@ import { routeLinksToDefaultBrowser } from './external-links';
 import { htmlToPdf } from './print-pdf';
 import { readWindowState, trackWindowState } from './window-state';
 import { SessionBrowsers } from './session-browser';
+import { adoptLoginShellPath } from './login-shell-path';
+import { attachUpdaterWindow, startUpdater } from './updater';
 import { ScheduleTray } from './schedule-tray';
 
 const currentDir = fileURLToPath(new URL('.', import.meta.url));
@@ -189,7 +191,7 @@ async function createWindow(apiBase: string) {
         currentDir,
         path.join(process.env.QUASAR_ELECTRON_PRELOAD_FOLDER, 'electron-preload' + process.env.QUASAR_ELECTRON_PRELOAD_EXTENSION)
       ),
-      additionalArguments: [`--api-base=${apiBase}`, `--ui-key=${uiKey}`],
+      additionalArguments: [`--api-base=${apiBase}`, `--ui-key=${uiKey}`, ...(app.isPackaged ? ['--app-packaged'] : [])],
     },
   });
   // Maximized / full screen are applied at the first show, so the window appears in its last
@@ -206,6 +208,7 @@ async function createWindow(apiBase: string) {
   mainWindow.webContents.on('dom-ready', () => mainWindow?.webContents.send('kermanych:boot-status', bootStatus));
   routeLinksToDefaultBrowser(mainWindow, (url) => shell.openExternal(url));
   browsers.attach(mainWindow);
+  attachUpdaterWindow(mainWindow);
   // Decision 4 of the scheduled-tasks spec: hide rather than close while a scheduled task is
   // enabled, unless the app is really quitting. A full-screen window leaves its own Space first,
   // or macOS would keep an empty black Space behind.
@@ -345,7 +348,13 @@ void app.whenReady().then(async () => {
     // bootstrap() listens on 127.0.0.1:<port> and serves under /api, so the api base is known
     // before it finishes and the window need not wait for it.
     const port = await freePort(4317);
-    await Promise.all([startBackend(port), createWindow(`http://127.0.0.1:${port}/api`)]);
+    // A restart into an update must get past the background-mode close guard: Electron closes
+    // the windows BEFORE it emits `before-quit` when quitAndInstall() starts the quit.
+    startUpdater({ beforeInstall: () => { quitting = true; } });
+    // The login shell's PATH before the api boots: every spawn it makes (omp, claude, git, adb,
+    // xcrun) resolves through PATH. The window does not wait for it; its splash covers the wait.
+    const backendUp = (app.isPackaged ? adoptLoginShellPath() : Promise.resolve()).then(() => startBackend(port));
+    await Promise.all([backendUp, createWindow(`http://127.0.0.1:${port}/api`)]);
   } catch (err) {
     dialog.showErrorBox('Kermanych failed to start', String((err as Error).stack ?? err));
     app.quit();

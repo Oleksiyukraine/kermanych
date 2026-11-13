@@ -2,9 +2,10 @@
   <!-- ЦУК's «Центр сповіщень» (docs/specs/2026-11-04-skill-self-improvement.md, decision 6): the
        window's left column, built like the notepad on the right — a physical object drawn from
        theme tokens. A clipboard: a board with a clip at its head and the notifications as slips
-       held on it, newest on top. Its head switches between «Сповіщення» — skill improvements and
-       this machine's schedule slips in one feed — and «Розклад», the scheduled tasks
-       (docs/specs/2026-11-06-scheduled-tasks.md, decision 6). -->
+       held on it, newest on top. Its head switches between «Сповіщення» — skill improvements,
+       this machine's schedule slips and the updates of Kermanych this machine received, in one
+       feed — and «Розклад», the scheduled tasks (docs/specs/2026-11-06-scheduled-tasks.md,
+       decision 6; docs/specs/2026-10-12-desktop-releases-and-updates.md, decision 12). -->
   <aside class="nc" :aria-label="t('cuk.notifications.title')">
     <div class="nc__clip" aria-hidden="true"><span class="nc__clip-ring"></span></div>
     <div class="nc__board">
@@ -57,7 +58,10 @@
           </p>
           <p v-if="!store.feed.length && store.phase !== 'error'" class="nc__blank">{{ t('cuk.notifications.empty') }}</p>
           <ul v-else class="nc__list">
-            <li v-for="item in store.feed" :key="item.kind === 'skill-improvement' ? item.entry.id : `slip:${item.slip.id}`">
+            <li
+              v-for="item in store.feed"
+              :key="item.kind === 'skill-improvement' ? item.entry.id : item.kind === 'app-update' ? item.update.id : `slip:${item.slip.id}`"
+            >
               <button
                 v-if="item.kind === 'skill-improvement'"
                 class="nc__slip"
@@ -79,6 +83,20 @@
                 <span v-if="item.entry.state !== 'applied'" class="nc__state mono">
                   {{ t(`cuk.notifications.state.${item.entry.state}`) }}
                 </span>
+              </button>
+              <!-- An update opens its «What's new» (AppWhatsNew.vue), not the entry view. -->
+              <button
+                v-else-if="item.kind === 'app-update'"
+                class="nc__slip"
+                :class="{ 'nc__slip--new': !item.update.seenAt }"
+                type="button"
+                @click="appUpdate.openUpdate(item.update.id)"
+              >
+                <span class="nc__slip-top">
+                  <span class="nc__skill mono">{{ t('cuk.notifications.update.title', { version: item.update.version }) }}</span>
+                  <span class="nc__when mono">{{ renderTime(t, relativeTime(item.update.createdAt, now)) }}</span>
+                </span>
+                <span class="nc__summary">{{ t('cuk.notifications.update.summary', { from: item.update.from }) }}</span>
               </button>
               <ScheduleSlipCard v-else :slip="item.slip" />
             </li>
@@ -110,6 +128,7 @@ import { useI18n } from 'vue-i18n';
 import type { SkillImprovementEntry } from '@kermanych/core';
 import { useNotificationCenter } from 'stores/notification-center';
 import { useSchedules } from 'stores/schedules';
+import { useAppUpdate } from 'stores/app-update';
 import { useProjects } from 'stores/projects';
 import { useOrchestrator } from 'stores/orchestrator';
 import { useAsyncAction } from '../../composables/useAsyncAction';
@@ -124,6 +143,7 @@ import ScheduleSlipCard from './ScheduleSlipCard.vue';
 const { t } = useI18n();
 const store = useNotificationCenter();
 const schedules = useSchedules();
+const appUpdate = useAppUpdate();
 const projects = useProjects();
 const local = useOrchestrator();
 const now = useNow(60_000);

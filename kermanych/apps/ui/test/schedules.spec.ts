@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import type { ScheduleSlip, ScheduledTask, SkillImprovementEntry } from '@kermanych/core';
 import { scheduleUndo } from '../src/lib/schedules';
-import { isUnseen, mergeFeed } from '../src/lib/notification-feed';
+import { isUnseen, mergeFeed, type NotificationItem } from '../src/lib/notification-feed';
+import type { AppUpdateEntry } from '../src/stores/app-update';
 import { cukScheduleRows } from '../src/lib/cuk-digest';
 
 // docs/specs/2026-11-06-scheduled-tasks.md. What the operator would notice going wrong: «Скасувати»
@@ -87,20 +88,32 @@ describe('notification feed', () => {
     seen,
   });
 
-  it('merges both sources newest first, whatever the timestamp form', () => {
+  const update = (id: string, createdAt: string, seenAt?: string): AppUpdateEntry => ({
+    id,
+    version: '1.3.0',
+    from: '1.2.0',
+    createdAt,
+    ...(seenAt ? { seenAt } : {}),
+  });
+  const idOf = (i: NotificationItem): string =>
+    i.kind === 'skill-improvement' ? i.entry.id : i.kind === 'app-update' ? i.update.id : i.slip.id;
+
+  it('merges every source newest first, whatever the timestamp form', () => {
     const feed = mergeFeed(
       [improvement('i2', '2026-11-06T12:00:00Z'), improvement('i1', '2026-11-06T08:00:00Z')],
       [slip('s2', '2026-11-06T14:30:00.000+02:00'), slip('s1', '2026-11-06T09:00:00.000Z')],
+      [update('u1', '2026-11-06T10:00:00.000Z')],
     );
-    expect(feed.map((i) => (i.kind === 'skill-improvement' ? i.entry.id : i.slip.id))).toEqual(['s2', 'i2', 's1', 'i1']);
+    expect(feed.map(idOf)).toEqual(['s2', 'i2', 'u1', 's1', 'i1']);
   });
 
-  it('counts an improvement without seenAt and a slip not seen as new', () => {
+  it('counts an improvement or an update without seenAt and a slip not seen as new', () => {
     const feed = mergeFeed(
       [improvement('i1', '2026-11-06T08:00:00Z'), improvement('i2', '2026-11-06T09:00:00Z', '2026-11-06T10:00:00Z')],
       [slip('s1', '2026-11-06T09:00:00Z'), slip('s2', '2026-11-06T10:00:00Z', true)],
+      [update('u1', '2026-11-06T11:00:00Z'), update('u2', '2026-11-06T07:00:00Z', '2026-11-06T07:30:00Z')],
     );
-    expect(feed.filter(isUnseen).length).toBe(2);
+    expect(feed.filter(isUnseen).map(idOf)).toEqual(['u1', 's1', 'i1']);
   });
 });
 
