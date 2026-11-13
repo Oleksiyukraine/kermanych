@@ -944,6 +944,25 @@ Spec: `docs/specs/2026-10-12-desktop-releases-and-updates.md`. Versions are semv
 (`apps/ui/package.json`), tags are `v<version>`, notes live in [`CHANGELOG.md`](./CHANGELOG.md),
 in English.
 
+**The usual way: `/kermanych-release`.** Open a coding agent (omp or Claude Code) in the
+repository root — the folder that contains `kermanych/`, not `kermanych/` itself — and type
+`/kermanych-release`, or `/kermanych-release 1.4.0` to name the version. The agent:
+
+- proposes the version from the commits since the last tag (`feat` → minor, otherwise patch,
+  never a major on its own) and writes user-facing notes;
+- runs the typecheck and every test suite;
+- opens a `release/<version>` PR, then stops once and asks whether to publish.
+
+After «yes» it merges the PR, tags `v<version>`, watches the workflow, and checks the published
+release: the assets and their versions, the notarization of the dmg and zip downloaded as from
+the internet, and the native modules in the AppImage. It fixes release failures itself through
+PRs, at most twice. A published release that fails a check is put back to draft first, and the
+fix ships as the next patch. It works in a temporary worktree, so your own checkout is never
+touched. It reads `GIT_TOKEN` from `kermanych/.env`. The command is
+`.claude/commands/kermanych-release.md`; spec: `docs/specs/2026-11-13-kermanych-release-command.md`.
+
+What the command does, by hand:
+
 1. `pnpm release:prepare 1.3.0` — refuses a version that is not higher than the current one,
    writes it into `apps/ui/package.json` and adds an empty `## 1.3.0 — <date>` section to
    `CHANGELOG.md`. Write the notes there (Менеджмент → «Реліз-ноти» can draft them), open a
