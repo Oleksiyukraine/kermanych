@@ -530,6 +530,7 @@
             <div class="set__row set__row--center">
               <KTag>{{ APP_VERSION }}</KTag>
               <KBtn variant="ghost" @click="appUpdate.openAllNotes()">{{ t('settings.appGeneral.whatsNew') }}</KBtn>
+              <KBtn variant="ghost" @click="feedback.show()">{{ t('feedback.open') }}</KBtn>
             </div>
           </div>
         </div>
@@ -1053,12 +1054,14 @@ import KLangToggle from 'components/kit/KLangToggle.vue';
 import KSkeleton from 'components/kit/KSkeleton.vue';
 import SteGuide from 'components/settings/SteGuide.vue';
 import { APP_VERSION, useAppUpdate } from 'stores/app-update';
+import { useFeedback } from 'stores/feedback';
 
 const store = useOrchestrator();
 const projects = useProjects();
 const { t } = useI18n();
 const auth = useAuth();
 const appUpdate = useAppUpdate();
+const feedback = useFeedback();
 const route = useRoute();
 const router = useRouter();
 

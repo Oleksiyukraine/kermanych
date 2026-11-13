@@ -105,6 +105,16 @@ export {
   setMySkillImprovementLevel,
 } from "./account";
 export { getMinAppVersion } from "./app-release";
+export type { FeedbackKind, FeedbackInput } from "./feedback";
+export {
+  FEEDBACK_KINDS,
+  FEEDBACK_MAX_LENGTH,
+  FEEDBACK_MAX_IMAGES,
+  FEEDBACK_MAX_IMAGE_BYTES,
+  FEEDBACK_IMAGE_BUCKET,
+  FeedbackRateLimitedError,
+  sendFeedback,
+} from "./feedback";
 
 export type { CloudProjectPatch, CloudProjectInsert } from "./projects";
 export {
