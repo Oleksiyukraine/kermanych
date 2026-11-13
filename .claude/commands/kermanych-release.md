@@ -95,7 +95,8 @@ For a **prepared version** (step 1.4), create a detached worktree on `origin/dev
 On the exact commit that will be released (the worktree), in `kermanych/`:
 
 ```bash
-pnpm --filter @kermanych/core --filter @kermanych/cloud --filter @kermanych/tokens build
+# every workspace package apps/ui depends on — core, cloud, tokens and api; vue-tsc needs api's dist
+pnpm --filter '@kermanych/ui^...' build
 (cd apps/ui && pnpm exec vue-tsc --noEmit)
 (cd packages/core && pnpm test -- --maxWorkers=4)
 (cd packages/cloud && pnpm test -- --maxWorkers=4)
@@ -142,8 +143,9 @@ Download everything: `gh release download v<version> -D <tmp>/assets`.
 **GitHub Release**
 - It is marked latest: `gh release view v<version> --json isDraft,isPrerelease,tagName` shows not
   draft and not prerelease, and `gh release list --limit 1` shows `Latest` on it.
-- Six assets: `Kermanych-<version>-arm64.dmg`, `Kermanych-<version>-arm64-mac.zip`,
-  `Kermanych-<version>.AppImage`, two `.blockmap`, `latest-mac.yml` and `latest-linux.yml`.
+- Seven assets: `Kermanych-<version>-arm64.dmg`, `Kermanych-<version>-arm64-mac.zip`,
+  `Kermanych-<version>.AppImage`, the dmg's and the zip's `.blockmap` (the AppImage carries its
+  own inside), `latest-mac.yml` and `latest-linux.yml`.
 - Both `latest-*.yml` have `version: <version>`.
 - The release body equals `pnpm -s release:notes <version>` (compare after trimming whitespace).
 
