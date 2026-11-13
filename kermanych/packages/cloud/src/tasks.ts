@@ -296,8 +296,8 @@ export const TASK_IMAGE_BUCKET = "task-images";
 
 // Slug a filename down to what a storage key tolerates, so the extension survives (the
 // signed URL and the browser both read it) while spaces and other characters cannot break
-// the path the RLS policy parses.
-function safeName(name: string): string {
+// the path the RLS policy parses. Shared with the feedback bucket (feedback.ts).
+export function safeName(name: string): string {
   const cleaned = name.replace(/[^a-zA-Z0-9._-]/g, "-").replace(/-+/g, "-");
   return cleaned.replace(/^[.-]+/, "") || "image";
 }

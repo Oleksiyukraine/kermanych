@@ -202,6 +202,9 @@
           :aria-label="`${t('common.nav.aiLoginRequired')}. ${signInHint}`"
           @click="ompCheck.recheck()"
         ><span aria-hidden="true">⚠</span> {{ t('common.nav.aiLoginRequired') }}</button>
+        <!-- «Надіслати відгук» (docs/specs/2026-11-13-feedback-form.md): always on screen, so a
+             bug can be reported from the screen it happened on. -->
+        <KIconButton :title="t('feedback.open')" :active="feedback.open" @click="feedback.show()"><KIcon name="feedback" /></KIconButton>
         <!-- ONE gear, into pages/SettingsPage.vue. It used to be three controls —
              a workspace ⚙, a project ⚙ and a `$` for the `.env` — each opening its
              own modal; the settings screen holds all three behind a scope switcher,
@@ -559,6 +562,8 @@
     <KToast :toasts="store.toasts" @dismiss="store.dismissToast" />
     <!-- Every destructive action asks here first (lib/confirm.ts). -->
     <KConfirmDialog />
+    <!-- «Надіслати відгук»: the header icon and Налаштування → «Загальне» open it. -->
+    <FeedbackDialog />
 
     <!-- TRACKER MERGE PROMPTS — global on purpose: a shadow task reaches `merged` wherever
          the user happens to be, and the «куди перенести тікет?» question must not depend
@@ -636,6 +641,8 @@ import AssistantLauncher from 'components/assistant/AssistantLauncher.vue';
 import KDirPicker from 'components/kit/KDirPicker.vue';
 import OnboardingChecklist from 'components/onboarding/OnboardingChecklist.vue';
 import { useOnboarding } from 'stores/onboarding';
+import FeedbackDialog from 'components/feedback/FeedbackDialog.vue';
+import { useFeedback } from 'stores/feedback';
 
 // The Kermanych app shell (design-system section 07): project rail, brand header, page
 // container, fleet status bar. Two stores back it — `store` (useOrchestrator) owns the LOCAL
@@ -664,6 +671,7 @@ const activity = useActivity();
 const board = useBoard();
 const projectDocs = useProjectDocs();
 const onb = useOnboarding();
+const feedback = useFeedback();
 // Created with the shell, before the socket connects: it listens for the first `snapshot` to
 // read «Посіпака»'s state, and for every `minion_update` after it (a pause is announced from any
 // screen, so the store cannot wait for the map or «ШІ-команда» to be opened). The sidebar marks
