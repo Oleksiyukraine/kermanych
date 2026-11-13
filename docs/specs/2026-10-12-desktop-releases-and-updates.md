@@ -179,6 +179,9 @@ that tell them what changed.
 
 ## Release procedure (what the operator does)
 
+Since 2026-11-13 the per-release steps below are one command, `/kermanych-release`
+(`docs/specs/2026-11-13-kermanych-release-command.md`). They remain the manual fallback.
+
 One-time setup:
 
 1. Create a **Developer ID Application** certificate, export it from Keychain as `.p12` with a
