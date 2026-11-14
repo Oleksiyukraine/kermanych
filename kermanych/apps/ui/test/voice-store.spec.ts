@@ -30,10 +30,11 @@ vi.mock('../src/stores/auth', () => ({ useAuth: () => ({ language: 'uk' }) }));
 const sent: Record<string, unknown>[] = [];
 let handlers: VoiceConnectionHandlers | undefined;
 const close = vi.fn();
+const setOutputMuted = vi.fn();
 vi.mock('../src/lib/voice-connection', () => ({
   connectVoice: async (_exchange: unknown, h: VoiceConnectionHandlers) => {
     handlers = h;
-    return { send: (e: Record<string, unknown>) => sent.push(e), setMicEnabled: () => {}, micLevel: () => 0, setGate: () => {}, close };
+    return { send: (e: Record<string, unknown>) => sent.push(e), setMicEnabled: () => {}, micLevel: () => 0, setGate: () => {}, setOutputMuted, close };
   },
   micErrorWords: (e: unknown) => e,
 }));
@@ -72,6 +73,7 @@ describe('the voice store bridges GPT-Live and the agent', () => {
     answerUi.mockReset().mockResolvedValue(undefined);
     sent.length = 0;
     close.mockReset();
+    setOutputMuted.mockReset();
     vi.useFakeTimers();
   });
   afterEach(() => vi.useRealTimers());
@@ -148,5 +150,58 @@ describe('the voice store bridges GPT-Live and the agent', () => {
     }
     expect(sentOf('session.close')).toHaveLength(1);
     expect(sendMessage).not.toHaveBeenCalled();
+  });
+
+  // Barge-in (docs/specs/2026-11-14-local-voice-dictation.md, decision 7): a long retelling goes to
+  // GPT-Live one chunk at a time, so the operator can cut it off by speaking.
+  // Long enough that no two paragraphs fit one COMMENTARY_CHUNK_CHARS chunk together.
+  const paragraph = (word: string) => `${word} `.repeat(150).trim();
+  const longReply = [paragraph('один'), paragraph('два'), paragraph('три')].join('\n\n');
+  const said = () => sentOf('session.commentary.append').map((e) => e.content);
+  function agentReplies(text: string) {
+    reduce!({ type: 'session_update', session: session({ status: 'thinking' }) });
+    reduce!({ type: 'transcript_append', sessionId: 's1', entry: entry('assistant_text', 'a1', text) });
+    reduce!({ type: 'session_update', session: session({ status: 'done' }) });
+  }
+
+  it('sends the next retelling chunk only after GPT-Live has said the previous one', async () => {
+    await talking();
+    agentReplies(longReply);
+    expect(said()).toEqual([paragraph('один')]);
+
+    live({ type: 'session.output_transcript.delta', delta: 'Один, ' });
+    await vi.advanceTimersByTimeAsync(500);
+    live({ type: 'session.output_transcript.delta', delta: 'один, ' });
+    await vi.advanceTimersByTimeAsync(500);
+    expect(said()).toHaveLength(1);
+
+    await vi.advanceTimersByTimeAsync(300);
+    expect(said()).toEqual([paragraph('один'), paragraph('два')]);
+
+    // A chunk GPT-Live never starts saying does not stall the rest.
+    await vi.advanceTimersByTimeAsync(8000);
+    expect(said()).toEqual([paragraph('один'), paragraph('два'), paragraph('три')]);
+  });
+
+  it('mutes GPT-Live and drops the rest of the retelling when the operator speaks over it, then unmutes', async () => {
+    await talking();
+    agentReplies(longReply);
+    live({ type: 'session.output_transcript.delta', delta: 'Один, ' });
+    await vi.advanceTimersByTimeAsync(200);
+
+    live({ type: 'session.input_transcript.delta', delta: 'стоп, ', start_ms: 100, end_ms: 400 });
+    expect(setOutputMuted.mock.calls).toEqual([[true]]);
+
+    // Still talking: GPT-Live stays muted.
+    await vi.advanceTimersByTimeAsync(500);
+    live({ type: 'session.input_transcript.delta', delta: 'інше питання', start_ms: 400, end_ms: 900 });
+    await vi.advanceTimersByTimeAsync(500);
+    expect(setOutputMuted.mock.calls).toEqual([[true]]);
+
+    await vi.advanceTimersByTimeAsync(400);
+    expect(setOutputMuted.mock.calls).toEqual([[true], [false]]);
+
+    await vi.advanceTimersByTimeAsync(20_000);
+    expect(said()).toEqual([paragraph('один')]);
   });
 });

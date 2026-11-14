@@ -16,6 +16,12 @@ if (!pkg || typeof pkg !== 'object' || !('version' in pkg) || typeof pkg.version
 }
 const APP_VERSION = pkg.version;
 const ENTITLEMENTS = join(appDir, 'src-electron', 'entitlements.mac.plist');
+// The macOS dictation engine (docs/specs/2026-11-14-local-voice-dictation.md, decision 4), built
+// from a pinned whisper.cpp by scripts/build-whisper-server.sh into the gitignored
+// kermanych/.whisper-build/. The `.dmg` ships it as Contents/Resources/bin/whisper-server, where
+// the api looks when packaged.
+const WHISPER_BUILD_SCRIPT = join(appDir, 'scripts', 'build-whisper-server.sh');
+const WHISPER_SERVER = join(appDir, '..', '..', '.whisper-build', 'bin', 'whisper-server');
 
 export default defineConfig((ctx) => {
   return {
@@ -121,6 +127,10 @@ export default defineConfig((ctx) => {
           extendInfo: {
             NSMicrophoneUsageDescription: 'Kermanych uses the microphone for voice conversations with your agents.',
           },
+          // The binary keeps its 0755 mode through the copy, and the signing step signs it like
+          // every other Mach-O in the bundle (an unsigned build keeps the linker's ad-hoc
+          // signature, which is all Apple Silicon needs to exec it).
+          extraResources: [{ from: WHISPER_SERVER, to: 'bin/whisper-server' }],
         },
         // AppImage is the Linux format electron-updater can replace in place.
         linux: {
@@ -140,7 +150,21 @@ export default defineConfig((ctx) => {
         // CLI the api runs as Node from disk: its N-API addon and the helper binaries it execs
         // (simax/, simcam/, simduo/) cannot live in an archive, and the CLI's one external import,
         // `ws`, must sit beside it on disk for Node's resolver (ios.driver.ts serveSimPath).
-        asarUnpack: ['**/node_modules/better-sqlite3/**', '**/node_modules/node-pty/**', '**/node_modules/serve-sim/**', '**/node_modules/ws/**'],
+        // sherpa-onnx (the Linux dictation engine, decision 4): sherpa-onnx.node finds its
+        // libsherpa-onnx-c-api / libonnxruntime beside itself (RUNPATH $ORIGIN), so the whole
+        // platform package must sit unpacked on disk. The glob covers sherpa-onnx-node too, whose
+        // loader requires `../sherpa-onnx-<platform>-<arch>/sherpa-onnx.node`. Only the build
+        // machine's platform package is installed (an optional dependency filtered by os/cpu), and
+        // the release builds each platform on its own runner (.github/workflows/release.yml), so
+        // the AppImage gets sherpa-onnx-linux-x64 and the `.dmg` an unused sherpa-onnx-darwin-arm64
+        // that the signing step signs like better-sqlite3's prebuild.
+        asarUnpack: [
+          '**/node_modules/better-sqlite3/**',
+          '**/node_modules/node-pty/**',
+          '**/node_modules/serve-sim/**',
+          '**/node_modules/ws/**',
+          '**/node_modules/sherpa-onnx-*/**',
+        ],
         npmRebuild: false,
       },
 
@@ -149,6 +173,13 @@ export default defineConfig((ctx) => {
       // `workspace:*` deps. `pnpm deploy` is the only thing that flattens that graph into a
       // self-contained node_modules; we then hand it to electron-builder to pack.
       async beforePackaging({ appPaths, unpackagedDir }: { appPaths: { appDir: string }; unpackagedDir: string }) {
+        // whisper-server for the mac extraResources above. Here rather than in `build` because
+        // only packaging needs it and the script has to run before electron-builder copies the
+        // file; it returns at once when the binary already matches the pinned whisper.cpp.
+        if (process.platform === 'darwin') {
+          execFileSync('bash', [WHISPER_BUILD_SCRIPT], { stdio: 'inherit' });
+        }
+
         const repoRoot = resolve(appPaths.appDir, '..', '..');
         const deployTmp = join(unpackagedDir, '..', 'deploy-tmp');
         rmSync(deployTmp, { recursive: true, force: true });

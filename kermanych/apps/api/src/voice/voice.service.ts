@@ -3,9 +3,9 @@
 // operator's OpenAI key and the one OpenAI call the window cannot make itself. The window holds
 // the WebRTC connection and the bridge to the agent; it hands its SDP offer here, and this
 // service exchanges it for GPT-Live's answer with the key, so the key never leaves this process.
-// Voice dictation (docs/specs/2026-11-03-voice-dictation.md) exchanges its offer the same way.
+// Dictation is local (docs/specs/2026-11-14-local-voice-dictation.md): voice/local-stt.service.ts.
 import { Injectable, Optional } from "@nestjs/common";
-import { DICTATION_MODEL, VOICE_MODEL, dictationSession, isDictationLanguages, isVoiceId, voiceLivePrompt } from "@kermanych/core";
+import { VOICE_MODEL, isVoiceId, voiceLivePrompt } from "@kermanych/core";
 import { RegistryService } from "../registry/registry.service";
 import { CodedError } from "../management/coded-error";
 
@@ -18,7 +18,6 @@ const MAX_OFFER_BYTES = 64 * 1024;
 export type VoiceKeyStatus = { source: "env" | "stored" | null; hint?: string };
 export type VoiceSessionRequest = { sdp: string; voice: string; language: string };
 export type VoiceSessionAnswer = { id: string; sdp: string };
-export type DictationRequest = { sdp: string; languages: string[] };
 
 type Fetch = (url: string, init: RequestInit) => Promise<Response>;
 
@@ -79,27 +78,6 @@ export class VoiceService {
     const out = (await r.json()) as { session?: { id?: string }; transport?: { sdp?: string } };
     if (!out.session?.id || !out.transport?.sdp) throw refusal(r.status, "GPT-Live");
     return { id: out.session.id, sdp: out.transport.sdp };
-  }
-
-  // Voice dictation (docs/specs/2026-11-03-voice-dictation.md): a transcription session over
-  // WebRTC. OpenAI's unified interface takes the offer and the session as a multipart form and
-  // answers the SDP as plain text.
-  async createDictation(userId: string, req: DictationRequest): Promise<{ sdp: string }> {
-    requireOffer(req.sdp);
-    if (!isDictationLanguages(req.languages)) throw new CodedError("voice_language_invalid", "Невідома мова диктування.");
-    const key = this.requireKey(userId);
-    const form = new FormData();
-    form.set("sdp", req.sdp);
-    form.set("session", JSON.stringify(dictationSession(req.languages)));
-    const r = await this.call(`${OPENAI}/realtime/calls`, {
-      method: "POST",
-      headers: { authorization: `Bearer ${key}` },
-      body: form,
-    });
-    if (!r.ok) throw refusal(r.status, DICTATION_MODEL);
-    const sdp = await r.text();
-    if (!sdp.trim().startsWith("v=")) throw refusal(r.status, DICTATION_MODEL);
-    return { sdp };
   }
 
   private requireKey(userId: string): string {

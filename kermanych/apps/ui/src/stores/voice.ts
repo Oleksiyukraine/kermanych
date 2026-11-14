@@ -46,6 +46,15 @@ const CLOSE_WAIT_MS = 3000;
 const DELEGATION_GRACE_MS = 700;
 // After an agent error is said, the conversation ends (decision 8) — once GPT-Live had time to say it.
 const ERROR_END_MS = 8000;
+// Barge-in (docs/specs/2026-11-14-local-voice-dictation.md, decision 7). A retelling chunk counts
+// as said once GPT-Live's voice transcript went this quiet after it started.
+const CHUNK_SPOKEN_MS = 700;
+// A chunk GPT-Live never starts saying must not stall the rest of the retelling.
+const CHUNK_UNSPOKEN_MS = 8000;
+// The gate opening this soon after GPT-Live's last words is the operator talking over it.
+const BARGE_SPOKE_MS = 300;
+// GPT-Live's voice returns once the operator was quiet this long, so its next answer is heard.
+const BARGE_QUIET_MS = 800;
 const TICK_MS = 150;
 
 const ASKS: Record<string, true> = { select: true, confirm: true, input: true, editor: true };
@@ -76,6 +85,8 @@ export const useVoice = defineStore('voice', () => {
   let ticker: ReturnType<typeof setInterval> | undefined;
   let closeTimer: ReturnType<typeof setTimeout> | undefined;
   let errorTimer: ReturnType<typeof setTimeout> | undefined;
+  let chunkTimer: ReturnType<typeof setTimeout> | undefined;
+  let unmuteTimer: ReturnType<typeof setTimeout> | undefined;
   // Bumped by every start and every finish: a connection, a delegation or a timer that settles
   // after its conversation was ended (or replaced) does nothing.
   let generation = 0;
@@ -96,6 +107,12 @@ export const useVoice = defineStore('voice', () => {
   let since = 0;
   let lastProgressAt = 0;
   let seenEntries = 0;
+  // The retelling's chunks not sent yet, and whether one was sent and is still being said
+  // (decision 7: one at a time, so a barge-in has something to drop).
+  let chunks: string[] = [];
+  let chunkSaying = false;
+  // GPT-Live's voice is silenced because the operator talks over it.
+  let outputMuted = false;
 
   const bound = computed(() => (sessionId.value ? orchestrator.sessions.find((x) => x.id === sessionId.value) : undefined));
   // The bridge reads the bound session's transcript for the agent's replies whichever page the
@@ -143,6 +160,8 @@ export const useVoice = defineStore('voice', () => {
         break;
       case 'session.input_transcript.delta': {
         const text = String(e.delta ?? '');
+        // The operator talks over GPT-Live, or keeps talking after cutting it off.
+        if (outputMuted || Date.now() - lastSpokeAt.value < TALKING_MS) bargeIn();
         appendCaption('operator', text);
         // Not activity for the hang-up: the input transcript hears a TV as readily as the operator
         // (docs/specs/2026-11-04-voice-background-noise.md, decision 5).
@@ -154,6 +173,7 @@ export const useVoice = defineStore('voice', () => {
       case 'session.output_transcript.delta':
         appendCaption('voice', String(e.delta ?? ''));
         lastSpokeAt.value = lastActivityAt = Date.now();
+        if (chunkSaying) armChunk(CHUNK_SPOKEN_MS);
         break;
       case 'session.delegation.created': {
         const id = (e.delegation as { id?: string } | undefined)?.id ?? null;
@@ -204,19 +224,77 @@ export const useVoice = defineStore('voice', () => {
     }
   }
 
-  // The agent's finished reply, then its pending question — each said once.
+  // The agent's finished reply, then its pending question — each said once. Nothing while the
+  // operator talks over GPT-Live: it is said once they stop.
   function speakPending(): void {
     const s = bound.value;
-    if (!s || !live() || agentBusy(s)) return;
+    if (!s || !live() || agentBusy(s) || outputMuted) return;
     const reply = finalReply(orchestrator.transcripts[s.id] ?? []);
     if (reply && reply.at >= since && reply.text !== spokenReplyText) {
       spokenReplyText = reply.text;
-      for (const chunk of toCommentaryChunks(reply.text)) commentary(turnDelegation, chunk);
+      chunks.push(...toCommentaryChunks(reply.text));
+      if (!chunkSaying) sayNextChunk();
     }
+    // The question comes after the whole retelling: the drained queue calls back here.
+    if (chunkSaying) return;
     const req = s.pendingUiRequest;
     if (req && ASKS[req.method] && req.id !== spokenRequestId) {
       spokenRequestId = req.id;
       commentary(turnDelegation, describeUiRequest(req));
+    }
+  }
+
+  // Sends the next retelling chunk; once the queue is drained, what waited for it is said.
+  function sayNextChunk(): void {
+    const chunk = chunks.shift();
+    if (chunk === undefined) {
+      chunkSaying = false;
+      speakPending();
+      return;
+    }
+    chunkSaying = true;
+    commentary(turnDelegation, chunk);
+    armChunk(CHUNK_UNSPOKEN_MS);
+  }
+
+  function armChunk(ms: number): void {
+    clearTimeout(chunkTimer);
+    const mine = generation;
+    chunkTimer = setTimeout(() => mine === generation && sayNextChunk(), ms);
+  }
+
+  // The operator talks over GPT-Live (decision 7): its voice goes silent at once and the rest of
+  // the retelling is dropped — the prompt has GPT-Live stop and hand a new request to the agent.
+  function bargeIn(): void {
+    if (!conn) return;
+    chunks = [];
+    chunkSaying = false;
+    clearTimeout(chunkTimer);
+    if (!outputMuted) {
+      outputMuted = true;
+      conn.setOutputMuted(true);
+    }
+    armUnmute();
+  }
+
+  function armUnmute(): void {
+    clearTimeout(unmuteTimer);
+    const mine = generation;
+    unmuteTimer = setTimeout(() => {
+      // An open gate (when it is on) is the operator still talking; its closing re-arms this.
+      if (mine !== generation || (gate.value > 0 && gateOpen.value)) return;
+      outputMuted = false;
+      conn?.setOutputMuted(false);
+      speakPending();
+    }, BARGE_QUIET_MS);
+  }
+
+  function onGate(open: boolean): void {
+    gateOpen.value = open;
+    if (open && Date.now() - lastSpokeAt.value < BARGE_SPOKE_MS) bargeIn();
+    else if (outputMuted) {
+      if (open) clearTimeout(unmuteTimer);
+      else armUnmute();
     }
   }
 
@@ -291,6 +369,9 @@ export const useVoice = defineStore('voice', () => {
     heard = [];
     turnDelegation = null;
     lastProgressAt = 0;
+    chunks = [];
+    chunkSaying = false;
+    outputMuted = false;
     // What is already on screen is not news: only replies that arrive from now on are said.
     const history = orchestrator.transcripts[id] ?? [];
     since = Date.now();
@@ -312,7 +393,7 @@ export const useVoice = defineStore('voice', () => {
             finish();
           },
           onGate: (open) => {
-            if (mine === generation) gateOpen.value = open;
+            if (mine === generation) onGate(open);
           },
         },
         { gate: gate.value },
@@ -380,6 +461,8 @@ export const useVoice = defineStore('voice', () => {
     clearInterval(ticker);
     clearTimeout(closeTimer);
     clearTimeout(errorTimer);
+    clearTimeout(chunkTimer);
+    clearTimeout(unmuteTimer);
     conn?.close();
     conn = null;
     phase.value = 'idle';
@@ -391,6 +474,9 @@ export const useVoice = defineStore('voice', () => {
     muted.value = false;
     held = false;
     heard = [];
+    chunks = [];
+    chunkSaying = false;
+    outputMuted = false;
     closing?.resolve();
     closing = null;
   }

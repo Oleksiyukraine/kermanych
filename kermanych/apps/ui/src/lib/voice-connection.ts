@@ -21,6 +21,8 @@ export interface VoiceConnection {
   micLevel(): number;
   /** The noise gate's threshold on `micLevel`'s scale, 0 = off. Without a gate, does nothing. */
   setGate(threshold: number): void;
+  /** Silences GPT-Live's voice in this window (the microphone is untouched): the barge-in. */
+  setOutputMuted(on: boolean): void;
   /** Tears everything down: tracks, channel, peer connection, audio element. */
   close(): void;
 }
@@ -37,8 +39,7 @@ export interface VoiceConnectionOptions {
   /**
    * A noise gate in front of GPT-Live (docs/specs/2026-11-04-voice-background-noise.md,
    * decision 4): its starting threshold. Also turns the browser's automatic gain off, which would
-   * otherwise lift a distant TV to the operator's level while they are silent. Dictation passes
-   * none and keeps the plain microphone.
+   * otherwise lift a distant TV to the operator's level while they are silent.
    */
   gate?: number;
 }
@@ -166,6 +167,9 @@ export const connectVoice: ConnectVoice = async (exchange, handlers, options = {
     },
     setGate(threshold) {
       gate?.port.postMessage({ threshold });
+    },
+    setOutputMuted(on) {
+      audio.muted = on;
     },
     close: teardown,
   };

@@ -167,7 +167,7 @@
           @keydown="onLogResizeKeydown"
         ></div>
 
-        <!-- LOG — the agent's transcript and composer with the voice conversation, as on «Агенти».
+        <!-- LOG — the agent's transcript and composer with local dictation (🎤 / ⌥D), as on «Агенти».
              Every message here — typed, «Надіслати агенту» or said — carries the page and the
              picks (decision 8; stores/orchestrator.ts sendMessage). -->
         <aside class="syn__log" :style="{ width: logWidth + 'px' }">
@@ -210,7 +210,9 @@
             @set-model="onSetModel"
             :voiceable="true"
             :voice="voicePanel.bar.value"
+            :dictation="voicePanel.dictation.value"
             @voice-start="voicePanel.start"
+            @dictate="voicePanel.toggleDictation"
             @voice-mute="voicePanel.mute"
             @voice-end="voicePanel.end"
           >
@@ -364,6 +366,7 @@ import { useMarkSeen } from '../composables/useMarkSeen';
 import { useResizablePanel } from '../composables/useResizablePanel';
 import { errorText, useAsyncAction, useKeyedAction } from '../composables/useAsyncAction';
 import { useVoicePanel } from '../composables/useVoicePanel';
+import type { ComposerDictationHost } from '../composables/useComposerDictation';
 import { nextMode as modeFor } from '../lib/message-mode';
 import { useOptimisticValue } from '../composables/useOptimisticValue';
 import { useLoadPhase } from '../composables/useLoadPhase';
@@ -444,7 +447,10 @@ const sessionId = ref<string | undefined>(initialSession(store.selectedProjectId
 const session = computed(() => sessions.value.find((s) => s.id === sessionId.value));
 // The open session's log stays resident while it is on screen (the store evicts past its cap).
 useHeldTranscript(() => session.value?.id);
-const voicePanel = useVoicePanel(() => session.value);
+// 🎤 here is local dictation only (docs/specs/2026-11-14-local-voice-dictation.md, decision 1):
+// the result is on screen, no spoken answer is needed.
+const panelEl = ref<(ComponentPublicInstance & { restoreDraft: (text: string, images: readonly ImageInput[]) => void; dictationHost: ComposerDictationHost }) | null>(null);
+const voicePanel = useVoicePanel(() => session.value, { live: false, composer: () => panelEl.value?.dictationHost });
 useMarkSeen(() => session.value);
 
 function select(id: string): void {
@@ -519,8 +525,6 @@ function onExpandAll(on: boolean): void {
 }
 const logTab = ref('log');
 const logTabs = computed(() => [{ value: 'log', label: t('agents.tabs.log') }]);
-
-const panelEl = ref<(ComponentPublicInstance & { restoreDraft: (text: string, images: readonly ImageInput[]) => void }) | null>(null);
 
 function nextMode(s: Session): MessageMode {
   return modeFor(s, store.transcripts[s.id] ?? []);
