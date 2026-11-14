@@ -4,6 +4,11 @@ The project's own specs, plans, runbooks and design mockups are indexed by
 [docs-harness](https://github.com/andygo-develop/docs-harness) and served through the
 `project-docs` MCP server. Before you assume how a feature is meant to behave, search them.
 
+The server is registered twice. The repository root's `.mcp.json` (and `.codex/config.toml` for
+codex) starts it inside `kermanych/`, where `.docs-harness/` lives, because Kermanych sessions
+start at the root. `kermanych/.mcp.json` serves a harness started inside `kermanych/`, such as a
+Kermanych chat.
+
 - `search_project_docs` takes `query`, an optional `limit` (default 5, max 25) and optional
   `tags`. It returns short excerpts, each with a `documentId`.
 - `get_project_doc` takes a `documentId` and returns that one section in full. Fetch a section

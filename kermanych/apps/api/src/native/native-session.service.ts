@@ -24,6 +24,7 @@ import { CHAT_TOOLS } from "../supervisor/chat-tools";
 import { claudeMcpConfigPath, claudeSettingsPath, codexConfigArgs, codexHookPath, NATIVE_TOKEN_ENV, NATIVE_URL_ENV, ompExtensionPath } from "./native-hooks";
 import { BrowserMcpService } from "../browser/browser-mcp.service";
 import { MCP_TOKEN_ENV, MCP_URL_ENV, ompMcpBridgePath } from "../runtime/omp-mcp-bridge";
+import { mcpLaunchEnv } from "../mcp/mcp-files";
 import { MachineResourcesService } from "../machine/machine-resources.service";
 
 // `settled`: a turn just came to rest at `status` — the supervisor checks the tree for a merge
@@ -529,6 +530,9 @@ export class NativeSessionService implements OnModuleInit, OnModuleDestroy {
         file,
         args,
         env: {
+          // The variables the folder's MCP files reference, from its `.env`, under every key of
+          // Kermanych's own (docs/specs/2026-11-14-project-mcp-servers.md, decision 6).
+          ...mcpLaunchEnv(cwd),
           [NATIVE_URL_ENV]: `http://127.0.0.1:${port}/api/native/${session.id}`,
           [NATIVE_TOKEN_ENV]: token,
           // omp's bridge reads the browser server from here, and codex its bearer

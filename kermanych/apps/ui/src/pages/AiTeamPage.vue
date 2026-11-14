@@ -135,6 +135,15 @@
           <SkillsLibraryPanel :owner="owner" :owner-name="ownerName" :workspace="inheritedWorkspace" />
           <AiInherited v-if="scope !== 'workspace'" kind="skills" :scope="scope" :workspace="inheritedWorkspace" />
         </div>
+        <!-- MCP-сервери (docs/specs/2026-11-14-project-mcp-servers.md): they live in a project's
+             repository, so only the project scope has something to show. -->
+        <div v-else-if="section.key === 'mcp'" class="ait__form ait__form--wide">
+          <McpServersPanel v-if="owner.scope === 'project'" :project-id="owner.id" :bound="!!localRow?.localRepoPath" />
+          <div v-else class="ait__blank">
+            <span class="ait__blank-eyebrow mono">{{ t('aiTeam.blank.eyebrow') }}</span>
+            <p>{{ t('aiTeam.mcp.projectOnly') }}</p>
+          </div>
+        </div>
       </div>
     </section>
   </main>
@@ -171,6 +180,7 @@ import TriggersPanel from 'components/settings/TriggersPanel.vue';
 import SkillsLibraryPanel from 'components/settings/SkillsLibraryPanel.vue';
 import HelpersCatalogPanel from 'components/settings/HelpersCatalogPanel.vue';
 import AiInherited from 'components/settings/AiInherited.vue';
+import McpServersPanel from 'components/settings/McpServersPanel.vue';
 
 const store = useOrchestrator();
 const projects = useProjects();

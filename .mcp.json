@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "project-docs": {
+      "type": "stdio",
+      "command": "sh",
+      "args": [
+        "-c",
+        "cd kermanych && exec npx -y @andygo.dev/docs-harness mcp start"
+      ]
+    }
+  }
+}
