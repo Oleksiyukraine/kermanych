@@ -15,7 +15,7 @@
         :aria-label="tr('kit.toast.close')"
         @click.stop="emit('dismiss', t.id)"
       >✕</button>
-      <span>{{ t.message }}</span>
+      <span class="k-toast__msg">{{ t.message }}</span>
       <!-- `.stop`: the action consumes the toast itself, so the host's dismiss-on-click must
            not fire a second time around it. -->
       <button v-if="t.action" type="button" class="k-toast__action" @click.stop="act(t)">
@@ -106,6 +106,17 @@ const placement = computed<CSSProperties | undefined>(() => {
   line-height: 1.5;
   cursor: pointer;
   box-shadow: var(--k-sheen), var(--k-shadow-toast);
+}
+
+// A toast informs, it does not carry a log: a path or URL with no break opportunity wraps
+// anywhere instead of pushing the card past TOAST_MAX, and a long message stops at four lines
+// with an ellipsis instead of growing the stack up the window.
+.k-toast__msg {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 4;
+  overflow: hidden;
+  overflow-wrap: anywhere;
 }
 
 // Same small faint ✕ as a closable tab (KTabs `.k-tabs__close`), pinned top-right.
