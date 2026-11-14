@@ -707,6 +707,12 @@ minutes (NULL: not estimated; a check keeps it above zero). `tasks_guard()` is u
 estimate is not what the card asks for, so setting it never switches auto-run off. It only adds,
 but every task read selects the column, so push it before shipping a client that knows it.
 
+`20261113090000_app_feedback.sql` adds the «Надіслати відгук» table `app_feedback` (insert-only
+for the author, `select` for `service_role` only), its rate-limit trigger and the private bucket
+`feedback-images` with own-folder policies (see [Feedback](#feedback-надіслати-відгук)). It only
+adds, and no older client reads it, but push it before shipping a client that has the form:
+until then «Надіслати» fails with the database's «table not found».
+
 ### Running against a local stack or your own project
 
 Everything below is for pointing Kermanych somewhere OTHER than the team's
@@ -1017,6 +1023,31 @@ with `posix_spawnp failed`; the API restores it before the first shell and the a
 sets it in the bundle. There is no Linux prebuild of `node-pty`: on Linux the app build
 compiles it in the packaged tree (`node-gyp`, so it needs `python3`, `make` and a C++
 compiler) unless pnpm already left a build there.
+
+## Feedback («Надіслати відгук»)
+
+Spec: `docs/specs/2026-11-13-feedback-form.md`. The speech-balloon icon in the header, beside the
+settings gear, opens the form. So does **Надіслати відгук** in Налаштування → Застосунок →
+«Загальне», beside «Що нового». A report has a kind («Помилка», «Ідея», «Інше»), a text of up to
+5000 characters and up to 3 screenshots (paste ⌘V, drag-and-drop or «Додати знімок», 10 MB each).
+The form also sends the app version, `desktop` or `web`, the user agent, the UI language and the
+name of the screen it was opened from (a route name, never ids), and says so under the text. The
+draft stays when the form is closed and clears once the report is sent.
+
+Reports go to the team's cloud: one row in `public.app_feedback` (the author is the signed-in
+account), screenshots in the private Storage bucket `feedback-images` under
+`{user_id}/{uuid}-{name}`. A user may only insert their own reports and upload into their own
+folder; no client reads either back. **Maintainers read them in the Supabase dashboard**: Table
+Editor → `app_feedback`, Storage → `feedback-images`, or SQL:
+
+```sql
+select f.created_at, p.github_username, f.kind, f.message, f.app_version, f.client, f.screen, f.image_paths
+from public.app_feedback f join public.profiles p on p.id = f.user_id
+order by f.created_at desc;
+```
+
+A `before insert` trigger allows 10 reports per user per hour; the eleventh is refused with
+`feedback_rate_limited`, which the form shows as «Забагато відгуків за годину».
 
 ## Integrated terminal
 

@@ -22,6 +22,7 @@ import { createWorkspaceRisk, listRiskEvents, listWorkspaceRisks } from "../src/
 import { deleteAiSkill, listAiSkills, upsertAiSkill } from "../src/skills";
 import { deleteAiTrigger, listAiTriggers, setAiTriggerSkills, upsertAiTrigger } from "../src/triggers";
 import { listMembers } from "../src/workspaces";
+import { FEEDBACK_IMAGE_BUCKET, FeedbackRateLimitedError, sendFeedback } from "../src/feedback";
 import {
   deleteJiraIntegration,
   ensureJiraSyncState,
@@ -1427,6 +1428,57 @@ describe.skipIf(!URL || !ANON || !SERVICE)("supabase RLS and triggers", () => {
       const rows = await listWorkspaceRisks(owner.client, riskWs);
       expect(rows).toHaveLength(2);
       expect(rows.find((r) => r.id === riskId)?.event).toBe(risk.event);
+    });
+  });
+
+  // docs/specs/2026-11-13-feedback-form.md: insert-only for the author, screenshots in the
+  // author's own folder, 10 reports per user per hour.
+  describe("app feedback", () => {
+    const png = (name: string) => new File([new Uint8Array([137, 80, 78, 71])], name, { type: "image/png" });
+
+    it("a report with a screenshot lands, and its author cannot read it back", async () => {
+      await sendFeedback(member.client, member.id, { kind: "bug", message: "Кнопка не працює", appVersion: "1.2.0", client: "web", screen: "agents" }, [png("shot.png")]);
+
+      const own = await member.client.from("app_feedback").select("id");
+      expect(own.error?.code).toBe("42501");
+
+      const rows = await admin.from("app_feedback").select("kind, message, image_paths, app_version, screen").eq("user_id", member.id);
+      expect(rows.error).toBeNull();
+      expect(rows.data).toHaveLength(1);
+      const row = rows.data?.[0] as { kind: string; message: string; image_paths: string[]; app_version: string; screen: string };
+      expect([row.kind, row.message, row.app_version, row.screen]).toEqual(["bug", "Кнопка не працює", "1.2.0", "agents"]);
+      expect(row.image_paths).toHaveLength(1);
+      expect(row.image_paths[0]?.startsWith(`${member.id}/`)).toBe(true);
+      const object = await admin.storage.from(FEEDBACK_IMAGE_BUCKET).download(row.image_paths[0] ?? "");
+      expect(object.error).toBeNull();
+    });
+
+    it("a forged author and an anonymous insert are refused", async () => {
+      const forged = await member.client.from("app_feedback").insert({ kind: "bug", message: "x", user_id: outsider.id });
+      expect(forged.error?.code).toBe("42501");
+
+      const anon = createClient(URL ?? "", ANON ?? "", { auth: { autoRefreshToken: false, persistSession: false } });
+      const anonymous = await anon.from("app_feedback").insert({ kind: "bug", message: "x" });
+      expect(anonymous.error?.code).toBe("42501");
+    });
+
+    it("a screenshot cannot land in another user's folder", async () => {
+      const upload = await member.client.storage.from(FEEDBACK_IMAGE_BUCKET).upload(`${outsider.id}/x.png`, png("x.png"));
+      expect(upload.error).not.toBeNull();
+    });
+
+    it("the eleventh report within an hour is refused, also with a back-dated created_at", async () => {
+      const sender = await makeUser("feedback");
+      for (let i = 0; i < 10; i += 1) {
+        await sendFeedback(sender.client, sender.id, { kind: "other", message: `report ${i}` });
+      }
+      await expect(sendFeedback(sender.client, sender.id, { kind: "other", message: "one more" })).rejects.toBeInstanceOf(
+        FeedbackRateLimitedError,
+      );
+      const backDated = await sender.client
+        .from("app_feedback")
+        .insert({ kind: "other", message: "from the past", created_at: "2000-01-01T00:00:00Z" });
+      expect(backDated.error?.message).toContain("feedback_rate_limited");
     });
   });
 });

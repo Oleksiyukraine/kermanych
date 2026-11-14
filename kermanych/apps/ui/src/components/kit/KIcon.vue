@@ -58,7 +58,8 @@ export type KIconName =
   | 'agentFinish'
   | 'agentSummary'
   | 'agentTester'
-  | 'clock';
+  | 'clock'
+  | 'feedback';
 </script>
 
 <script setup lang="ts">
@@ -256,6 +257,9 @@ const ICONS: Record<KIconName, readonly string[]> = {
   // «Розклад» — a clock (Lucide's): a scheduled task's row and the mark on the session its run
   // became (KScheduleMark, docs/specs/2026-11-06-scheduled-tasks.md, decision 5).
   clock: ['M3 12a9 9 0 1 0 18 0a9 9 0 1 0-18 0', 'M12 6v6l4 2'],
+  // «Надіслати відгук» in the header (docs/specs/2026-11-13-feedback-form.md): Lucide's
+  // message-square-text. A glyph would need a font that has a speech balloon.
+  feedback: ['M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z', 'M13 8H7', 'M17 12H7'],
 };
 
 const props = defineProps<{ name: KIconName }>();
