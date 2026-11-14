@@ -730,6 +730,7 @@ export const en: MessageSchema = {
       created: 'Task “{title}” created in “{project}”',
       unreadable: 'The document could not be read as text.',
       notCloud: 'This session’s project is not published to a workspace — there is nowhere to create the task.',
+      cloudUnread: 'The cloud project list could not be read — there is no connection to the cloud. Try again once it is back.',
       screens: 'Screenshots — attached to the card',
       screensCount: 'Screenshots: {n}',
       screensNone: 'There are no screenshots in {dir} yet (`screens/*.png`). The card will be created without them.',
@@ -779,6 +780,7 @@ export const en: MessageSchema = {
         planeUnavailable: 'Plane is not available here: no connection to the cloud',
         planeProbing: 'Checking Plane…',
         notCloud: 'This session’s project is not published to a workspace — there is nowhere to create the task.',
+        cloudUnread: 'The cloud project list could not be read — there is no connection to the cloud. Try again once it is back.',
       },
     },
     prompt: {

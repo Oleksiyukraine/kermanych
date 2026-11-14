@@ -29,6 +29,7 @@ import { useAuth } from './auth';
 import { useOrchestrator } from './orchestrator';
 import { api } from '../lib/api';
 import { groupProjectsByWorkspace, orderWorkspaces, projectWorkspaceMap, reorderWorkspaces } from '../lib/scope';
+import { IS_PREVIEW } from '../lib/preview';
 import { globalTr } from '../boot/i18n';
 
 // Cloud workspaces + projects + membership: the source of truth for project CONFIG, for
@@ -206,7 +207,18 @@ export const useProjects = defineStore('projects', () => {
     writeOrderCache();
   }
 
-  async function load(): Promise<CloudProject[]> {
+  // The read in flight, if any: ensureList() joins it rather than sending a second one.
+  let reading: Promise<CloudProject[]> | null = null;
+
+  function load(): Promise<CloudProject[]> {
+    const run = readList().finally(() => {
+      if (reading === run) reading = null;
+    });
+    reading = run;
+    return run;
+  }
+
+  async function readList(): Promise<CloudProject[]> {
     loading.value = true;
     try {
       // Workspaces first: the tree cannot place a project without its group, and RLS
@@ -237,6 +249,17 @@ export const useProjects = defineStore('projects', () => {
       loading.value = false;
       loadSettled.value = true;
     }
+  }
+
+  // The cloud list, for a surface that cannot work without it (a «Створити задачу» dialog
+  // resolving the session's project to its workspace). The cold-start read in MainLayout is
+  // the only one a run otherwise makes: if it failed (the machine woke without a network),
+  // `projects` holds only what create()/publish() appended since, and every published project
+  // reads as absent until a restart. So an unread list is read again here; a read already in
+  // flight is joined. Never throws — a failure lands in `offlineError` like load()'s.
+  async function ensureList(): Promise<void> {
+    if (IS_PREVIEW || listRead.value || !auth.user) return;
+    await (reading ?? load());
   }
 
   async function createWorkspace(name: string, color?: string): Promise<Workspace> {
@@ -526,6 +549,7 @@ export const useProjects = defineStore('projects', () => {
     orderedWorkspaces,
     moveWorkspace,
     load,
+    ensureList,
     createWorkspace,
     patchWorkspace,
     removeWorkspace,

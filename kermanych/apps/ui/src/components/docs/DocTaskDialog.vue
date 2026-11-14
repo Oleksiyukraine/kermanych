@@ -16,6 +16,7 @@
         :label="t('agents.docTask.project')"
         :options="projectOptions"
         :placeholder="t(screensDir ? 'agents.docTask.projectPlaceholderAny' : 'agents.docTask.projectPlaceholder')"
+        :loading="cloudReading"
       />
       <KSkeleton v-if="readPhase === 'skeleton'" variant="line" :label="t('agents.docTask.taskTitle')" />
       <KField v-else v-model="title" :label="t('agents.docTask.taskTitle')" />
@@ -24,7 +25,7 @@
         :label="t('agents.docTask.assignee')"
         :options="assigneeOptions"
         :placeholder="t('agents.docTask.unassigned')"
-        :loading="membersLoading"
+        :loading="membersLoading || cloudReading"
       />
       <KSkeleton v-if="readPhase === 'skeleton'" variant="lines" :rows="8" :label="t('agents.docTask.description')" />
       <div v-else>
@@ -138,10 +139,13 @@ watch(
 // answers, so «no screenshots yet» never shows while they are still being read.
 const reading = ref(false);
 const membersLoading = ref(false);
+// The cloud list being re-read because the run never managed to (stores/projects.ts,
+// ensureList): the session's project cannot be resolved to its workspace before it answers.
+const cloudReading = ref(false);
 const screensLoading = ref(false);
 const screens = ref<{ path: string; file: File; url: string }[] | undefined>(undefined);
 const screensError = ref<string | null>(null);
-const readPhase = useLoadPhase(() => reading.value);
+const readPhase = useLoadPhase(() => reading.value || cloudReading.value);
 const screensPhase = useLoadPhase(() => screensLoading.value);
 
 const home = computed(() => projects.byId.get(props.session?.projectId ?? ''));
@@ -178,9 +182,19 @@ onBeforeUnmount(() => {
 async function load(gen: number): Promise<void> {
   const s = props.session;
   const path = props.path;
+  if (s && !home.value && !projects.listRead) {
+    cloudReading.value = true;
+    try {
+      await projects.ensureList();
+    } finally {
+      if (gen === generation) cloudReading.value = false;
+    }
+    if (gen !== generation) return;
+  }
   const h = home.value;
   if (!s || !h) {
-    store.notify(t('agents.docTask.notCloud'), 'error');
+    // A list that could not be read is said as such, not as «не опубліковано».
+    store.notify(t(projects.listRead ? 'agents.docTask.notCloud' : 'agents.docTask.cloudUnread'), 'error');
     emit('update:modelValue', false);
     return;
   }
