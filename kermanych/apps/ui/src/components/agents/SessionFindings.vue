@@ -33,7 +33,7 @@
         </section>
         <div class="findings__foot mono">
           <template v-if="f.status === 'open'">
-            <button type="button" class="findings__action" @click="openFile(f)">{{ t('agents.findings.file') }}</button>
+            <button type="button" class="findings__action" @click="void openFile(f)">{{ t('agents.findings.file') }}</button>
             <button
               type="button"
               class="findings__action findings__action--quiet"
@@ -96,16 +96,25 @@
         </div>
         <p v-if="jiraHint" class="findings__hint mono">{{ jiraHint }}</p>
         <p v-if="planeHint" class="findings__hint mono">{{ planeHint }}</p>
-        <p v-if="!workspaceId" class="findings__hint mono">{{ t('agents.findings.dialog.notCloud') }}</p>
+        <!-- Said only once the cloud list has answered: before that, a published project reads
+             as absent too. A list that could not be read is said as such, not as «не опубліковано». -->
+        <p v-if="!cloudReading && !workspaceId" class="findings__hint mono">
+          {{ t(projects.listRead ? 'agents.findings.dialog.notCloud' : 'agents.findings.dialog.cloudUnread') }}
+        </p>
 
         <template v-if="target === 'board'">
-          <KSelect v-model="project" :label="t('agents.findings.dialog.project')" :options="projectOptions" />
+          <KSelect
+            v-model="project"
+            :label="t('agents.findings.dialog.project')"
+            :options="projectOptions"
+            :loading="cloudReading"
+          />
           <KSelect
             v-model="assignee"
             :label="t('agents.findings.dialog.assignee')"
             :options="assigneeOptions"
             :placeholder="t('agents.findings.dialog.unassigned')"
-            :loading="membersLoading"
+            :loading="membersLoading || cloudReading"
           />
           <!-- «Дозволити автовиконання»: off by default, the operator's own decision per card.
                The card is theirs (they file it), so the author rule never locks it here. -->
@@ -281,6 +290,12 @@ const dialogError = ref<string | null>(null);
 const busy = ref(false);
 // The workspace's members are read on the first open; the assignee picker spins meanwhile.
 const membersLoading = ref(false);
+// The cloud list being re-read because the run never managed to (stores/projects.ts,
+// ensureList): until it answers the session's project has no workspace, so both pickers spin
+// and the trackers are not probed.
+const cloudReading = ref(false);
+// A reopened dialog's reads supersede the previous open's late answers.
+let openRun = 0;
 
 const home = computed(() => projects.byId.get(props.session.projectId));
 const workspaceId = computed(() => home.value?.workspaceId);
@@ -470,8 +485,9 @@ watch(planeProject, async (id) => {
   }
 });
 
-function openFile(f: AgentFinding): void {
+async function openFile(f: AgentFinding): Promise<void> {
   const s = props.session;
+  const run = ++openRun;
   finding.value = f;
   target.value = 'board';
   title.value = f.title;
@@ -486,7 +502,20 @@ function openFile(f: AgentFinding): void {
   planePriority.value = planeFindingPriority(f.kind);
   dialogError.value = null;
   busy.value = false;
+  jiraProbe.value = 'pending';
+  planeProbe.value = 'pending';
   dialogOpen.value = true;
+  if (!home.value && !projects.listRead) {
+    cloudReading.value = true;
+    try {
+      await projects.ensureList();
+    } finally {
+      if (run === openRun) cloudReading.value = false;
+    }
+    if (run !== openRun) return;
+    // The picker spun while the list was read, so nothing was picked meanwhile.
+    project.value = projects.byId.has(s.projectId) ? s.projectId : '';
+  }
   const ws = workspaceId.value;
   if (ws && !projects.members[ws]) {
     membersLoading.value = true;

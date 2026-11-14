@@ -17,7 +17,7 @@
         :label="t('agents.docTask.assignee')"
         :options="assigneeOptions"
         :placeholder="t('agents.docTask.unassigned')"
-        :loading="membersLoading"
+        :loading="membersLoading || cloudReading"
       />
       <div>
         <KField ref="descriptionField" v-model="description" :label="t('agents.docTask.description')" multiline :rows="12" @keydown="dictation.onKeydown" />
@@ -52,7 +52,7 @@
       <KBtn
         variant="primary"
         :loading="createAction.busy.value"
-        :disabled="!title.trim() || screensLoading"
+        :disabled="!title.trim() || screensLoading || cloudReading"
         @click="createAction.run()"
       >{{ t('synergy.handoff.create') }}</KBtn>
     </template>
@@ -98,6 +98,9 @@ const descriptionField = ref<InstanceType<typeof KField> | null>(null);
 // Диктування: the description is said rather than typed; closing the dialog drops the phrase.
 const dictation = useDictationField({ el: () => descriptionField.value?.el(), value: description });
 const membersLoading = ref(false);
+// The cloud list being re-read because the run never managed to (stores/projects.ts,
+// ensureList): the session's project — the card's target — is unknown before it answers.
+const cloudReading = ref(false);
 const error = ref<string | null>(null);
 // `screens` stays undefined until the walk answers, so «no screenshots» never shows while the
 // pane is still walking the pages.
@@ -131,14 +134,7 @@ watch(
     screens.value = undefined;
     screensError.value = null;
     error.value = null;
-    const ws = project.value?.workspaceId;
-    if (ws && !projects.members[ws]) {
-      membersLoading.value = true;
-      void projects
-        .loadMembers(ws)
-        .catch(() => undefined)
-        .finally(() => { membersLoading.value = false; });
-    }
+    void loadMembers(generation);
     void loadScreens(generation, props.session.id);
   },
   { immediate: true },
@@ -146,6 +142,28 @@ watch(
 onBeforeUnmount(() => {
   generation += 1;
 });
+
+async function loadMembers(gen: number): Promise<void> {
+  if (!project.value && !projects.listRead) {
+    cloudReading.value = true;
+    try {
+      await projects.ensureList();
+    } finally {
+      if (gen === generation) cloudReading.value = false;
+    }
+    if (gen !== generation) return;
+  }
+  const ws = project.value?.workspaceId;
+  if (!ws || projects.members[ws]) return;
+  membersLoading.value = true;
+  try {
+    await projects.loadMembers(ws);
+  } catch {
+    /* no roster: the card is filed unassigned */
+  } finally {
+    membersLoading.value = false;
+  }
+}
 
 async function loadScreens(gen: number, sessionId: string): Promise<void> {
   screensLoading.value = true;
