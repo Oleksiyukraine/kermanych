@@ -2,10 +2,11 @@ import { describe, expect, it } from "vitest";
 import {
   DICTATION_IDLE_MS,
   DICTATION_PAUSE_MS,
-  dictationLanguages,
+  dictationLanguage,
   emptySegments,
   insertDictated,
-  isDictationLanguages,
+  isDictationLanguage,
+  isInventedPhrase,
   segmentCommitted,
   segmentSettled,
   segmentsDone,
@@ -13,25 +14,43 @@ import {
   vadStep,
 } from "../src/dictation";
 
-// Voice dictation (docs/specs/2026-11-03-voice-dictation.md): the pure decisions behind the
-// dictation store — phrase ends, insertion at the caret, release order of finished phrases.
+// Voice dictation (docs/specs/2026-11-14-local-voice-dictation.md): the pure decisions behind the
+// dictation store — phrase ends, insertion at the caret, release order of finished phrases, the
+// recogniser's inventions.
 
-describe("dictationLanguages", () => {
-  it("speaks the agent's language with English terms, falling back to the ui locale", () => {
-    expect(dictationLanguages("uk", "en")).toEqual(["uk", "en"]);
-    expect(dictationLanguages("en-ste-80", "uk")).toEqual(["en"]);
-    expect(dictationLanguages("zh", "uk")).toEqual(["zh-cn", "en"]);
-    expect(dictationLanguages(null, "uk")).toEqual(["uk", "en"]);
-    expect(dictationLanguages(undefined, "en")).toEqual(["en"]);
+describe("dictationLanguage", () => {
+  it("is the agent's language, falling back to the ui locale", () => {
+    expect(dictationLanguage("uk", "en")).toBe("uk");
+    expect(dictationLanguage("en-ste-80", "uk")).toBe("en");
+    expect(dictationLanguage("zh", "uk")).toBe("zh");
+    expect(dictationLanguage(null, "uk")).toBe("uk");
+    expect(dictationLanguage(undefined, "en")).toBe("en");
   });
 
   it("the api accepts exactly what it produces", () => {
-    expect(isDictationLanguages(dictationLanguages("pl", "uk"))).toBe(true);
-    expect(isDictationLanguages([])).toBe(false);
-    expect(isDictationLanguages(["uk", "uk"])).toBe(false);
-    expect(isDictationLanguages(["xx"])).toBe(false);
-    expect(isDictationLanguages(["uk", "en", "de"])).toBe(false);
-    expect(isDictationLanguages("uk")).toBe(false);
+    expect(isDictationLanguage(dictationLanguage("pl", "uk"))).toBe(true);
+    expect(isDictationLanguage("xx")).toBe(false);
+    expect(isDictationLanguage(["uk"])).toBe(false);
+  });
+});
+
+describe("isInventedPhrase", () => {
+  it("drops Whisper's sign-offs heard in silence or a cough", () => {
+    expect(isInventedPhrase("Дякую.")).toBe(true);
+    expect(isInventedPhrase("Дякую за перегляд!")).toBe(true);
+    expect(isInventedPhrase("Субтитри зроблені спільнотою Amara.org")).toBe(true);
+    expect(isInventedPhrase("Thank you for watching.")).toBe(true);
+    expect(isInventedPhrase(" … ")).toBe(true);
+    // Sounds described instead of transcribed (seen on the cough-only recording).
+    expect(isInventedPhrase("*coughs*")).toBe(true);
+    expect(isInventedPhrase("*клук*")).toBe(true);
+    expect(isInventedPhrase("[музика]")).toBe(true);
+  });
+
+  it("keeps a real request that merely contains such words", () => {
+    expect(isInventedPhrase("Дякую, а тепер зроби кнопку синьою.")).toBe(false);
+    expect(isInventedPhrase("Другий варіант.")).toBe(false);
+    expect(isInventedPhrase("Зміни текст (той, що в хедері).")).toBe(false);
   });
 });
 
@@ -55,6 +74,15 @@ describe("vadStep", () => {
   it("speech restarts the silence clock", () => {
     const s = vadStep(vadStart(0), 0.5, DICTATION_IDLE_MS - 10).state;
     expect(vadStep(s, 0, DICTATION_IDLE_MS + 10).idle).toBe(false);
+  });
+
+  it("a noise gate above the speech level raises what counts as speech", () => {
+    expect(vadStep(vadStart(0), 0.12, 10).state.pending).toBe(true);
+    expect(vadStep(vadStart(0), 0.12, 10, { speechLevel: 0.15 }).state.pending).toBe(false);
+  });
+
+  it("a composer's longer silence limit", () => {
+    expect(vadStep(vadStart(0), 0, DICTATION_IDLE_MS, { idleMs: DICTATION_IDLE_MS * 10 }).idle).toBe(false);
   });
 });
 

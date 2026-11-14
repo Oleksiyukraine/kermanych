@@ -130,24 +130,38 @@ export {
 } from "./language";
 export { DEFAULT_VOICE, VOICE_IDS, VOICE_MODEL, isVoiceId, voiceLanguage, voiceLivePrompt, type VoiceId } from "./voice";
 export {
+  DICTATION_COMPOSER_IDLE_MS,
   DICTATION_IDLE_MS,
-  DICTATION_MODEL,
   DICTATION_PAUSE_MS,
   DICTATION_PROMPT,
+  DICTATION_SEND_MS,
   DICTATION_SPEECH_LEVEL,
-  dictationLanguages,
-  dictationSession,
+  dictationLanguage,
   emptySegments,
   insertDictated,
-  isDictationLanguages,
+  isDictationLanguage,
+  isInventedPhrase,
   segmentCommitted,
   segmentSettled,
   segmentsDone,
   vadStart,
   vadStep,
   type DictationSegments,
+  type VadOptions,
   type VadState,
 } from "./dictation";
+export {
+  STT_MAX_WAV_BYTES,
+  STT_MODELS,
+  STT_SAMPLE_RATE,
+  STT_UNLOAD_MS,
+  sttEngineFor,
+  sttModelBytes,
+  type SttEngine,
+  type SttModel,
+  type SttModelFile,
+  type SttModelStatus,
+} from "./local-stt";
 export {
   COMMENTARY_CHUNK_CHARS,
   PROGRESS_EVERY_MS,

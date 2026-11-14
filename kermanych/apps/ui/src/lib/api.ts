@@ -30,6 +30,7 @@ import type {
   DocLinkEmbedCheck,
   ModelOption,
   ApiErrorCode,
+  SttModelStatus,
   ApiErrorParams,
   NativeHarness,
   AgentLanguage,
@@ -1167,9 +1168,16 @@ export const api = {
   checkVoiceKey: (): Promise<{ ok: true }> => post<{ ok: true }>('/voice/check', {}),
   voiceSession: (body: { sdp: string; voice: string; language: string }): Promise<{ id: string; sdp: string }> =>
     post<{ id: string; sdp: string }>('/voice/session', body),
-  // Voice dictation (docs/specs/2026-11-03-voice-dictation.md): a transcription session's answer.
-  voiceDictation: (body: { sdp: string; languages: string[] }): Promise<{ sdp: string }> =>
-    post<{ sdp: string }>('/voice/dictation', body),
+  // Local dictation (docs/specs/2026-11-14-local-voice-dictation.md): the recogniser's model on
+  // this machine (decision 5), warming it up when 🎤 is pressed (decision 9), and one phrase's
+  // 16 kHz mono WAV, base64, → its text (decision 10; an invented phrase comes back as "").
+  sttModel: (): Promise<SttModelStatus> => get<SttModelStatus>('/voice/model'),
+  sttDownload: (): Promise<SttModelStatus> => post<SttModelStatus>('/voice/model/download', {}),
+  sttCancelDownload: (): Promise<SttModelStatus> => delJson<SttModelStatus>('/voice/model/download'),
+  sttRemove: (): Promise<SttModelStatus> => delJson<SttModelStatus>('/voice/model'),
+  sttWarm: (): Promise<{ ok: true }> => post<{ ok: true }>('/voice/stt/warm', {}),
+  transcribe: (body: { audio: string; language: string }): Promise<{ text: string }> =>
+    post<{ text: string }>('/voice/transcribe', body),
 };
 
 export type VoiceKeyStatus = { source: 'env' | 'stored' | null; hint?: string };

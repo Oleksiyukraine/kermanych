@@ -137,7 +137,7 @@ export type ApiErrorCode =
   | "inplace_tree_dirty" // the project checkout has uncommitted changes (params: { count, files } — files: the first few paths, comma-joined, `…` when cut)
   | "inplace_already_active" // another in-place agent already owns the project checkout (params: none)
   | "inplace_detached_head" // the project checkout is on no branch (params: none)
-  // voice/voice.service.ts — a voice conversation or a dictation that could not start, or a key check:
+  // voice/voice.service.ts — a voice conversation that could not start, or a key check:
   | "voice_key_missing" // no OpenAI key stored and no OPENAI_API_KEY (params: none)
   | "voice_key_invalid" // OpenAI refused the key, 401 (params: none)
   | "voice_no_access" // the key's project cannot use the model, 403/404 (params: { model })
@@ -146,7 +146,10 @@ export type ApiErrorCode =
   | "voice_upstream" // any other OpenAI refusal (params: { status })
   | "voice_offer_invalid" // the SDP offer is missing or too large (params: none)
   | "voice_voice_invalid" // the voice is not one of VOICE_IDS (params: none)
-  | "voice_language_invalid"; // the dictation languages are not what dictationLanguages produces (params: none)
+  // voice/local-stt.service.ts — local dictation (docs/specs/2026-11-14-local-voice-dictation.md):
+  | "stt_model_missing" // the recognition model is not (fully) downloaded (params: none)
+  | "stt_audio_invalid" // the phrase is not a 16 kHz mono 16-bit WAV within the size cap, or its language is unknown (params: none)
+  | "stt_engine_failed"; // the local engine could not load or failed on the phrase (params: { reason })
 
 // Runtime mirrors of the unions above. MUST list every member of their type exactly once;
 // the exhaustiveness test in test/i18n-codes.spec.ts fails on a drift or a duplicate.
@@ -252,7 +255,9 @@ export const API_ERROR_CODES = [
   "voice_upstream",
   "voice_offer_invalid",
   "voice_voice_invalid",
-  "voice_language_invalid",
+  "stt_model_missing",
+  "stt_audio_invalid",
+  "stt_engine_failed",
 ] as const satisfies readonly ApiErrorCode[];
 
 // Compile-time exhaustiveness (checked by `tsc` at build; test/ is not compiled). The

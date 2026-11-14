@@ -8,8 +8,9 @@
   menu, the «Голос» settings pane, the Live barge-in), `apps/ui` packaging (`whisper-server` in
   the `.dmg`, `sherpa-onnx-node` in the AppImage), i18n `uk` / `en`, `kermanych/README.md`.
 - **Status:** decisions agreed with the operator in the deep-analysis interview (2026-11-14) on
-  top of a measured comparison of local recognisers on the operator's own recordings; waiting
-  for approval.
+  top of a measured comparison of local recognisers on the operator's own recordings; approved
+  the same day; implemented on this branch (see «Verification»). The live microphone run is the
+  operator's.
 
 ## Goal
 
@@ -98,12 +99,14 @@ the texts:
    rarer mode).
 3. **In a composer, dictated text lands in the composer, then sends itself after a visible
    countdown.** Each phrase is inserted at the caret (`insertDictated`); after a longer pause a
-   ~2 s countdown runs on the send button. Speaking again appends and restarts it; editing the
+   countdown runs on the send button. Speaking again appends and restarts it; editing the
    text by hand cancels the auto-send until Enter; Enter sends at once; Esc cancels the send and
    keeps the text. Dictation stays on between messages until stopped, so changes can follow each
-   other hands-free. The 2 s is an assumption (the operator's mid-phrase pauses were 1–2 s): it
-   is measured on the operator's speech in implementation and kept as a core constant. Rejected:
-   sending at once (a misheard word goes to the agent); insert only (not hands-free).
+   other hands-free. The pause is `DICTATION_SEND_MS` = **2.5 s**, measured: on the operator's
+   15 recordings (100 ms level windows, the dictation speech level) pauses inside one request
+   reached 2.0 s (a list said with pauses, a 21 s free request), so the send waits half a second
+   longer. Rejected: sending at once (a misheard word goes to the agent); insert only (not
+   hands-free).
 4. **Engine by platform: Whisper on macOS, Parakeet on Linux.** macOS runs whisper.cpp
    (`large-v3-turbo` q8, Metal) as a `whisper-server` binary built for the `.dmg`; Linux runs
    Parakeet TDT 0.6B v3 (int8) through `sherpa-onnx-node`, whose N-API prebuilds ship like
@@ -127,10 +130,12 @@ the texts:
 7. **Live gets a working barge-in; nothing else in Live changes.** `voiceLivePrompt` gains
    OpenAI's interruption policy (stop at once, even mid-sentence; a new request or a correction
    while retelling drops the rest of the retelling and is delegated). The client guarantees it:
-   when the operator speaks (the gate is open and `session.input_transcript.delta` arrives) while
-   GPT-Live is speaking, the window mutes GPT-Live's audio element and drops the retelling chunks
-   not yet sent; audio returns once the operator stops. Retelling chunks are sent one at a time,
-   the next after the previous one has been spoken, so there is something to drop. Rejected: no
+   when the operator is heard while GPT-Live is speaking (a `session.input_transcript.delta`
+   arrives — GPT-Live heard them — or the gate opens within 300 ms of GPT-Live's last words), the
+   window mutes GPT-Live's audio element and drops the retelling chunks not yet sent; audio
+   returns 0.8 s after the operator stops. Retelling chunks are sent one at a time, the next once
+   GPT-Live's speech of the previous one has been quiet for 0.7 s (8 s safety timeout), so there
+   is something to drop. Rejected: no
    Live change; an auto-pause of idle Live sessions (a visible behaviour change with its own
    risks — resume delay, lost first words — for a mode that is now opt-in; its own task if Live
    stays expensive).
@@ -151,7 +156,11 @@ the texts:
    on a free 127.0.0.1 port (in the child ledger, stopped on quit like the other children);
    Parakeet decodes in a worker thread so the api's event loop never blocks. The model (~1 GB of
    RAM) starts loading when 🎤 is pressed, so it loads while the first phrase is spoken, and is
-   unloaded after 10 minutes without dictation. Load time is measured in implementation.
+   unloaded after 10 minutes without dictation. Measured: `whisper-server` alone accepts
+   connections 0.3–0.4 s after spawn (model file in the page cache), and through the api the
+   first phrase after a cold start took 4.2 s (spawn, model load, ledger, readiness poll) against
+   ~0.5 s for every later one — the reason the load starts at 🎤, not at the first phrase.
+   Parakeet in the worker: 1.6 s for the first phrase, 0.1–0.5 s after.
 10. **One transport.** The window captures PCM through an AudioWorklet (echo cancellation and
     noise suppression on, as today), runs `vadStep` on it, and posts each finished phrase as a
     16 kHz mono WAV to `POST /api/voice/transcribe` → `{ text }`. The noise gate's threshold
@@ -159,12 +168,17 @@ the texts:
     never crossed it is not sent.
 11. **Hallucinations are filtered, whisper.cpp's VAD is not used.** A phrase whose whole text is a
     known Whisper invention («Дякую.», «Дякую за перегляд!», «Субтитри …», «Продовження далі»,
-    their English counterparts) is dropped — a pure core list with a spec. Silero VAD inside
-    whisper.cpp is off: it cut quiet speech in the comparison.
+    their English counterparts) or a described sound («*coughs*», «*клук*», «[музика]» — seen on
+    the cough-only recording with some prompts) is dropped — a pure core rule with a spec. Silero
+    VAD inside whisper.cpp is off: it cut quiet speech in the comparison.
 12. **Language and vocabulary.** The engine's language is the agent's language («Мова спілкування
-    агента»), else the UI locale, as dictation picks it today. Whisper gets a fixed prompt of
-    technical vocabulary; whether it stays is decided on the comparison recordings in
-    implementation (it fixed English terms but cost one Ukrainian word). Parakeet takes no prompt.
+    агента»), else the UI locale, as dictation picks it today. Whisper gets a fixed one-sentence
+    prompt with technical vocabulary (`DICTATION_PROMPT`). Measured on the recordings:
+    no prompt 25.9 % WER (no «KPanel», «placeholder», «email»); the word-list prompt from the
+    comparison 27.0 % (got the terms, broke «відміни» → «від мені»); an English instruction
+    36.2 %; a natural Ukrainian sentence naming KPanel / toast / placeholder / email **23.7 %**
+    and kept «відміни» — chosen. One speaker, 15 phrases: a direction, not a benchmark.
+    Parakeet takes no prompt.
 13. **⌥D toggles dictation in a composer too**, as in the popups. A dictated message is sent as
     plain text: no voice note (the reply is not read aloud, and the operator saw the text before
     it went) and no 🎤 mark in the log.
@@ -220,9 +234,14 @@ the texts:
 
 ### Packaging (`apps/ui`)
 
-- macOS: build `whisper-server` from a pinned whisper.cpp tag (static, `GGML_METAL=ON`,
-  `GGML_METAL_EMBED_LIBRARY=ON`) in the release build and ship it in `extraResources`; dev runs
-  use the same built binary, or `whisper-server` on PATH.
+- macOS: `apps/ui/scripts/build-whisper-server.sh` builds `whisper-server` from whisper.cpp
+  **v1.9.5** (commit pinned and checked) as a static arm64 binary (`BUILD_SHARED_LIBS=OFF`,
+  `GGML_METAL=ON`, `GGML_METAL_EMBED_LIBRARY=ON`, `GGML_NATIVE=OFF`, `GGML_OPENMP=OFF`, minimum
+  macOS 13.3 — ggml's BLAS path needs it), ~8 MB, system frameworks only (the script fails
+  otherwise). `beforePackaging` runs it on macOS; `mac.extraResources` ships it as
+  `bin/whisper-server`. The api looks for `KERMANYCH_WHISPER_SERVER`, then the bundled binary,
+  then the monorepo's `.whisper-build/bin/whisper-server` (a dev run uses what the release
+  ships), then `whisper-server` on PATH (Homebrew's `whisper-cpp`).
 - Linux: `sherpa-onnx-node` + `sherpa-onnx-linux-x64` in the api's dependencies, unpacked from
   the asar.
 
@@ -239,18 +258,40 @@ the texts:
 
 ## Verification
 
-To be filled in from the checks actually run. Planned:
+- `@kermanych/core` (`vitest run`): 33 files, 473 passed — incl. `dictation.spec.ts` (language,
+  inventions incl. described sounds, the gate-raised speech level, the composer idle limit).
+- `@kermanych/api` (`vitest run`): 135 files, 1412 passed, 4 skipped — incl.
+  `local-stt.service.spec.ts` (14: download through a redirect, Range resume, a server ignoring
+  Range, sha256 mismatch, cancel then resume, delete; WAV validation; model missing; inventions →
+  `""`; one phrase at a time; warm once; engine error and restart; idle unload; shutdown) against
+  a local fake server and a fake engine. `tsc --noEmit` clean.
+- `@kermanych/ui` (`vitest run`): 95 files, 1026 passed — incl. the rewritten
+  `dictation-store.spec.ts`, `stt-model-store.spec.ts`, `composer-dictation.spec.ts` (10:
+  countdown, restart on speech, hand edit holds the send, Esc, «другий» answers a `select`, an
+  `input` answer, a non-answer to the composer) and `voice-store.spec.ts` (sequential retelling
+  chunks; barge-in mutes, drops the rest, unmutes). `vue-tsc --noEmit` clean.
+- Both real engines through `LocalSttService` on the operator's recordings (a throwaway script):
+  Whisper — «Ні, відміни останню зміну, поверни як було.», «KPanel: зверху додай перемикач
+  темної теми.», the 21 s free request verbatim, the cough-only clip `""`; Parakeet in its worker
+  on macOS (`KERMANYCH_STT_ENGINE=parakeet`) — the same four, cough `""`.
+- Preview (`.kermanych/preview.json`): Settings → «Голос» shows «Локальне розпізнавання ·
+  Whisper large-v3-turbo · 874 МБ · готова»; «Агенти» shows 🎤 with ▾ and the menu «Диктування
+  (локально, безкоштовно)» / «Live-розмова (GPT-Live, $0.05/хв)»; 🎤 warms the engine (the api
+  spawned `.whisper-build/bin/whisper-server`) and, in the embedded browser that never gets a
+  microphone, ends in «Немає доступу до мікрофона…»; `POST /api/voice/transcribe` with a recording
+  → its text in 0.57 s; a bad WAV → `stt_audio_invalid`; `POST /api/voice/dictation` → 404.
+- `build-whisper-server.sh`: v1.9.5 built in ~20 s, `--help` runs, a request to `/inference`
+  answered with Metal in use; `otool -L` lists system frameworks and libraries only.
 
-- `pnpm --filter @kermanych/core test`: hallucination filter, countdown rules, manifest shape,
-  Live prompt contains the interruption policy.
-- `pnpm --filter @kermanych/api test`: download resume and sha256 mismatch against a local fake
-  server; transcribe with a fake engine; idle unload; removed dictation route returns 404.
-- `pnpm --filter @kermanych/ui test`: the dictation store with a scripted capture and a fake
-  transcribe (phrase order, insert, countdown cancel on edit, Esc, decision answers); the voice
-  store's barge-in with a scripted connection.
-- Live in the preview with the operator: «Синергія» hands-free, a deep analysis with a `select`
-  answered by voice, a popup dictation, Live interrupted mid-retelling.
-- Packaged `.dmg`: dictation runs with the shipped `whisper-server`.
+**Not verified here:**
+
+- Speaking into the composer or a popup with a real microphone (the embedded browser refuses it):
+  the countdown, Esc, a voice answer to a decision block and «Синергія» hands-free need the
+  operator's run in Chrome against the preview or in the desktop app.
+- Live barge-in against GPT-Live itself (needs the operator's key and voice).
+- A packaged `.dmg` running the shipped `whisper-server`, and the Linux AppImage with
+  sherpa-onnx — no package was built.
+- Parakeet's speed and quality on a Linux machine.
 
 ## Risks
 

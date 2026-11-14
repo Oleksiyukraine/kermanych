@@ -1,20 +1,20 @@
 import { isAgentLanguage, type AgentLanguage } from "./language";
 
-// Voice dictation («Диктування», docs/specs/2026-11-03-voice-dictation.md): the operator speaks a
-// task description and OpenAI's streaming transcription writes it into the field. This file holds
-// what the api and the ui must agree on (the model, the session, the language hints) and the
-// pure decisions the ui store performs: when a phrase ends, how its text joins the field, and in
-// which order finished phrases are released.
+// Voice dictation («Диктування»): the operator speaks and a local recogniser on this machine
+// (docs/specs/2026-11-14-local-voice-dictation.md; the first, OpenAI-based version was
+// docs/specs/2026-11-03-voice-dictation.md) turns each phrase into text. This file holds what the
+// api and the ui must agree on (the language, the recogniser's vocabulary) and the pure decisions
+// the ui performs: when a phrase ends, how its text joins the field, in which order finished
+// phrases are released, which texts are the recogniser's inventions, and when a composer sends.
 
-export const DICTATION_MODEL = "gpt-live-transcribe";
+// Decision 12: context for Whisper, read as the text that came before. Technical names are spoken
+// in English inside Ukrainian speech. Measured on the operator's recordings (2026-11-14): a plain
+// word list brought «KPanel», «placeholder», «email» but broke Ukrainian words («відміни» → «від
+// мені»); this one natural sentence kept both and gave the lowest error rate (23.7 % vs 25.9 %
+// without a prompt).
+export const DICTATION_PROMPT = "Онови компонент у KPanel: додай toast, зміни placeholder в інпуті та поле email у формі.";
 
-// Decision 8: fixed context for the recogniser. Technical names are spoken in English inside
-// Ukrainian speech, and saying so keeps them from being transliterated.
-export const DICTATION_PROMPT =
-  "A software task description dictated for a developer. File, library, command and API names are spoken in English.";
-
-// The agent language → the code the Realtime API accepts in `languages`. An ASD-STE100 level is
-// English; Chinese needs its regional form.
+// The agent language → Whisper's language code. An ASD-STE100 level is English.
 const LANGUAGE_CODES: Record<AgentLanguage, string> = {
   uk: "uk",
   en: "en",
@@ -28,50 +28,67 @@ const LANGUAGE_CODES: Record<AgentLanguage, string> = {
   it: "it",
   pt: "pt",
   ja: "ja",
-  zh: "zh-cn",
+  zh: "zh",
 };
 
 const KNOWN_CODES: ReadonlySet<string> = new Set(Object.values(LANGUAGE_CODES));
 
-// The operator speaks the agent's language (falling back to the ui locale, like the voice
-// conversation), with English technical terms in it.
-export function dictationLanguages(agentLanguage: unknown, uiLocale: "uk" | "en"): string[] {
-  const main = isAgentLanguage(agentLanguage) ? LANGUAGE_CODES[agentLanguage] : uiLocale;
-  return main === "en" ? ["en"] : [main, "en"];
+// The operator speaks the agent's language, falling back to the ui locale, like the voice
+// conversation.
+export function dictationLanguage(agentLanguage: unknown, uiLocale: "uk" | "en"): string {
+  return isAgentLanguage(agentLanguage) ? LANGUAGE_CODES[agentLanguage] : uiLocale;
 }
 
-/** The api's guard: only what `dictationLanguages` can produce reaches OpenAI. */
-export function isDictationLanguages(v: unknown): v is string[] {
-  return (
-    Array.isArray(v) &&
-    v.length > 0 &&
-    v.length <= 2 &&
-    v.every((code) => typeof code === "string" && KNOWN_CODES.has(code)) &&
-    new Set(v).size === v.length
-  );
+/** The api's guard: only what `dictationLanguage` can produce reaches the recogniser. */
+export function isDictationLanguage(v: unknown): v is string {
+  return typeof v === "string" && KNOWN_CODES.has(v);
 }
 
-/** The `session` of a transcription call (POST /v1/realtime/calls). */
-export function dictationSession(languages: string[]): Record<string, unknown> {
-  return {
-    type: "transcription",
-    audio: {
-      input: {
-        transcription: { model: DICTATION_MODEL, prompt: DICTATION_PROMPT, languages, delay: "medium" },
-        // gpt-live-transcribe has no server VAD: the window commits each phrase itself.
-        turn_detection: null,
-      },
-    },
-  };
+// ── the recogniser's inventions ──
+// Decision 11: on silence, a cough or noise Whisper writes what its training subtitles ended
+// with. A phrase whose whole text is one of these is dropped. Compared lower-cased, without
+// punctuation; the prefixes cover the long credit lines.
+const INVENTED: Record<string, true> = {
+  "дякую": true,
+  "дякую за перегляд": true,
+  "дякую за увагу": true,
+  "дякуємо за перегляд": true,
+  "продовження далі": true,
+  "продовження буде": true,
+  "thank you": true,
+  "thanks for watching": true,
+  "thank you for watching": true,
+  "you": true,
+};
+const INVENTED_PREFIXES = ["субтитри", "субтитрування", "subtitles by", "редактор субтитрів", "переклад субтитрів"];
+
+// A sound Whisper describes instead of transcribing: «*coughs*», «[музика]», «(сміх)».
+const ANNOTATION = /^\s*(\*[^*]*\*|\[[^\]]*\]|\([^)]*\))\s*$/u;
+
+export function isInventedPhrase(text: string): boolean {
+  if (ANNOTATION.test(text)) return true;
+  const said = text
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N} ]+/gu, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  if (!said) return true;
+  return Object.hasOwn(INVENTED, said) || INVENTED_PREFIXES.some((p) => said.startsWith(p));
 }
 
 // ── client-side VAD ──
-// The mic level is the voice connection's meter (0…1, normal speech fills most of it).
+// The mic level is the capture's meter (0…1, normal speech fills most of it).
 export const DICTATION_SPEECH_LEVEL = 0.1;
-// A pause this long after speech ends the phrase: it is committed and transcribed.
+// A pause this long after speech ends the phrase: it is cut and transcribed (decision 6).
 export const DICTATION_PAUSE_MS = 800;
-// Decision 6.4: this long without speech stops dictation (the billing guard).
+// A popup's dictation stops after this long without speech.
 export const DICTATION_IDLE_MS = 60_000;
+// Decision 14: a composer's dictation stays on between messages, but not forever.
+export const DICTATION_COMPOSER_IDLE_MS = 600_000;
+// Decision 3: after this long without speech, the text dictated into a composer sends itself.
+// Measured on the operator's recordings (2026-11-14): pauses inside one request reached 2.0 s
+// (a list said with pauses, a long free request), so the send waits half a second longer.
+export const DICTATION_SEND_MS = 2_500;
 
 export type VadState = {
   /** When speech was last above the level (or when dictation started). */
@@ -84,11 +101,18 @@ export function vadStart(now: number): VadState {
   return { lastSpeechAt: now, pending: false };
 }
 
-export function vadStep(state: VadState, level: number, now: number): { state: VadState; commit: boolean; idle: boolean } {
-  if (level >= DICTATION_SPEECH_LEVEL) return { state: { lastSpeechAt: now, pending: true }, commit: false, idle: false };
+export type VadOptions = {
+  /** Decision 10: the noise gate's threshold when it is above the speech level. */
+  speechLevel?: number;
+  /** Decision 14: the silence that stops dictation. */
+  idleMs?: number;
+};
+
+export function vadStep(state: VadState, level: number, now: number, opts: VadOptions = {}): { state: VadState; commit: boolean; idle: boolean } {
+  if (level >= Math.max(DICTATION_SPEECH_LEVEL, opts.speechLevel ?? 0)) return { state: { lastSpeechAt: now, pending: true }, commit: false, idle: false };
   const quiet = now - state.lastSpeechAt;
   if (state.pending && quiet >= DICTATION_PAUSE_MS) return { state: { ...state, pending: false }, commit: true, idle: false };
-  return { state, commit: false, idle: quiet >= DICTATION_IDLE_MS };
+  return { state, commit: false, idle: quiet >= (opts.idleMs ?? DICTATION_IDLE_MS) };
 }
 
 // ── inserting a phrase ──

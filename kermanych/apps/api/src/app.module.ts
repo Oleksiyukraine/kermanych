@@ -59,6 +59,7 @@ import { MinionService } from "./minion/minion.service";
 import { BranchNameService } from "./supervisor/branch-name.service";
 import { VoiceController } from "./http/voice.controller";
 import { VoiceService } from "./voice/voice.service";
+import { LocalSttService } from "./voice/local-stt.service";
 import { DeviceService } from "./device/device.service";
 import { DEVICE_API } from "./device/device.contract";
 import { DeviceController } from "./http/device.controller";
@@ -116,6 +117,10 @@ import { StartupGcService } from "./gc/startup-gc.service";
     // key (RegistryService) and the SDP exchange with GPT-Live. The bridge to the agent runs in
     // the window, through the same /sessions endpoints typed text uses.
     VoiceService,
+    // Local dictation (docs/specs/2026-11-14-local-voice-dictation.md): the recognition model in
+    // ~/.kermanych/models/ and its engine (a whisper-server child or a sherpa-onnx worker),
+    // released on quit. Depends on nothing; VoiceController is its only caller.
+    LocalSttService,
     // Dependency direction, stated once: CloudSyncService → { SupervisorService,
     // RegistryService, AuthService }. The supervisor never knows the mirror exists — it is
     // a pure `events$` subscriber, like EventsGateway.

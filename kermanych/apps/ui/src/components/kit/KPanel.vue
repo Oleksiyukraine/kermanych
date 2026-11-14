@@ -103,10 +103,21 @@
         <div v-if="req.title" class="k-panel__decision-title">{{ req.title }}</div>
         <div v-if="req.message" class="k-panel__decision-msg">{{ req.message }}</div>
 
-        <!-- confirm -->
+        <!-- confirm. A button lit by a dictated «так» / «ні» is the answer about to go
+             (docs/specs/2026-11-14-local-voice-dictation.md, decision 8). -->
         <div v-if="req.method === 'confirm'" class="k-panel__decision-row">
-          <KBtn variant="primary" :loading="answering" @click="answerConfirm(true)">{{ t('kit.panel.yes') }}</KBtn>
-          <KBtn variant="secondary" :disabled="answering" @click="answerConfirm(false)">{{ t('kit.panel.no') }}</KBtn>
+          <KBtn
+            variant="primary"
+            :class="{ 'k-panel__picked': picked && 'confirmed' in picked && picked.confirmed }"
+            :loading="answering"
+            @click="answerConfirm(true)"
+          >{{ t('kit.panel.yes') }}</KBtn>
+          <KBtn
+            variant="secondary"
+            :class="{ 'k-panel__picked': picked && 'confirmed' in picked && !picked.confirmed }"
+            :disabled="answering"
+            @click="answerConfirm(false)"
+          >{{ t('kit.panel.no') }}</KBtn>
         </div>
 
         <!-- select -->
@@ -115,6 +126,7 @@
             v-for="(opt, i) in req.options ?? []"
             :key="i"
             class="k-panel__option mono"
+            :class="{ 'k-panel__picked': picked && 'option' in picked && picked.option === i }"
             type="button"
             :disabled="answering"
             @click="answerValue(opt)"
@@ -128,6 +140,7 @@
           @submit.prevent="answerValue(decisionText)"
         >
           <input
+            ref="decisionFieldEl"
             v-model="decisionText"
             class="k-panel__decision-input mono"
             :placeholder="req.placeholder ?? ''"
@@ -142,6 +155,7 @@
           @submit.prevent="answerValue(decisionText)"
         >
           <textarea
+            ref="decisionFieldEl"
             v-model="decisionText"
             class="k-panel__decision-editor mono"
             rows="4"
@@ -212,10 +226,15 @@
         :files="session.worktree && !session.worktreePath ? null : { kind: 'session', id: session.id }"
         :voice="voiceable"
         :voice-active="!!voice"
+        :voice-modes="voiceModes"
+        :voice-mode="voiceMode"
+        :dictation="dictation"
         @send="(text, images) => emit('send', text, images)"
         @effort="(level) => emit('effort', level)"
         @set-model="(p) => emit('setModel', p)"
         @voice="voice ? emit('voiceEnd') : emit('voiceStart')"
+        @voice-mode="(mode) => emit('voiceMode', mode)"
+        @dictate="emit('dictate')"
       >
         <template #actions>
           <KIconButton
@@ -269,6 +288,8 @@ import type { OutgoingMessage } from '../../lib/outgoing';
 import { needsSignIn } from '../../lib/session-auth';
 import KVoiceBar from './KVoiceBar.vue';
 import type { VoiceBarState } from '../../lib/voice';
+import type { ComposerDictationHost, ComposerDictationState } from '../../composables/useComposerDictation';
+import type { VoiceMode } from '../../composables/useVoicePanel';
 
 const { t } = useI18n();
 
@@ -320,10 +341,17 @@ const props = withDefaults(
     // (AgentsPage) owns one consolidated header — identity, status, actions, expand/collapse —
     // above its tabs, so the embedded panel would only stack a second, redundant one.
     bare?: boolean;
-    // The host can hold a voice conversation with this session: the composer shows 🎤.
+    // The host can hold voice with this session: the composer shows 🎤.
     voiceable?: boolean;
     // The voice conversation's state while it is bound to THIS session, else null.
     voice?: VoiceBarState | null;
+    // 🎤 offers Live beside dictation (the ▾ mode menu), and the mode its click starts
+    // (docs/specs/2026-11-14-local-voice-dictation.md, decision 2).
+    voiceModes?: boolean;
+    voiceMode?: VoiceMode;
+    // Dictation into this panel's composer while it runs, else null: the composer's dictation
+    // line and countdown, and the decision block's option a phrase picked (decision 8).
+    dictation?: ComposerDictationState | null;
   }>(),
   {
     promoting: false,
@@ -345,6 +373,9 @@ const props = withDefaults(
     bare: false,
     voiceable: false,
     voice: null,
+    voiceModes: false,
+    voiceMode: 'dictation',
+    dictation: null,
   },
 );
 
@@ -370,6 +401,9 @@ const emit = defineEmits<{
   voiceStart: [];
   voiceMute: [];
   voiceEnd: [];
+  voiceMode: [mode: VoiceMode];
+  // ⌥D in the composer.
+  dictate: [];
 }>();
 
 const draft = ref('');
@@ -383,8 +417,27 @@ function restoreDraft(text: string, images: readonly ImageInput[]): void {
   draft.value = text;
   composerEl.value?.restoreImages(images);
 }
-defineExpose({ restoreDraft });
 const decisionText = ref('');
+const decisionFieldEl = ref<HTMLInputElement | HTMLTextAreaElement | null>(null);
+
+// What composer dictation (composables/useComposerDictation, on the host page) writes into and
+// sends from: the composer and the decision block. Lent rather than lifted to the host, so the
+// draft stays this panel's own as it is for typing.
+const dictationHost: ComposerDictationHost = {
+  text: draft,
+  field: () => composerEl.value?.field() ?? null,
+  send: () => composerEl.value?.submit(),
+  request: () => req.value,
+  answer: (res) => {
+    emit('answer', res);
+    if ('value' in res) decisionText.value = '';
+  },
+  blockText: decisionText,
+  blockField: () => decisionFieldEl.value,
+};
+defineExpose({ restoreDraft, dictationHost });
+// The option or button a dictated phrase picked, lit until the countdown answers with it.
+const picked = computed(() => props.dictation?.highlight ?? null);
 
 // Auto-scroll: keep the log pinned to the newest entry while the user is at the
 // bottom; if they scroll up to read history, stop following until they return.
@@ -971,6 +1024,15 @@ function answerCancel() {
     outline: 1px solid var(--k-accent);
     outline-offset: 1px;
   }
+}
+
+// The option or button a dictated phrase picked: it goes when the composer's countdown ends
+// (docs/specs/2026-11-14-local-voice-dictation.md, decision 8). An accent ring rather than a
+// fill, so it reads as «about to», not as «answered».
+.k-panel__option.k-panel__picked,
+.k-panel__decision-row .k-panel__picked {
+  border-color: var(--k-accent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--k-accent) 35%, transparent);
 }
 
 .k-panel__decision-form {

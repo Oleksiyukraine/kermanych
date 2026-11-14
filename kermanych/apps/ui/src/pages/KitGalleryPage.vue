@@ -517,11 +517,25 @@
         :voice-active="voiceSample"
         @voice="voiceSample = !voiceSample"
       />
-      <!-- Voice dictation sits under a task popup's description: the toggle, then the state, the
-           mic level and the draft of the phrase being spoken. -->
+      <!-- Composer dictation: 🎤 with the ▾ mode menu («Агенти», «Чат»), the dictation line and the
+           auto-send countdown ringing the send button. -->
+      <KComposer
+        v-model="dictatedDraft"
+        :context="14"
+        @send="() => {}"
+        :voice="true"
+        :voice-modes="true"
+        :voice-mode="voiceModeSample"
+        :dictation="composerDictation"
+        @voice="composerDictation = composerDictation ? null : dictationSample()"
+        @voice-mode="(m) => (voiceModeSample = m)"
+        @dictate="composerDictation = composerDictation ? null : dictationSample()"
+      />
+      <!-- Voice dictation sits under a task popup's description: the toggle, then the phrase's
+           status and the mic level. The text lands in the field once a phrase is recognised. -->
       <KDictation
         :state="dictateSample ? 'live' : 'idle'"
-        caption="Додай у BoardPage кнопку експорту в CSV, використай papaparse"
+        :caption="t('dictation.listening')"
         :level="0.4"
         @toggle="dictateSample = !dictateSample"
       />
@@ -640,6 +654,9 @@ import { useI18n } from 'vue-i18n';
 import type {
   SessionStatus, Session, TranscriptEntry, RpcExtensionUIResponse, ThinkingLevel, Usage, ModelOption,
 } from '@kermanych/core';
+import { DICTATION_SEND_MS } from '@kermanych/core';
+import type { ComposerDictationState } from '../composables/useComposerDictation';
+import type { VoiceMode } from '../composables/useVoicePanel';
 import { EXPAND_ALL_NONE, nextExpandAll, type ExpandAllCommand } from '../lib/expand-all';
 import KBtn from 'components/kit/KBtn.vue';
 import KIconButton from 'components/kit/KIconButton.vue';
@@ -717,6 +734,21 @@ const composerDraft = ref('');
 const voiceSample = ref(true);
 // The dictation sample: its own toggle flips it between idle and listening.
 const dictateSample = ref(true);
+// Composer dictation (docs/specs/2026-11-14-local-voice-dictation.md): 🎤 with the ▾ mode menu,
+// the «слухаю…» line and the auto-send countdown on the send button. 🎤 restarts the countdown.
+const dictatedDraft = ref('Додай тест на порожній список');
+const voiceModeSample = ref<VoiceMode>('dictation');
+function dictationSample(): ComposerDictationState {
+  return {
+    phase: 'live',
+    level: 0.3,
+    hearing: false,
+    recognising: false,
+    countdown: { at: Date.now() + DICTATION_SEND_MS, ms: DICTATION_SEND_MS, answer: false },
+    highlight: null,
+  };
+}
+const composerDictation = ref<ComposerDictationState | null>(dictationSample());
 // The gallery has no session behind the chip, so the pick is held locally — the point here is
 // that the menu opens upward inside the row and reports the level it landed on.
 const composerEffort = ref<ThinkingLevel>('high');
