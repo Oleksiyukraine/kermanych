@@ -21,6 +21,11 @@ import type {
   SkillImportRead,
   SkillImportRoot,
   SkillImportScan,
+  McpCheckResult,
+  McpProjectView,
+  McpSaveBody,
+  McpServerRow,
+  McpWriteResult,
   TranscriptEntry,
   ThinkingLevel,
   ToolLine,
@@ -899,6 +904,23 @@ export const api = {
     get<SkillImportScan>(`/skills/import/scan?path=${encodeURIComponent(path)}`),
   skillImportRead: (dir: string): Promise<SkillImportRead> =>
     get<SkillImportRead>(`/skills/import/read?dir=${encodeURIComponent(dir)}`),
+
+  // «ШІ-команда → MCP-сервери» (docs/specs/2026-11-14-project-mcp-servers.md): the checkout's MCP
+  // files, read and written by the local api. A write answers the fresh view, or the codex table
+  // it stopped at.
+  mcpView: (id: string): Promise<McpProjectView> => get<McpProjectView>(`/projects/${id}/mcp`),
+  mcpCreate: (id: string, name: string, body: McpSaveBody): Promise<McpWriteResult> =>
+    post<McpWriteResult>(`/projects/${id}/mcp`, { ...body, name }),
+  mcpUpdate: (id: string, name: string, body: McpSaveBody): Promise<McpWriteResult> =>
+    put<McpWriteResult>(`/projects/${id}/mcp/${encodeURIComponent(name)}`, body),
+  mcpRemove: (id: string, name: string): Promise<McpProjectView> =>
+    delJson<McpProjectView>(`/projects/${id}/mcp/${encodeURIComponent(name)}`),
+  mcpCopy: (id: string, name: string, replaceCodex = false): Promise<McpWriteResult> =>
+    post<McpWriteResult>(`/projects/${id}/mcp/${encodeURIComponent(name)}/copy`, { replaceCodex }),
+  mcpMoveToRoot: (id: string, name: string, replaceCodex = false): Promise<McpWriteResult> =>
+    post<McpWriteResult>(`/projects/${id}/mcp/${encodeURIComponent(name)}/move-to-root`, { replaceCodex }),
+  mcpCheck: (id: string, name: string, location: McpServerRow['location']): Promise<McpCheckResult> =>
+    post<McpCheckResult>(`/projects/${id}/mcp/${encodeURIComponent(name)}/check?location=${location}`, {}),
 
   listBranches: (id: string): Promise<{ branches: string[]; current: string; default: string | null }> =>
     get<{ branches: string[]; current: string; default: string | null }>(`/projects/${id}/branches`),

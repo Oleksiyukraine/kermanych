@@ -1,8 +1,8 @@
 # «ШІ-команда → MCP-сервери»: the project's MCP servers, seen and edited in Kermanych
 
 - **Date:** 2026-11-14
-- **Status:** decisions agreed with the operator on 2026-11-14 (deep analysis). Waiting for
-  approval before implementation.
+- **Status:** decisions agreed with the operator on 2026-11-14 (deep analysis); approved and
+  implemented on this branch. Results at the end.
 - **Scope:** `packages/core` (types, harness visibility, the codex mapping), `apps/api` (read,
   write, check, environment at launch), `apps/ui` (a new «ШІ-команда» section, i18n),
   `kermanych/README.md`.
@@ -223,13 +223,19 @@ checkout's git root, with `process.env` plus the referenced `.env` variables. It
   - `mcp/mcp.service.ts`: `list(projectId)`, `save(projectId, name, def, secrets)`,
     `remove`, `copyToMcpJson`, `moveToRoot`, `check`. It writes `.env` through `EnvFileService`.
   - `mcp/mcp-check.ts`: the stdio and HTTP check client (decision 7).
-  - `mcp/mcp-launch-env.ts`: `mcpLaunchEnv(dir)` → the referenced `.env` variables. It is called
-    where the launches in decision 6 build their env (`rpc-session.ts` callers in
-    `supervisor.service.ts`, `native-session.service.ts`, minion, tester, schedules).
-  - `http/mcp.controller.ts`: `GET /projects/:id/mcp`, `PUT /projects/:id/mcp/:name`,
-    `DELETE /projects/:id/mcp/:name`, `POST /projects/:id/mcp/:name/copy`,
-    `POST /projects/:id/mcp/:name/move-to-root`, `POST /projects/:id/mcp/:name/check`. These are
-    behind the global auth guard and touch no cloud.
+  - `mcpLaunchEnv(dir)` (in `mcp/mcp-files.ts`) → the referenced `.env` variables. It is called
+    at the two spawn points every launch in decision 6 goes through: `RpcSession.start()`
+    (managed omp: sessions, chats, «Посіпака», «Тестувальник», scheduled and one-shot runs) and
+    `NativeSessionService.doStart()` (native sessions and chats). It reads synchronously, so the
+    spawn stays in the same tick as `start()` (the renice contract `rpc-session.config.spec.ts`
+    pins).
+  - `http/mcp.controller.ts`: `GET /projects/:id/mcp`, `POST /projects/:id/mcp`,
+    `PUT /projects/:id/mcp/:name`, `DELETE /projects/:id/mcp/:name`,
+    `POST /projects/:id/mcp/:name/copy`, `POST /projects/:id/mcp/:name/move-to-root`,
+    `POST /projects/:id/mcp/:name/check?location=`. A write answers `{ view }`, or
+    `{ conflict: { current, next } }` when it stopped at a differing codex table (a 200, not a
+    409: the UI needs both tables, and the api client keeps no error body). These are behind the
+    global auth guard and touch no cloud.
 - **ui**
   - `lib/ai-team.ts`: the group `tools` and the section `{ key: 'mcp', group: 'tools' }`.
   - `components/settings/McpServersPanel.vue` (list, chips, variables, «не закомічено»,
@@ -285,3 +291,51 @@ first:
 
 `kermanych/README.md`: the new section and one line in «Native sessions» (see Changes). No
 migration and no cloud runbook.
+
+## Results (2026-11-14)
+
+### Measurements
+
+1. **omp expands `${VAR}` in stdio `args` and `env` of root `.mcp.json`.** A probe server that
+   logs its argv, launched by `omp -p` 18.20.0 with `PROBE_ARG=argval`, got
+   `["mcpjson","argval"]`.
+2. **omp starts a same-named server once, and the codex table wins.** With the probe in both
+   `.mcp.json` and `.codex/config.toml`, omp launched only the codex variant (`argv: ["codex"]`).
+   So for omp the codex mirror is the definition that runs. This is harmless because the mirror is
+   an exact translation, and it is one more reason a differing hand-written table is shown and
+   confirmed.
+3. **codex: not measured.** The codex CLI is not installed on this machine. Project
+   `.codex/config.toml`, `env_vars`, `bearer_token_env_var` and `env_http_headers` rest on codex's
+   own documentation.
+4. **claude expands `${VAR}` from its process environment.** `claude -p` 2.1.285 with
+   `enableAllProjectMcpServers` started the probe with `["mcpjson","argval"]` and
+   `PROBE_ENV=envval`. The pty env Kermanych sets is that process environment.
+
+### Checks
+
+- `@kermanych/core`: 486 passed (`mcp.spec.ts` adds 17). `@kermanych/api`: `tsc --noEmit` clean;
+  `mcp.spec.ts` (12), `rpc-session.config.spec.ts` and `native-session.spec.ts` pass.
+  `@kermanych/ui`: `vue-tsc` clean; `mcp.spec.ts` (10), `ai-team.spec.ts` and the i18n suites
+  pass.
+- **Smoke** (preview api and `quasar dev`, a scratch checkout bound as the seeded «Acme Web»,
+  shaped like the operator's projects):
+  - `nextjs-docs` in `.mcp.json` and `.codex/config.toml`: one row, both files, all three marks.
+  - `dev-db` with `${DEV_DB_RO_URL}` in `args`: omp and claude, «codex його не отримає: codex не
+    підставляє змінні в аргументи», the variable «не задано». «Перевірити» showed «the server
+    exited (code 1)» and the postgres server's `TypeError: Invalid URL … input: ''`. «Задати»
+    wrote the value to `.env`, and the row turned «задано в .env».
+  - A `.cursor/mcp.json`-only server: omp alone. «Перевірити» listed 16 tools of
+    `server-everything` in 2.5 s. «Скопіювати в .mcp.json» wrote it to `.mcp.json` and the codex
+    table, and «не закомічено» appeared.
+  - «Додати сервер» → URL `https://mcp.linear.app/mcp`, header `Authorization` with
+    `Bearer lin_api_demo123` as a secret: `.env` got `LINEAR_AUTHORIZATION=lin_api_demo123`,
+    `.mcp.json` `Bearer ${LINEAR_AUTHORIZATION}`, and codex `bearer_token_env_var`.
+    «Перевірити» answered HTTP 401 with the OAuth hint.
+  - A hand-edited codex table (`@1.2` and `startup_timeout_sec = 30`): the row said it differs,
+    «Зберегти» showed both tables, «Замінити й зберегти» replaced the args and kept
+    `startup_timeout_sec`, the comment and the other tables.
+  - The user scope shows «MCP-сервери зберігаються в репозиторії проєкту. Оберіть рівень
+    «Проєкт»».
+- **Not exercised:** a real session on the operator's own projects, which the preview cannot
+  reach. In the preview, `npm` inside «Перевірити» printed `npm warn Unknown env config` lines,
+  because the preview api runs under `pnpm` and inherits its `npm_config_*` variables.

@@ -8,6 +8,7 @@ import { MCP_TOKEN_ENV, MCP_URL_ENV, ompMcpBridgePath } from "../runtime/omp-mcp
 import { AuthFailure, authFailureCode, type AuthFailureCode } from "../runtime/auth-failure";
 import { childLedger } from "../runtime/child-ledger";
 import { signalGroup } from "../runtime/process-group";
+import { mcpLaunchEnv } from "../mcp/mcp-files";
 
 interface RpcResponseFrame {
   type: "response"; id?: string; command: string; success: boolean; data?: unknown; error?: string;
@@ -72,11 +73,15 @@ export class RpcSession implements AgentRuntime {
     if (this.opts.ompPath) argv[0] = this.opts.ompPath;
     // The MCP server rides a bridge extension (omp reads MCP only from config files); its
     // address and bearer go in the child's environment so the secret never touches disk.
-    let env: NodeJS.ProcessEnv | undefined = this.opts.env ? { ...process.env, ...this.opts.env } : undefined;
-    if (this.opts.mcp) {
-      argv.push("-e", await ompMcpBridgePath());
-      env = { ...process.env, ...this.opts.env, [MCP_URL_ENV]: this.opts.mcp.url, [MCP_TOKEN_ENV]: this.opts.mcp.token };
-    }
+    if (this.opts.mcp) argv.push("-e", await ompMcpBridgePath());
+    // Under Kermanych's own keys: the variables the folder's MCP files reference, from its `.env`
+    // (docs/specs/2026-11-14-project-mcp-servers.md, decision 6).
+    const extra = {
+      ...mcpLaunchEnv(this.opts.cwd),
+      ...this.opts.env,
+      ...(this.opts.mcp ? { [MCP_URL_ENV]: this.opts.mcp.url, [MCP_TOKEN_ENV]: this.opts.mcp.token } : {}),
+    };
+    const env: NodeJS.ProcessEnv | undefined = Object.keys(extra).length ? { ...process.env, ...extra } : undefined;
     // `detached`: the child leads its own process group, so stop()'s signals reach what it started
     // — its MCP servers, LSP, test workers — and not just omp. Killed alone, omp left them to
     // launchd, running on with nobody to stop them.

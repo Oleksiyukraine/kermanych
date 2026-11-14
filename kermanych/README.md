@@ -1090,7 +1090,9 @@ ChatGPT app is not used. A missing binary shows `command not found` in the «Л�
   own `/model`. Model, effort, images and Хелпери are hidden in the launcher for this mode. The
   exceptions are the [session browser](#session-browser)'s tools, passed on the launch in the
   desktop app, and a «Глибокий аналіз» card's opening prompt: the TUI receives the task
-  wrapped in the deep-analysis instructions, because that is the task you chose.
+  wrapped in the deep-analysis instructions, because that is the task you chose. The
+  environment does get one thing: the variables the folder's MCP files reference, from its
+  `.env` (see [MCP servers](#mcp-servers-ші-команда--mcp-сервери)).
 - **What Kermanych still tracks.** Status on the board (working, tool, waiting for you,
   ready, on review, stopped) comes from hooks passed **on that launch only** —
   `claude --settings <file>`, `omp --hook <file>` and codex's `-c hooks.*` overrides, posting
@@ -2115,6 +2117,53 @@ change applies at once, and you can roll it back.
   «Applying a migration to the team's project»). The second replaces `profiles.skill_improvement`
   with `profiles.skill_improvement_level` (`off` stays off, on becomes `moderate`); an older client
   then keeps its «unknown = on» fallback and cannot save its old switch until it is updated.
+
+### MCP servers («ШІ-команда → MCP-сервери»)
+
+The project's MCP servers live in its repository, and Kermanych shows and edits them there (spec:
+`docs/specs/2026-11-14-project-mcp-servers.md`). It keeps no copy of its own and commits nothing.
+The section exists at project scope only and reads the files at the git root of the bound
+checkout, because that is where every session's harness starts.
+
+| File | omp | claude | codex |
+| --- | --- | --- | --- |
+| `.mcp.json` | yes | yes | no |
+| `mcp.json`, `.omp/mcp.json`, `.claude/mcp.json`, `.cursor/mcp.json`, `.vscode/mcp.json` | yes | no | no |
+| `.codex/config.toml` (`[mcp_servers.*]`) | yes | no | yes |
+
+- **The list** has one row per server name, merged across those files: its command or URL, the
+  files that define it, which harness sees it, and the variables it needs with where each value
+  is (`.env`, Kermanych's environment, or not set). An unset variable can be filled in from the
+  row. «не закомічено» marks `.mcp.json` or `.codex/config.toml` that `git status` lists: new
+  sessions fork from the base branch, so they get a change once it is committed and pushed.
+  Running sessions get it after a restart.
+- **Editing.** «Додати сервер», «Змінити» and «Видалити» write the root `.mcp.json`. Unknown keys
+  of a server (`timeout`, `oauth`, …) and the file's indentation are kept. Every write also sets
+  the server's `[mcp_servers.<name>]` table in `.codex/config.toml`: env values of the form
+  `${KEY}` become `env_vars`, `Authorization: Bearer ${T}` becomes `bearer_token_env_var`, a
+  header that is one `${V}` becomes `env_http_headers`. Only that table changes; comments, other
+  servers and its keys Kermanych does not manage (`startup_timeout_sec`, `tools.*`) stay. codex
+  expands no `${VAR}`, so a server with a variable in its command, arguments or URL (or an SSE
+  server) gets no codex table, and the row says so. A codex table someone wrote differently is
+  replaced only after you compare both and confirm. A server defined only in another file gets
+  «Скопіювати в .mcp.json»; one in a bound subfolder, which sessions do not see, gets
+  «Перенести в корінь».
+- **Secrets.** A value marked «секрет» goes to the project's `.env`, and the file gets `${KEY}`
+  (an env variable keeps its own name; a header is stored as `<SERVER>_<HEADER>`, and a pasted
+  `Bearer …` token is stored without the scheme). At every launch in a project folder — managed
+  sessions, native sessions and chats, «Посіпака», «Тестувальник», scheduled runs — Kermanych adds
+  to the harness's environment the `.env` variables that folder's MCP files reference, and only
+  those. A worktree has its own `.env` copy, so a value saved here reaches new sessions; change a
+  running one through «Змінні» in its preview row.
+- **«Перевірити»** starts the server in the git root with the api's environment plus the
+  project's `.env`, asks `initialize` and `tools/list`, and stops its whole process group. It
+  shows the tools, or the error with the server's last stderr lines (60 s limit, because `npx -y`
+  downloads on first use). A 401/403 from a URL server means it signs in with OAuth: sign in
+  inside the harness (`/mcp` in omp or claude, `codex mcp login`).
+- **Routes.** `GET /api/projects/:id/mcp`, `POST /api/projects/:id/mcp` (`{ name, def, secrets? }`),
+  `PUT` and `DELETE /api/projects/:id/mcp/:name`, `POST …/:name/copy`, `POST …/:name/move-to-root`
+  (writes answer `{ view }`, or `{ conflict: { current, next } }` when a codex table differs; send
+  again with `replaceCodex: true`), and `POST …/:name/check?location=root|subdir`.
 
 ### Project documentation
 
