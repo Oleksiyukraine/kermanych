@@ -108,7 +108,7 @@
 // Extracted from the Менеджмент assistant so ЦУК types into the very same pill: Enter sends,
 // Shift+Enter breaks the line, `/` on an empty draft opens Хелпери, files arrive by paste, drop
 // or 📎, the field grows to six lines and then scrolls.
-import { computed, nextTick, ref } from 'vue';
+import { computed, nextTick, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { prependHelper } from '@kermanych/core';
 import KHelperPicker from 'components/kit/KHelperPicker.vue';
@@ -119,6 +119,7 @@ import { useSubscriptionUsage } from '../../composables/useSubscriptionUsage';
 import { useFileAttach } from '../../composables/useFileAttach';
 import { ATTACH_ACCEPT, type AttachedFile } from '../../lib/files';
 import { SUPPORTED_IMAGE_TYPES } from '../../lib/images';
+import { useDraft } from '../../lib/drafts';
 import { useOmpCheck } from 'stores/omp-check';
 
 const props = defineProps<{
@@ -134,6 +135,9 @@ const props = defineProps<{
   imagesOnly?: boolean;
   // Over a whole page the dock's 74 % frost lets the page read through; the window is denser.
   dense?: boolean;
+  // The conversation the typed text belongs to (lib/drafts.ts): kept per conversation across a
+  // restart and a switch to another one. Absent: the text lives as long as the component.
+  draftKey?: string | undefined;
 }>();
 
 const emit = defineEmits<{ submit: [text: string, files: AttachedFile[]] }>();
@@ -142,6 +146,15 @@ const { t } = useI18n();
 
 const draft = ref('');
 const fieldEl = ref<HTMLTextAreaElement | null>(null);
+const typed = useDraft({ text: draft });
+watch(
+  () => props.draftKey,
+  (key) => {
+    typed.bind(key ?? null, { text: '' });
+    void nextTick(autoGrow);
+  },
+  { immediate: true },
+);
 
 // The field grows with the text and then scrolls, so Shift+Enter newlines stay visible
 // instead of being clipped by a one-line input. 132px ≈ six lines of the pill's type.

@@ -365,6 +365,7 @@ import {
 import { useAsyncAction, useKeyedAction } from '../../composables/useAsyncAction';
 import { useLoadPhase } from '../../composables/useLoadPhase';
 import { useOptimisticValue } from '../../composables/useOptimisticValue';
+import { useDraft } from '../../lib/drafts';
 import { usePlane } from 'stores/plane';
 import { useOrchestrator } from 'stores/orchestrator';
 
@@ -388,6 +389,9 @@ const tab = ref<'comments' | 'worklogs'>('comments');
 // The wide mode: the same ticket at ~90% of the screen, for descriptions that need room.
 const expanded = ref(false);
 const commentDraft = ref('');
+// The comment being typed, kept per item (lib/drafts.ts): bound on open and whenever the
+// item under the dialog changes, so half a comment never carries over to another item.
+const commentKept = useDraft({ text: commentDraft });
 const confirmingDelete = ref(false);
 const fileInput = ref<HTMLInputElement | null>(null);
 
@@ -397,6 +401,9 @@ const transitionOptions = ref<PlaneTransitionView[]>([]);
 // ── logging work ─────────────────────────────────────────────────────────────
 const workTime = ref('');
 const workNote = ref('');
+// The note of a NEW entry, kept per item like the comment. Unbound while the form edits an
+// existing entry: that entry's own note is not something typed and unsent.
+const workNoteKept = useDraft({ text: workNote });
 // Which existing entry the form is editing (null = composing a new one), and which one is
 // asking to be deleted. Separate: a delete confirm is a per-row question, while the edit
 // takes over the one form at the bottom.
@@ -517,7 +524,7 @@ const launchHint = computed(() => {
 function onOpen(): void {
   tab.value = 'comments';
   confirmingDelete.value = false;
-  commentDraft.value = '';
+  commentKept.bind(`plane-comment:${props.integrationId}:${props.issue.key}`, { text: '' });
   startDraft.value = props.issue.startDate;
   dueDraft.value = props.issue.dueDate;
   resetWorkDraft();
@@ -551,6 +558,17 @@ watch(
   (issue) => {
     if (savingField.value !== 'startDate') startDraft.value = issue.startDate;
     if (savingField.value !== 'dueDate') dueDraft.value = issue.dueDate;
+  },
+);
+
+// The item shown can change without a close (a sub-work item opened in place): its own
+// drafts come in. A worklog edit in progress belongs to the old item's entry and keeps the form.
+watch(
+  () => `${props.integrationId}:${props.issue.key}`,
+  () => {
+    commentKept.bind(`plane-comment:${props.integrationId}:${props.issue.key}`, { text: '' });
+    if (editingWorklogId.value === null)
+      workNoteKept.bind(`plane-worklog:${props.integrationId}:${props.issue.key}`, { text: '' });
   },
 );
 
@@ -652,15 +670,20 @@ const { run: sendComment, busy: commenting } = useAsyncAction(async () => {
 
 // A fresh worklog form, editing nothing — so this doubles as «cancel the edit».
 function resetWorkDraft(): void {
+  // Blanked unbound, then bound back: the blank must not erase this item's composed note,
+  // which returns — after a cancelled entry edit too.
+  workNoteKept.bind(null);
   editingWorklogId.value = null;
   workTime.value = '';
   workNote.value = '';
+  workNoteKept.bind(`plane-worklog:${props.integrationId}:${props.issue.key}`, { text: '' });
 }
 
 // The form takes over an existing entry: its duration in the spelling the field accepts
 // back, and its note.
 function startEditWorklog(w: PlaneWorklog): void {
   deletingWorklogId.value = null;
+  workNoteKept.bind(null);
   editingWorklogId.value = w.worklogId;
   workTime.value = w.timeSpent || formatDuration(w.seconds);
   workNote.value = w.description;
@@ -681,6 +704,8 @@ const { run: submitWork, busy: submitting } = useAsyncAction(async () => {
       ? await api.planeEditWorklog(props.integrationId, props.issue.key, editing, draft)
       : await api.planeLogWork(props.integrationId, props.issue.key, draft),
   );
+  // A new entry is logged: its note was sent. An edit's success leaves the new-entry draft.
+  if (!editing) workNoteKept.discard();
   resetWorkDraft();
   await plane.loadChildren(props.issue.issueId);
 });

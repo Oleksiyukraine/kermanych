@@ -106,6 +106,7 @@
       :input-label="t('cuk.inputLabel')"
       :form-label="t('cuk.title')"
       :attach-tip="t('cuk.attach')"
+      draft-key="assistant:cuk"
       @submit="(text, files) => chat.send(text, files)"
     />
   </div>

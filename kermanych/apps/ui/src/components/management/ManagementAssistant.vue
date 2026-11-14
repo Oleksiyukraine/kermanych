@@ -87,6 +87,7 @@
       :input-label="t('management.assistant.inputLabel')"
       :form-label="t('management.assistant.title')"
       :attach-tip="t('management.assistant.attach')"
+      :draft-key="orchestrator.selectedWorkspaceId ? `assistant:management:${orchestrator.selectedWorkspaceId}` : undefined"
       @submit="submit"
     />
   </div>
@@ -103,6 +104,7 @@ import { useRoute, useRouter } from 'vue-router';
 import { useI18n } from 'vue-i18n';
 import { confirmAction } from '../../lib/confirm';
 import { useManagementChat } from 'stores/management-chat';
+import { useOrchestrator } from 'stores/orchestrator';
 import { useProjectDocs } from 'stores/project-docs';
 import { useAssistantOverlay } from 'stores/assistant-overlay';
 import KChatMessage from 'components/kit/KChatMessage.vue';
@@ -128,6 +130,8 @@ const route = useRoute();
 const router = useRouter();
 
 const chat = useManagementChat();
+// The composer's draft follows the conversation, which is per workspace (stores/management-chat.ts).
+const orchestrator = useOrchestrator();
 const composerEl = ref<InstanceType<typeof AssistantComposer> | null>(null);
 const logEl = ref<HTMLElement | null>(null);
 

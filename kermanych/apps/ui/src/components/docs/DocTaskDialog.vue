@@ -101,6 +101,7 @@ import { readDesignScreens } from '../../lib/design-screens';
 import { errorText } from '../../composables/useAsyncAction';
 import { useDictationField } from '../../composables/useDictationField';
 import { useLoadPhase } from '../../composables/useLoadPhase';
+import { useDraft } from '../../lib/drafts';
 import KModal from 'components/kit/KModal.vue';
 import KSelect, { type KSelectOption } from 'components/kit/KSelect.vue';
 import KField from 'components/kit/KField.vue';
@@ -127,6 +128,9 @@ const busy = ref(false);
 const descriptionField = ref<InstanceType<typeof KField> | null>(null);
 // Диктування: the description is said rather than typed; closing the dialog drops the phrase.
 const dictation = useDictationField({ el: () => descriptionField.value?.el(), value: description });
+// The edited title/description outlive the dialog (lib/drafts.ts), per (session, document). Bound
+// only once the document text has filled them, so the draft is kept against that prefill.
+const docDraft = useDraft({ title, description });
 watch(
   () => props.modelValue,
   (open) => {
@@ -170,6 +174,8 @@ watch(
   () => [props.modelValue, props.session?.id, props.path] as const,
   ([open]) => {
     generation += 1;
+    // Unbound before load() resets the fields, so the blanks are not stored as the previous open's edit.
+    docDraft.bind(null);
     if (open) void load(generation);
   },
   { immediate: true },
@@ -236,6 +242,7 @@ async function load(gen: number): Promise<void> {
       ...(framing ? [t(`agents.docTask.framing.${framing}`)] : []),
     ].join('\n\n');
     description.value = `${head}\n\n${file.content.trim()}\n`;
+    docDraft.bind(`doc-task:${s.id}:${path}`);
   } catch (e) {
     if (gen === generation) error.value = errorText(e);
   } finally {
@@ -293,6 +300,7 @@ async function submit(): Promise<void> {
       (screens.value ?? []).map((s) => s.file),
     );
     if (!card) return; // the store has already said why
+    docDraft.discard();
     emit('update:modelValue', false);
     store.notify(t('agents.docTask.created', { title: name, project: target.name }), 'info');
   } finally {

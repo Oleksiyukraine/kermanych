@@ -137,6 +137,7 @@
               :needs-decision="cardDecisionReason(t, item.card)"
               :not-needed="cardNotNeededReason(t, item.card)"
               :selected="false"
+              :draft="hasDraft(taskDraftKey(item.card.id))"
               :pending="cardDelete.busyFor(item.card.id)"
               removable
               :remove-title="t('agents.board.removeTask', { title: item.card.title })"
@@ -165,6 +166,7 @@
               :selected="store.selectedSessionId === item.session.id"
               :removable="item.session.kind === 'task'"
               :browsing="sessionBrowser.agentLive.has(item.session.id)"
+              :draft="store.selectedSessionId !== item.session.id && hasDraft(sessionDraftKey(item.session.id))"
               :findings="item.session.openFindings ?? 0"
               :pending="isSessionPending(item.session.id) || deleteAction.busyFor(item.session.id)"
               :remove-title="t('agents.board.removeStranded', { name: item.session.name })"
@@ -1447,6 +1449,7 @@ import { useFileMention } from '../composables/useFileMention';
 import { useDictationField } from '../composables/useDictationField';
 import { useNow } from '../composables/useNow';
 import { useMarkSeen } from '../composables/useMarkSeen';
+import { hasDraft, newTaskDraftKey, sessionDraftKey, taskDraftKey, useDraft } from '../lib/drafts';
 import { relativeTime, renderTime } from '../lib/time';
 import { tokens, usageTokens, usd } from '../lib/format';
 import { EFFORT_OPTIONS } from '../lib/effort';
@@ -2959,6 +2962,10 @@ watch(
 const launcherOpen = ref(false);
 const draftName = ref('');
 const draftTask = ref('');
+// The title and the task text are kept as a draft (lib/drafts.ts): a new card's per project —
+// the same slot the board's «Нова задача» editor uses — and an edited card's per card. Closing
+// the launcher, opening an agent or leaving the screen keeps them; a save drops them.
+const launcherDraft = useDraft({ title: draftName, description: draftTask });
 const draftModel = ref('');
 // Reasoning effort for the launch, the other half of `model`. '' is «за замовчуванням» —
 // the card stores nothing and omp picks. A card being edited keeps its own.
@@ -3229,8 +3236,12 @@ function openLauncher(card?: Task, deepAnalysis = false): void {
   // disabled unless there is one.
   launchProjectId.value = card?.projectId ?? store.selectedProjectId;
   editingTaskId.value = card?.id ?? null;
-  draftName.value = card?.title ?? '';
-  draftTask.value = card?.description ?? '';
+  // The title and task text open on the target's draft, or on the card's own (blank for a new
+  // card) when there is none — set through bind(), never assigned first (lib/drafts.ts).
+  launcherDraft.bind(
+    card ? taskDraftKey(card.id) : launchProjectId.value ? newTaskDraftKey(launchProjectId.value) : null,
+    { title: card?.title ?? '', description: card?.description ?? '' },
+  );
   // A NEW card inherits the project's «за замовчуванням» model (Запуск задач settings); a card
   // being EDITED keeps its own. `launchProjectId` is set just above, and the LOCAL row carries
   // the synced default so this works offline like the rest of the launch path.
@@ -3252,7 +3263,8 @@ function openLauncher(card?: Task, deepAnalysis = false): void {
   openedAutoRun = modes.autoRun;
   // `tasks.branch` IS the base branch (the board labels it «Базова гілка»).
   void loadLaunchBranches(card?.branch);
-  nameEdited.value = !!card;
+  // A restored title the operator wrote by hand must not be re-derived from the task text.
+  nameEdited.value = !!card || draftName.value !== taskNameFromText(draftTask.value);
   launcherError.value = null;
   clearLaunchImages();
   draftMode.value = defaultLaunchMode(auth.provider, { synergy: !!card?.synergyBranch });
@@ -3268,8 +3280,9 @@ function openTaskFromText(text: string): void {
   // scope is not necessarily the selected one.
   launchProjectId.value = selectedSession.value?.projectId ?? store.selectedProjectId;
   editingTaskId.value = null;
-  draftName.value = taskNameFromText(text);
-  draftTask.value = text;
+  // A selection prefills the form: it is not the project's «Нова задача» draft and must not
+  // overwrite one, so this form keeps no draft.
+  launcherDraft.bind(null, { title: taskNameFromText(text), description: text });
   // New task from a selection: same project default model as openLauncher's new-task branch.
   const textDefault = store.projects.find((p) => p.id === launchProjectId.value);
   draftModel.value = textDefault?.defaultModel ?? '';
@@ -3362,6 +3375,10 @@ async function submitLauncher(asTask: boolean): Promise<void> {
       // honest, and a retry carries any edit made in between into the same card.
       editingTaskId.value = created.id;
     }
+    // The card holds the text now. A retry after a failed launch edits that card, so further
+    // edits are its draft.
+    launcherDraft.discard();
+    launcherDraft.bind(taskDraftKey(cardId));
     if (asTask) {
       launcherOpen.value = false;
       clearLaunchImages();

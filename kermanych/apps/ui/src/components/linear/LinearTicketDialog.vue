@@ -233,6 +233,7 @@ import { dateChip, subtasksOf, todayIso, type LinearTransitionView } from '../..
 import { useAsyncAction } from '../../composables/useAsyncAction';
 import { useLoadPhase } from '../../composables/useLoadPhase';
 import { useOptimisticValue } from '../../composables/useOptimisticValue';
+import { useDraft } from '../../lib/drafts';
 import { useLinear } from 'stores/linear';
 import { useOrchestrator } from 'stores/orchestrator';
 
@@ -255,6 +256,9 @@ const local = useOrchestrator();
 // The wide mode: the same ticket at ~90% of the screen, for descriptions that need room.
 const expanded = ref(false);
 const commentDraft = ref('');
+// The comment being typed, kept per ticket (lib/drafts.ts): bound on open and whenever the
+// ticket under the dialog changes, so half a comment never carries over to another ticket.
+const commentKept = useDraft({ text: commentDraft });
 const confirmingDelete = ref(false);
 
 const transitionOpen = ref(false);
@@ -320,7 +324,7 @@ const launchHint = computed(() => {
 // `modelValue`, which the watcher never sees — onMounted covers it.
 function onOpen(): void {
   confirmingDelete.value = false;
-  commentDraft.value = '';
+  commentKept.bind(`linear-comment:${props.workspaceId}:${props.issue.key}`, { text: '' });
   estimateDraft.value = props.issue.estimate > 0 ? String(props.issue.estimate) : '';
   dueDraft.value = props.issue.dueDate;
   const mine = ++openRun;
@@ -349,6 +353,13 @@ watch(
     if (savingField.value !== 'estimate') estimateDraft.value = issue.estimate > 0 ? String(issue.estimate) : '';
     if (savingField.value !== 'dueDate') dueDraft.value = issue.dueDate;
   },
+);
+
+// The ticket shown can change without a close (a subtask opened in place): its own draft
+// comes in.
+watch(
+  () => `${props.workspaceId}:${props.issue.key}`,
+  () => commentKept.bind(`linear-comment:${props.workspaceId}:${props.issue.key}`, { text: '' }),
 );
 
 // Failure degrades to the read-only facts — the assignee select renders only on a loaded list.

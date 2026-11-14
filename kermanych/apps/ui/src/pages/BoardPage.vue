@@ -477,6 +477,7 @@ import {
 } from '../lib/tasks-view';
 import { cardDecisionReason, cardNotNeededReason } from '../lib/minion';
 import { defaultLaunchMode, nativeRuntimeFor } from '../lib/native-session';
+import { newTaskDraftKey, taskDraftKey, useDraft } from '../lib/drafts';
 import JiraBoardView from 'components/jira/JiraBoardView.vue';
 import LinearBoardView from 'components/linear/LinearBoardView.vue';
 import PlaneBoardView from 'components/plane/PlaneBoardView.vue';
@@ -1279,6 +1280,10 @@ const editingAssignee = computed(() => {
 const draftProject = ref('');
 const draftTitle = ref('');
 const draftDescription = ref('');
+// The title and description are kept as a draft (lib/drafts.ts): a new card's under the project
+// the form opened on — the slot the Агенти launcher's «Нова задача» shares — an edited card's
+// under the card. A project re-picked mid-form does not move it: the text is the same either way.
+const editorDraft = useDraft({ title: draftTitle, description: draftDescription });
 const draftModel = ref('');
 const draftEffort = ref<ThinkingLevel | ''>('');
 const draftPrefix = ref('');
@@ -1391,8 +1396,8 @@ function openCreate(): void {
   // looking at — and otherwise to the first project IN SCOPE, since those are the only ones
   // the picker offers.
   draftProject.value = projectFilter.value || (projectOptions.value[0]?.value ?? '');
-  draftTitle.value = '';
-  draftDescription.value = '';
+  // Through bind(), never assigned first (lib/drafts.ts): the project's draft, or blanks.
+  editorDraft.bind(draftProject.value ? newTaskDraftKey(draftProject.value) : null, { title: '', description: '' });
   // A NEW card seeds its Модель and Ефорт from the chosen project's «за замовчуванням» (Запуск
   // задач settings); an EDIT keeps the card's own. `draftProject` is set just above.
   const createDefault = cloud.byId.get(draftProject.value);
@@ -1411,8 +1416,7 @@ function openEdit(task: Task): void {
   editingId.value = task.id;
   editorError.value = null;
   draftProject.value = task.projectId;
-  draftTitle.value = task.title;
-  draftDescription.value = task.description ?? '';
+  editorDraft.bind(taskDraftKey(task.id), { title: task.title, description: task.description ?? '' });
   draftModel.value = task.model ?? '';
   draftEffort.value = task.effort ?? '';
   draftPrefix.value = task.prefix ?? '';
@@ -1500,6 +1504,7 @@ async function submitEditor(): Promise<void> {
         return;
       }
     }
+    editorDraft.discard();
     editorOpen.value = false;
   } finally {
     submitting.value = false;

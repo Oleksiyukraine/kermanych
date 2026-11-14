@@ -3109,6 +3109,7 @@ export const en: MessageSchema = {
       tokens: '{count} tok',
       browsing: 'The agent is working in the browser',
       findings: 'Open findings: {n}',
+      draft: 'Draft: unsent text waits here',
     },
     analysisMark: {
       label: 'analysis',

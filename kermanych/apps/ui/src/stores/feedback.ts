@@ -13,6 +13,7 @@ import {
 } from '@kermanych/cloud';
 import { useImageAttach } from '../composables/useImageAttach';
 import { imageToFile } from '../lib/images';
+import { useDraft } from '../lib/drafts';
 import { globalTr } from '../boot/i18n';
 import { useAuth } from './auth';
 import { useOrchestrator } from './orchestrator';
@@ -28,6 +29,9 @@ export const useFeedback = defineStore('feedback', () => {
   const open = ref(false);
   const kind = ref<FeedbackKind>('bug');
   const message = ref('');
+  // The text also outlives a restart (lib/drafts.ts); the screenshots stay in memory only.
+  const draft = useDraft({ message });
+  draft.bind('feedback', { message: '' });
   const attach = useImageAttach();
 
   // Why the draft cannot go yet, said under the form; null when it can. An empty text is not a
@@ -57,9 +61,12 @@ export const useFeedback = defineStore('feedback', () => {
   }
 
   function clear(): void {
+    draft.discard();
     kind.value = 'bug';
     message.value = '';
     attach.clear();
+    // The next report is a draft again, from the blank form.
+    draft.bind('feedback', { message: '' });
   }
 
   /** Send the draft. Throws with operator-facing text; on success clears it, closes and thanks. */

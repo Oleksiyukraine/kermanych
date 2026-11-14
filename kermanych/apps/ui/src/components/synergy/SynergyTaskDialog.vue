@@ -72,6 +72,7 @@ import { imageToFile, type AttachedImage } from '../../lib/images';
 import { errorText, useAsyncAction } from '../../composables/useAsyncAction';
 import { useDictationField } from '../../composables/useDictationField';
 import { useLoadPhase } from '../../composables/useLoadPhase';
+import { useDraft } from '../../lib/drafts';
 import KModal from 'components/kit/KModal.vue';
 import KSelect, { type KSelectOption } from 'components/kit/KSelect.vue';
 import KField from 'components/kit/KField.vue';
@@ -97,6 +98,8 @@ const description = ref('');
 const descriptionField = ref<InstanceType<typeof KField> | null>(null);
 // Диктування: the description is said rather than typed; closing the dialog drops the phrase.
 const dictation = useDictationField({ el: () => descriptionField.value?.el(), value: description });
+// The edited title/description outlive the dialog (lib/drafts.ts), per session.
+const synergyDraft = useDraft({ title, description });
 const membersLoading = ref(false);
 // The cloud list being re-read because the run never managed to (stores/projects.ts,
 // ensureList): the session's project — the card's target — is unknown before it answers.
@@ -124,12 +127,15 @@ watch(
   () => [props.modelValue, props.session.id] as const,
   ([open]) => {
     generation += 1;
+    // Unbound before the next prefill overwrites the fields, so it is not stored as the previous session's edit.
+    synergyDraft.bind(null);
     if (!open) {
       dictation.cancel();
       return;
     }
     title.value = props.session.name;
     description.value = props.brief;
+    synergyDraft.bind(`synergy-task:${props.session.id}`);
     assignee.value = '';
     screens.value = undefined;
     screensError.value = null;
@@ -220,6 +226,7 @@ const createAction = useAsyncAction(
       throw new Error(t('synergy.handoff.closeFailed', { error: errorText(e) }));
     }
     filed.delete(s.id);
+    synergyDraft.discard();
     emit('handedOver', s);
     emit('update:modelValue', false);
     store.notify(t('synergy.handoff.created', { title: name, branch }), 'info');

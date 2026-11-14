@@ -111,6 +111,7 @@ import { PLANE_PRIORITIES, priorityValue } from '../../lib/plane-view';
 import { errorText, useAsyncAction } from '../../composables/useAsyncAction';
 import { useLoadPhase } from '../../composables/useLoadPhase';
 import { useDictationField } from '../../composables/useDictationField';
+import { useDraft } from '../../lib/drafts';
 import { usePlane } from 'stores/plane';
 import { useI18n } from 'vue-i18n';
 
@@ -132,6 +133,8 @@ const description = ref('');
 const descriptionField = ref<InstanceType<typeof KField> | null>(null);
 // Диктування: the description is said rather than typed; closing the editor drops the phrase.
 const dictation = useDictationField({ el: () => descriptionField.value?.el(), value: description });
+// Unsaved summary and description kept per item / per create form (lib/drafts.ts).
+const issueDraft = useDraft({ summary, description });
 // The description as it was loaded, so a save that did not touch it leaves Plane's body
 // alone: markdown cannot carry everything Plane's editor can (mentions, embedded images),
 // and an edit of the priority must not rewrite the text through it.
@@ -229,6 +232,8 @@ watch(
   async (open) => {
     if (!open) return dictation.cancel();
     const mine = ++openRun;
+    // Unbound first: the resets below must not be filed under the previous open's key.
+    issueDraft.bind(null);
     error.value = '';
     loaded.value = false;
     loading.value = true;
@@ -247,6 +252,13 @@ watch(
     parentPick.value = issue?.parentKey ?? '';
     startDate.value = issue?.startDate ?? '';
     dueDate.value = issue?.dueDate ?? '';
+    // A create has nothing to load for its text: its draft comes back at once.
+    if (!issue)
+      issueDraft.bind(
+        props.parentKey
+          ? `plane-issue-new:${props.integrationId}:sub:${props.parentKey}`
+          : `plane-issue-new:${props.integrationId}`,
+      );
     try {
       const [lists, desc] = await Promise.all([
         plane.editorLists(),
@@ -255,8 +267,16 @@ watch(
       if (mine !== openRun) return;
       options.value = lists.options;
       assignable.value = lists.assignable;
-      description.value = desc.markdown;
-      loadedDescription.value = desc.markdown;
+      if (issue) {
+        description.value = desc.markdown;
+        loadedDescription.value = desc.markdown;
+        // An edit's draft is only restored over the text it was typed against, so bind once
+        // Plane's own body has landed (the openRun guard above drops a stale reply).
+        issueDraft.bind(`plane-issue:${props.integrationId}:${issue.key}`, {
+          summary: issue.summary,
+          description: desc.markdown,
+        });
+      }
       // The mirror stores the type's NAME; the picker needs its id.
       typePick.value = issue
         ? (lists.options.issueTypes.find((ty) => ty.name === issue.typeName)?.id ?? '')
@@ -301,6 +321,7 @@ const { run: save, busy } = useAsyncAction(
     const saved = issue
       ? await api.planeEditIssue(props.integrationId, issue.key, draft)
       : await api.planeCreateIssue(props.integrationId, draft);
+    issueDraft.discard();
     emit('update:modelValue', false);
     emit('saved', saved);
   },

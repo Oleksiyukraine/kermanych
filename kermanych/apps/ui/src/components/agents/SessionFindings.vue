@@ -216,6 +216,7 @@ import KSpinner from 'components/kit/KSpinner.vue';
 import { errorText, useKeyedAction } from '../../composables/useAsyncAction';
 import { useLoadPhase } from '../../composables/useLoadPhase';
 import { useDictationField } from '../../composables/useDictationField';
+import { useDraft } from '../../lib/drafts';
 
 const props = defineProps<{ session: Session }>();
 
@@ -280,6 +281,9 @@ const description = ref('');
 const descriptionField = ref<InstanceType<typeof KField> | null>(null);
 // Диктування: the description is said rather than typed; closing the dialog drops the phrase.
 const dictation = useDictationField({ el: () => descriptionField.value?.el(), value: description });
+// The edited title/description outlive the dialog and the tab (lib/drafts.ts): this component
+// unmounts on a tab or session switch, so without it the edits would be lost.
+const findingDraft = useDraft({ title, description });
 watch(dialogOpen, (open) => {
   if (!open) dictation.cancel();
 });
@@ -488,6 +492,8 @@ watch(planeProject, async (id) => {
 async function openFile(f: AgentFinding): Promise<void> {
   const s = props.session;
   const run = ++openRun;
+  // Unbound before the prefill overwrites the fields, so it is not stored as the previous finding's edit.
+  findingDraft.bind(null);
   finding.value = f;
   target.value = 'board';
   title.value = f.title;
@@ -496,6 +502,7 @@ async function openFile(f: AgentFinding): Promise<void> {
     branch: s.branch,
     session: s.name,
   });
+  findingDraft.bind(`finding:${s.id}:${f.id}`);
   project.value = home.value?.id ?? '';
   assignee.value = '';
   autoRun.value = false;
@@ -593,6 +600,7 @@ async function submit(): Promise<void> {
     if (!dest) return;
     const updated = await api.fileFinding(props.session.id, f.id, dest);
     findings.value = findings.value.map((x) => (x.id === updated.id ? updated : x));
+    findingDraft.discard();
     dialogOpen.value = false;
     store.notify(
       dest.kind === 'jira'
