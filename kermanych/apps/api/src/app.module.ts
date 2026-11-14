@@ -8,6 +8,8 @@ import { FsController } from "./http/fs.controller";
 import { UsageController } from "./http/usage.controller";
 import { SkillsController } from "./http/skills.controller";
 import { SkillImportController } from "./http/skill-import.controller";
+import { McpController } from "./http/mcp.controller";
+import { McpService } from "./mcp/mcp.service";
 import { ManagementController } from "./http/management.controller";
 import { CukController } from "./http/cuk.controller";
 import { ModelsController } from "./http/models.controller";
@@ -71,9 +73,9 @@ import { AnalyticsService } from "./analytics/analytics.service";
 import { StartupGcService } from "./gc/startup-gc.service";
 
 @Module({
-  controllers: [AuthController, ProjectsController, SessionsController, FsController, UsageController, CloudController, SkillsController, SkillImportController, ManagementController, ManagementMcpController, CukController, ModelsController, JiraController, LinearController, PlaneController, SlackController, AccountController, DocsController, NativeController, BrowserMcpController, MachineController, MinionController, TesterController, VoiceController, DeviceController, SchedulesController, AnalyticsController],
+  controllers: [AuthController, ProjectsController, SessionsController, FsController, UsageController, CloudController, SkillsController, SkillImportController, McpController, ManagementController, ManagementMcpController, CukController, ModelsController, JiraController, LinearController, PlaneController, SlackController, AccountController, DocsController, NativeController, BrowserMcpController, MachineController, MinionController, TesterController, VoiceController, DeviceController, SchedulesController, AnalyticsController],
   providers: [
-    RegistryService, WorktreeService, SupervisorService, PreviewService, EnvFileService, EventsGateway,
+    RegistryService, WorktreeService, SupervisorService, PreviewService, EnvFileService, EventsGateway, McpService,
     UsageService,
     AuthService,
     SkillsService,

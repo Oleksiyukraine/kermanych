@@ -36,6 +36,7 @@
     "rxjs": "^7",
     "serve-sim": "0.1.49",
     "sherpa-onnx-node": "^2.0.1",
+    "smol-toml": "^1.9.1",
     "socket.io": "^4"
   },
   "devDependencies": {
