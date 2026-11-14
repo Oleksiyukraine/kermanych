@@ -591,6 +591,7 @@ import { useSeen } from 'stores/seen';
 import { useMinion } from 'stores/minion';
 import { IS_PREVIEW } from '../lib/preview';
 import { api } from '../lib/api';
+import { pullSummary } from '../lib/git-pull';
 import { isPlatform, MANAGEMENT_DEFAULT_SECTION } from '@kermanych/core';
 import { canDropProject, sessionScopedProjectIds } from '../lib/scope';
 import { PLATFORM_CHOICES } from '../lib/settings';
@@ -1770,17 +1771,18 @@ const accountHint = computed(() => {
 });
 
 // Footer git pull for the selected project's bound repo, through useAsyncAction so a
-// double-click cannot fire two operations and the button spins; git's own output (or
-// refusal) surfaces as a toast — caught here, because it carries the «Pull:» prefix.
+// double-click cannot fire two operations and the button spins; the one line of git's output
+// that says what happened (lib/git-pull.ts — never the whole diffstat) surfaces as a toast —
+// caught here, because it carries the «Pull:» prefix.
 const { run: gitPull, busy: syncing } = useAsyncAction(async () => {
   const id = store.selectedProjectId;
   if (!id || !isBound.value) return;
   try {
     const r = await store.pullProject(id);
     if (r.ok) {
-      store.notify(`Pull: ${r.out.trim() || t('common.nav.pullDone')}`);
+      store.notify(`Pull: ${pullSummary(r.out) || t('common.nav.pullDone')}`);
       projectDocs.refreshIfActive(id);
-    } else store.notify(`Pull: ${r.out.trim() || t('common.nav.pullFailed')}`, 'error', 7000);
+    } else store.notify(`Pull: ${pullSummary(r.out) || t('common.nav.pullFailed')}`, 'error', 7000);
   } catch (e) {
     store.notify(`Pull: ${errorText(e)}`, 'error', 7000);
   }
