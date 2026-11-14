@@ -46,6 +46,18 @@
         ></textarea>
       </div>
 
+      <!-- Composer dictation (docs/specs/2026-11-14-local-voice-dictation.md): a slim line while
+           it runs — the microphone's level, what it is doing, and the auto-send countdown with
+           its way out (decisions 3 and 6). -->
+      <div v-if="dictation" class="k-composer__dictation mono" role="status" aria-live="polite">
+        <KSpinner v-if="dictation.phase === 'starting'" :size="10" />
+        <span v-else class="k-composer__level" aria-hidden="true">
+          <span class="k-composer__level-fill" :style="{ transform: `scaleX(${dictation.level})` }"></span>
+        </span>
+        <span class="k-composer__dictation-state" :class="{ 'k-composer__dictation-state--due': dictation.countdown }">{{ dictationWords }}</span>
+        <span v-if="dictation.countdown" class="k-composer__dictation-hint">{{ t('kit.composer.dictation.cancelHint') }}</span>
+      </div>
+
       <!-- v3 controls row: attach + the session's own facts (model, reasoning effort,
            isolation) on the left, spend + session actions + the accent send FAB on the right.
            Model and effort are live controls, so each carries a caret; isolation is a reading
@@ -76,18 +88,37 @@
           :disabled="disabled"
           @click="fileInput?.click()"
         >📎</button>
-        <!-- «Голосова розмова» (docs/specs/2026-11-02-voice-conversation.md): only where the host
-             can hold one (`voice`); lit while this session's conversation runs. -->
-        <button
-          v-if="voice"
-          type="button"
-          class="k-composer__attach-btn"
-          :class="{ 'k-composer__attach-btn--on': voiceActive }"
-          v-tip="t('kit.composer.voiceTip')"
-          :aria-label="t('kit.composer.voice')"
-          :aria-pressed="voiceActive"
-          @click="emit('voice')"
-        ><KIcon class="k-composer__voice-icon" name="mic" /></button>
+        <!-- 🎤 (docs/specs/2026-11-14-local-voice-dictation.md, decision 2): dictation into this
+             composer, or where the host offers it (`voiceModes`) the Live conversation too — the
+             click starts the remembered mode, ▾ picks one. Lit while either runs here.
+             `mousedown.prevent`: the field keeps its caret, so a phrase lands where it was. -->
+        <span v-if="voice" ref="voiceEl" class="k-composer__voice">
+          <button
+            type="button"
+            class="k-composer__attach-btn"
+            :class="{ 'k-composer__attach-btn--on': voiceActive || !!dictation }"
+            v-tip="voiceTip"
+            :aria-label="voiceTip"
+            :aria-pressed="voiceActive || !!dictation"
+            :aria-busy="dictation?.phase === 'starting' || dictation?.phase === 'stopping' || undefined"
+            @mousedown.prevent
+            @click="emit('voice')"
+          >
+            <KSpinner v-if="dictation?.phase === 'starting'" :size="12" />
+            <KIcon v-else class="k-composer__voice-icon" name="mic" />
+          </button>
+          <button
+            v-if="voiceModes"
+            type="button"
+            class="k-composer__attach-btn k-composer__voice-caret"
+            v-tip="t('kit.composer.voiceModes')"
+            :aria-label="t('kit.composer.voiceModes')"
+            aria-haspopup="menu"
+            :aria-expanded="modeMenuOpen"
+            @mousedown.prevent
+            @click="toggleModeMenu"
+          ><span class="k-composer__caret" aria-hidden="true"></span></button>
+        </span>
         <KChipSelect
           v-if="model && modelChipOptions.length"
           :model-value="model"
@@ -120,10 +151,23 @@
         <button
           type="submit"
           class="k-composer__send"
+          :class="{ 'k-composer__send--due': dictation?.countdown }"
           :aria-label="t('kit.composer.send')"
           :aria-busy="reading > 0 || undefined"
           :disabled="disabled || !canSend || reading > 0"
-        >↑</button>
+        >
+          <!-- The auto-send countdown: the ring empties until the message goes (decision 3). -->
+          <svg
+            v-if="dictation?.countdown"
+            :key="dictation.countdown.at"
+            class="k-composer__send-ring"
+            viewBox="0 0 36 36"
+            aria-hidden="true"
+          >
+            <circle cx="18" cy="18" r="16" pathLength="100" :style="{ animationDuration: `${dictation.countdown.ms}ms` }" />
+          </svg>
+          ↑
+        </button>
       </div>
 
       <input
@@ -135,11 +179,34 @@
         @change="onFilePick"
       />
     </form>
+
+    <!-- The 🎤 mode menu. Under <body>, `position: fixed`, like KChipSelect's: the panel's
+         panes scroll and would crop an in-flow menu. -->
+    <Teleport to="body">
+      <div
+        v-if="modeMenuOpen"
+        ref="modeMenuEl"
+        class="k-composer__mode-menu"
+        role="menu"
+        :aria-label="t('kit.composer.voiceModes')"
+      >
+        <button
+          v-for="m in VOICE_MODES"
+          :key="m"
+          type="button"
+          class="k-composer__mode-item"
+          :class="{ 'k-composer__mode-item--active': m === voiceMode }"
+          role="menuitemradio"
+          :aria-checked="m === voiceMode"
+          @click="pickMode(m)"
+        >{{ t(`voice.mode.${m}`) }}</button>
+      </div>
+    </Teleport>
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, ref, watch } from 'vue';
+import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { DEFAULT_COMMANDS, prependCommand, prependHelper, type ImageInput, type ModelOption, type ThinkingLevel, type Usage } from '@kermanych/core';
 import KAttachStrip from './KAttachStrip.vue';
@@ -149,11 +216,15 @@ import KIcon from './KIcon.vue';
 import KHelperPicker from './KHelperPicker.vue';
 import KFilePicker from './KFilePicker.vue';
 import KTag from './KTag.vue';
+import KSpinner from './KSpinner.vue';
 import { useImageAttach } from '../../composables/useImageAttach';
 import { useFileMention } from '../../composables/useFileMention';
 import { EFFORT_OPTIONS } from '../../lib/effort';
 import { modelOptions } from '../../lib/models';
 import { tokens, usageTokens, usd } from '../../lib/format';
+import { placeMenu } from '../../lib/menu';
+import type { ComposerDictationState } from '../../composables/useComposerDictation';
+import type { VoiceMode } from '../../composables/useVoicePanel';
 
 const { t } = useI18n();
 
@@ -196,12 +267,30 @@ const props = withDefaults(
     usage?: Usage | undefined;
     // The tree a file mention reads — the session's. Absent: no @ button, and `@` is plain text.
     files?: { kind: 'session' | 'project'; id: string } | null | undefined;
-    // The host can start a voice conversation with this session: shows the 🎤 button.
+    // The host can start voice with this session: shows the 🎤 button.
     voice?: boolean | undefined;
     // This session's voice conversation is running: the button is lit.
     voiceActive?: boolean | undefined;
+    // The host offers Live beside dictation: 🎤 gets the ▾ mode menu (decision 2 of
+    // docs/specs/2026-11-14-local-voice-dictation.md). Without it 🎤 only dictates.
+    voiceModes?: boolean | undefined;
+    // The mode the 🎤 click starts — the one used last.
+    voiceMode?: VoiceMode | undefined;
+    // Dictation into this composer while it runs (composables/useComposerDictation), else null.
+    dictation?: ComposerDictationState | null | undefined;
   }>(),
-  { disabled: false, worktree: false, models: () => [], modelLoading: false, effortLoading: false, voice: false, voiceActive: false },
+  {
+    disabled: false,
+    worktree: false,
+    models: () => [],
+    modelLoading: false,
+    effortLoading: false,
+    voice: false,
+    voiceActive: false,
+    voiceModes: false,
+    voiceMode: 'dictation',
+    dictation: null,
+  },
 );
 
 const emit = defineEmits<{
@@ -209,8 +298,87 @@ const emit = defineEmits<{
   send: [text: string, images: ImageInput[]];
   effort: [level: ThinkingLevel];
   setModel: [patch: { model: string; provider?: string }];
+  // The 🎤 click: the host stops what runs here or starts `voiceMode`.
   voice: [];
+  // A pick in the ▾ menu.
+  voiceMode: [mode: VoiceMode];
+  // ⌥D in the field: toggles dictation whatever the mode (decision 13).
+  dictate: [];
 }>();
+
+// ── 🎤 ────────────────────────────────────────────────────────────────────────
+const VOICE_MODES: readonly VoiceMode[] = ['dictation', 'live'];
+
+const voiceTip = computed(() => {
+  if (props.dictation) return t('kit.composer.dictateStop');
+  if (props.voiceActive) return t('kit.composer.voiceEnd');
+  return props.voiceMode === 'live' ? t('kit.composer.voiceTip') : t('kit.composer.dictateTip');
+});
+
+const voiceEl = ref<HTMLElement | null>(null);
+const modeMenuEl = ref<HTMLElement | null>(null);
+const modeMenuOpen = ref(false);
+
+async function toggleModeMenu(): Promise<void> {
+  if (modeMenuOpen.value) return closeModeMenu();
+  modeMenuOpen.value = true;
+  document.addEventListener('pointerdown', onDocPointerDown);
+  document.addEventListener('keydown', onDocKeydown);
+  await nextTick();
+  const r = voiceEl.value?.getBoundingClientRect();
+  const m = modeMenuEl.value;
+  if (!r || !m) return;
+  // Opens upward: the composer sits at the bottom of its pane.
+  const at = placeMenu(r, { width: m.offsetWidth, height: m.offsetHeight }, { width: window.innerWidth, height: window.innerHeight }, 'top');
+  m.style.left = `${at.left}px`;
+  m.style.top = `${at.top}px`;
+  m.style.maxHeight = `${at.maxHeight}px`;
+}
+function closeModeMenu(): void {
+  modeMenuOpen.value = false;
+  document.removeEventListener('pointerdown', onDocPointerDown);
+  document.removeEventListener('keydown', onDocKeydown);
+}
+// The menu is teleported: a pointer inside it is not inside the button.
+function onDocPointerDown(e: PointerEvent): void {
+  const target = e.target as Node;
+  if (!voiceEl.value?.contains(target) && !modeMenuEl.value?.contains(target)) closeModeMenu();
+}
+function onDocKeydown(e: KeyboardEvent): void {
+  if (e.key === 'Escape') closeModeMenu();
+}
+function pickMode(mode: VoiceMode): void {
+  closeModeMenu();
+  emit('voiceMode', mode);
+}
+onBeforeUnmount(closeModeMenu);
+
+// The dictation line's words, and the countdown's whole seconds. The clock ticks only while a
+// countdown runs.
+const now = ref(Date.now());
+let clock: ReturnType<typeof setInterval> | undefined;
+watch(
+  () => props.dictation?.countdown?.at,
+  (at) => {
+    clearInterval(clock);
+    clock = undefined;
+    now.value = Date.now();
+    if (at) clock = setInterval(() => (now.value = Date.now()), 100);
+  },
+  { immediate: true },
+);
+onBeforeUnmount(() => clearInterval(clock));
+const dictationWords = computed(() => {
+  const d = props.dictation;
+  if (!d) return '';
+  if (d.countdown) {
+    const n = Math.max(1, Math.ceil((d.countdown.at - now.value) / 1000));
+    return t(d.countdown.answer ? 'kit.composer.dictation.answerIn' : 'kit.composer.dictation.sendIn', { n });
+  }
+  if (d.phase === 'starting') return t('kit.composer.dictation.starting');
+  if (d.phase === 'stopping' || d.recognising) return t('kit.composer.dictation.recognising');
+  return t('kit.composer.dictation.listening');
+});
 
 const focused = ref(false);
 
@@ -281,6 +449,12 @@ const mention = useFileMention({
 // ignored so committing a candidate doesn't fire the message.
 function onComposerKeydown(e: KeyboardEvent): void {
   if (props.disabled) return;
+  // ⌥D toggles dictation, as in the task popups. `code`, not `key`: on macOS ⌥D types «∂».
+  if (props.voice && e.altKey && !e.metaKey && !e.ctrlKey && !e.shiftKey && e.code === 'KeyD') {
+    e.preventDefault();
+    emit('dictate');
+    return;
+  }
   if (e.key === '/' && props.modelValue === '') {
     e.preventDefault();
     pickerOpen.value = true;
@@ -319,7 +493,9 @@ function restoreImages(list: readonly ImageInput[]): void {
     ...list.map((i, n) => ({ ...i, url: `data:${i.mimeType};base64,${i.data}`, name: `image-${n + 1}` })),
   ];
 }
-defineExpose({ restoreImages });
+// `submit` and `field`: composer dictation (KPanel's dictation host) sends the dictated message
+// the same way Enter does and inserts each phrase at the caret.
+defineExpose({ restoreImages, submit, field: () => fieldEl.value });
 
 const canSend = computed(() => props.modelValue.trim().length > 0 || attachImages.value.length > 0);
 
@@ -536,6 +712,137 @@ function submit(): void {
   &:disabled {
     opacity: 0.4;
     cursor: default;
+  }
+}
+
+// The ring runs inside the FAB, so the button is its containing block.
+.k-composer__send--due {
+  position: relative;
+}
+// The auto-send countdown: a ring around the arrow that empties as the send nears.
+.k-composer__send-ring {
+  position: absolute;
+  inset: -3px;
+  width: calc(100% + 6px);
+  height: calc(100% + 6px);
+  transform: rotate(-90deg);
+  pointer-events: none;
+
+  circle {
+    fill: none;
+    stroke: var(--k-accent);
+    stroke-width: 2;
+    stroke-dasharray: 100;
+    stroke-dashoffset: 0;
+    animation-name: k-composer-ring;
+    animation-timing-function: linear;
+    animation-fill-mode: forwards;
+  }
+}
+@keyframes k-composer-ring {
+  to {
+    stroke-dashoffset: 100;
+  }
+}
+
+// 🎤 and its ▾: one control in two halves, like a split button shrunk to the row's icons.
+.k-composer__voice {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+}
+.k-composer__voice-caret {
+  padding: 0 2px 0 0;
+}
+.k-composer__caret {
+  display: block;
+  width: 7px;
+  height: 4px;
+  background: currentColor;
+  clip-path: polygon(0 0, 100% 0, 50% 100%);
+}
+
+// The dictation line: quiet, one row, under the text it fills.
+.k-composer__dictation {
+  display: flex;
+  align-items: center;
+  gap: var(--k-sp-2);
+  min-width: 0;
+  font-size: var(--k-fs-xs);
+  color: var(--k-muted);
+}
+.k-composer__level {
+  flex: none;
+  width: 48px;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--k-line);
+  overflow: hidden;
+}
+.k-composer__level-fill {
+  display: block;
+  height: 100%;
+  background: var(--k-accent);
+  transform-origin: left center;
+  transition: transform 120ms linear;
+}
+.k-composer__dictation-state {
+  white-space: nowrap;
+}
+.k-composer__dictation-state--due {
+  color: var(--k-accent);
+}
+.k-composer__dictation-hint {
+  color: var(--k-faint);
+  white-space: nowrap;
+}
+
+// The 🎤 mode menu — KChipSelect's floating surface, z-index band included.
+.k-composer__mode-menu {
+  position: fixed;
+  top: 0;
+  left: 0;
+  z-index: 6500;
+  box-sizing: border-box;
+  max-width: min(calc(100vw - 16px), 360px);
+  display: flex;
+  flex-direction: column;
+  padding: var(--k-sp-1);
+  background: var(--k-grad-raise), var(--k-surface);
+  border: 1px solid var(--k-line-strong);
+  border-radius: var(--k-r);
+  box-shadow: var(--k-sheen), var(--k-shadow-pop);
+}
+.k-composer__mode-item {
+  padding: 6px 8px;
+  background: transparent;
+  border: none;
+  border-radius: var(--k-r-sm);
+  color: var(--k-muted);
+  font-family: var(--k-font-ui);
+  font-size: var(--k-fs-sm);
+  line-height: 1.2;
+  text-align: left;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background 0.12s, color 0.12s;
+
+  &:hover {
+    background: var(--k-surface2);
+    color: var(--k-text);
+  }
+  &:focus-visible {
+    outline: 1px solid var(--k-accent);
+    outline-offset: -1px;
+  }
+}
+.k-composer__mode-item--active {
+  color: var(--k-text);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .k-composer__level-fill {
+    transition: none;
   }
 }
 </style>

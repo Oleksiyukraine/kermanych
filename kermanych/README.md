@@ -1155,12 +1155,18 @@ each turn the first message becomes the thread's name, as for a managed chat.
 
 Talk to a session's agent by voice, the way ChatGPT's voice mode works (spec:
 `docs/specs/2026-11-02-voice-conversation.md`). OpenAI's GPT-Live (`gpt-live-1`) listens and
-speaks full duplex — interrupt it at any time — and hands everything about the task to the
-session's own agent (omp / claude, with the repository and its tools). GPT-Live is only the agent's
-voice: it never answers about the code itself, and asks back only when it did not hear you.
+speaks full duplex and hands everything about the task to the session's own agent (omp / claude,
+with the repository and its tools). GPT-Live is only the agent's voice: it never answers about
+the code itself, and asks back only when it did not hear you. For speaking without a spoken
+reply, see [Voice dictation](#voice-dictation-диктування) — free, local, and the default.
 
-- **Where.** 🎤 in the composer of every managed conversation: «Агенти» (agents, «Глибокий
-  аналіз», discussions, reviews), «Чат» and «Синергія». Not native sessions, not «Менеджмент».
+- **Where.** «Агенти» (agents, «Глибокий аналіз», discussions, reviews) and «Чат»: the ▾ beside
+  🎤 in the composer picks «Live-розмова» or «Диктування»; 🎤 then starts the mode used last
+  (dictation until you pick Live; spec: `docs/specs/2026-11-14-local-voice-dictation.md`).
+  «Синергія» has dictation only. Not native sessions, not «Менеджмент».
+- **Interrupting.** Start speaking and GPT-Live goes quiet at once: the window mutes its voice
+  and drops the rest of a retelling (sent to GPT-Live a part at a time for that reason); you are
+  heard again 0.8 s after you stop.
 - **The key.** Settings → Застосунок → «Голос»: your own OpenAI API key, stored in this machine's
   SQLite (`voice_keys`) like the Jira/Linear tokens — never in the cloud, never in the window;
   the local api exchanges the window's WebRTC offer with OpenAI (`POST /api/voice/session`).
@@ -1200,27 +1206,42 @@ voice: it never answers about the code itself, and asks back only when it did no
 
 ### Voice dictation («Диктування»)
 
-Speak a task description instead of typing it (spec: `docs/specs/2026-11-03-voice-dictation.md`).
-OpenAI's streaming transcription (`gpt-live-transcribe`) turns speech into text as you talk.
+Speak instead of typing; a recogniser on this machine turns each phrase into text — free, no
+key, nothing leaves the computer (spec: `docs/specs/2026-11-14-local-voice-dictation.md`; it
+replaced the OpenAI-based `docs/specs/2026-11-03-voice-dictation.md`).
 
-- **Where.** «Диктувати» under the description of every popup that creates or edits a task:
-  «Нова задача» on «Агенти» (incl. «Глибокий аналіз»), the card editor on «Дошка», «Синергія»'s
-  «Задача →», a task from a document, a finding → task, and the Jira / Linear issue editors. **⌥D**
-  in the description toggles it.
-- **How text lands.** The phrase being spoken shows as a grey draft under the field; when you
-  pause (~0.8 s) its final text is inserted at the caret. The field stays editable meanwhile.
-  Hints: the agent's language («Мова спілкування агента», else the UI language) plus English for
-  technical terms. No clean-up — the text is what the model heard.
-- **Stopping.** «Зупинити» or ⌥D waits up to 5 s for the last phrase. Submitting the popup while
-  dictating lets the last phrase land first. Closing the popup drops an unfinished phrase. A
-  minute of silence stops it. A dropped connection stops it; what was inserted stays. One
-  dictation per app: starting another field stops the current one.
-- **Key, cost.** The same OpenAI key as the voice conversation (`POST /api/voice/dictation`
-  exchanges the offer with `/v1/realtime/calls`); $0.017 per minute. With no key the notice links
-  to Settings → «Голос».
-- **With a voice conversation.** Dictation mutes the conversation's microphone while it runs and
+- **The recogniser.** macOS: Whisper large-v3-turbo through `whisper-server` (whisper.cpp,
+  Metal), shipped inside the `.dmg`. Linux: NVIDIA Parakeet TDT 0.6B v3 through
+  `sherpa-onnx-node`. The platform decides; `KERMANYCH_STT_ENGINE=whisper|parakeet` in the api's
+  environment overrides it, and `KERMANYCH_WHISPER_SERVER` points at another `whisper-server`
+  (otherwise the bundled one, then `kermanych/.whisper-build/bin/whisper-server` that
+  `apps/ui/scripts/build-whisper-server.sh` builds for a dev run, then `PATH`).
+- **The model** is downloaded on demand: Settings → Застосунок → «Голос» → «Локальне
+  розпізнавання», or the button the first dictation offers (874 MB for Whisper, 670 MB for
+  Parakeet). It lands in `~/.kermanych/models/`, is checked against its sha256, resumes after a
+  broken download, and «Видалити модель» removes it. It is loaded (~1 GB of RAM) when 🎤 is
+  pressed and released after 10 minutes without dictation.
+- **In a chat composer** — «Синергія», and «Агенти» / «Чат» in the «Диктування» mode: 🎤 or **⌥D**
+  toggles it. Each phrase lands in the composer when you pause (~0.8 s); after 2.5 s of quiet a
+  countdown sends it. Speak again to add to it, edit it by hand to keep it until Enter, Esc to
+  cancel the send (the text stays). Dictation stays on between messages until you stop it, the
+  page closes, or 10 minutes pass without speech. A «Потрібне рішення» block can be answered by
+  voice: «другий», «варіант три», «так» / «ні» highlight the choice and send it after the same
+  countdown; for a text answer the words go into the block's own field.
+- **In task popups.** «Диктувати» under the description of every popup that creates or edits a
+  task: «Нова задача» on «Агенти» (incl. «Глибокий аналіз»), the card editor on «Дошка»,
+  «Синергія»'s «Задача →», a task from a document, a finding → task, and the Jira / Linear /
+  Plane issue editors. **⌥D** in the description toggles it. Each phrase is inserted at the caret
+  when you pause; the field stays editable. «Зупинити» or ⌥D waits up to 5 s for the last
+  phrase, submitting lets it land first, closing the popup drops it, a minute of silence stops
+  it. One dictation per app: starting another stops the current one.
+- **What is heard.** The agent's language («Мова спілкування агента», else the UI language);
+  Whisper is primed with English technical terms. Noise below «Поріг шуму мікрофона» is not
+  sent, and Whisper's inventions on a cough or silence («Дякую за перегляд!», «*coughs*») are
+  dropped. «еее» / «ммм» do not come through. No other clean-up — the text is what was heard.
+- **With a voice conversation.** Dictation mutes a running Live conversation's microphone and
   unmutes it afterwards (a conversation you muted stays muted), so the agent never gets the
-  description as a message.
+  dictated text twice.
 
 ## Agent map («Карта агентів»)
 

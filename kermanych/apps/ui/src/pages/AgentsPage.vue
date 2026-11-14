@@ -529,7 +529,12 @@
               @set-model="onSetModel"
               :voiceable="true"
               :voice="voicePanel.bar.value"
+              :voice-modes="voicePanel.live"
+              :voice-mode="voicePanel.mode.value"
+              :dictation="voicePanel.dictation.value"
               @voice-start="voicePanel.start"
+              @voice-mode="voicePanel.pick"
+              @dictate="voicePanel.toggleDictation"
               @voice-mute="voicePanel.mute"
               @voice-end="voicePanel.end"
             >
@@ -1869,8 +1874,12 @@ const isBound = computed(() => !!launchProject.value?.localRepoPath);
 const selectedSession = computed(() =>
   store.sessions.find((s) => s.id === store.selectedSessionId),
 );
-// The voice conversation (docs/specs/2026-11-02-voice-conversation.md) from the detail panel.
-const voicePanel = useVoicePanel(() => selectedSession.value);
+// Voice from the detail panel: local dictation into its composer, or the Live conversation
+// (docs/specs/2026-11-14-local-voice-dictation.md, decision 2; 2026-11-02-voice-conversation.md).
+// The composer clears on send and the store shows the «надсилаю…» bubble at once; the panel
+// ref is also how a refused message gets its text and images back.
+const panelRef = ref<InstanceType<typeof KPanel> | null>(null);
+const voicePanel = useVoicePanel(() => selectedSession.value, { live: true, composer: () => panelRef.value?.dictationHost });
 const selectedDecision = computed(() => (selectedSession.value ? sessionDecisionReason(t, selectedSession.value) : undefined));
 
 // Inline rename of the open agent: double-click its name in the header. Enter and blur
@@ -3558,9 +3567,6 @@ function nextMode(s: Session): MessageMode {
   return modeFor(s, store.transcripts[s.id] ?? []);
 }
 
-// The composer clears on send and the store shows the «надсилаю…» bubble at once; the panel
-// ref is how a refused message gets its text and images back.
-const panelRef = ref<InstanceType<typeof KPanel> | null>(null);
 const logTermRef = ref<InstanceType<typeof KTerminalView> | null>(null);
 async function onSend(text: string, images: ImageInput[]): Promise<void> {
   const s = selectedSession.value;

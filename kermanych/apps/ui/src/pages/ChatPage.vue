@@ -221,7 +221,12 @@
               @set-model="onSetModel"
               :voiceable="true"
               :voice="voicePanel.bar.value"
+              :voice-modes="voicePanel.live"
+              :voice-mode="voicePanel.mode.value"
+              :dictation="voicePanel.dictation.value"
               @voice-start="voicePanel.start"
+              @voice-mode="voicePanel.pick"
+              @dictate="voicePanel.toggleDictation"
               @voice-mute="voicePanel.mute"
               @voice-end="voicePanel.end"
             >
@@ -286,6 +291,7 @@ import { useNow } from '../composables/useNow';
 import { useResizablePanel } from '../composables/useResizablePanel';
 import { useAsyncAction, useKeyedAction } from '../composables/useAsyncAction';
 import { useVoicePanel } from '../composables/useVoicePanel';
+import type { ComposerDictationHost } from '../composables/useComposerDictation';
 import { nextMode as modeFor } from '../lib/message-mode';
 import { useOptimisticValue } from '../composables/useOptimisticValue';
 import { useLoadPhase } from '../composables/useLoadPhase';
@@ -351,7 +357,7 @@ async function loadLog(id: string): Promise<void> {
 }
 // Every session action is blocked while the open thread waits on an echo (stop, archive…).
 const sessionPending = computed(() => !!chatId.value && pending.isPending('session:' + chatId.value));
-const panelEl = ref<(ComponentPublicInstance & { restoreDraft: (text: string, images: readonly ImageInput[]) => void }) | null>(null);
+const panelEl = ref<(ComponentPublicInstance & { restoreDraft: (text: string, images: readonly ImageInput[]) => void; dictationHost: ComposerDictationHost }) | null>(null);
 // «розгорнути / стиснути все» is per-session detail state — reset on a chat switch so a
 // stale command is not adopted by the newly opened session's rows.
 const expandAll = ref<ExpandAllCommand>(EXPAND_ALL_NONE);
@@ -368,8 +374,9 @@ const BIND_HINT = computed(() => t('chat.page.bindHint'));
 const selectedProject = computed(() => store.projects.find((p) => p.id === store.selectedProjectId));
 const isBound = computed(() => !!selectedProject.value?.localRepoPath);
 const chatSession = computed(() => store.sessions.find((s) => s.id === chatId.value));
-// The voice conversation (docs/specs/2026-11-02-voice-conversation.md) with this thread.
-const voicePanel = useVoicePanel(() => chatSession.value);
+// Voice with this thread: local dictation into the composer, or the Live conversation
+// (docs/specs/2026-11-14-local-voice-dictation.md, decision 2; 2026-11-02-voice-conversation.md).
+const voicePanel = useVoicePanel(() => chatSession.value, { live: true, composer: () => panelEl.value?.dictationHost });
 // Promotion grows a worktree, so it is refused without a local binding; the strip states why.
 // A native chat's ▶ is blocked for being «Керманич»-only and carries that reason itself.
 const promoteBlocked = computed(() => !!chatSession.value && !chatSession.value.native && !isBound.value);

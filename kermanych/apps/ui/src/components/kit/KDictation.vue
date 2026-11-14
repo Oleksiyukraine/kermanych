@@ -7,40 +7,40 @@
       class="k-dc__btn mono"
       v-tip="state === 'idle' ? t('kit.dictate.startTip') : t('kit.dictate.stopTip')"
       :aria-pressed="state !== 'idle'"
-      :aria-busy="state === 'connecting' || state === 'stopping'"
+      :aria-busy="state === 'starting' || state === 'stopping'"
       :disabled="disabled"
       @mousedown.prevent
       @click="emit('toggle')"
     >
-      <KSpinner v-if="state === 'connecting' || state === 'stopping'" :size="12" />
+      <KSpinner v-if="state === 'starting' || state === 'stopping'" :size="12" />
       <KIcon v-else class="k-dc__icon" name="mic" />
       <span>{{ state === 'idle' ? t('kit.dictate.start') : t('kit.dictate.stop') }}</span>
     </button>
     <template v-if="state !== 'idle'">
-      <span class="k-dc__state mono" role="status" aria-live="polite">{{ t(`kit.dictate.state.${state}`) }}</span>
+      <!-- What happens to the phrase now («слухаю…», «розпізнаю…»), else the state itself. Text
+           appears in the field only once a phrase is recognised, never word by word. -->
+      <span class="k-dc__state mono" role="status" aria-live="polite">{{ caption || t(`kit.dictate.state.${state}`) }}</span>
       <!-- The microphone's loudness: speech fills it. -->
       <span class="k-dc__level" aria-hidden="true">
         <span class="k-dc__level-fill" :style="{ transform: `scaleX(${level})` }"></span>
       </span>
-      <!-- The phrase being recognised: a draft; only its final text goes into the field. -->
-      <span class="k-dc__caption">{{ tail }}</span>
     </template>
   </div>
 </template>
 
 <script setup lang="ts">
-// Voice dictation under a task description (docs/specs/2026-11-03-voice-dictation.md): the
-// toggle, and while it runs the state, the mic level and the draft of the phrase being spoken
-// (decision 4). Pure presentation — the host passes the state of
-// composables/useDictationField.ts in. Kept outside the field's <label>: a button inside one
-// would be the label's control, and a click on the label text would toggle dictation.
-import { computed } from 'vue';
+// Voice dictation under a task description (docs/specs/2026-11-14-local-voice-dictation.md,
+// decision 6): the toggle, and while it runs the status of the phrase being spoken and the mic
+// level. Pure presentation — the host passes the state of composables/useDictationField.ts in.
+// Kept outside the field's <label>: a button inside one would be the label's control, and a
+// click on the label text would toggle dictation.
 import { useI18n } from 'vue-i18n';
 import KIcon from './KIcon.vue';
 import KSpinner from './KSpinner.vue';
 
-const props = defineProps<{
-  state: 'idle' | 'connecting' | 'live' | 'stopping';
+defineProps<{
+  state: 'idle' | 'starting' | 'live' | 'stopping';
+  /** The phrase's status line; empty shows the state's own word. */
   caption: string;
   level: number;
   disabled?: boolean;
@@ -49,10 +49,6 @@ const props = defineProps<{
 const emit = defineEmits<{ toggle: [] }>();
 
 const { t } = useI18n();
-
-// A long phrase shows its end — the words being said now.
-const TAIL_CHARS = 140;
-const tail = computed(() => (props.caption.length > TAIL_CHARS ? `…${props.caption.slice(-TAIL_CHARS)}` : props.caption));
 </script>
 
 <style scoped lang="scss">
@@ -115,13 +111,6 @@ const tail = computed(() => (props.caption.length > TAIL_CHARS ? `…${props.cap
   background: var(--k-accent);
   transform-origin: left center;
   transition: transform 120ms linear;
-}
-.k-dc__caption {
-  flex: 1;
-  min-width: 0;
-  overflow-wrap: anywhere;
-  color: var(--k-muted);
-  font-style: italic;
 }
 @media (prefers-reduced-motion: reduce) {
   .k-dc__level-fill {

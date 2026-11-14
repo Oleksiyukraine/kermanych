@@ -52,6 +52,11 @@ export function voiceLivePrompt(language: string): string {
     "- Say file paths and identifiers once; do not spell code. If the reply mentions a code block or a table, say that it is in the chat.",
     "- When the agent asks a question with numbered options, read the options with their numbers and wait for the operator's answer.",
     "",
+    // docs/specs/2026-11-14-local-voice-dictation.md, decision 7 (OpenAI's interruption policy).
+    "Interruption policy:",
+    "- When the operator starts speaking while you speak, stop right away, even in the middle of a sentence. Listen until they finish, then respond to what they said.",
+    "- A new request, a correction or «cancel that» while you are retelling ends the retelling: do not finish it. Delegate the new request.",
+    "",
     "Style: short, natural sentences. No filler, no closing offers.",
   ].join("\n");
 }

@@ -1,10 +1,12 @@
 // apps/api/src/http/voice.controller.ts
-// The voice conversation's api surface (docs/specs/2026-11-02-voice-conversation.md): the
-// operator's OpenAI key on this machine and the SDP exchange with GPT-Live. Guarded by the
-// global SupabaseAuthGuard; the acting user comes from the guard, never the body.
-import { BadRequestException, Body, Controller, Get, HttpCode, Post, Put, Req } from "@nestjs/common";
+// The voice api surface. The voice conversation (docs/specs/2026-11-02-voice-conversation.md):
+// the operator's OpenAI key on this machine and the SDP exchange with GPT-Live. Local dictation
+// (docs/specs/2026-11-14-local-voice-dictation.md): the recognition model and one phrase → text.
+// Guarded by the global SupabaseAuthGuard; the acting user comes from the guard, never the body.
+import { BadRequestException, Body, Controller, Delete, Get, HttpCode, Post, Put, Req } from "@nestjs/common";
 import { CodedError, badRequest } from "../management/coded-error";
-import { VoiceService, type DictationRequest, type VoiceSessionRequest } from "../voice/voice.service";
+import { LocalSttService } from "../voice/local-stt.service";
+import { VoiceService, type VoiceSessionRequest } from "../voice/voice.service";
 
 type Authed = { user: { id: string } };
 
@@ -15,7 +17,10 @@ function relay(err: unknown): never {
 
 @Controller("voice")
 export class VoiceController {
-  constructor(private voice: VoiceService) {}
+  constructor(
+    private voice: VoiceService,
+    private stt: LocalSttService,
+  ) {}
 
   @Get("key")
   key(@Req() req: Authed) {
@@ -49,11 +54,50 @@ export class VoiceController {
     }
   }
 
-  // Voice dictation (docs/specs/2026-11-03-voice-dictation.md): a transcription session.
-  @Post("dictation")
-  async dictation(@Body() b: DictationRequest, @Req() req: Authed) {
+  // ── local dictation ──
+  // The model is this machine's, not the user's: no user id reaches LocalSttService.
+
+  @Get("model")
+  model() {
+    return this.stt.status();
+  }
+
+  // Starts the download or continues it after a break; while one runs, answers its progress.
+  @Post("model/download")
+  @HttpCode(200)
+  download() {
+    return this.stt.download();
+  }
+
+  // The bytes downloaded so far stay on disk for the next download to continue from.
+  @Delete("model/download")
+  cancelDownload() {
+    return this.stt.cancelDownload();
+  }
+
+  @Delete("model")
+  removeModel() {
+    return this.stt.remove();
+  }
+
+  // 🎤 was pressed: the engine starts loading while the first phrase is spoken (decision 9).
+  @Post("stt/warm")
+  @HttpCode(200)
+  warm() {
     try {
-      return await this.voice.createDictation(req.user.id, b ?? ({} as DictationRequest));
+      this.stt.warm();
+      return { ok: true };
+    } catch (err) {
+      relay(err);
+    }
+  }
+
+  // One phrase: a base64 16 kHz mono 16-bit WAV and Whisper's language code.
+  @Post("transcribe")
+  @HttpCode(200)
+  async transcribe(@Body() b: { audio?: unknown; language?: unknown }) {
+    try {
+      return { text: await this.stt.transcribe(b?.audio, b?.language) };
     } catch (err) {
       relay(err);
     }

@@ -645,8 +645,65 @@
 
         <!-- ── APP · ГОЛОС ──────────────────────────────────────────────────── -->
         <!-- docs/specs/2026-11-02-voice-conversation.md, decisions 3 and 11. The key lives in the
-             api on this machine; the window only learns its source and last four characters. -->
+             api on this machine; the window only learns its source and last four characters.
+             docs/specs/2026-11-14-local-voice-dictation.md, decision 5: dictation's model is
+             downloaded here, and the key is for Live alone (decision 15). -->
         <div v-else-if="section.key === 'app-voice'" class="set__form">
+          <div class="set__group">
+            <span class="set__label">{{ t('settings.voice.stt.label') }}</span>
+            <KSkeleton v-if="sttPhase === 'skeleton'" variant="lines" :rows="2" />
+            <template v-else-if="sttPhase === 'ready' && sttModel.status">
+              <p class="set__note">
+                {{ t(`settings.voice.stt.engine.${sttModel.status.engine}`) }} ·
+                {{ t('settings.voice.stt.size', { size: sttModelMegabytes(sttModel.status.totalBytes) }) }} ·
+                {{ t(`settings.voice.stt.state.${sttModel.status.state}`) }}
+              </p>
+              <template v-if="sttModel.status.state === 'downloading'">
+                <div
+                  class="set__progress"
+                  role="progressbar"
+                  :aria-label="t('settings.voice.stt.state.downloading')"
+                  aria-valuemin="0"
+                  aria-valuemax="100"
+                  :aria-valuenow="sttPercent"
+                >
+                  <span class="set__progress-fill" :style="{ transform: `scaleX(${sttPercent / 100})` }"></span>
+                </div>
+                <p class="set__note">
+                  {{ t('settings.voice.stt.progress', {
+                    received: sttModelMegabytes(sttModel.status.receivedBytes ?? 0),
+                    total: sttModelMegabytes(sttModel.status.totalBytes),
+                    percent: sttPercent,
+                  }) }}
+                </p>
+              </template>
+              <div class="set__row">
+                <KBtn
+                  v-if="sttModel.status.state === 'absent'"
+                  variant="secondary"
+                  :loading="sttDownload.busy.value"
+                  @click="sttDownload.run()"
+                >{{ t(sttModel.status.receivedBytes ? 'settings.voice.stt.resume' : 'settings.voice.stt.download', { size: sttModelMegabytes(sttModel.status.totalBytes) }) }}</KBtn>
+                <KBtn
+                  v-else-if="sttModel.status.state === 'downloading'"
+                  variant="ghost"
+                  :loading="sttCancel.busy.value"
+                  @click="sttCancel.run()"
+                >{{ t('settings.voice.stt.cancel') }}</KBtn>
+                <KBtn v-else variant="ghost" :loading="sttRemove.busy.value" @click="sttRemove.run()">
+                  {{ t('settings.voice.stt.remove') }}
+                </KBtn>
+              </div>
+              <p v-if="sttModel.status.error" class="set__error" role="alert">
+                {{ t('settings.voice.stt.failed', { error: sttModel.status.error }) }}
+              </p>
+            </template>
+            <p v-else-if="sttPhase === 'ready'" class="set__note">{{ t('settings.voice.stt.unknown') }}</p>
+            <p class="set__note">{{ t('settings.voice.stt.note') }}</p>
+          </div>
+
+          <div class="set__rule"></div>
+
           <div class="set__group">
             <span class="set__label">{{ t('settings.voice.key') }}</span>
             <KSkeleton v-if="voiceKeyPhase === 'skeleton'" variant="line" width="60%" />
@@ -1017,6 +1074,7 @@ import AssistantMascot from 'components/assistant/AssistantMascot.vue';
 import { voiceGatePick, voicePick } from '../lib/voice';
 import { VOICE_GATE_LEVELS, type VoiceGateLevel } from '../lib/voice-gate';
 import { locale } from '../lib/locale';
+import { sttModelMegabytes, useSttModel } from 'stores/stt-model';
 import { isMoveRefusal, memberErrorText, moveRefusalText, NO_ROWS } from '../lib/cloud-errors';
 import {
   buildEnvRows,
@@ -2048,6 +2106,40 @@ const voiceLanguageLabel = computed(() =>
   auth.language ? AGENT_LANGUAGE_LABELS[auth.language] : locale.value === 'en' ? 'English' : 'Українська',
 );
 
+// Dictation's local recogniser (docs/specs/2026-11-14-local-voice-dictation.md, decision 5). The
+// store polls while a download runs, wherever it was started from.
+const sttModel = useSttModel();
+// The last refresh failed, so no status is coming: the pane says so instead of a skeleton.
+const sttFailed = ref(false);
+const sttPhase = useLoadPhase(() => sttModel.status === null && !sttFailed.value);
+watch(
+  () => section.value.key,
+  async (key) => {
+    if (key !== 'app-voice') return;
+    try {
+      await sttModel.refresh();
+      sttFailed.value = false;
+    } catch {
+      sttFailed.value = true;
+    }
+  },
+  { immediate: true },
+);
+const sttPercent = computed(() => {
+  const s = sttModel.status;
+  return s?.totalBytes ? Math.min(100, Math.floor(((s.receivedBytes ?? 0) / s.totalBytes) * 100)) : 0;
+});
+const sttDownload = useAsyncAction(() => sttModel.download());
+const sttCancel = useAsyncAction(() => sttModel.cancelDownload());
+const sttRemove = useAsyncAction(async () => {
+  const ok = await confirmAction({
+    title: t('settings.voice.stt.removeConfirm.title'),
+    message: t('settings.voice.stt.removeConfirm.message', { size: sttModelMegabytes(sttModel.status?.totalBytes ?? 0) }),
+    confirmLabel: t('confirmations.label.remove'),
+  });
+  if (ok) await sttModel.remove();
+});
+
 // ── RESOURCES ───────────────────────────────────────────────────────────────
 // This machine's profile (spec decision 8). The saved state is the api's effective values plus
 // the decision; the draft goes through the same bar as the cloud scopes, and save sends only
@@ -2459,6 +2551,29 @@ const badges = computed<Record<string, number | undefined>>(() => ({
   font-size: var(--k-fs-sm);
   line-height: 1.5;
   color: var(--k-accent);
+}
+
+// The model download's progress (Голос → «Локальне розпізнавання»). Determinate: the kit's
+// KProgressBar is the indeterminate «something is running» sweep.
+.set__progress {
+  height: 4px;
+  border-radius: 2px;
+  background: var(--k-line);
+  overflow: hidden;
+}
+
+.set__progress-fill {
+  display: block;
+  height: 100%;
+  background: var(--k-accent);
+  transform-origin: left center;
+  transition: transform 300ms linear;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .set__progress-fill {
+    transition: none;
+  }
 }
 
 .set__rule {
