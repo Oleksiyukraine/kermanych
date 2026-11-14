@@ -65,6 +65,7 @@ import KSelect, { type KSelectOption } from 'components/kit/KSelect.vue';
 import { api, type LinearAssignableUser, type LinearIssueDraftWire } from '../../lib/api';
 import { errorText, useAsyncAction } from '../../composables/useAsyncAction';
 import { useDictationField } from '../../composables/useDictationField';
+import { useDraft } from '../../lib/drafts';
 import { useI18n } from 'vue-i18n';
 
 const props = defineProps<{
@@ -83,6 +84,8 @@ const description = ref('');
 const descriptionField = ref<InstanceType<typeof KField> | null>(null);
 // Диктування: the description is said rather than typed; closing the editor drops the phrase.
 const dictation = useDictationField({ el: () => descriptionField.value?.el(), value: description });
+// Unsaved title and description kept per issue / per create form (lib/drafts.ts).
+const issueDraft = useDraft({ title: titleField, description });
 const priorityPick = ref('0');
 const assigneePick = ref('');
 const labelsInput = ref('');
@@ -127,6 +130,8 @@ watch(
   async (open) => {
     if (!open) return dictation.cancel();
     const mine = ++openRun;
+    // Unbound first: the resets below must not be filed under the previous open's key.
+    issueDraft.bind(null);
     error.value = '';
     loading.value = true;
     const issue = props.issue;
@@ -139,6 +144,14 @@ watch(
     labelsInput.value = issue?.labels.join(', ') ?? '';
     estimateInput.value = issue && issue.estimate > 0 ? String(issue.estimate) : '';
     dueDate.value = issue?.dueDate ?? '';
+    // The text comes from the mirror, already here: the draft binds over it at once.
+    issueDraft.bind(
+      issue
+        ? `linear-issue:${props.workspaceId}:${issue.key}`
+        : props.parentKey
+          ? `linear-issue-new:${props.workspaceId}:sub:${props.parentKey}`
+          : `linear-issue-new:${props.workspaceId}`,
+    );
     try {
       const users = await api.linearAssignableUsers(props.workspaceId, '');
       if (mine === openRun) assignable.value = users;
@@ -180,6 +193,7 @@ const { run: save, busy } = useAsyncAction(
     const saved = props.issue
       ? await api.linearEditIssue(props.workspaceId, props.issue.key, draft)
       : await api.linearCreateIssue(props.workspaceId, draft);
+    issueDraft.discard();
     emit('update:modelValue', false);
     emit('saved', saved);
   },

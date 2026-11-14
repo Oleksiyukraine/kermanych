@@ -412,6 +412,7 @@ import {
 import { useAsyncAction, useKeyedAction } from '../../composables/useAsyncAction';
 import { useLoadPhase } from '../../composables/useLoadPhase';
 import { useOptimisticValue } from '../../composables/useOptimisticValue';
+import { useDraft } from '../../lib/drafts';
 import { useJira } from 'stores/jira';
 import { useOrchestrator } from 'stores/orchestrator';
 
@@ -435,6 +436,9 @@ const tab = ref<'comments' | 'worklogs'>('comments');
 // The wide mode: the same ticket at ~90% of the screen, for descriptions that need room.
 const expanded = ref(false);
 const commentDraft = ref('');
+// The comment being typed, kept per ticket (lib/drafts.ts): bound on open and whenever the
+// ticket under the dialog changes, so half a comment never carries over to another ticket.
+const commentKept = useDraft({ text: commentDraft });
 const confirmingDelete = ref(false);
 const fileInput = ref<HTMLInputElement | null>(null);
 
@@ -470,6 +474,9 @@ type AdjustMode = JiraWorklogAdjustWire['mode'];
 const workTime = ref('');
 const workStarted = ref('');
 const workComment = ref('');
+// The note of a NEW entry, kept per ticket like the comment. Unbound while the form edits an
+// existing entry: that entry's own note is not something typed and unsent.
+const workNoteKept = useDraft({ text: workComment });
 const workAdjust = ref<AdjustMode>('auto');
 const workAdjustValue = ref('');
 // Which existing entry the form is editing (null = it is composing a new one), and which
@@ -590,6 +597,7 @@ function onOpen(): void {
   estimateDraft.value = props.issue.originalEstimate;
   startDraft.value = props.issue.startDate;
   dueDraft.value = props.issue.dueDate;
+  commentKept.bind(`jira-comment:${props.integrationId}:${props.issue.key}`, { text: '' });
   resetWorkDraft();
   deletingWorklogId.value = null;
   const mine = ++openRun;
@@ -619,6 +627,17 @@ watch(
     if (savingField.value !== 'estimate') estimateDraft.value = issue.originalEstimate;
     if (savingField.value !== 'startDate') startDraft.value = issue.startDate;
     if (savingField.value !== 'dueDate') dueDraft.value = issue.dueDate;
+  },
+);
+
+// The ticket shown can change without a close (a subtask opened in place): its own drafts
+// come in. A worklog edit in progress belongs to the old ticket's entry and keeps the form.
+watch(
+  () => `${props.integrationId}:${props.issue.key}`,
+  () => {
+    commentKept.bind(`jira-comment:${props.integrationId}:${props.issue.key}`, { text: '' });
+    if (editingWorklogId.value === null)
+      workNoteKept.bind(`jira-worklog:${props.integrationId}:${props.issue.key}`, { text: '' });
   },
 );
 
@@ -726,12 +745,16 @@ const { run: sendComment, busy: commenting } = useAsyncAction(async () => {
 // own default), the estimate left to Jira's automatic adjustment — and NOT editing
 // anything, so this doubles as «cancel the edit».
 function resetWorkDraft(): void {
+  // Blanked unbound, then bound back: the blank must not erase this ticket's composed note,
+  // which returns — after a cancelled entry edit too.
+  workNoteKept.bind(null);
   editingWorklogId.value = null;
   workTime.value = '';
   workStarted.value = localDateTimeValue();
   workComment.value = '';
   workAdjust.value = 'auto';
   workAdjustValue.value = '';
+  workNoteKept.bind(`jira-worklog:${props.integrationId}:${props.issue.key}`, { text: '' });
 }
 
 function pickAdjust(mode: string): void {
@@ -747,6 +770,7 @@ function pickDeleteAdjust(mode: string): void {
 // The stored start is an INSTANT, shown back on the user's own clock.
 function startEditWorklog(w: JiraWorklog): void {
   deletingWorklogId.value = null;
+  workNoteKept.bind(null);
   editingWorklogId.value = w.worklogId;
   workTime.value = w.timeSpent;
   workStarted.value = localDateTimeValue(new Date(w.startedAt));
@@ -802,6 +826,8 @@ const { run: submitWork, busy: submitting } = useAsyncAction(async () => {
       ? await api.jiraEditWorklog(props.integrationId, props.issue.key, editing, draft)
       : await api.jiraLogWork(props.integrationId, props.issue.key, draft),
   );
+  // A new entry is logged: its note was sent. An edit's success leaves the new-entry draft.
+  if (!editing) workNoteKept.discard();
   resetWorkDraft();
   await jira.loadChildren(props.issue.issueId);
 });

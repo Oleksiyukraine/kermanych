@@ -288,6 +288,7 @@ import type { OutgoingMessage } from '../../lib/outgoing';
 import { needsSignIn } from '../../lib/session-auth';
 import KVoiceBar from './KVoiceBar.vue';
 import type { VoiceBarState } from '../../lib/voice';
+import { sessionDraftKey, useDraft } from '../../lib/drafts';
 import type { ComposerDictationHost, ComposerDictationState } from '../../composables/useComposerDictation';
 import type { VoiceMode } from '../../composables/useVoicePanel';
 
@@ -406,7 +407,15 @@ const emit = defineEmits<{
   dictate: [];
 }>();
 
+// What is typed belongs to the session it was typed to (lib/drafts.ts): kept per session across
+// a switch to another agent, a route change and a restart; a send empties it, which drops it.
 const draft = ref('');
+const sessionDraft = useDraft({ text: draft });
+watch(
+  () => props.session.id,
+  (id) => sessionDraft.bind(sessionDraftKey(id), { text: '' }),
+  { immediate: true },
+);
 const composerEl = ref<InstanceType<typeof KComposer> | null>(null);
 
 // A send that failed hands its text and images back here, so nothing typed is lost. Only

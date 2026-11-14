@@ -1674,6 +1674,30 @@ An async operation without feedback reads as a bug or a frozen app. Spec:
 
 The `#/kit` gallery shows each of these states live.
 
+### Drafts
+
+Text you typed and did not send stays where you typed it, the way Slack keeps a draft per
+channel. Switching to another agent, closing a form, leaving the screen or restarting the app
+keeps it, and it comes back when the same target opens again. Sending or saving drops it.
+Spec: `docs/specs/2026-11-14-persist-input-drafts.md`.
+
+- **What keeps a draft:** each agent's or chat's composer (per session), «Нова задача» on
+  «Агенти» and on «Дошка» (one draft per project, shared by both forms), the form of a card
+  being edited (per card), the ЦУК and Менеджмент assistants (Менеджмент per workspace), the
+  Jira / Linear / Plane issue editors, comments and work-log notes (per issue), the «Задача з
+  документа», «Синергія» handoff and finding forms, and «Надіслати відгук».
+- An agent or a backlog card with a draft carries a ✎ in the list. The open agent does not:
+  its draft is in front of you.
+- Drafts are text only and live on this device (`localStorage`, key `kermanych.drafts`), never in
+  the cloud. An attached image is not kept. A draft untouched for 30 days is dropped.
+- A draft for an existing card or issue comes back only while the card still has the text it
+  was typed over. If a teammate changed it since, the draft is dropped, so saving it cannot
+  overwrite their edit.
+
+A new free-text input binds its refs through `useDraft` (`apps/ui/src/lib/drafts.ts`): call
+`bind(key, base)` when the form opens on a target, with the text it opens with as `base`, and
+`discard()` after a successful save.
+
 ## Cloud tasks and local sessions
 
 A **task** is a card in the shared cloud board; a **session** is its execution on one

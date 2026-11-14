@@ -3159,6 +3159,7 @@ export const uk = {
       tokens: '{count} ток',
       browsing: 'Агент працює в браузері',
       findings: 'Відкритих знахідок: {n}',
+      draft: 'Чернетка: тут є ненадісланий текст',
     },
     analysisMark: {
       label: 'аналіз',

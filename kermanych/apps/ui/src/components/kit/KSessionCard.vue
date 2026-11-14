@@ -26,6 +26,14 @@
           class="k-session-card__label"
           :class="title ? 'k-session-card__label--title' : 'k-session-card__label--branch'"
         >{{ title || branch }}</span>
+        <!-- Unsent text in this agent's composer or this card's form (lib/drafts.ts), the way
+             Slack pencils a channel holding a draft. -->
+        <span
+          v-if="draft"
+          class="k-session-card__draft"
+          v-tip="t('kit.sessionCard.draft')"
+          :aria-label="t('kit.sessionCard.draft')"
+        >✎</span>
         <span
           v-if="browsing"
           class="k-session-card__browsing"
@@ -176,10 +184,12 @@ const props = withDefaults(
     removable?: boolean;
     removeTitle?: string;
     browsing?: boolean;
+    // Unsent text waits for this session or card (lib/drafts.ts hasDraft).
+    draft?: boolean;
     findings?: number;
     pending?: boolean | undefined;
   }>(),
-  { selected: false, fork: false, forkContinues: false, removable: false, browsing: false, findings: 0, pending: false },
+  { selected: false, fork: false, forkContinues: false, removable: false, browsing: false, draft: false, findings: 0, pending: false },
 );
 
 defineEmits<{ click: []; remove: [] }>();
@@ -341,6 +351,17 @@ const spend = computed(() => {
   color: var(--k-accent);
 }
 
+.k-session-card__draft {
+  flex: none;
+  margin-left: auto;
+  color: var(--k-muted);
+  font-size: var(--k-icon-xs);
+  line-height: 1;
+}
+
+// Only the first mark of the row pushes away from the label; the rest follow it.
+.k-session-card__draft + .k-session-card__browsing,
+.k-session-card__draft + .k-session-card__findings,
 .k-session-card__browsing + .k-session-card__findings {
   margin-left: 0;
 }

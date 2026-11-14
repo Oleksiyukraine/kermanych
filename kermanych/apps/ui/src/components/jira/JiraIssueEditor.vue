@@ -77,6 +77,7 @@ import { api, type JiraAssignableUser, type JiraEditorOptions, type JiraIssueDra
 import { errorText, useAsyncAction } from '../../composables/useAsyncAction';
 import { useLoadPhase } from '../../composables/useLoadPhase';
 import { useDictationField } from '../../composables/useDictationField';
+import { useDraft } from '../../lib/drafts';
 import { useI18n } from 'vue-i18n';
 
 const props = defineProps<{
@@ -95,6 +96,8 @@ const description = ref('');
 const descriptionField = ref<InstanceType<typeof KField> | null>(null);
 // Диктування: the description is said rather than typed; closing the editor drops the phrase.
 const dictation = useDictationField({ el: () => descriptionField.value?.el(), value: description });
+// Unsaved summary and description kept per issue / per create form (lib/drafts.ts).
+const issueDraft = useDraft({ summary, description });
 // The description as it was loaded, so a save that did not touch it leaves Jira's body
 // alone: markdown cannot carry everything ADF can (images, mentions, panels), and an edit
 // of the priority must not rewrite the text through it.
@@ -158,6 +161,8 @@ watch(
   async (open) => {
     if (!open) return dictation.cancel();
     const mine = ++openRun;
+    // Unbound first: the resets below must not be filed under the previous open's key.
+    issueDraft.bind(null);
     error.value = '';
     loaded.value = false;
     loading.value = true;
@@ -174,6 +179,13 @@ watch(
     labelsInput.value = issue?.labels.join(', ') ?? '';
     startDate.value = issue?.startDate ?? '';
     dueDate.value = issue?.dueDate ?? '';
+    // A create has nothing to load for its text: its draft comes back at once.
+    if (!issue)
+      issueDraft.bind(
+        props.parentKey
+          ? `jira-issue-new:${props.integrationId}:sub:${props.parentKey}`
+          : `jira-issue-new:${props.integrationId}`,
+      );
     try {
       const [opts, users, desc] = await Promise.all([
         api.jiraEditorOptions(props.integrationId),
@@ -183,10 +195,16 @@ watch(
       if (mine !== openRun) return;
       options.value = opts;
       assignable.value = users;
-      description.value = desc.markdown;
-      loadedDescription.value = desc.markdown;
       if (issue) {
+        description.value = desc.markdown;
+        loadedDescription.value = desc.markdown;
         priorityPick.value = opts.priorities.find((p) => p.name === issue.priorityName)?.id ?? '';
+        // An edit's draft is only restored over the text it was typed against, so bind once
+        // Jira's own body has landed (the openRun guard above drops a stale reply).
+        issueDraft.bind(`jira-issue:${props.integrationId}:${issue.key}`, {
+          summary: issue.summary,
+          description: desc.markdown,
+        });
       } else {
         typePick.value = typeOptions.value[0]?.value ?? '';
       }
@@ -232,6 +250,7 @@ const { run: save, busy } = useAsyncAction(
     const saved = props.issue
       ? await api.jiraEditIssue(props.integrationId, props.issue.key, draft)
       : await api.jiraCreateIssue(props.integrationId, draft);
+    issueDraft.discard();
     emit('update:modelValue', false);
     emit('saved', saved);
   },

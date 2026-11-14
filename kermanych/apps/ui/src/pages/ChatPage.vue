@@ -48,6 +48,7 @@
             :harness="sessionLaunchMode(s)"
             :usage="s.usage"
             :selected="s.id === chatId"
+            :draft="s.id !== chatId && hasDraft(sessionDraftKey(s.id))"
             :pending="pending.isPending('session:' + s.id) || archivingThread(s.id)"
             removable
             :remove-title="t('chat.page.archiveThread', { title: threadTitle(s) })"
@@ -285,6 +286,7 @@ import type { MessageMode } from '../lib/api';
 import { taskInsertFromDraft } from '../lib/tasks-view';
 import { EXPAND_ALL_NONE, nextExpandAll, type ExpandAllCommand } from '../lib/expand-all';
 import { relativeTime, renderTime } from '../lib/time';
+import { hasDraft, sessionDraftKey } from '../lib/drafts';
 import { useNow } from '../composables/useNow';
 import { useResizablePanel } from '../composables/useResizablePanel';
 import { useAsyncAction, useKeyedAction } from '../composables/useAsyncAction';
