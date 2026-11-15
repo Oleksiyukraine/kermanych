@@ -11,6 +11,9 @@ export const uk = {
       hint: 'Спільна дошка задач команди. Увійдіть, щоб побачити проєкти та задачі.',
       signingIn: 'Входимо…',
       signIn: 'Увійти через GitHub',
+      // The sign-in loader (components/auth/AuthLoader.vue): a quote under the pixel word.
+      quote: '«Науковець вивчає світ, який є; інженер творить світ, якого ніколи не було».',
+      quoteAuthor: 'Теодор фон Карман',
     },
     notFound: {
       message: 'Тут нічого немає.',
