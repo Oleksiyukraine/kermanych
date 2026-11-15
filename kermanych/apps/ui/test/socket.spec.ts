@@ -1,7 +1,9 @@
-import { describe, it, expect, vi } from 'vitest';
+import { afterEach, describe, it, expect, vi } from 'vitest';
 import {
+  installRefusalRetry,
   installVisibilityResync,
   type ResyncSocket,
+  type RetrySocket,
   type VisibilityDoc,
 } from '../src/lib/socket';
 
