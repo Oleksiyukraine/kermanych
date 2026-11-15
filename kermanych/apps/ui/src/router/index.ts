@@ -9,6 +9,7 @@ import {
 } from 'vue-router';
 import routes from './routes';
 import { useAuth } from '../stores/auth';
+import { signInLoaderHold } from '../lib/sign-in-loader';
 
 export default defineRouter(({ store }) => {
   const createHistory = process.env.SERVER
@@ -46,9 +47,15 @@ export default defineRouter(({ store }) => {
             // Gained a session: leave the signed-out screens. This is what ends
             // the OAuth round trip in BOTH builds — the browser tab that came
             // back to /auth/callback, and Electron sitting on /login while
-            // exchangeCodeForSession resolved in place.
+            // exchangeCodeForSession resolved in place. The sign-in loader gets
+            // its minimum time first; the session or the route may change meanwhile.
             if (at === 'login' || at === 'auth-callback') {
-              void Router.replace({ name: 'agents' });
+              void signInLoaderHold().then(() => {
+                const still = Router.currentRoute.value.name;
+                if (auth.user && (still === 'login' || still === 'auth-callback')) {
+                  void Router.replace({ name: 'agents' });
+                }
+              });
             }
             return;
           }

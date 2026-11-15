@@ -6,6 +6,68 @@ export const en: MessageSchema = {
       hint: 'The shared team task board. Sign in to see projects and tasks.',
       signingIn: 'Signing in…',
       signIn: 'Sign in with GitHub',
+      quotes: {
+        vonKarman: {
+          text: '“Scientists study the world as it is; engineers create the world that has never been.”',
+          author: 'Theodore von Kármán',
+        },
+        korolyov: {
+          text: '“What seemed impossible for centuries, what only yesterday was a bold dream, today becomes a real task, and tomorrow an achievement.”',
+          author: 'Serhiy Korolyov',
+        },
+        yevhenPaton: {
+          text: '“Life demands of an engineer not only knowledge, but creative courage and the ability to see the technology of tomorrow.”',
+          author: 'Yevhen Paton',
+        },
+        kondratyuk: {
+          text: '“When you go deep into the essence of a matter, you see the limits of the possible move further and further away.”',
+          author: 'Yuri Kondratyuk',
+        },
+        borysPaton: {
+          text: '“Science is what cannot be. What already can be is technical progress.”',
+          author: 'Borys Paton',
+        },
+        glushkov: {
+          text: '“A machine does not replace a person; it multiplies their intellect, opening doors to worlds thought never reached before.”',
+          author: 'Viktor Glushkov',
+        },
+        lyulka: {
+          text: '“In engineering nothing is impossible — there are only problems whose right calculation has not been found yet.”',
+          author: 'Arkhyp Lyulka',
+        },
+        romankiw: {
+          text: '“When you create a technology that does not exist yet, the main thing is not to be afraid of being told: ‘This won’t work.’”',
+          author: 'Lubomyr Romankiw',
+        },
+        lebedev: {
+          text: '“Every new machine is born first as a bold hypothesis that only its creators believe in.”',
+          author: 'Serhiy Lebedev',
+        },
+        seneca: {
+          text: '“If a man does not know to what port he is steering, no wind is favourable to him.”',
+          author: 'Lucius Seneca',
+        },
+        daVinci: {
+          text: '“Nature never breaks her own laws, but we can create what nature has not yet created.”',
+          author: 'Leonardo da Vinci',
+        },
+        edison: {
+          text: '“Vision without execution is hallucination.”',
+          author: 'Thomas Edison',
+        },
+        ford: {
+          text: '“If I had asked people what they wanted, they would have said faster horses.”',
+          author: 'Henry Ford',
+        },
+        kay: {
+          text: '“The best way to predict the future is to invent it.”',
+          author: 'Alan Kay',
+        },
+        jobs: {
+          text: '“The ones who are crazy enough to think they can change the world are the ones who do.”',
+          author: 'Steve Jobs',
+        },
+      },
     },
     notFound: {
       message: 'Nothing here.',

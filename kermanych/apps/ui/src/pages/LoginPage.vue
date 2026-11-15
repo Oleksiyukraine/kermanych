@@ -1,12 +1,13 @@
 <template>
-  <main class="login">
+  <AuthLoader v-if="busy" />
+  <main v-else class="login">
     <section class="login__card">
       <h1 class="login__brand">KERMANYCH</h1>
       <p class="login__hint">
         {{ t('common.login.hint') }}
       </p>
-      <KBtn variant="primary" :disabled="busy" @click="signIn">
-        {{ busy ? t('common.login.signingIn') : t('common.login.signIn') }}
+      <KBtn variant="primary" @click="signIn">
+        {{ t('common.login.signIn') }}
       </KBtn>
       <p v-if="error" class="login__error" role="alert">{{ error }}</p>
     </section>
@@ -21,12 +22,18 @@ import { ref } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { useAuth } from 'stores/auth';
 import KBtn from 'components/kit/KBtn.vue';
+import AuthLoader from 'components/auth/AuthLoader.vue';
 
 const auth = useAuth();
 const busy = ref(false);
 const error = ref<string | null>(null);
 const { t } = useI18n();
 
+// The whole wait is AuthLoader: in the browser until the page navigates away to GitHub, in
+// Electron until the session exists. Success leaves `busy` up — the `auth.user` watcher in
+// router/index.ts moves off /login only after the store adopted the session, and dropping
+// the loader on the exchange alone flashed this card in between. A failure (the 120 s
+// loopback timeout included) brings the card back with the error.
 async function signIn(): Promise<void> {
   busy.value = true;
   error.value = null;
@@ -34,9 +41,6 @@ async function signIn(): Promise<void> {
     await auth.signInWithGithub();
   } catch (e) {
     error.value = e instanceof Error ? e.message : String(e);
-  } finally {
-    // In the browser the page navigates away before this runs; in Electron the
-    // promise resolves once the exchange finished, so the button must recover.
     busy.value = false;
   }
 }
