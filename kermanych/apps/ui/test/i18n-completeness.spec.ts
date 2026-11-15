@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { NOTICE_CODES, API_ERROR_CODES, MANAGEMENT_REJECTION_CODES, STE_RULES } from '@kermanych/core';
 import { SCHEDULE_RUN_REASONS } from '../src/lib/schedules';
+import { SIGN_IN_QUOTES } from '../src/lib/sign-in-loader';
 import { uk } from '../src/i18n/uk';
 import { en } from '../src/i18n/en';
 
@@ -57,5 +58,15 @@ describe('i18n completeness', () => {
       ...(Object.values(rule.at).some((cell) => typeof cell === 'object') && !(rule.id in soft) ? [`soft.${rule.id}`] : []),
     ]);
     expect(missing).toEqual([]);
+  });
+
+  // The sign-in loader (components/auth/AuthLoader.vue) picks an id from SIGN_IN_QUOTES at
+  // random: an id without its quote would put a raw key under the word for some sign-ins only,
+  // and a quote whose id is not listed would never show.
+  it.each([
+    ['uk', uk],
+    ['en', en],
+  ] as const)('the sign-in quotes in %s are exactly SIGN_IN_QUOTES', (_name, locale) => {
+    expect(Object.keys(locale.common.login.quotes).sort()).toEqual([...SIGN_IN_QUOTES].sort());
   });
 });

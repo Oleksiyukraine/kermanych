@@ -20,3 +20,25 @@ export function signInLoaderHold(): Promise<void> {
   else resolve();
   return promise;
 }
+
+/**
+ * The engineers' quotes the loader shows under the word, one picked at random per showing. Each id
+ * is `common.login.quotes.<id>` with `text` and `author` in every locale (i18n-completeness test).
+ */
+export const SIGN_IN_QUOTES = [
+  'vonKarman',
+  'korolyov',
+  'yevhenPaton',
+  'kondratyuk',
+  'borysPaton',
+  'glushkov',
+  'lyulka',
+  'romankiw',
+  'lebedev',
+  'seneca',
+  'daVinci',
+  'edison',
+  'ford',
+  'kay',
+  'jobs',
+] as const;

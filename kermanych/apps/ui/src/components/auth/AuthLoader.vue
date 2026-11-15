@@ -20,8 +20,8 @@
       />
     </svg>
     <figure class="auth-loader__quote">
-      <blockquote>{{ t('common.login.quote') }}</blockquote>
-      <figcaption>— {{ t('common.login.quoteAuthor') }}</figcaption>
+      <blockquote>{{ t(`common.login.quotes.${quote}.text`) }}</blockquote>
+      <figcaption>— {{ t(`common.login.quotes.${quote}.author`) }}</figcaption>
     </figure>
     <p class="auth-loader__status" role="status">{{ t('common.login.signingIn') }}</p>
   </main>
@@ -35,10 +35,12 @@
 import { onMounted, onUnmounted } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { PIXEL_CELL, pixelWord } from '../../lib/pixel-word';
-import { markSignInLoader } from '../../lib/sign-in-loader';
+import { SIGN_IN_QUOTES, markSignInLoader } from '../../lib/sign-in-loader';
 
 const { t } = useI18n();
 const word = pixelWord('КЕРМАНИЧ');
+// One quote per showing: it does not change while the loader is on screen.
+const quote = SIGN_IN_QUOTES[Math.floor(Math.random() * SIGN_IN_QUOTES.length)];
 
 onMounted(() => markSignInLoader(performance.now()));
 onUnmounted(() => markSignInLoader(null));

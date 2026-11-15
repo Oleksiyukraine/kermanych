@@ -38,11 +38,17 @@ quote on the right.
    picture. Reduced motion shows the word assembled and still.
 3. **Same glyphs and seed as the landing** (`lib/pixel-word.ts`), so the app and the site draw the
    same picture.
-4. **One quote, the one the operator gave:** Theodore von Kármán, «Науковець вивчає світ, який є;
-   інженер творить світ, якого ніколи не було». English: "Scientists study the world as it is;
-   engineers create the world that has never been."
-   - Rejected: a rotating set of quotes. Popular engineer quotes are often misattributed, and the
-     operator named this one.
+4. **A random quote from a set of 15, one per showing.** The first version had one quote, Theodore
+   von Kármán's, which the operator gave as an example. The operator then supplied 14 more:
+   Корольов, Євген Патон, Кондратюк, Борис Патон, Глушков, Люлька, Романків, Лебедєв, Сенека,
+   Леонардо да Вінчі, Едісон, Форд, Алан Кей, Стів Джобс. The texts are the operator's; the
+   English versions are the known English originals (Kay, Ford, Edison, Jobs, Seneca's Gummere
+   translation, von Kármán) or translations of the Ukrainian text. The ids are `SIGN_IN_QUOTES`
+   (`lib/sign-in-loader.ts`), the texts `common.login.quotes.<id>.{text,author}`. The quote does
+   not change while the loader is on screen.
+   - Attribution: the operator chose the list. Several of these sayings have disputed sources
+     (the Ford and Edison ones in particular; the Jobs line is from Apple's «Think Different»
+     ad). This was flagged to the operator, and the list was kept as given.
 5. **«Входимо…» stays as a screen-reader `role="status"`**, visually hidden. The animation is the
    visible feedback.
 6. **Success keeps the loader up.** `LoginPage` drops `busy` only on failure; on success the
@@ -67,9 +73,10 @@ quote on the right.
 - `apps/ui/src/pages/LoginPage.vue` — the loader while signing in; `busy` reset only on failure.
 - `apps/ui/src/pages/AuthCallbackPage.vue` — the loader instead of the card and its hard-coded
   Ukrainian text.
-- i18n `common.login.quote`, `common.login.quoteAuthor` (`uk`, `en`).
+- i18n `common.login.quotes.<id>.text` / `.author` (`uk`, `en`), 15 quotes.
 - `apps/ui/src/lib/sign-in-loader.ts` — the minimum time: `markSignInLoader`, `signInLoaderHold`.
 - `apps/ui/src/router/index.ts` — the sign-in redirect waits for `signInLoaderHold()`.
+- `apps/ui/test/i18n-completeness.spec.ts` — both locales have exactly the `SIGN_IN_QUOTES` ids.
 
 ## Verification
 
@@ -82,7 +89,9 @@ quote on the right.
 - Minimum time: `#/auth/callback` with the session restored 300 ms after the loader appeared —
   the route changed to `agents` at 3001 ms after the loader appeared. With the loader already
   on screen 2.26 s, the redirect came 742 ms after the session.
-- `vue-tsc --noEmit`: no errors. `vitest run test/i18n-completeness.spec.ts`: 8 passed.
+- Quote set: Корольов's quote, the longest, picked on `#/auth/callback`: it wraps to three lines
+  under the word, with the author on the right (screenshot).
+- `vue-tsc --noEmit`: no errors. `vitest run test/i18n-completeness.spec.ts`: 10 passed.
 
 Not verified: a real GitHub sign-in in the desktop build (Electron), and the reduced-motion
 rendering.
