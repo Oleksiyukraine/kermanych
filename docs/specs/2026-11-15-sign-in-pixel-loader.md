@@ -49,6 +49,14 @@ quote on the right.
    `auth.user` watcher in `router/index.ts` replaces the route, so the card no longer flashes
    between the exchange and the redirect. A failure (the 120 s timeout included) brings the card
    back with the error.
+7. **The loader stays at least 3 s** (`SIGN_IN_LOADER_MIN_MS`, `lib/sign-in-loader.ts`), asked by
+   the operator after the first version: a fast sign-in blinked the word and the quote away.
+   `AuthLoader` records when it appeared; the `auth.user` watcher in `router/index.ts` waits out
+   the rest before it leaves `/login` or `/auth/callback`, then checks again that the session
+   still exists and the route is still a signed-out one. The guard's redirect for a persisted
+   session landing on `/auth/callback` is not held: no loader was shown there.
+   - Rejected: a longer animation cycle. The cycle is already 3.6 s; the problem was the loader
+     leaving early, not the loop's speed.
 
 ## Changes
 
@@ -60,6 +68,8 @@ quote on the right.
 - `apps/ui/src/pages/AuthCallbackPage.vue` — the loader instead of the card and its hard-coded
   Ukrainian text.
 - i18n `common.login.quote`, `common.login.quoteAuthor` (`uk`, `en`).
+- `apps/ui/src/lib/sign-in-loader.ts` — the minimum time: `markSignInLoader`, `signInLoaderHold`.
+- `apps/ui/src/router/index.ts` — the sign-in redirect waits for `signInLoaderHold()`.
 
 ## Verification
 
@@ -69,6 +79,9 @@ quote on the right.
 - `#/login` with `signInWithGithub` stubbed to reject after 1.5 s: 400 ms after the click the
   loader was on screen with the status «Входимо…»; after the rejection the card came back with the
   error.
+- Minimum time: `#/auth/callback` with the session restored 300 ms after the loader appeared —
+  the route changed to `agents` at 3001 ms after the loader appeared. With the loader already
+  on screen 2.26 s, the redirect came 742 ms after the session.
 - `vue-tsc --noEmit`: no errors. `vitest run test/i18n-completeness.spec.ts`: 8 passed.
 
 Not verified: a real GitHub sign-in in the desktop build (Electron), and the reduced-motion

@@ -30,12 +30,18 @@
 <script setup lang="ts">
 // The sign-in wait: from the «Увійти через GitHub» press until the session exists (LoginPage),
 // and the OAuth redirect landing on /auth/callback (AuthCallbackPage). The word is the landing
-// page's coda, КЕРМАНИЧ gathered from pixels (lib/pixel-word.ts).
+// page's coda, КЕРМАНИЧ gathered from pixels (lib/pixel-word.ts). It stays at least
+// SIGN_IN_LOADER_MIN_MS (lib/sign-in-loader.ts): the router holds the redirect until then.
+import { onMounted, onUnmounted } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { PIXEL_CELL, pixelWord } from '../../lib/pixel-word';
+import { markSignInLoader } from '../../lib/sign-in-loader';
 
 const { t } = useI18n();
 const word = pixelWord('КЕРМАНИЧ');
+
+onMounted(() => markSignInLoader(performance.now()));
+onUnmounted(() => markSignInLoader(null));
 </script>
 
 <style scoped lang="scss">
