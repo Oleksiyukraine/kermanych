@@ -17,7 +17,11 @@ declare class AudioWorkletProcessor {
 
 class VoiceCapture extends AudioWorkletProcessor {
   // The render quantum is 128 samples; posting each would be ~125 messages a second.
-  private block = new Float32Array(Math.round(sampleRate / 10));
+  // Kept apart from `block`: transferring a block detaches its buffer, and a detached
+  // Float32Array reads length 0 — sizing the next block from it would spin `process` forever
+  // on the audio thread and hang the whole window.
+  private readonly size = Math.round(sampleRate / 10);
+  private block = new Float32Array(this.size);
   private filled = 0;
 
   process(inputs: Float32Array[][]): boolean {
@@ -25,13 +29,13 @@ class VoiceCapture extends AudioWorkletProcessor {
     if (!input) return true;
     let from = 0;
     while (from < input.length) {
-      const n = Math.min(input.length - from, this.block.length - this.filled);
+      const n = Math.min(input.length - from, this.size - this.filled);
       this.block.set(input.subarray(from, from + n), this.filled);
       this.filled += n;
       from += n;
-      if (this.filled === this.block.length) {
+      if (this.filled === this.size) {
         this.port.postMessage(this.block, [this.block.buffer]);
-        this.block = new Float32Array(this.block.length);
+        this.block = new Float32Array(this.size);
         this.filled = 0;
       }
     }
