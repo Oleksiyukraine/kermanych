@@ -4,6 +4,29 @@ What changed in each release of the Kermanych desktop app. The newest version is
 The release workflow publishes a version's section as its GitHub Release notes, and the app
 shows it as «What's new». Write each section for the people who use the app, in English.
 
+## 1.3.1 — 2026-11-15
+
+### New
+
+- ЦУК answers faster. ЦУК and Менеджмент show the answer while it is being written, and
+  Менеджмент shows what it is looking at. Stop an answer with «■» in place of the send button,
+  or with Esc.
+- While the app starts and while you sign in, the word КЕРМАНИЧ gathers from pixels, with a
+  random engineer's quote under it.
+
+### Improvements
+
+- The app checks for a new version every hour instead of every 4 hours, so updates reach you
+  sooner.
+
+### Fixes
+
+- Pressing 🎤 no longer freezes the window.
+- In a new session, a Next.js app in the live preview picks up the agent's edits again. You no
+  longer have to reload or restart the preview.
+- Web pages open in your browser can no longer read your agents' sessions from the app's local
+  service.
+
 ## 1.3.0 — 2026-11-15
 
 ### New
