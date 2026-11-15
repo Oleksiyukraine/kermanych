@@ -3,13 +3,13 @@ import { Injectable, type OnModuleInit } from "@nestjs/common";
 import { lstat, readdir, readFile, realpath, rm, stat } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { join, relative, resolve, sep } from "node:path";
-import { worktreeDir } from "@kermanych/core";
+import { worktreeDir, WORKTREE_FOLDERS } from "@kermanych/core";
 import { RegistryService } from "../registry/registry.service";
 import { WorktreeService } from "../worktree/worktree.service";
 
 export type StartupGcOptions = {
   // Where Kermanych once kept every worktree, one `<uuid>/` folder each, before they moved into
-  // the project's own `.gitworktree/`.
+  // the project's own worktrees folder (WORKTREE_FOLDERS).
   legacyRoot: string;
   // Where native sessions write their per-session claude MCP config (native-hooks.ts).
   nativeRoot: string;
@@ -90,8 +90,9 @@ export class StartupGcService implements OnModuleInit {
   // The launch's crash window (SupervisorService.launch): `addWorktree` ran, the process died
   // before `updateSession` stored the path. The row then owns a tree it cannot see — delete
   // skips it, and `branch -D` fails on a branch checked out there. The tree is exactly where
-  // the launch put it, on the row's own branch, so the row is given its path back rather than
-  // the work being thrown away.
+  // the launch put it, on the row's own branch, in the current worktrees folder or, for a launch
+  // from before the move, `.gitworktree/` — so the row is given its path back rather than the
+  // work being thrown away.
   private async adopt(): Promise<void> {
     const repos = new Map(this.registry.listProjects().filter((p) => p.localRepoPath).map((p) => [p.id, p.localRepoPath] as const));
     const sessions = this.registry.listSessions();
@@ -101,15 +102,18 @@ export class StartupGcService implements OnModuleInit {
       const repo = repos.get(s.projectId);
       if (!repo) continue;
       try {
-        const dir = worktreeDir(repo, s.branch);
-        const want = await canon(dir);
-        if (owned.has(want)) continue;
         const trees = await this.worktrees.listWorktrees(repo);
-        const match = await Promise.all(trees.map(async (t) => t.branch === s.branch && (await canon(t.path)) === want));
-        if (!match.includes(true) || !(await stat(dir).catch(() => undefined))?.isDirectory()) continue;
-        this.registry.updateSession(s.id, { worktreePath: dir });
-        owned.add(want);
-        console.warn(`[gc] session ${s.id} adopted its worktree ${dir}, left unrecorded by an interrupted launch`);
+        for (const folder of WORKTREE_FOLDERS) {
+          const dir = worktreeDir(repo, s.branch, folder);
+          const want = await canon(dir);
+          if (owned.has(want)) continue;
+          const match = await Promise.all(trees.map(async (t) => t.branch === s.branch && (await canon(t.path)) === want));
+          if (!match.includes(true) || !(await stat(dir).catch(() => undefined))?.isDirectory()) continue;
+          this.registry.updateSession(s.id, { worktreePath: dir });
+          owned.add(want);
+          console.warn(`[gc] session ${s.id} adopted its worktree ${dir}, left unrecorded by an interrupted launch`);
+          break;
+        }
       } catch (err) {
         console.warn(`[gc] adopting the worktree of session ${s.id} failed: ${errText(err)}`);
       }
@@ -118,7 +122,7 @@ export class StartupGcService implements OnModuleInit {
 
   // Paths no sweep may delete: every row's worktree, and every bound checkout — a project can be
   // bound to a linked worktree of another project's repository, and then lives inside that
-  // repository's `.gitworktree/`. A candidate that is one of them, or contains one, stays.
+  // repository's worktrees folder. A candidate that is one of them, or contains one, stays.
   private async protectedPaths(): Promise<string[]> {
     const paths = [
       ...this.registry.listSessions().map((s) => s.worktreePath),
@@ -131,13 +135,14 @@ export class StartupGcService implements OnModuleInit {
     return kept.some((p) => p === candidate || p.startsWith(candidate + sep));
   }
 
-  // `<repo>/.gitworktree/` is not Kermanych's alone: the operator, omp and other tools put their
-  // own worktrees there too, under any folder name and on any branch. So a tree no row names is
-  // NOT an orphan by itself — only one Kermanych provably made: it sits at `worktreeDir(repo,
-  // branch)` of a session row of this repository that does not own it any more (a finished
-  // session whose retirement left the tree behind). Never the main checkout, a locked tree, or a
-  // tree with uncommitted work. A deleted session's tree is not provable once its row is gone;
-  // deleteSession removes it before the row, so only a crash in between could leave one.
+  // `<repo>/.worktrees/` (and the older `.gitworktree/`) is not Kermanych's alone: the operator,
+  // omp and other tools put their own worktrees there too, under any folder name and on any
+  // branch. So a tree no row names is NOT an orphan by itself — only one Kermanych provably made:
+  // it sits at `worktreeDir(repo, branch)`, in either folder, of a session row of this repository
+  // that does not own it any more (a finished session whose retirement left the tree behind).
+  // Never the main checkout, a locked tree, or a tree with uncommitted work. A deleted session's
+  // tree is not provable once its row is gone; deleteSession removes it before the row, so only
+  // a crash in between could leave one.
   private async sweepProjects(): Promise<void> {
     const kept = await this.protectedPaths();
     const sessions = this.registry.listSessions();
@@ -158,7 +163,7 @@ export class StartupGcService implements OnModuleInit {
         for (const s of sessions) {
           if (!projects.has(s.projectId) || !s.worktree || !s.branch) continue;
           try {
-            made.add(await canon(worktreeDir(repo, s.branch)));
+            for (const folder of WORKTREE_FOLDERS) made.add(await canon(worktreeDir(repo, s.branch, folder)));
           } catch {
             /* not a branch name worktreeDir accepts: Kermanych never made a tree for it */
           }
@@ -216,7 +221,7 @@ export class StartupGcService implements OnModuleInit {
   // The legacy root is Kermanych's alone, so such a folder is Kermanych's too, and once its tree
   // is gone and no row's `ompSessionFile` lies inside, nothing can open it again: a deleted
   // session's history. A retired session's stays — its row still reads its transcript and can be
-  // reopened. Folders of the project-root and `.gitworktree/` layouts are never touched: the
+  // reopened. Folders of the project-root and worktrees-folder layouts are never touched: the
   // operator's own omp conversations live under the same names. Off when the legacy root is not
   // under home (a custom KERMANYCH_SKILLS_HOME, a spec): its folders' names are not knowable.
   private async sweepLegacyConversations(): Promise<void> {

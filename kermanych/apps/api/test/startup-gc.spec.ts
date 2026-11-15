@@ -5,7 +5,7 @@ import { randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { worktreeDir } from "@kermanych/core";
+import { worktreeDir, WORKTREE_FOLDERS } from "@kermanych/core";
 import { RegistryService } from "../src/registry/registry.service";
 import { WorktreeService } from "../src/worktree/worktree.service";
 import { StartupGcService } from "../src/gc/startup-gc.service";
@@ -49,8 +49,8 @@ afterEach(() => {
   for (const d of trash) rmSync(d, { recursive: true, force: true });
 });
 
-async function tree(branch: string): Promise<string> {
-  const dir = worktreeDir(repo, branch);
+async function tree(branch: string, folder: (typeof WORKTREE_FOLDERS)[number] = WORKTREE_FOLDERS[0]): Promise<string> {
+  const dir = worktreeDir(repo, branch, folder);
   await wt.addWorktree(repo, dir, branch, "dev");
   return dir;
 }
@@ -61,7 +61,7 @@ function session(branch: string, worktreePath: string): string {
 
 const registered = (): string => git(repo, "worktree", "list", "--porcelain");
 
-// `.gitworktree/` is shared with the operator and other tools: a tree Kermanych did not make is
+// `.worktrees/` is shared with the operator and other tools: a tree Kermanych did not make is
 // never touched, however unreferenced and clean it is.
 test("a worktree no session made is kept, even unreferenced and clean", async () => {
   const dir = await tree("feature/operators-own");
@@ -107,6 +107,16 @@ test("a finished row does not adopt the tree on its branch: it is a leftover, re
   expect(existsSync(dir)).toBe(false);
   expect(registered()).not.toContain("feature/done");
   expect(await wt.refExists(repo, "refs/heads/feature/done")).toBe(true);
+});
+
+// Sessions made before the move to `.worktrees/` left their trees in `.gitworktree/`.
+test("a finished session's leftover in the older .gitworktree folder is removed, prefix folder too", async () => {
+  const dir = await tree("feature/old-layout", ".gitworktree");
+  reg.updateSession(session("feature/old-layout", ""), { status: "merged" });
+  await gc.run();
+  expect(existsSync(dir)).toBe(false);
+  expect(existsSync(join(repo, ".gitworktree", "feature"))).toBe(false);
+  expect(registered()).not.toContain("feature/old-layout");
 });
 
 test("legacy leftovers go; a referenced legacy path and a dirty legacy tree stay", async () => {

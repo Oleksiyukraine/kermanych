@@ -132,7 +132,7 @@ describe("promoteChatToAgent", () => {
     expect(registry.listSessions(g.id)).toHaveLength(1);
     expect(agent.kind).toBe("agent");
     expect(agent.worktree).toBe(true);
-    expect(agent.worktreePath).toBe(join("/tmp/proj", ".gitworktree", ...agent.branch.split("/")));
+    expect(agent.worktreePath).toBe(join("/tmp/proj", ".worktrees", ...agent.branch.split("/")));
     expect(worktree.addWorktree).toHaveBeenCalledTimes(1);
   });
 

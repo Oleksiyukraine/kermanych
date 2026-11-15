@@ -66,10 +66,18 @@ test("isGitBranchName refuses options, refspecs and revision expressions", () =>
   ]) expect(isGitBranchName(name), JSON.stringify(name)).toBe(false);
 });
 test("worktreeDir names the folder after the branch, nesting its slashes", () => {
-  expect(worktreeDir("/repo", "feature/fix-login")).toBe(join("/repo", ".gitworktree", "feature", "fix-login"));
-  expect(worktreeDir("/repo", "main")).toBe(join("/repo", ".gitworktree", "main"));
+  expect(worktreeDir("/repo", "feature/fix-login")).toBe(join("/repo", ".worktrees", "feature", "fix-login"));
+  expect(worktreeDir("/repo", "main")).toBe(join("/repo", ".worktrees", "main"));
+  expect(worktreeDir("/repo", "main", ".gitworktree")).toBe(join("/repo", ".gitworktree", "main"));
 });
-test("worktreeDir refuses a name that is not a branch, so it cannot leave .gitworktree", () => {
+// Next.js's webpack watcher ignores any path with a segment starting with `.git`
+// (vercel/next.js#75372): a session tree there would never hot reload.
+test("worktreeDir keeps new trees out of a folder Next.js's watcher ignores", () => {
+  const nextIgnored = /^((?:[^/]*(?:\/|$))*)(\.(git|next)|node_modules)(\/((?:[^/]*(?:\/|$))*)(?:$|\/))?/;
+  expect(nextIgnored.test("/repo/.gitworktree/main/app/page.tsx")).toBe(true);
+  expect(nextIgnored.test(join(worktreeDir("/repo", "main"), "app", "page.tsx"))).toBe(false);
+});
+test("worktreeDir refuses a name that is not a branch, so it cannot leave the worktrees folder", () => {
   expect(() => worktreeDir("/repo", "../outside")).toThrow();
   expect(() => worktreeDir("/repo", "")).toThrow();
 });

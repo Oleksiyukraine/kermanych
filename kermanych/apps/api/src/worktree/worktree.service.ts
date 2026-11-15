@@ -4,7 +4,7 @@ import { spawn } from "node:child_process";
 import { readdir, readFile, rm, rmdir, stat } from "node:fs/promises";
 import { basename, dirname, join, resolve } from "node:path";
 import { addedFileDiff, splitDiff, type SplitDiff } from "./split-diff";
-import { isGitBranchName, type TreeEntry, type FileContent, type ReleaseCommit } from "@kermanych/core";
+import { isGitBranchName, WORKTREE_FOLDERS, type TreeEntry, type FileContent, type ReleaseCommit } from "@kermanych/core";
 
 export type ChangedFile = { path: string; added: number; removed: number };
 
@@ -203,12 +203,14 @@ export class WorktreeService {
     await this.dropEmptyParents(wtDir);
   }
 
-  // A branch-named worktree nests (`.gitworktree/feature/x`, worktreeDir): the prefix folders it
-  // leaves behind go too once empty, up to — never including — `.gitworktree` itself. rmdir
-  // removes only an empty folder, so a sibling worktree under the same prefix stops the walk.
+  // A branch-named worktree nests (`.worktrees/feature/x`, worktreeDir): the prefix folders it
+  // leaves behind go too once empty, up to — never including — the worktrees folder itself (the
+  // current one or the older `.gitworktree`, WORKTREE_FOLDERS). rmdir removes only an empty
+  // folder, so a sibling worktree under the same prefix stops the walk.
   private async dropEmptyParents(wtDir: string): Promise<void> {
-    if (!resolve(wtDir).split(/[\\/]/).includes(".gitworktree")) return;
-    for (let dir = dirname(resolve(wtDir)); basename(dir) !== ".gitworktree" && dir !== dirname(dir); dir = dirname(dir)) {
+    const folders = new Set<string>(WORKTREE_FOLDERS);
+    if (!resolve(wtDir).split(/[\\/]/).some((part) => folders.has(part))) return;
+    for (let dir = dirname(resolve(wtDir)); !folders.has(basename(dir)) && dir !== dirname(dir); dir = dirname(dir)) {
       if (!(await rmdir(dir).then(() => true, () => false))) return;
     }
   }

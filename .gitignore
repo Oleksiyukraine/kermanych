@@ -17,7 +17,9 @@ kermanych/.whisper-build/
 *.sqlite-shm
 *.sqlite-wal
 
-# Session git worktrees (packages/core worktreeDir): one folder per session, inside the project repo
+# Session git worktrees (packages/core worktreeDir): one folder per session, inside the project repo.
+# `.gitworktree/` is the older folder: sessions started before the move, and the release command.
+.worktrees/
 .gitworktree/
 
 # The landing page is its own repository (Oleksiyukraine/kermanych-landing), sometimes cloned
