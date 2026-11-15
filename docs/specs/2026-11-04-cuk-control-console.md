@@ -1,6 +1,8 @@
 # ЦУК: the avatar opens Kermanych's control console
 
 > Superseded in part by docs/specs/2026-11-05-remove-managed-claude-code.md: ЦУК runs on omp and launches agents with the provider's default mode, not a remembered one.
+>
+> Decision 11 is extended by docs/specs/2026-11-15-faster-assistant-answers.md: ЦУК also pins low thinking effort, streams its answer and can be stopped.
 
 - **Branch:** `feature/redesign-avatar-control-console`
 - **Scope:** `apps/ui` (the launcher window, a new ЦУК store and views, the shared composer, the

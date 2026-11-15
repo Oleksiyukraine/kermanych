@@ -88,18 +88,26 @@
         v-tip="planChip.hint"
         class="acomp__plan mono"
       >{{ planChip.short }} {{ planChip.percent }}</span>
+      <!-- During a turn the send disc becomes «■»: it stops the turn (Esc does the same,
+           docs/specs/2026-11-15-faster-assistant-answers.md, decisions 8–9). -->
       <button
-        v-tip="busy ? t('management.assistant.busy') : t('management.assistant.send')"
+        v-if="busy"
+        v-tip="t('management.assistant.stop')"
+        class="acomp__send acomp__send--stop"
+        type="button"
+        :disabled="stopping"
+        :aria-busy="stopping || undefined"
+        :aria-label="t('management.assistant.stopShort')"
+        @click="emit('stop')"
+      ><span class="acomp__glyph" aria-hidden="true">■</span></button>
+      <button
+        v-else
+        v-tip="t('management.assistant.send')"
         class="acomp__send"
         type="submit"
         :disabled="!canSend"
-        :aria-busy="busy"
-        :aria-label="busy ? t('management.assistant.busy') : t('management.assistant.sendShort')"
-      ><span
-        class="acomp__glyph"
-        :class="{ 'acomp__glyph--busy': busy }"
-        aria-hidden="true"
-      >↑</span></button>
+        :aria-label="t('management.assistant.sendShort')"
+      ><span class="acomp__glyph" aria-hidden="true">↑</span></button>
     </form>
   </div>
 </template>
@@ -123,8 +131,10 @@ import { useDraft } from '../../lib/drafts';
 import { useOmpCheck } from 'stores/omp-check';
 
 const props = defineProps<{
-  // A turn is in flight: the send disc breathes.
+  // A turn is in flight: the send disc is «■», which emits `stop`.
   busy: boolean;
+  // The stop request is on its way: the «■» is locked.
+  stopping?: boolean;
   // Nothing may be typed or sent (a turn in flight, a reset in progress).
   locked: boolean;
   placeholder: string;
@@ -140,7 +150,7 @@ const props = defineProps<{
   draftKey?: string | undefined;
 }>();
 
-const emit = defineEmits<{ submit: [text: string, files: AttachedFile[]] }>();
+const emit = defineEmits<{ submit: [text: string, files: AttachedFile[]]; stop: [] }>();
 
 const { t } = useI18n();
 
@@ -583,23 +593,16 @@ const planChip = computed(() => {
   }
 }
 
-// The in-flight signal, on the GLYPH rather than the disc, for the reason above: the arrow
-// breathes while the model is answering — the house pulse (see KToolRow, KStatusDot).
 .acomp__glyph {
   display: inline-flex;
 }
 
-.acomp__glyph--busy {
-  animation: acomp-send-pulse 1.4s ease-in-out infinite;
-}
+// «■» is a smaller glyph than «↑» at the same size; the disc stays the same.
+.acomp__send--stop {
+  font-size: 13px;
 
-@keyframes acomp-send-pulse {
-  0%,
-  100% {
-    opacity: 0.4;
-  }
-  50% {
-    opacity: 1;
+  &[aria-busy='true'] {
+    cursor: progress;
   }
 }
 </style>

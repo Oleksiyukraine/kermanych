@@ -592,6 +592,9 @@ export type ManagementChatReply = {
   usage?: Usage;
   model?: string;
   ms: number;
+  // The operator stopped the turn («■» / Esc): `text` is what was written until then, and
+  // `actions` / `rejected` are empty — nothing from a stopped turn runs.
+  stopped?: true;
 };
 
 // ── Parsing ───────────────────────────────────────────────────────────────────

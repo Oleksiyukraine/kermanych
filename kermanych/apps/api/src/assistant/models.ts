@@ -7,4 +7,13 @@
 //
 // The full id rather than omp's fuzzy `sonnet`: the model behind an answer must not drift
 // with whatever omp decides a short name means this week.
+import type { ThinkingLevel } from "@kermanych/core";
+
 export const FAST_MODEL = "claude-sonnet-5";
+
+// The effort pinned with it (docs/specs/2026-11-15-faster-assistant-answers.md, decisions 1–2).
+// Left unset, omp takes the operator's own `defaultThinkingLevel` — `max` on a machine set up
+// for agent work — and a ЦУК answer of 300 visible tokens spent 4–5k thinking: ~60 s against
+// ~10 s at `low` for the same turn. `low` keeps a little room for schedule dates and for
+// telling two similar sessions apart; `off` was faster still but riskier for both.
+export const FAST_THINKING: ThinkingLevel = "low";

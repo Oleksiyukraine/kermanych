@@ -39,7 +39,6 @@ import {
   type SchedulePatch,
   type ScheduledTask,
   type Session,
-  type Usage,
 } from '@kermanych/core';
 import { listAiSkills, type Task } from '@kermanych/cloud';
 import type { AttachedFile } from '../lib/files';
@@ -47,6 +46,7 @@ import { globalTr } from '../boot/i18n';
 import { localizeNotice, localizeRejection } from '../lib/i18n-coded';
 import { locale } from '../lib/locale';
 import { api } from '../lib/api';
+import { StreamedAnswer, type AssistantTurnEntry } from '../lib/streamed-answer';
 import { handleOf } from '../lib/members';
 import { todoPlainText } from '../lib/home-todo';
 import { SETTINGS_CATEGORIES } from '../lib/settings';
@@ -70,7 +70,8 @@ export type CukCardState = 'pending' | 'running' | 'done' | 'cancelled';
 
 export type CukEntry =
   | { kind: 'user'; id: string; at: number; text: string; files?: { name: string; url?: string }[] }
-  | { kind: 'assistant'; id: string; at: number; text: string; model?: string; usage?: Usage; ms: number }
+  // Grows while the answer streams (lib/streamed-answer.ts).
+  | AssistantTurnEntry
   // What the APP did. `session` makes the line carry «Відкрити сесію» — the launch's result.
   // `undo` makes it carry «Скасувати» (an at-once schedule action, scheduled-tasks decision 7):
   // `ready` until pressed, `done` once undone.
@@ -125,6 +126,9 @@ export const useCukChat = defineStore('cuk-chat', () => {
 
   const entries = ref<CukEntry[]>([]);
   const busy = ref(false);
+  // A delta arrived this turn: the «Думаю…» line steps aside for the growing answer
+  // (docs/specs/2026-11-15-faster-assistant-answers.md).
+  const writing = ref(false);
   const resetting = ref(false);
   const hasConversation = computed(() => entries.value.length > 0);
   // «Обговорити в ЦУК»: text another view hands to the composer's draft. `n` makes the same text
@@ -140,6 +144,12 @@ export const useCukChat = defineStore('cuk-chat', () => {
 
   function push(entry: CukEntry): void {
     entries.value.push(entry);
+  }
+
+  // The stored (reactive) copy, which a streaming answer keeps writing to.
+  function appendAnswer(entry: AssistantTurnEntry): AssistantTurnEntry {
+    entries.value.push(entry);
+    return entries.value[entries.value.length - 1] as AssistantTurnEntry;
   }
 
   function result(level: Level, text: string, session?: string): void {
@@ -635,6 +645,8 @@ export const useCukChat = defineStore('cuk-chat', () => {
       ...(attachments.length ? { files: attachments.map((f) => ({ name: f.name, ...(f.url ? { url: f.url } : {}) })) } : {}),
     });
     busy.value = true;
+    writing.value = false;
+    const answer = new StreamedAnswer(appendAnswer, entryId);
     try {
       const list = places();
       const ask: CukChatAsk = {
@@ -645,28 +657,27 @@ export const useCukChat = defineStore('cuk-chat', () => {
           ? { attachments: attachments.map((f) => ({ name: f.name, mimeType: f.mimeType, data: f.data })) }
           : {}),
       };
-      const reply = await api.cukChat(ask);
-      push({
-        kind: 'assistant',
-        id: entryId(),
-        at: Date.now(),
-        text: reply.text,
-        ms: reply.ms,
-        ...(reply.model ? { model: reply.model } : {}),
-        ...(reply.usage ? { usage: reply.usage } : {}),
+      // ЦУК has no tools, so only deltas arrive.
+      const reply = await api.cukChat(ask, (p) => {
+        if (p.type !== 'delta') return;
+        answer.delta(p.text);
+        writing.value = true;
       });
+      answer.finish(reply);
       for (const line of reply.rejected) result('warn', localizeRejection(globalTr, line));
       for (const line of reply.notices) result('info', localizeNotice(globalTr, line));
       // In order: «відкрий проєкт X і запусти там агента» is two actions that only make sense
-      // one after the other.
+      // one after the other. A stopped turn carries none.
       for (const action of reply.actions) {
         if (cukNeedsConfirm(action, scheduleKindOf)) push({ kind: 'card', id: entryId(), at: Date.now(), action, state: 'pending' });
         else await runNow(action, list);
       }
     } catch (e) {
+      answer.fail();
       result('error', errorText(e));
     } finally {
       busy.value = false;
+      writing.value = false;
     }
   }
 
@@ -685,14 +696,23 @@ export const useCukChat = defineStore('cuk-chat', () => {
     }
   }
 
+  // «Зупинити» / Esc (decision 8): the api ends the running turn, whose stream then closes with
+  // a `stopped` reply — `send` writes the mark. Throws for the caller's useAsyncAction to show.
+  async function stop(): Promise<void> {
+    if (!busy.value) return;
+    await api.stopCukChat();
+  }
+
   return {
     entries,
     busy,
+    writing,
     resetting,
     hasConversation,
     draftRequest,
     bindRouter,
     send,
+    stop,
     reset,
     confirm,
     cancel,

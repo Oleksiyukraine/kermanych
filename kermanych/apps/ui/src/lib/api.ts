@@ -3,6 +3,7 @@
 import type {
   AnalyticsPeriod,
   AnalyticsReport,
+  AssistantStreamFrame,
   CukChatAsk,
   CukChatReply,
   DirListing,
@@ -66,6 +67,7 @@ import type {
   ScheduleRun,
   ScheduleSlip,
 } from '@kermanych/core';
+import { LineSplitter } from '@kermanych/core';
 import type {
   CloudProject,
   JiraIntegration,
@@ -202,6 +204,31 @@ async function post<T>(path: string, body: unknown): Promise<T> {
   // NestJS message/answer endpoints return an empty body; tolerate no-JSON.
   const text = await r.text();
   return (text ? JSON.parse(text) : undefined) as T;
+}
+
+// What a streamed chat answer reports before its reply (core/assistant-stream.ts).
+export type AssistantProgress = Extract<AssistantStreamFrame<unknown>, { type: 'delta' | 'step' }>;
+
+// One streamed chat turn (docs/specs/2026-11-15-faster-assistant-answers.md, decision 4): the
+// NDJSON body is read as it arrives, `onProgress` hears each delta and step, the promise
+// resolves with the reply, and an `error` frame throws the ApiError a refused request throws.
+// A failure before the stream opened is an ordinary HTTP error and throws from `send`.
+async function postStream<R>(path: string, body: unknown, onProgress: (p: AssistantProgress) => void): Promise<R> {
+  const r = await send('POST', path, { json: body });
+  const reader = r.body?.pipeThrough(new TextDecoderStream()).getReader();
+  const lines = new LineSplitter();
+  for (let chunk = await reader?.read(); chunk && !chunk.done; chunk = await reader?.read()) {
+    for (const line of lines.push(chunk.value)) {
+      const frame = JSON.parse(line) as AssistantStreamFrame<R>;
+      if (frame.type === 'reply') return frame.reply;
+      if (frame.type === 'error')
+        throw new ApiError(localizeError(globalTr, frame.code, frame.params, frame.message), frame.message, frame.code, frame.params);
+      onProgress(frame);
+    }
+  }
+  // Closed with neither a reply nor an error: the connection went, not the turn.
+  const lost = globalTr.t('management.assistant.streamLost');
+  throw new ApiError(lost, lost);
 }
 
 async function get<T>(path: string): Promise<T> {
@@ -770,12 +797,17 @@ export const api = {
   subscriptionUsage: (): Promise<SubscriptionUsage> =>
     get<SubscriptionUsage>('/usage/subscription'),
 
-  // One turn of the Менеджмент assistant. Local-only for the same reason as the two calls
-  // above: the model is reached by spawning `omp` on THIS machine (apps/api/src/management),
-  // and only this process has the binary, the provider credentials and the local registry
-  // that turns project ids into repository paths. There is no cloud route to fall back to.
-  managementChat: (ask: ManagementChatAsk): Promise<ManagementChatReply> =>
-    post<ManagementChatReply>('/management/chat', ask),
+  // One turn of the Менеджмент assistant, streamed (`postStream`). Local-only for the same
+  // reason as the two calls above: the model is reached by spawning `omp` on THIS machine
+  // (apps/api/src/management), and only this process has the binary, the provider credentials
+  // and the local registry that turns project ids into repository paths. There is no cloud
+  // route to fall back to.
+  managementChat: (ask: ManagementChatAsk, onProgress: (p: AssistantProgress) => void): Promise<ManagementChatReply> =>
+    postStream<ManagementChatReply>('/management/chat', ask, onProgress),
+
+  // «Зупинити» / Esc: the running turn of that conversation ends with what it wrote.
+  stopManagementChat: (conversationId: string): Promise<{ ok: boolean }> =>
+    post<{ ok: boolean }>('/management/chat/stop', { conversationId }),
 
   // Drops the omp child behind a conversation, so «Новий чат» starts with no history rather
   // than a fresh transcript in front of a model that still remembers the old one.
@@ -783,8 +815,11 @@ export const api = {
     post<{ ok: boolean }>('/management/chat/reset', { conversationId }),
 
   // ЦУК (docs/specs/2026-11-04-cuk-control-console.md): one global conversation per signed-in
-  // user — the api keys it by the guard's user id, so neither call names a conversation.
-  cukChat: (ask: CukChatAsk): Promise<CukChatReply> => post<CukChatReply>('/cuk/chat', ask),
+  // user — the api keys it by the guard's user id, so none of these calls names a conversation.
+  cukChat: (ask: CukChatAsk, onProgress: (p: AssistantProgress) => void): Promise<CukChatReply> =>
+    postStream<CukChatReply>('/cuk/chat', ask, onProgress),
+
+  stopCukChat: (): Promise<{ ok: boolean }> => post<{ ok: boolean }>('/cuk/chat/stop', {}),
 
   resetCukChat: (): Promise<{ ok: boolean }> => post<{ ok: boolean }>('/cuk/chat/reset', {}),
 

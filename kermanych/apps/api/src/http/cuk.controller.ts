@@ -1,9 +1,10 @@
 // apps/api/src/http/cuk.controller.ts
-// ЦУК («Центр управління Керманича») over REST: one question, one answer. Auto-guarded by
-// the global SupabaseAuthGuard (app.module.ts) like the Менеджмент chat, for its reason — the
-// console spends the operator's own provider plan. One global conversation per user, so the
-// body names none: the key is the guard's user id (spec decision 5).
-import { Body, Controller, Post, Req } from "@nestjs/common";
+// ЦУК («Центр управління Керманича») over REST: one question, one streamed answer (NDJSON,
+// http/assistant-stream.ts). Auto-guarded by the global SupabaseAuthGuard (app.module.ts) like
+// the Менеджмент chat, for its reason — the console spends the operator's own provider plan.
+// One global conversation per user, so the body names none: the key is the guard's user id
+// (spec decision 5).
+import { Body, Controller, Post, Req, Res } from "@nestjs/common";
 import { formatZonedWall, isTimeZone } from "@kermanych/core";
 import type {
   CukBoardRow,
@@ -19,6 +20,7 @@ import type {
 } from "@kermanych/core";
 import { CukChatService } from "../cuk/cuk-chat.service";
 import { badRequest, relay } from "../management/coded-error";
+import { streamTurn, type StreamResponse } from "./assistant-stream";
 import { attachmentRows, todoRows } from "./chat-input";
 
 // The digest is rebuilt field by field, never forwarded: every line of it is printed into the
@@ -167,8 +169,9 @@ function cukContext(v: unknown): CukContext {
 export class CukController {
   constructor(private chat: CukChatService) {}
 
+  // The body is a stream of `AssistantStreamFrame<CukChatReply>` (core/assistant-stream.ts).
   @Post("chat")
-  async ask(@Body() b: CukChatAsk, @Req() req: { user: { id: string } }): Promise<CukChatReply> {
+  async ask(@Body() b: CukChatAsk, @Req() req: { user: { id: string } }, @Res() res: StreamResponse): Promise<void> {
     const text = typeof b?.text === "string" ? b.text.trim() : "";
     // Images only: ЦУК has no file tools, so a document could not be read (decision 11).
     // The size and count caps are the Менеджмент chat's, checked on the whole list first.
@@ -177,14 +180,20 @@ export class CukController {
     if (!text && attachments.length === 0) throw badRequest("message_empty", "повідомлення порожнє");
     if (!b?.context || typeof b.context !== "object") throw badRequest("section_context_missing", "не передано контекст розділу");
     const context = cukContext(b.context);
-    try {
-      return await this.chat.ask(
+    await streamTurn<CukChatReply>(res, (sink) =>
+      this.chat.ask(
         { text, context, attachments, ...(b.locale === "uk" || b.locale === "en" ? { locale: b.locale } : {}) },
         req.user.id,
-      );
-    } catch (err) {
-      relay(err);
-    }
+        sink,
+      ),
+    );
+  }
+
+  // «Зупинити» / Esc (docs/specs/2026-11-15-faster-assistant-answers.md, decision 8): the
+  // running turn ends with what it wrote; its stream closes with a `stopped` reply.
+  @Post("chat/stop")
+  stop(@Req() req: { user: { id: string } }): { ok: true } {
+    return this.chat.stop(req.user.id);
   }
 
   @Post("chat/reset")

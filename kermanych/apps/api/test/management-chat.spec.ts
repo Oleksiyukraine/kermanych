@@ -9,7 +9,7 @@ import { join } from "node:path";
 // The same seam supervisor.chat.spec.ts uses: swap the transport, keep the service. Here it
 // also plays a scripted turn back at the service, because what this service IS is the loop
 // that turns an omp event burst into one reply.
-type SpawnOpts = { cwd: string; tools?: string[]; model?: string; mcp?: { name: string; url: string; token: string } };
+type SpawnOpts = { cwd: string; tools?: string[]; model?: string; thinking?: string; mcp?: { name: string; url: string; token: string } };
 const spawned: SpawnOpts[] = [];
 const sent: { kind: "prompt" | "followUp"; text: string; images?: ImageInput[] }[] = [];
 const answered: RpcExtensionUIResponse[] = [];
@@ -363,14 +363,17 @@ describe("ManagementChatService", () => {
 // by section, inside one conversation id: the browser knows nothing about it, and the
 // operator sees one chat.
 describe("ManagementChatService — the documentation child", () => {
-  it("spawns a second child for documentation, on the faster model", async () => {
+  it("spawns a second child for documentation, on the faster model and effort", async () => {
     const svc = make();
     turns = [reply("про ризики"), reply("з документації")];
     await svc.ask(ask("які ризики"), "u1");
     await svc.ask(docsAsk("як працює дошка"), "u1");
     expect(spawned).toHaveLength(2);
+    // An ordinary turn reasons over tools: the operator's model and effort.
     expect(spawned[0]?.model).toBeUndefined();
+    expect(spawned[0]?.thinking).toBeUndefined();
     expect(spawned[1]?.model).toBe("claude-sonnet-5");
+    expect(spawned[1]?.thinking).toBe("low");
   });
 
   it("keeps a run of documentation turns in the one child", async () => {
@@ -398,5 +401,31 @@ describe("ManagementChatService — the documentation child", () => {
     // Both start over: the contract rides the first message of each new child.
     expect(sent[2]?.text).toContain("ПРОТОКОЛ ДІЙ");
     expect(sent[3]?.text).toContain("ПРОТОКОЛ ДІЙ");
+  });
+});
+
+// The step line (docs/specs/2026-11-15-faster-assistant-answers.md, decision 6): each tool the
+// model starts reaches the sink with what it was pointed at, short enough for one line.
+describe("ManagementChatService — streamed steps", () => {
+  it("names the pattern a search was given and the file a read opened", async () => {
+    const svc = make();
+    turns = [
+      [
+        { type: "tool_execution_start", toolCallId: "t1", toolName: "grep", args: { pattern: "pricing", path: "/repo" } },
+        { type: "tool_execution_start", toolCallId: "t2", toolName: "read", args: { path: "/Users/me/repo/docs/README.md" } },
+        { type: "tool_execution_start", toolCallId: "t3", toolName: "jira_get_issue", args: { key: "KRM-1" } },
+        { type: "tool_execution_start", toolCallId: "t4", toolName: "grep", args: { pattern: "x".repeat(200) } },
+        ...reply("готово"),
+      ],
+    ];
+    const steps: { tool: string; target?: string }[] = [];
+    await svc.ask(ask("де ціни"), "u1", { delta: () => {}, step: (tool, target) => steps.push({ tool, ...(target ? { target } : {}) }) });
+    expect(steps.slice(0, 3)).toEqual([
+      { tool: "grep", target: "pricing" },
+      { tool: "read", target: "docs/README.md" },
+      { tool: "jira_get_issue" },
+    ]);
+    expect(steps[3]?.target).toHaveLength(80);
+    expect(steps[3]?.target?.endsWith("…")).toBe(true);
   });
 });
