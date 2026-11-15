@@ -7,13 +7,15 @@ import updaterPkg from 'electron-updater';
 // from quasar.config.ts `publish`) names the repository; REPO below is only for the raw
 // CHANGELOG.md the banner's «What's new» reads.
 //
-// Behaviour: check at launch and every 4 hours, download in the background, install on the
+// Behaviour: check at launch and every hour, download in the background, install on the
 // next normal quit or when the renderer asks for a restart. Never restart on our own. Errors
 // (offline, an unsigned local build Squirrel refuses) are logged and retried next cycle.
 
 const { autoUpdater } = updaterPkg;
 const REPO = 'Oleksiyukraine/kermanych';
-const CHECK_EVERY_MS = 4 * 60 * 60 * 1000;
+// Hourly: with every 4 hours, the 1.3.0 release reached open apps hours after it was published.
+// A check is one small request to GitHub, so the shorter wait costs nothing worth counting.
+const CHECK_EVERY_MS = 60 * 60 * 1000;
 
 let state: KermanychUpdateState = { phase: 'idle' };
 let target: BrowserWindow | undefined;
