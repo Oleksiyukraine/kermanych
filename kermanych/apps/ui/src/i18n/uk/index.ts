@@ -10,6 +10,8 @@ export const uk = {
     login: {
       hint: 'Спільна дошка задач команди. Увійдіть, щоб побачити проєкти та задачі.',
       signingIn: 'Входимо…',
+      // The start-up splash's screen-reader status while the desktop's local api starts.
+      startingBackend: 'Запускаю локальний сервіс…',
       signIn: 'Увійти через GitHub',
       // The sign-in loader (components/auth/AuthLoader.vue): a quote under the pixel word, one
       // picked at random. The ids are SIGN_IN_QUOTES in lib/sign-in-loader.ts.

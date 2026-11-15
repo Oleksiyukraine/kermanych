@@ -5,6 +5,7 @@ export const en: MessageSchema = {
     login: {
       hint: 'The shared team task board. Sign in to see projects and tasks.',
       signingIn: 'Signing in…',
+      startingBackend: 'Starting the local service…',
       signIn: 'Sign in with GitHub',
       quotes: {
         vonKarman: {

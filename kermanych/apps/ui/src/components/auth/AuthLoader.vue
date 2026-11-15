@@ -23,19 +23,23 @@
       <blockquote>{{ t(`common.login.quotes.${quote}.text`) }}</blockquote>
       <figcaption>— {{ t(`common.login.quotes.${quote}.author`) }}</figcaption>
     </figure>
-    <p class="auth-loader__status" role="status">{{ t('common.login.signingIn') }}</p>
+    <p class="auth-loader__status" role="status">{{ status ?? t('common.login.signingIn') }}</p>
   </main>
 </template>
 
 <script setup lang="ts">
-// The sign-in wait: from the «Увійти через GitHub» press until the session exists (LoginPage),
-// and the OAuth redirect landing on /auth/callback (AuthCallbackPage). The word is the landing
-// page's coda, КЕРМАНИЧ gathered from pixels (lib/pixel-word.ts). It stays at least
-// SIGN_IN_LOADER_MIN_MS (lib/sign-in-loader.ts): the router holds the redirect until then.
+// The sign-in wait: the start-up splash (boot/splash.ts), the «Увійти через GitHub» press until
+// the session exists (LoginPage), and the OAuth redirect landing on /auth/callback
+// (AuthCallbackPage). The word is the landing page's coda, КЕРМАНИЧ gathered from pixels
+// (lib/pixel-word.ts). It stays at least SIGN_IN_LOADER_MIN_MS (lib/sign-in-loader.ts): the
+// router holds the sign-in redirect, and the splash its fade, until then.
 import { onMounted, onUnmounted } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { PIXEL_CELL, pixelWord } from '../../lib/pixel-word';
 import { SIGN_IN_QUOTES, markSignInLoader } from '../../lib/sign-in-loader';
+
+// `status`: the screen-reader line; the splash passes its start-up step, the rest sign in.
+defineProps<{ status?: string }>();
 
 const { t } = useI18n();
 const word = pixelWord('КЕРМАНИЧ');
