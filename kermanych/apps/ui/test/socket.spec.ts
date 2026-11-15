@@ -1,7 +1,9 @@
-import { describe, it, expect, vi } from 'vitest';
+import { afterEach, describe, it, expect, vi } from 'vitest';
 import {
+  installRefusalRetry,
   installVisibilityResync,
   type ResyncSocket,
+  type RetrySocket,
   type VisibilityDoc,
 } from '../src/lib/socket';
 
@@ -77,5 +79,76 @@ describe('installVisibilityResync', () => {
 
     expect(socket.connect).toHaveBeenCalledTimes(1);
     expect(socket.disconnect).not.toHaveBeenCalled();
+  });
+});
+
+// A socket stand-in for installRefusalRetry: `refuse()` plays a handshake the api turned
+// down (socket.io then leaves `active` false), `drop()` a lost transport socket.io retries
+// by itself (`active` stays true).
+function fakeRetrySocket() {
+  const listeners: Record<string, () => void> = {};
+  const s = {
+    active: true,
+    connected: false,
+    connect: vi.fn(() => {
+      s.active = true;
+    }),
+    on(event: 'connect' | 'connect_error', cb: () => void) {
+      listeners[event] = cb;
+    },
+    refuse() {
+      s.active = false;
+      listeners.connect_error?.();
+    },
+    drop() {
+      listeners.connect_error?.();
+    },
+    accept() {
+      s.connected = true;
+      listeners.connect?.();
+    },
+  };
+  return s;
+}
+
+describe('installRefusalRetry', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('reconnects after a refused handshake, backing off while the api keeps refusing', () => {
+    vi.useFakeTimers();
+    const socket = fakeRetrySocket();
+    installRefusalRetry(socket as RetrySocket, { minMs: 1_000, maxMs: 4_000 });
+
+    socket.refuse();
+    vi.advanceTimersByTime(999);
+    expect(socket.connect).not.toHaveBeenCalled();
+    vi.advanceTimersByTime(1);
+    expect(socket.connect).toHaveBeenCalledTimes(1);
+
+    socket.refuse();
+    vi.advanceTimersByTime(1_999);
+    expect(socket.connect).toHaveBeenCalledTimes(1);
+    vi.advanceTimersByTime(1);
+    expect(socket.connect).toHaveBeenCalledTimes(2);
+
+    // Accepted at last: the next refusal starts from the shortest wait again.
+    socket.accept();
+    socket.connected = false;
+    socket.refuse();
+    vi.advanceTimersByTime(1_000);
+    expect(socket.connect).toHaveBeenCalledTimes(3);
+  });
+
+  it("leaves a dropped transport to socket.io's own reconnect", () => {
+    vi.useFakeTimers();
+    const socket = fakeRetrySocket();
+    installRefusalRetry(socket as RetrySocket);
+
+    socket.drop();
+    vi.advanceTimersByTime(60_000);
+
+    expect(socket.connect).not.toHaveBeenCalled();
   });
 });

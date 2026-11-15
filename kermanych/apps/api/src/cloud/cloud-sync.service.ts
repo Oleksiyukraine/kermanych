@@ -44,7 +44,7 @@ export class CloudSyncService implements OnModuleInit, OnModuleDestroy {
   ) {}
 
   onModuleInit(): void {
-    // Same subscription shape as EventsGateway (ws/events.gateway.ts:21-23): subscribe from
+    // Same subscription shape as EventsGateway (ws/events.gateway.ts, onModuleInit): subscribe from
     // outside instead of reaching into the supervisor's status paths (D3).
     this.supervisor.events$.subscribe((e) => {
       if (e.type === "session_update") this.onSession(e.session);

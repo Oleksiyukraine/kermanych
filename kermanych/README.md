@@ -850,6 +850,11 @@ token refresh), the desktop app's per-launch key, or — for a standalone `pnpm 
 browser gets `403`, even with a valid Supabase token. If you serve the dev UI from another
 origin, list it in `KERMANYCH_UI_ORIGINS` (comma-separated) for the API.
 
+The API's socket.io stream of session events (the default namespace: a snapshot on connect,
+then every session's live updates) admits a handshake only with that same signed-in bearer
+(`auth: { token }`), like the `/terminal` and `/device` namespaces; anything else is refused
+with `unauthorized`. A preview API (`KERMANYCH_PREVIEW`) admits everyone, as its REST routes do.
+
 > **Note:** `better-sqlite3` v13 and `node-pty` 1.1 ship N-API prebuilt binaries, so
 > switching Node versions (≥22.12) needs no rebuild.
 
