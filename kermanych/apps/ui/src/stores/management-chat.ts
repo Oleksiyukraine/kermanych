@@ -53,13 +53,13 @@ import type {
   ManagementRiskRow,
   ManagementTicketCreate,
   ManagementWorkspaceProject,
-  Usage,
 } from '@kermanych/core';
 import type { AttachedFile } from '../lib/files';
 import { globalTr } from '../boot/i18n';
 import { localizeNotice, localizeRejection } from '../lib/i18n-coded';
 import { locale } from '../lib/locale';
 import { api } from '../lib/api';
+import { StreamedAnswer, type AssistantStep, type AssistantTurnEntry } from '../lib/streamed-answer';
 import { handleOf } from '../lib/members';
 import {
   capacityDigest,
@@ -100,7 +100,8 @@ export type MgmtChatEntry =
   // bubble can echo the thumbnail. The payloads themselves are not kept on the entry: a
   // transcript holding megabytes of base64 per turn would bloat every deep watch of it.
   | { kind: 'user'; id: string; at: number; text: string; files?: MgmtEntryFile[] }
-  | { kind: 'assistant'; id: string; at: number; text: string; model?: string; usage?: Usage; ms: number }
+  // Grows while the answer streams (lib/streamed-answer.ts).
+  | AssistantTurnEntry
   | { kind: 'result'; id: string; at: number; level: 'info' | 'warn' | 'error'; text: string };
 
 export type MgmtEntryFile = { name: string; url?: string };
@@ -161,6 +162,13 @@ export const useManagementChat = defineStore('management-chat', () => {
   // transcript the model no longer has.
   const byWorkspace = ref<Record<string, MgmtChatEntry[]>>({});
   const busy = ref(false);
+  // The streamed turn (docs/specs/2026-11-15-faster-assistant-answers.md, decisions 4–6): the
+  // tool the model is running, and whether prose has arrived since — the «Думаю…» line shows
+  // the step, and steps aside while the answer is being written. `turnWorkspace` is whose
+  // conversation the running turn belongs to, which «Зупинити» names.
+  const step = ref<AssistantStep | undefined>(undefined);
+  const writing = ref(false);
+  let turnWorkspace: string | undefined;
   // «Новий чат» in flight: the composer stays locked until the api has dropped the old
   // conversation, or the next question would land in the memory being cleared. Separate from
   // `busy`, which also drives the «Думає…» line — nothing is thinking during a reset.
@@ -177,6 +185,13 @@ export const useManagementChat = defineStore('management-chat', () => {
     const list = byWorkspace.value[workspaceId];
     if (list) list.push(entry);
     else byWorkspace.value[workspaceId] = [entry];
+  }
+
+  // The stored (reactive) copy, which a streaming answer keeps writing to.
+  function appendAnswer(workspaceId: string, entry: AssistantTurnEntry): AssistantTurnEntry {
+    push(workspaceId, entry);
+    const list = byWorkspace.value[workspaceId]!;
+    return list[list.length - 1] as AssistantTurnEntry;
   }
 
   function result(workspaceId: string, level: MgmtResultLevel, text: string): void {
@@ -765,6 +780,10 @@ export const useManagementChat = defineStore('management-chat', () => {
         : {}),
     });
     busy.value = true;
+    turnWorkspace = workspaceId;
+    step.value = undefined;
+    writing.value = false;
+    const answer = new StreamedAnswer((entry) => appendAnswer(workspaceId, entry), entryId);
     try {
       // The roster first: it is what a TICKET needs, and it is also what says whether this
       // caller may see the register at all (a developer may not — core `managersOnly`). The
@@ -831,16 +850,17 @@ export const useManagementChat = defineStore('management-chat', () => {
           : {}),
       };
 
-      const reply = await api.managementChat(ask);
-      push(workspaceId, {
-        kind: 'assistant',
-        id: entryId(),
-        at: Date.now(),
-        text: reply.text,
-        ms: reply.ms,
-        ...(reply.model ? { model: reply.model } : {}),
-        ...(reply.usage ? { usage: reply.usage } : {}),
+      const reply = await api.managementChat(ask, (p) => {
+        if (p.type === 'step') {
+          step.value = { tool: p.tool, ...(p.target === undefined ? {} : { target: p.target }) };
+          writing.value = false;
+          return;
+        }
+        answer.delta(p.text);
+        step.value = undefined;
+        writing.value = true;
       });
+      answer.finish(reply);
 
       // Rejections first, then notices: a block that did not validate is the closest thing
       // to a lost instruction, and an operator who believes something was recorded when it
@@ -859,15 +879,28 @@ export const useManagementChat = defineStore('management-chat', () => {
       if (wrote('plane_') && plane.integration) await plane.loadBoard();
       // In order and one at a time: the model may file two risks in one turn, and the codes
       // Postgres mints depend on the order they arrive in. Awaited, so the transcript's
-      // result lines follow the actions rather than racing them.
+      // result lines follow the actions rather than racing them. A stopped turn carries none.
       for (const action of reply.actions) await run(workspaceId, action);
     } catch (e) {
       // The api failing is news, and news belongs in the transcript. A chat that swallows a
-      // dead api looks exactly like a model with nothing to say.
+      // dead api looks exactly like a model with nothing to say. What was already written
+      // stays, marked as cut off.
+      answer.fail();
       result(workspaceId, 'error', errorText(e));
     } finally {
       busy.value = false;
+      turnWorkspace = undefined;
+      step.value = undefined;
+      writing.value = false;
     }
+  }
+
+  // «Зупинити» / Esc (docs/specs/2026-11-15-faster-assistant-answers.md, decision 8): the api
+  // ends the running turn, whose stream then closes with a `stopped` reply — `send` writes the
+  // mark. Throws for the caller's useAsyncAction to show.
+  async function stop(): Promise<void> {
+    if (!busy.value || !turnWorkspace) return;
+    await api.stopManagementChat(conversationId(turnWorkspace));
   }
 
   // «Новий чат»: clears what is on screen AND drops the omp child behind the conversation,
@@ -890,5 +923,5 @@ export const useManagementChat = defineStore('management-chat', () => {
     }
   }
 
-  return { entries, busy, resetting, hasConversation, send, reset };
+  return { entries, busy, step, writing, resetting, hasConversation, send, stop, reset };
 });

@@ -226,6 +226,8 @@ export type CukChatReply = {
   usage?: Usage;
   model?: string;
   ms: number;
+  // Stopped by the operator, as ManagementChatReply.stopped: no actions, no rejections.
+  stopped?: true;
 };
 
 // ── Validation ──────────────────────────────────────────────────────────────

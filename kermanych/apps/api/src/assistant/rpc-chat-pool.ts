@@ -12,6 +12,7 @@
 import { Logger } from "@nestjs/common";
 import {
   INTERACTIVE_UI_METHODS,
+  shortPath,
   type ImageInput,
   type Notice,
   type RpcEvent,
@@ -76,6 +77,27 @@ export type ChatPoolConfig<X> = {
 // The prose and the accounting of one finished turn, read off its events.
 export type ChatTurnRead = { raw: string; usage?: Usage; model?: string };
 
+// Where a streamed turn's progress goes as it happens (docs/specs/2026-11-15-faster-assistant-
+// answers.md, decisions 4 and 6): the prose as omp writes it, and each tool the model starts.
+// The finished reply is still the owner's to build from `drive`'s events.
+export type ChatSink = {
+  delta: (text: string) => void;
+  step: (tool: string, target?: string) => void;
+};
+
+// The longest tool target a step line carries: one line of the transcript, not a dump.
+const STEP_TARGET_MAX = 80;
+
+// What the step line names: the pattern a search was given, or the file a read opened
+// (its last two segments — the full path is noise in a one-line status).
+function stepTarget(tool: string, args: unknown): string | undefined {
+  if (!args || typeof args !== "object") return undefined;
+  const a = args as Record<string, unknown>;
+  const raw = typeof a.pattern === "string" ? a.pattern : typeof a.path === "string" ? (tool === "read" ? shortPath(a.path) : a.path) : undefined;
+  if (!raw) return undefined;
+  return raw.length > STEP_TARGET_MAX ? `${raw.slice(0, STEP_TARGET_MAX - 1)}…` : raw;
+}
+
 export class RpcChatPool<X = never> {
   private readonly log: Logger;
   private map = new Map<string, ChatChild<X>>();
@@ -86,6 +108,11 @@ export class RpcChatPool<X = never> {
   // `agent_end` resolves whichever turn is listening, and one operator's answer is handed to
   // the other's question.
   private tail = new Map<string, Promise<unknown>>();
+  // Conversations with a turn running right now, and those whose running turn the operator
+  // asked to stop («■» / Esc). Both are per conversation, like the queue, and the stop request
+  // dies with the turn it was meant for — it never carries over to the ask queued behind.
+  private running = new Set<string>();
+  private stopAsked = new Set<string>();
 
   constructor(private cfg: ChatPoolConfig<X>) {
     this.log = new Logger(cfg.label);
@@ -93,9 +120,18 @@ export class RpcChatPool<X = never> {
 
   // Run `run` after every turn already queued on `key`.
   enqueue<T>(key: string, run: () => Promise<T>): Promise<T> {
-    // `then(run, run)` and not `finally`: a rejected predecessor must not cancel the ask
+    const go = async (): Promise<T> => {
+      this.running.add(key);
+      try {
+        return await run();
+      } finally {
+        this.running.delete(key);
+        this.stopAsked.delete(key);
+      }
+    };
+    // `then(go, go)` and not `finally`: a rejected predecessor must not cancel the ask
     // behind it, and the queue must not stay poisoned by one failed turn.
-    const next = this.tail.get(key)?.then(run, run) ?? run();
+    const next = this.tail.get(key)?.then(go, go) ?? go();
     this.tail.set(
       key,
       next.then(
@@ -104,6 +140,19 @@ export class RpcChatPool<X = never> {
       ),
     );
     return next;
+  }
+
+  // «Зупинити»: end the turn running on `key` and keep the child and the conversation — omp's
+  // `abort` closes the answer with what was written and the child takes the next question
+  // (docs/specs/2026-11-15-faster-assistant-answers.md, decision 8). A stop that lands while
+  // the child is still spawning is remembered and applied right after the message is sent.
+  // False when nothing is running.
+  stop(key: string): boolean {
+    if (!this.running.has(key)) return false;
+    this.stopAsked.add(key);
+    const live = this.map.get(key);
+    if (live?.turn) live.rpc.abort();
+    return true;
   }
 
   // The live child for a conversation, spawned on first use and respawned when the
@@ -157,20 +206,48 @@ export class RpcChatPool<X = never> {
     return live;
   }
 
-  // Send one message and wait out the turn it starts.
+  // Send one message and wait out the turn it starts. `sink`, when given, hears the prose and
+  // the tool starts as they happen; `stopped` says the operator ended the turn (`stop`).
   async drive(
     key: string,
     live: ChatChild<X>,
     message: string,
     images: ImageInput[],
-  ): Promise<{ events: RpcEvent[]; notices: Notice[] }> {
+    sink?: ChatSink,
+  ): Promise<{ events: RpcEvent[]; notices: Notice[]; stopped: boolean }> {
     const events: RpcEvent[] = [];
     const notices: Notice[] = [];
     const { promise, resolve, reject } = Promise.withResolvers<void>();
     const droppedBefore = live.rpc.droppedFrames;
+    let stopped = false;
+    // `readTurn` joins the prose of the turn's assistant messages with a blank line (one
+    // message before a tool call, the next after it), so the stream does the same: the first
+    // delta of a message that follows one that wrote prose starts with "\n\n".
+    let wrote = false;
+    let gap = false;
     live.turn = {
       on: (e) => {
         events.push(e);
+        if (e.type === "message_update") {
+          const ame = (e as Extract<RpcEvent, { type: "message_update" }>).assistantMessageEvent;
+          if (ame?.type === "text_delta" && ame.delta) {
+            sink?.delta(gap ? `\n\n${ame.delta}` : ame.delta);
+            gap = false;
+            wrote = true;
+          }
+          return;
+        }
+        if (e.type === "message_end") {
+          if (wrote) gap = true;
+          wrote = false;
+          return;
+        }
+        if (e.type === "tool_execution_start") {
+          const ev = e as Extract<RpcEvent, { type: "tool_execution_start" }>;
+          const tool = ev.toolName ?? "?";
+          sink?.step(tool, stepTarget(tool, ev.args));
+          return;
+        }
         if (e.type === "extension_ui_request") {
           // Narrowed the way core/status.ts narrows the same frame: `RpcEvent` ends in an
           // index-signature member, so `e.method` is `unknown` until `typeof` proves it.
@@ -194,7 +271,11 @@ export class RpcChatPool<X = never> {
           // `isTerminal: false` marks a sub-agent's end, not the answer's (core/status.ts
           // reads it the same way): resolving on it would return half a turn.
           const isTerminal = "isTerminal" in e ? e.isTerminal : undefined;
-          if (isTerminal !== false) resolve();
+          if (isTerminal === false) return;
+          // Read here, not after the await: a stop that arrives once the answer is complete
+          // must not throw away a finished turn's actions.
+          stopped = this.stopAsked.has(key);
+          resolve();
         }
       },
       fail: (reason) =>
@@ -206,6 +287,8 @@ export class RpcChatPool<X = never> {
       if (live.greeted) live.rpc.followUp(message, images);
       else live.rpc.prompt(message, images);
       live.greeted = true;
+      // Stopped while the child was still spawning: there was no turn to abort until now.
+      if (this.stopAsked.has(key)) live.rpc.abort();
       const seconds = Math.round(this.cfg.turnTimeoutMs / 1000);
       await limit(
         promise,
@@ -234,7 +317,7 @@ export class RpcChatPool<X = never> {
         code: "frames_lost",
         params: { count: lost },
       });
-    return { events, notices };
+    return { events, notices, stopped };
   }
 
   // «Новий чат» has to mean it: the child holds the whole conversation, so forgetting the

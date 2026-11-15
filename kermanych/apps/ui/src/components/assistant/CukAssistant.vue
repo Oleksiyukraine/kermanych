@@ -63,9 +63,7 @@
               <img v-for="f in e.files" :key="f.name" :src="f.url" class="cuk__thumb" :alt="f.name" />
             </span>
           </KChatMessage>
-          <KChatMessage v-else-if="e.kind === 'assistant'" role="assistant">
-            <div class="k-log__markdown" v-html="renderMarkdown(e.text)"></div>
-          </KChatMessage>
+          <AssistantAnswer v-else-if="e.kind === 'assistant'" :entry="e" />
           <CukActionCard
             v-else-if="e.kind === 'card'"
             :action="e.action"
@@ -91,7 +89,8 @@
             <span v-else-if="e.undo === 'done'" class="cuk__res-undone">{{ t('cuk.result.undone') }}</span>
           </p>
         </template>
-        <p v-if="chat.busy" class="cuk__think" aria-live="polite">{{ thinkingLabel }}</p>
+        <!-- Until the answer starts streaming; then the growing answer is the heartbeat. -->
+        <p v-if="chat.busy && !chat.writing" class="cuk__think" aria-live="polite">{{ thinkingLabel }}</p>
       </div>
     </section>
 
@@ -102,12 +101,14 @@
       dense
       :busy="chat.busy"
       :locked="chat.busy || chat.resetting"
+      :stopping="stopTurn.busy.value"
       :placeholder="t('cuk.placeholder')"
       :input-label="t('cuk.inputLabel')"
       :form-label="t('cuk.title')"
       :attach-tip="t('cuk.attach')"
       draft-key="assistant:cuk"
       @submit="(text, files) => chat.send(text, files)"
+      @stop="stopTurn.run()"
     />
   </div>
 </template>
@@ -119,11 +120,11 @@ import { useCukChat } from 'stores/cuk-chat';
 import { useOmpCheck } from 'stores/omp-check';
 import KChatMessage from 'components/kit/KChatMessage.vue';
 import KSpinner from 'components/kit/KSpinner.vue';
+import AssistantAnswer from './AssistantAnswer.vue';
 import AssistantComposer from './AssistantComposer.vue';
 import CukActionCard from './CukActionCard.vue';
 import { confirmAction } from '../../lib/confirm';
 import { useAsyncAction, useKeyedAction } from '../../composables/useAsyncAction';
-import { renderMarkdown } from '../../lib/markdown';
 
 defineProps<{
   folded?: boolean;
@@ -177,6 +178,8 @@ function focus(): void {
 defineExpose({ focus });
 
 const resetChat = useAsyncAction(() => chat.reset());
+// «■» in the composer (Esc does the same from the window, AssistantLauncher.vue).
+const stopTurn = useAsyncAction(() => chat.stop());
 const undo = useKeyedAction((id: string) => chat.undo(id));
 
 // «Обговорити в ЦУК» from a scheduled run's answer: the text lands in the draft, not sent.

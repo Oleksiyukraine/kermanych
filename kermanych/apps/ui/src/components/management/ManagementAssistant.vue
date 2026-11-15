@@ -5,7 +5,7 @@
        docs/specs/2026-11-04-cuk-control-console.md, decision 2). One conversation behind
        both — stores/management-chat.ts. In the window the header is always there: folded,
        it is the bar that expands this panel. -->
-  <div class="asst" :class="[`asst--${variant}`, { 'asst--folded': folded }]">
+  <div class="asst" :class="[`asst--${variant}`, { 'asst--folded': folded }]" @keydown.esc="onDockEscape">
     <section
       v-if="chat.hasConversation || variant === 'overlay'"
       class="asst__log"
@@ -59,9 +59,7 @@
               </template>
             </span>
           </KChatMessage>
-          <KChatMessage v-else-if="e.kind === 'assistant'" role="assistant">
-            <div class="k-log__markdown" v-html="renderMarkdown(e.text)"></div>
-          </KChatMessage>
+          <AssistantAnswer v-else-if="e.kind === 'assistant'" :entry="e" />
           <!-- What the APP did about the turn, not what the model said about it. Mono
                and colour-coded because a refusal that reads like prose gets skimmed as
                part of the answer — and stating WHY a section cannot be changed is the
@@ -72,8 +70,10 @@
              it answers (the api allows four minutes), so the wait needs a heartbeat:
              without one the chat looks dead and the operator sends the question again.
              Same «Думаю…» idiom as the agent panel, with the seconds counting up
-             because a static label held for two minutes reads as a hang. -->
-        <p v-if="chat.busy" class="asst__think" aria-live="polite">{{ thinkingLabel }}</p>
+             because a static label held for two minutes reads as a hang. While a tool runs
+             it names the step; once the answer streams, the growing answer is the heartbeat
+             (docs/specs/2026-11-15-faster-assistant-answers.md, decision 6). -->
+        <p v-if="chat.busy && !chat.writing" class="asst__think" aria-live="polite">{{ thinkingLabel }}</p>
       </div>
     </section>
 
@@ -82,6 +82,7 @@
       ref="composerEl"
       :busy="chat.busy"
       :locked="composerLocked"
+      :stopping="stopTurn.busy.value"
       :dense="variant === 'overlay'"
       :placeholder="t('management.assistant.placeholder')"
       :input-label="t('management.assistant.inputLabel')"
@@ -89,6 +90,7 @@
       :attach-tip="t('management.assistant.attach')"
       :draft-key="orchestrator.selectedWorkspaceId ? `assistant:management:${orchestrator.selectedWorkspaceId}` : undefined"
       @submit="submit"
+      @stop="stopTurn.run()"
     />
   </div>
 </template>
@@ -109,9 +111,9 @@ import { useProjectDocs } from 'stores/project-docs';
 import { useAssistantOverlay } from 'stores/assistant-overlay';
 import KChatMessage from 'components/kit/KChatMessage.vue';
 import KSpinner from 'components/kit/KSpinner.vue';
+import AssistantAnswer from 'components/assistant/AssistantAnswer.vue';
 import AssistantComposer from 'components/assistant/AssistantComposer.vue';
 import { useAsyncAction } from '../../composables/useAsyncAction';
-import { renderMarkdown } from '../../lib/markdown';
 import type { AttachedFile } from '../../lib/files';
 
 const props = defineProps<{
@@ -204,6 +206,16 @@ async function newChat(): Promise<void> {
 }
 const composerLocked = computed(() => chat.busy || chat.resetting);
 
+// «■» in the composer, and Esc (decision 9): in the window the launcher's Esc handler stops
+// the expanded panel's turn; the dock on the Менеджмент tab has no window around it, so Esc
+// with the focus inside the dock stops its turn here.
+const stopTurn = useAsyncAction(() => chat.stop());
+function onDockEscape(e: KeyboardEvent): void {
+  if (props.variant !== 'dock' || !chat.busy) return;
+  e.preventDefault();
+  void stopTurn.run();
+}
+
 // The section travels with the message: the store has no router of its own (Quasar builds
 // one per app in a factory, and a store setup has no injection context to reach it), and the
 // host already knows which section the turn is asked from. One source of truth.
@@ -232,10 +244,19 @@ const thinkingSec = ref(0);
 let thinkTimer: ReturnType<typeof setInterval> | undefined;
 
 // Silent for the first seconds — a fast answer must not flash a stopwatch — then the count
-// appears and keeps the wait honest.
-const thinkingLabel = computed(() =>
-  thinkingSec.value < 3 ? t('management.assistant.thinking') : t('management.assistant.thinkingSec', { sec: thinkingSec.value }),
-);
+// appears and keeps the wait honest. A tool step is named with the count from the start.
+const stepLabel = computed(() => {
+  const s = chat.step;
+  if (!s) return '';
+  if (s.tool === 'read' || s.tool === 'grep' || s.tool === 'glob') return t(`management.assistant.step.${s.tool}`, { target: s.target ?? '' });
+  if (s.tool.startsWith('jira_')) return t('management.assistant.step.jira');
+  if (s.tool.startsWith('plane_')) return t('management.assistant.step.plane');
+  return t('management.assistant.step.other', { tool: s.tool });
+});
+const thinkingLabel = computed(() => {
+  if (stepLabel.value) return t('management.assistant.stepSec', { step: stepLabel.value, sec: thinkingSec.value });
+  return thinkingSec.value < 3 ? t('management.assistant.thinking') : t('management.assistant.thinkingSec', { sec: thinkingSec.value });
+});
 
 watch(
   () => chat.busy,

@@ -2437,8 +2437,16 @@ its left and a notepad on its right. (Specs: `docs/specs/2026-11-04-cuk-control-
   agent; stops, resumes, restarts, archives or unarchives a session; starts or stops its preview;
   writes to the notepad; schedules reminders and agent runs («Розклад», below). It has no file
   tools — it answers from the app's state, and the agent it
-  launches reads the code — and runs on `claude-sonnet-5` for speed. It sees attached images, not
+  launches reads the code — and runs on `claude-sonnet-5` with low thinking effort for speed,
+  whatever effort your omp defaults to. It sees attached images, not
   documents.
+- **The answer appears as it is written.** The first words usually show within a few seconds; a
+  long explanation keeps growing in place. While the model writes an action, «готую дію…» stands in
+  for it, and the card or the result line follows once the answer is complete. During an answer
+  the send disc becomes «■»: it, or <kbd>Esc</kbd>, stops the answer; what was written stays,
+  marked «зупинено», nothing from it runs, and the conversation goes on. An answer that breaks off
+  (a timeout, omp exiting) keeps its text, marked «відповідь обірвано», with the error under it.
+  (Spec: `docs/specs/2026-11-15-faster-assistant-answers.md`.)
 - **«Шаблони» in an empty console.** Under the greeting, ready-made requests in five groups —
   Стан, Агенти й дошка, Навігація, Розклад, Записничок. A complete question («Хто чекає на мою
   відповідь?», «Що в мене в розкладі?») is sent on click; a template whose chip ends in «…» and is
@@ -2481,8 +2489,10 @@ its left and a notepad on its right. (Specs: `docs/specs/2026-11-04-cuk-control-
   bottom writes to the expanded panel, and each keeps its own draft and attachments. It is the same
   conversation as the Менеджмент tab's dock, asked as the «Огляд» section. Developers see ЦУК only.
 
-Esc, a click outside, <kbd>⌘K</kbd>, the character or another circle closes the window; a question
-in flight keeps running, the character shows it is thinking, then wears a dot until you look at
+Esc, a click outside, <kbd>⌘K</kbd>, the character or another circle closes the window — except
+that while the expanded panel is answering, Esc stops that answer first and a second Esc closes;
+a question in flight in the folded panel, or one left when the window closes, keeps running, the
+character shows it is thinking, then wears a dot until you look at
 the answer. The circle can be switched off in Settings → «Загальне» if it fires by accident; it
 does not work over a session's browser page, which the app cannot see the mouse over. The
 character is yours to pick in the same pane, under «Персонаж ЦУК»: ten drawings, from the
@@ -2780,6 +2790,15 @@ Wherever it is opened, that chat is a real assistant, and it is deliberately nar
   key to configure and no separate budget. The mono pill on the right of the field is
   that plan's tightest rolling window, read from `omp usage` — the same figure the
   sidebar shows.
+- **It answers as it writes, and says what it is doing.** The reply streams in like ЦУК's; while
+  it searches the code or calls Jira or Plane, the line under the transcript names the step with a
+  seconds count («Шукаю в коді: `pricing` · 12 с», «Читаю `README.md`», «Звертаюся до Jira»).
+  «■» or <kbd>Esc</kbd> (with the focus in the dock, or the panel expanded in the ЦУК window)
+  stops the answer: what was written stays, marked «зупинено», and none of its actions run — a
+  tracker write it already made through its tools did happen and is still listed. Documentation
+  questions (Проєктна документація) run on `claude-sonnet-5` with low thinking effort, since they
+  answer from passages found before the turn; every other question keeps your omp model and
+  effort.
 - **It is scoped to the Воркспейс, and so is the tab it lives in.** Every turn carries the
   repositories of that Воркспейс — name, remote, default branch, conventions and
   the local path where each is bound on this machine — so «which of our repos does this

@@ -13,14 +13,15 @@ import {
   expandHelpers,
   helperNotice,
   parseCukReply,
+  visibleProse,
   type CukChatAsk,
   type CukChatReply,
   type ImageInput,
 } from "@kermanych/core";
 import { RegistryService } from "../registry/registry.service";
 import { MachineResourcesService } from "../machine/machine-resources.service";
-import { FAST_MODEL } from "../assistant/models";
-import { RpcChatPool, readTurn } from "../assistant/rpc-chat-pool";
+import { FAST_MODEL, FAST_THINKING } from "../assistant/models";
+import { RpcChatPool, readTurn, type ChatSink } from "../assistant/rpc-chat-pool";
 import { todayIso } from "../management/management-prompt";
 import { buildCukTurn } from "./cuk-prompt";
 
@@ -51,11 +52,18 @@ export class CukChatService implements OnModuleDestroy {
     });
   }
 
-  async ask(input: CukChatAsk, userId: string): Promise<CukChatReply> {
+  // `sink` hears the answer as it is written (the controller streams it to the browser).
+  async ask(input: CukChatAsk, userId: string, sink?: ChatSink): Promise<CukChatReply> {
     const startedAt = Date.now();
     this.pool.sweep();
     const key = cukKey(userId);
-    return this.pool.enqueue(key, () => this.turn(key, input, startedAt));
+    return this.pool.enqueue(key, () => this.turn(key, input, startedAt, sink));
+  }
+
+  // «Зупинити» (RpcChatPool.stop): the turn ends with what it wrote, the conversation stays.
+  stop(userId: string): { ok: true } {
+    this.pool.stop(cukKey(userId));
+    return { ok: true };
   }
 
   // «Новий чат»: the child holds the whole conversation, so it goes (RpcChatPool.reset).
@@ -69,10 +77,12 @@ export class CukChatService implements OnModuleDestroy {
     await this.pool.dropAll();
   }
 
-  private async turn(key: string, input: CukChatAsk, startedAt: number): Promise<CukChatReply> {
+  private async turn(key: string, input: CukChatAsk, startedAt: number, sink?: ChatSink): Promise<CukChatReply> {
     // The home directory: no repository this child should be able to wander into — and it
     // has no tool to wander with.
-    const live = await this.pool.child(key, () => ({ opts: { cwd: homedir(), noTools: true, model: FAST_MODEL } }));
+    const live = await this.pool.child(key, () => ({
+      opts: { cwd: homedir(), noTools: true, model: FAST_MODEL, thinking: FAST_THINKING },
+    }));
     // Expanded before buildCukTurn wraps the text, or a leading `/helper` stops being leading.
     const helped = expandHelpers(input.text);
     // Images only, and only through the image slots: there is no file tool to open anything
@@ -87,18 +97,18 @@ export class CukChatService implements OnModuleDestroy {
       text: helped.text,
       ...(input.locale ? { locale: input.locale } : {}),
     });
-    const { events, notices } = await this.pool.drive(key, live, message, images);
+    const { events, notices, stopped } = await this.pool.drive(key, live, message, images, sink);
     if (helped.used.length) notices.unshift(helperNotice(helped.used));
     const { raw, usage, model } = readTurn(events, notices, startedAt);
-    const parsed = parseCukReply(raw);
-    return {
-      text: parsed.text,
-      actions: parsed.actions,
-      rejected: parsed.rejected,
+    const meta = {
       notices,
       ...(usage === undefined ? {} : { usage }),
       ...(model === undefined ? {} : { model }),
       ms: Date.now() - startedAt,
     };
+    // Stopped: the prose written so far, an unfinished action block cut, and nothing to run.
+    if (stopped) return { text: visibleProse(raw).text, actions: [], rejected: [], ...meta, stopped: true };
+    const parsed = parseCukReply(raw);
+    return { text: parsed.text, actions: parsed.actions, rejected: parsed.rejected, ...meta };
   }
 }

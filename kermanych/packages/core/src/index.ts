@@ -456,6 +456,11 @@ export {
   type CukWorkspaceRow,
 } from "./cuk-actions";
 export {
+  ASSISTANT_STREAM_CONTENT_TYPE,
+  visibleProse,
+  type AssistantStreamFrame,
+} from "./assistant-stream";
+export {
   SCHEDULE_KINDS,
   SCHEDULE_TYPES,
   SCHEDULE_NAME_MAX,

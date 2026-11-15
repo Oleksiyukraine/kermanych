@@ -26,7 +26,7 @@ import type { SlackIntegration } from "@kermanych/cloud";
 import { AuthService } from "../auth/auth.service";
 import { RegistryService, type SlackTokenRow } from "../registry/registry.service";
 import { runOneShot } from "../runtime/one-shot";
-import { FAST_MODEL } from "../assistant/models";
+import { FAST_MODEL, FAST_THINKING } from "../assistant/models";
 import { CodedError } from "../management/coded-error";
 import { SlackClient, type SlackChannel, type SlackIdentity } from "./slack-client";
 import { SlackSocket } from "./slack-socket";
@@ -272,6 +272,7 @@ export class SlackService implements OnModuleInit, OnModuleDestroy {
         prompt,
         noTools: true,
         model: FAST_MODEL,
+        thinking: FAST_THINKING,
         startedAt,
       });
       // The placeholder becomes the first part; a longer answer continues in the thread,

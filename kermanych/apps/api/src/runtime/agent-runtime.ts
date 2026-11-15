@@ -59,6 +59,8 @@ export interface AgentRuntime {
   prompt(message: string, images?: ImageInput[]): void;
   followUp(message: string, images?: ImageInput[]): void;
   steer(message: string, images?: ImageInput[]): void;
+  // End the turn in flight; the child stays up (`agent_end` follows with the partial answer).
+  abort(): void;
   answerUi(res: RpcExtensionUIResponse): void;
   getState(): Promise<RpcStateData>;
   switchSession(sessionPath: string): Promise<void>;

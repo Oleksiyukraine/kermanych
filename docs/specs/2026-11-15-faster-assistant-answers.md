@@ -5,13 +5,15 @@
 - **Scope:** `apps/api` (`assistant/models.ts`, `assistant/rpc-chat-pool.ts`, `rpc/rpc-session.ts`,
   `runtime/agent-runtime.ts`, `runtime/one-shot.ts`, `cuk/cuk-chat.service.ts`,
   `management/management-chat.service.ts`, `slack/slack.service.ts`, `http/cuk.controller.ts`,
-  `http/management.controller.ts`), `packages/core` (the stream frame types, the visible-prose
-  helper), `apps/ui` (`lib/api.ts`, `stores/cuk-chat.ts`, `stores/management-chat.ts`,
-  `components/assistant/AssistantComposer.vue`, `CukAssistant.vue`, `AssistantLauncher.vue`,
+  `http/management.controller.ts`, `http/assistant-stream.ts`), `packages/core` (the stream frame
+  types, the visible-prose helper), `apps/ui` (`lib/api.ts`, `lib/streamed-answer.ts`,
+  `stores/cuk-chat.ts`, `stores/management-chat.ts`, `components/assistant/AssistantComposer.vue`,
+  `AssistantAnswer.vue`, `CukAssistant.vue`, `AssistantLauncher.vue`,
   `components/management/ManagementAssistant.vue`, i18n `uk` / `en`), `kermanych/README.md`.
   No cloud migration.
 - **Status:** asked by the operator on 2026-11-15: «ЦУК довго шукає відповіді, чи можна це
-  прискорити?». Decisions agreed in the deep-analysis interview the same day; awaiting approval.
+  прискорити?». Decisions agreed in the deep-analysis interview the same day, approved the same
+  day; implemented on this branch (see «Verification»).
 
 ## Goal
 
@@ -84,8 +86,8 @@ going the wrong way can be stopped.
    - `{ "type": "delta", "text": "…" }` — prose as omp writes it; a new assistant message within
      the turn (after a tool call) starts with `"\n\n"`, as `readTurn` joins them;
    - `{ "type": "step", "tool": "grep", "target": "pricing" }` — a tool started (decision 6);
-   - `{ "type": "reply", … }` — the last line on success: exactly today's `CukChatReply` /
-     `ManagementChatReply`;
+   - `{ "type": "reply", "reply": … }` — the last line on success: exactly today's
+     `CukChatReply` / `ManagementChatReply`, plus `stopped: true` for a stopped turn (decision 8);
    - `{ "type": "error", "code", "message", "params" }` — the last line on failure after the
      stream opened. A failure before it opens (auth, validation, omp missing) stays an HTTP error
      as today.
@@ -153,25 +155,48 @@ going the wrong way can be stopped.
    compare actions and answers. A regression goes back to the operator before step 2.
 2. `FAST_THINKING` and its use in ЦУК, the docs child and Slack (`runOneShot` gains `thinking`).
 3. core: stream frame types, the visible-prose helper.
-4. api: `RpcSession.abort()` / `AgentRuntime.abort`; `RpcChatPool.drive` takes an `onFrame`
-   sink for `delta` / `step`; the services pass it through; the controllers write NDJSON and
-   expose `chat/stop`.
-5. ui: a streaming `post` in `lib/api.ts`; both stores grow the entry from deltas, keep the step,
-   mark broken / stopped entries; the composer's «■»; Esc in `AssistantLauncher.vue` and the dock.
+4. api: `RpcSession.abort()` / `AgentRuntime.abort`; `RpcChatPool.drive` takes a `ChatSink` for
+   `delta` / `step` and `RpcChatPool.stop` aborts the running turn; the services pass the sink
+   through; `http/assistant-stream.ts` writes the NDJSON for both controllers, which expose
+   `chat/stop`.
+5. ui: `postStream` in `lib/api.ts`; both stores grow the entry from deltas
+   (`lib/streamed-answer.ts`), keep the step, mark broken / stopped entries; the composer's «■»;
+   Esc in `AssistantLauncher.vue` and the dock.
 6. Docs.
 
 ## Verification
 
-- core unit tests: the visible-prose helper (no block, a complete block, an unclosed block, a
-  fence split across deltas, two blocks).
-- api: the controllers stream `delta` … `reply` for a fake runtime; an `error` frame after text;
-  `chat/stop` sends `abort` and the stream ends with `reply` and no actions; the ЦУК, docs and
-  Slack launches carry `thinking: "low"`, ordinary Менеджмент launches do not.
-- Live preview against a real omp: ЦУК's explanatory question shows text within a few seconds and
-  finishes near the replay figures; an action request shows «готую дію…» then the card; Esc
-  mid-answer stops it, a second Esc closes the window; a Менеджмент code question shows step lines,
-  then text.
-- Re-run the replay script at the end and record the figures here.
+- **Quality before switching (step 1).** The 16 ЦУК templates (blanks filled) and five harder
+  requests from the transcripts, replayed on the real 2026-11-12 digest at `max` and `low`: the
+  same action kinds and targets in 20 of 21 (`low` left out the optional `title` twice and wrote a
+  shorter agent-task text once); the one different set is `low` adding the `session.resume` a
+  stopped session needed before `session.message`. On «посіпака» and the vague daily schedule
+  `low` asked back where `max` guessed (that `max` turn took 142 s). `low` once said a restart
+  «не потребує підтвердження» and once that a message runs at once — prose slips of the kind
+  `max` also made («Поставив.» for a reminder the app reports); the actions were right. Turn
+  times: `max` 3.2–142 s, `low` 2.2–11.3 s. Two Менеджмент documentation questions from the
+  transcripts: `max` 145 s / 76 s, `low` 14 s / 16 s, the `low` answer shorter, citations in place.
+- core: `packages/core/test/assistant-stream.spec.ts` — the visible-prose helper (no block, a
+  closed block equal to the parser's cut, an unclosed block, a fence split at every prefix, two
+  blocks, another language's code block left alone).
+- api: `test/cuk-controller.spec.ts` streams `delta` / `step` / `reply`, ends a broken stream with
+  an `error` frame, relays a failure before the first frame as the 400 it was; `test/cuk-chat.spec.ts`
+  pins `thinking: "low"`, streams the prose with the blank line between messages and equal to the
+  reply, stop ends a held turn with its prose, no actions and the child kept, a stop with nothing
+  running does nothing; `test/management-chat.spec.ts` — the docs child on `low`, an ordinary one
+  with the operator's effort, step targets (pattern, last two path segments, Jira bare, cut at 80).
+- ui: `test/assistant-stream.spec.ts` — the NDJSON reader across 7-byte pieces (mid-line and
+  mid-character), an `error` frame as a coded `ApiError`, a stream closed early as a lost
+  connection. api and ui typecheck clean. Full suites: core 496, api 1433 (4 skipped), ui 1057
+  passed.
+- Live preview (web, real omp 18.20.2): an explanatory ЦУК question streamed its first words in
+  ~2 s and kept growing; Esc mid-answer stopped it with «зупинено», the window stayed open, a
+  second Esc (idle) closed it; the next question followed up in the same child and produced the
+  `agent.start` card, no raw JSON on screen. `POST /management/chat` with a glob/read question
+  streamed `step glob …`, `step read specs/…md:1-15` and then the deltas. Not exercised: the
+  Менеджмент panel and dock UI (the cloudless preview has no workspace to open them with), and
+  «готую дію…» on screen (the action blocks arrived in too few chunks to catch; covered by the
+  helper's tests).
 
 ## Documentation
 

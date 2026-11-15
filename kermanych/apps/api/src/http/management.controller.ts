@@ -1,5 +1,5 @@
 // apps/api/src/http/management.controller.ts
-import { Body, Controller, Post, Req } from "@nestjs/common";
+import { Body, Controller, Post, Req, Res } from "@nestjs/common";
 import {
   isReleaseDate,
   isReleaseGrouping,
@@ -35,6 +35,7 @@ import { ManagementChatService } from "../management/management-chat.service";
 import { ReleaseNotesService } from "../management/release-notes.service";
 import { badRequest, relay } from "../management/coded-error";
 import { attachmentRows, todoRows } from "./chat-input";
+import { streamTurn, type StreamResponse } from "./assistant-stream";
 
 // The register as the browser sent it, kept only where every field is one this build knows.
 // `project_risks` is behind RLS and the api has no credentials for it, so this list cannot be
@@ -334,10 +335,10 @@ function homeOverview(v: unknown): ManagementHome | undefined {
   return { tiles, todo, tasksToday, releases };
 }
 
-// The Менеджмент assistant, over REST rather than the sessions WebSocket: one question,
-// one answer, no board row and no live transcript to stream. Auto-guarded by the global
-// SupabaseAuthGuard (app.module.ts), so there is no @Public() here — the chat spends the
-// operator's own provider plan and must not be drivable by anything else on the machine.
+// The Менеджмент assistant, over REST rather than the sessions WebSocket: one question, one
+// streamed answer (NDJSON, http/assistant-stream.ts), no board row behind it. Auto-guarded by
+// the global SupabaseAuthGuard (app.module.ts), so there is no @Public() here — the chat spends
+// the operator's own provider plan and must not be drivable by anything else on the machine.
 @Controller("management")
 export class ManagementController {
   constructor(
@@ -345,8 +346,9 @@ export class ManagementController {
     private releases: ReleaseNotesService,
   ) {}
 
+  // The body is a stream of `AssistantStreamFrame<ManagementChatReply>` (core/assistant-stream.ts).
   @Post("chat")
-  async ask(@Body() b: ManagementChatAsk, @Req() req: { user: { id: string } }): Promise<ManagementChatReply> {
+  async ask(@Body() b: ManagementChatAsk, @Req() req: { user: { id: string } }, @Res() res: StreamResponse): Promise<void> {
     const conversationId = typeof b?.conversationId === "string" ? b.conversationId.trim() : "";
     if (!conversationId) throw badRequest("conversation_id_missing", "не вказано розмову (conversationId)");
     const text = typeof b?.text === "string" ? b.text.trim() : "";
@@ -390,11 +392,17 @@ export class ManagementController {
       ...(home ? { home } : {}),
       ...(docs ? { docs } : {}),
     };
-    try {
-      return await this.chat.ask({ ...b, conversationId, text, workspaceId, workspaceProjects, context, attachments }, req.user.id);
-    } catch (err) {
-      relay(err);
-    }
+    await streamTurn<ManagementChatReply>(res, (sink) =>
+      this.chat.ask({ ...b, conversationId, text, workspaceId, workspaceProjects, context, attachments }, req.user.id, sink),
+    );
+  }
+
+  // «Зупинити» / Esc (docs/specs/2026-11-15-faster-assistant-answers.md, decision 8).
+  @Post("chat/stop")
+  stop(@Body() b: { conversationId?: string }): { ok: true } {
+    const conversationId = typeof b?.conversationId === "string" ? b.conversationId.trim() : "";
+    if (!conversationId) throw badRequest("conversation_id_missing", "не вказано розмову (conversationId)");
+    return this.chat.stop(conversationId);
   }
 
   @Post("chat/reset")

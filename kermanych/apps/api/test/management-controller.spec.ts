@@ -11,6 +11,7 @@ import { ManagementController } from "../src/http/management.controller";
 import { CodedError } from "../src/management/coded-error";
 import type { ManagementChatService } from "../src/management/management-chat.service";
 import type { ReleaseNotesService } from "../src/management/release-notes.service";
+import type { StreamResponse } from "../src/http/assistant-stream";
 
 // The body Nest attaches to the 400. `getResponse()` is the object `badRequest` built.
 async function refusal(run: () => Promise<unknown>): Promise<ApiErrorBody> {
@@ -23,10 +24,24 @@ async function refusal(run: () => Promise<unknown>): Promise<ApiErrorBody> {
   throw new Error("expected the call to be refused");
 }
 
+// The chat answer is an NDJSON stream (http/assistant-stream.ts); these tests read what reached
+// the service and the refusals, so the response only has to accept the frames.
+const nullRes = (): StreamResponse => ({
+  status: () => {},
+  setHeader: () => {},
+  flushHeaders: () => {},
+  write: () => {},
+  end: () => {},
+  writableEnded: false,
+  destroyed: false,
+});
+
 function make(over: { chat?: Partial<ManagementChatService>; releases?: Partial<ReleaseNotesService> } = {}) {
-  const chat = { ask: async () => ({}), reset: async () => ({ ok: true }), ...over.chat } as unknown as ManagementChatService;
+  const chat = { ask: async () => ({}), stop: () => ({ ok: true }), reset: async () => ({ ok: true }), ...over.chat } as unknown as ManagementChatService;
   const releases = { generate: async () => ({}), authors: async () => ({ authors: [] }), ...over.releases } as unknown as ReleaseNotesService;
-  return new ManagementController(chat, releases);
+  const ctl = new ManagementController(chat, releases);
+  const ask = ctl.ask.bind(ctl);
+  return Object.assign(ctl, { ask: (b: ManagementChatAsk, req: typeof REQ) => ask(b, req, nullRes()) });
 }
 
 const chatAsk = (over: Partial<ManagementChatAsk> = {}): ManagementChatAsk =>
@@ -178,6 +193,16 @@ describe("ManagementController — CodedError relay", () => {
     const body = await refusal(() => controller.ask(chatAsk(), REQ));
     expect(body.code).toBe("assistant_no_reply_timeout");
     expect(body.params).toEqual({ seconds: 240 });
+  });
+});
+
+describe("ManagementController — «Зупинити»", () => {
+  it("stops the named conversation and refuses an unnamed one", async () => {
+    let stopped: string | undefined;
+    const ctl = make({ chat: { stop: (id: string) => ((stopped = id), { ok: true as const }) } });
+    expect(ctl.stop({ conversationId: " management:w1 " })).toEqual({ ok: true });
+    expect(stopped).toBe("management:w1");
+    expect((await refusal(async () => ctl.stop({}))).code).toBe("conversation_id_missing");
   });
 });
 

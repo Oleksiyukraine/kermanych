@@ -17,6 +17,7 @@ import {
   expandHelpers,
   helperNotice,
   parseManagementReply,
+  visibleProse,
   type ImageInput,
   type ManagementAttachment,
   type ManagementChatAsk,
@@ -29,8 +30,8 @@ import { RegistryService } from "../registry/registry.service";
 import { ManagementMcpService } from "./management-mcp.service";
 import { MachineResourcesService } from "../machine/machine-resources.service";
 import type { ManagementToolScope } from "./tracker-tools";
-import { FAST_MODEL } from "../assistant/models";
-import { RpcChatPool, readTurn, type ChatLaunch } from "../assistant/rpc-chat-pool";
+import { FAST_MODEL, FAST_THINKING } from "../assistant/models";
+import { RpcChatPool, readTurn, type ChatLaunch, type ChatSink } from "../assistant/rpc-chat-pool";
 import {
   buildManagementTurn,
   managementCwd,
@@ -54,9 +55,9 @@ const MCP_SERVER_NAME = "kermanych";
 // Documentation turns answer from passages the browser retrieved before the turn, and the
 // docs protocol forbids them to go looking for more — so there is no exploration left to
 // reason about, only prose to write from fragments already chosen. That is decode-bound
-// work, so it runs on the fast model (../assistant/models.ts). Every other section keeps
-// omp's default model, because a question about risk or capacity is exactly the kind that
-// deserves the stronger one.
+// work, so it runs on the fast model at low effort (../assistant/models.ts). Every other
+// section keeps omp's default model and the operator's effort, because a question about risk
+// or capacity is exactly the kind that deserves the stronger one.
 const DOCS_SECTION = "management-docs";
 
 // Documentation runs on its own child, inside the SAME conversation id the browser sent —
@@ -132,8 +133,9 @@ export class ManagementChatService implements OnModuleDestroy {
   }
 
   // `userId` is the guard's, never the body's (the jira controller's rule): it decides whose
-  // Jira and Plane tokens every tool call of this turn is signed with.
-  async ask(input: ManagementChatAsk, userId: string): Promise<ManagementChatReply> {
+  // Jira and Plane tokens every tool call of this turn is signed with. `sink` hears the answer
+  // and the tool steps as they happen (the controller streams them to the browser).
+  async ask(input: ManagementChatAsk, userId: string, sink?: ChatSink): Promise<ManagementChatReply> {
     const startedAt = Date.now();
     this.pool.sweep();
     // A workspace whose projects are all unbound on this machine — or which holds none at
@@ -142,7 +144,15 @@ export class ManagementChatService implements OnModuleDestroy {
     // the management surface, not the source, so there is nothing to refuse here.
     const repos = managementRepos(this.registry.listProjects(), input.workspaceProjects);
     const key = childKey(input.conversationId, input.context?.section);
-    return this.pool.enqueue(key, () => this.turn(key, repos, input, userId, startedAt));
+    return this.pool.enqueue(key, () => this.turn(key, repos, input, userId, startedAt, sink));
+  }
+
+  // «Зупинити» (RpcChatPool.stop). Both children, as reset: the browser names the
+  // conversation, and which of its two children holds the running turn is the api's business.
+  stop(conversationId: string): { ok: true } {
+    this.pool.stop(conversationId);
+    this.pool.stop(`${conversationId}${DOCS_KEY_SUFFIX}`);
+    return { ok: true };
   }
 
   // «Новий чат» has to mean it — see RpcChatPool.reset.
@@ -182,9 +192,10 @@ export class ManagementChatService implements OnModuleDestroy {
     input: ManagementChatAsk,
     userId: string,
     startedAt: number,
+    sink?: ChatSink,
   ): Promise<ManagementChatReply> {
     const docs = input.context?.section === DOCS_SECTION;
-    const live = await this.pool.child(key, () => this.launch(key, repos, docs ? FAST_MODEL : undefined, !docs));
+    const live = await this.pool.child(key, () => this.launch(key, repos, docs));
     // Re-pointed every turn: the child outlives any one ask, and the tools must act for the
     // operator and workspace of THIS one and report into THIS reply.
     const trackerChanges: Notice[] = [];
@@ -214,8 +225,9 @@ export class ManagementChatService implements OnModuleDestroy {
     });
     let events: RpcEvent[];
     let notices: Notice[];
+    let stopped: boolean;
     try {
-      ({ events, notices } = await this.pool.drive(key, live, message, images));
+      ({ events, notices, stopped } = await this.pool.drive(key, live, message, images, sink));
     } finally {
       // A tool call still in flight after the turn ended (timeout) reports nowhere.
       if (tools) tools.sink = undefined;
@@ -223,12 +235,9 @@ export class ManagementChatService implements OnModuleDestroy {
     // First, because it describes the message that produced everything after it.
     if (helped.used.length) notices.unshift(helperNotice(helped.used));
     const { raw, usage, model } = readTurn(events, notices, startedAt);
-    const parsed = parseManagementReply(raw);
-    return {
-      text: parsed.text,
-      actions: parsed.actions,
-      rejected: parsed.rejected,
+    const meta = {
       notices,
+      // Tracker writes made before the stop did happen, so they are reported either way.
       trackerChanges,
       ...(usage === undefined ? {} : { usage }),
       ...(model === undefined ? {} : { model }),
@@ -236,18 +245,22 @@ export class ManagementChatService implements OnModuleDestroy {
       // because that is what they sat through.
       ms: Date.now() - startedAt,
     };
+    // Stopped: the prose written so far, an unfinished action block cut, and nothing to run.
+    if (stopped) return { text: visibleProse(raw).text, actions: [], rejected: [], ...meta, stopped: true };
+    const parsed = parseManagementReply(raw);
+    return { text: parsed.text, actions: parsed.actions, rejected: parsed.rejected, ...meta };
   }
 
   // What a new child of this conversation is launched with. Documentation turns answer from
-  // retrieved passages only (docsProtocol) and never touch a tracker, so their child gets no
-  // tracker tools.
-  private launch(key: string, repos: ManagementRepo[], model: string | undefined, withTools: boolean): ChatLaunch<ToolBinding> {
-    const tools = withTools ? this.bindTools(key) : undefined;
+  // retrieved passages only (docsProtocol) on the fast model and effort, and never touch a
+  // tracker, so their child gets no tracker tools.
+  private launch(key: string, repos: ManagementRepo[], docs: boolean): ChatLaunch<ToolBinding> {
+    const tools = docs ? undefined : this.bindTools(key);
     return {
       opts: {
         cwd: managementCwd(repos),
         tools: [...MANAGEMENT_TOOLS],
-        ...(model ? { model } : {}),
+        ...(docs ? { model: FAST_MODEL, thinking: FAST_THINKING } : {}),
         ...(tools ? { mcp: tools.mcp } : {}),
       },
       ...(tools ? { extra: tools.binding } : {}),
