@@ -17,7 +17,9 @@ worktrees, the RPC bridge — is shared.
   their turns stream in, and answering interactive prompts.
 - **One session = one git worktree + one child**: an `omp` runtime for «Керманич», or the
   native harness's TUI. Worktrees live under
-  the project's `.gitworktree/<branch>`; the registry DB is
+  the project's `.worktrees/<branch>` (older sessions keep theirs in `.gitworktree/<branch>`;
+  new ones moved because Next.js's webpack watcher ignores any path with a segment starting
+  with `.git`, so a Next app run from there never hot-reloads); the registry DB is
   `~/.kermanych/kermanych.sqlite`.
 
 ## Processes and disk housekeeping
@@ -34,9 +36,10 @@ worktrees, the RPC bridge — is shared.
   with `omp_launch_timeout`, and a hung `omp models` (the AI-login check) is killed.
 - **At start** (the machine's own registry only — skipped when `KERMANYCH_DB` is set): a session
   whose launch was interrupted after its worktree was created gets the worktree's path back (and
-  waits for a slot again); a clean worktree a finished session left at `.gitworktree/<branch>` is
-  removed (its branch stays; worktrees Kermanych did not make are never touched, nor any with
-  uncommitted changes); leftovers of the old `~/.kermanych/worktrees/` layout no session names are
+  waits for a slot again); a clean worktree a finished session left at `.worktrees/<branch>` (or
+  the older `.gitworktree/<branch>`) is removed (its branch stays; worktrees Kermanych did not
+  make are never touched, nor any with uncommitted changes); leftovers of the old
+  `~/.kermanych/worktrees/` layout no session names are
   removed, and so are their omp conversations (`~/.omp/agent/sessions/-.kermanych-worktrees-<id>`)
   no session reads; so are `$TMPDIR/kermanych-native/mcp-<id>.json` files of deleted sessions and
   the session-browser partitions of deleted projects.
@@ -855,12 +858,14 @@ origin, list it in `KERMANYCH_UI_ORIGINS` (comma-separated) for the API.
 Kermanych also runs as a desktop app (Electron via Quasar): one window that
 starts the API in-process — no browser, no separate dev servers.
 
-The window opens as soon as the API's port is chosen, while the API is still starting. A
-splash shows the app mark and what is happening («Запускаю локальний сервіс…», then
-«Входжу…»), and it fades out when the app has mounted. The window background follows the
-last theme you used (`window-theme.json` in Electron's `userData`), so a light-theme user
-does not get a dark frame first. The `backend` boot file holds every request until the API
-is listening; the web build shows the same splash with «Входжу…» only.
+The window opens as soon as the API's port is chosen, while the API is still starting. The
+splash is the sign-in loader: the word КЕРМАНИЧ gathering from pixels and a random engineer's
+quote (`boot/splash.ts`, spec `docs/specs/2026-11-15-sign-in-pixel-loader.md`). It stays at
+least 3 seconds and fades out once the app has mounted. Screen readers hear what is happening
+(«Запускаю локальний сервіс…», then «Входимо…»). The window background follows the last theme
+you used (`window-theme.json` in Electron's `userData`), so a light-theme user does not get a
+dark frame first. The `backend` boot file holds every request until the API is listening; the
+web build shows the same splash.
 
 **The Dock icon calls you when an agent needs you** (spec:
 `docs/specs/2026-11-01-dock-attention.md`). Its number counts the agents whose turn it is, over
@@ -1736,7 +1741,7 @@ developer's machine. The direction is always task → session.
    «Запустити» for an unbound project asks for the local git repository and stores that
    path locally (it never reaches the cloud).
 4. **Run** — `POST /api/sessions/from-task` creates a git worktree under
-   the project's `.gitworktree/<branch>`, copies the project's `carryFiles` (`.env` by
+   the project's `.worktrees/<branch>`, copies the project's `carryFiles` (`.env` by
    default) into it, and spawns one `omp --mode rpc` child. From here on the session is an
    ordinary local session: it appears on the Агенти board and you drive it there. The branch
    is named `<prefix>/<slug>`: the prefix is the card's (`feature` by default). The slug is the

@@ -7,7 +7,5 @@ import { defineBoot } from '#q-app/wrappers';
 export default defineBoot(async () => {
   // Rejects when the api failed to start; main then shows the error and quits.
   await window.kermanych?.backendReady?.();
-  // The splash in index.html moves on to the sign-in step the `supabase` boot performs next.
-  const splash = document.getElementById('k-splash');
-  if (splash) splash.dataset.status = 'auth';
+  // The splash (boot/splash.ts) follows main's boot status on its own.
 });

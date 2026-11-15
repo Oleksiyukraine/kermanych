@@ -5,6 +5,7 @@ export const en: MessageSchema = {
     login: {
       hint: 'The shared team task board. Sign in to see projects and tasks.',
       signingIn: 'Signing in…',
+      startingBackend: 'Starting the local service…',
       signIn: 'Sign in with GitHub',
       quotes: {
         vonKarman: {
@@ -392,9 +393,9 @@ export const en: MessageSchema = {
       cost: 'Cost',
       tokenTotal: '{n} tok',
       id: 'Session ID',
-      idHint: 'The session’s identifier in Kermanych — the string to quote in a bug report or when hunting for logs. Its worktree is named after its branch: .gitworktree/<branch> in the project. The conversation with the engine has its own id, below.',
+      idHint: 'The session’s identifier in Kermanych — the string to quote in a bug report or when hunting for logs. Its worktree is named after its branch: .worktrees/<branch> in the project (.gitworktree/<branch> for older sessions). The conversation with the engine has its own id, below.',
       engineId: 'Claude Code session',
-      engineIdHint: 'The identifier of the conversation inside Claude Code. To continue it natively, without Kermanych: cd into the session’s worktree (cd .gitworktree/<branch> in the project) and run claude --resume <this id>. The history lives in ~/.claude/projects keyed by that very folder, so the folder and this id are needed together.',
+      engineIdHint: 'The identifier of the conversation inside Claude Code. To continue it natively, without Kermanych: cd into the session’s worktree (cd .worktrees/<branch> in the project) and run claude --resume <this id>. The history lives in ~/.claude/projects keyed by that very folder, so the folder and this id are needed together.',
     },
     docs: {
       usedTitle: 'Documentation used',

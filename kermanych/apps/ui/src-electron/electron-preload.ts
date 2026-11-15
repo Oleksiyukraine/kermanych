@@ -16,7 +16,7 @@ function subscribe<A extends unknown[]>(channel: string, cb: (...args: A) => voi
 }
 
 // The splash status from main. Listened to from the preload's first tick, before any page
-// script, and the latest one is replayed to a late subscriber: the index.html splash script and
+// script, and the latest one is replayed to a late subscriber: the splash (boot/splash.ts) and
 // main's sends do not otherwise agree on an order.
 let bootStatus: KermanychBootStatus | undefined;
 const bootListeners = new Set<(status: KermanychBootStatus) => void>();

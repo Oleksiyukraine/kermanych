@@ -10,6 +10,8 @@ export const uk = {
     login: {
       hint: 'Спільна дошка задач команди. Увійдіть, щоб побачити проєкти та задачі.',
       signingIn: 'Входимо…',
+      // The start-up splash's screen-reader status while the desktop's local api starts.
+      startingBackend: 'Запускаю локальний сервіс…',
       signIn: 'Увійти через GitHub',
       // The sign-in loader (components/auth/AuthLoader.vue): a quote under the pixel word, one
       // picked at random. The ids are SIGN_IN_QUOTES in lib/sign-in-loader.ts.
@@ -399,9 +401,9 @@ export const uk = {
       cost: 'Вартість',
       tokenTotal: '{n} ток',
       id: 'ID сесії',
-      idHint: 'Ідентифікатор сесії в Керманичі — саме його варто назвати в баг-репорті чи при пошуку логів. Її робочу теку названо за гілкою: .gitworktree/<гілка> у проєкті. Сама розмова з рушієм має окремий id, нижче.',
+      idHint: 'Ідентифікатор сесії в Керманичі — саме його варто назвати в баг-репорті чи при пошуку логів. Її робочу теку названо за гілкою: .worktrees/<гілка> у проєкті (.gitworktree/<гілка> у старіших сесій). Сама розмова з рушієм має окремий id, нижче.',
       engineId: 'Сесія Claude Code',
-      engineIdHint: 'Ідентифікатор самої розмови в Claude Code. Щоб продовжити її нативно, без Керманича: перейдіть у робочу теку сесії (cd .gitworktree/<гілка> у проєкті) і виконайте claude --resume <цей id>. Історія лежить у ~/.claude/projects і привʼязана саме до тієї теки, тому потрібні разом і тека, і цей id.',
+      engineIdHint: 'Ідентифікатор самої розмови в Claude Code. Щоб продовжити її нативно, без Керманича: перейдіть у робочу теку сесії (cd .worktrees/<гілка> у проєкті) і виконайте claude --resume <цей id>. Історія лежить у ~/.claude/projects і привʼязана саме до тієї теки, тому потрібні разом і тека, і цей id.',
     },
     docs: {
       usedTitle: 'Використана документація',

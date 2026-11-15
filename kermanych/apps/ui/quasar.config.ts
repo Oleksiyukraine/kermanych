@@ -25,9 +25,10 @@ const WHISPER_SERVER = join(appDir, '..', '..', '.whisper-build', 'bin', 'whispe
 
 export default defineConfig((ctx) => {
   return {
-    // app boot files (/src/boot) — order matters. `backend` comes first: on the desktop build
-    // it holds every later boot until main's local api listens.
-    boot: ['backend', 'tokens', 'i18n', 'tip', 'supabase'],
+    // app boot files (/src/boot) — order matters. `splash` mounts the start-up loader and needs
+    // the tokens and the messages; none of the three talks to the local api. `backend` then holds
+    // every later boot until main's local api listens.
+    boot: ['tokens', 'i18n', 'splash', 'backend', 'tip', 'supabase'],
 
     // global CSS (/src/css)
     css: ['app.scss'],

@@ -47,6 +47,7 @@ export {
   branchName,
   uniqueSlug,
   worktreeDir,
+  WORKTREE_FOLDERS,
   isGitBranchName,
   BRANCH_PREFIXES,
   type BranchPrefix,

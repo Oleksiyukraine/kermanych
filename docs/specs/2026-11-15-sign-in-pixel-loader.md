@@ -96,7 +96,50 @@ quote on the right.
 Not verified: a real GitHub sign-in in the desktop build (Electron), and the reduced-motion
 rendering.
 
+## Follow-up: the start-up splash (after PR #295)
+
+After the merge the operator still saw the old «Входжу…» when launching the app. That text was the
+start-up splash in `apps/ui/index.html` (mark, spinner, «Запускаю локальний сервіс…» → «Входжу…»,
+`docs/specs/2026-10-21-async-feedback.md` decision 10), which covers the boot files while the
+session is read — not the sign-in screens this change had touched.
+
+**Decisions**
+
+8. **The splash is the sign-in loader.** `boot/splash.ts` mounts `AuthLoader` into `#k-splash` as
+   a separate small Vue app, because the boot files run before Quasar mounts the main one. Before
+   the bundle loads, `index.html` paints only the theme's canvas; the mark, spinner and inline
+   status script are gone.
+   - Rejected: drawing the pixel word in `index.html` with an inline script. It would copy the
+     glyphs, the scatter and 15 quotes in two languages into a second place.
+9. **Its own vue-i18n instance.** vue-i18n wraps `app.unmount` of the app it is installed in and
+   disposes the instance (`vue-i18n` 10.0.8, `install`), so installing the shared `i18n` into the
+   splash app and unmounting it would break the main app's messages.
+10. **Boot order `tokens`, `i18n`, `splash`, `backend`, …** The splash needs the tokens and the
+    messages; neither boot talks to the local api, so moving them ahead of `backend` keeps decision
+    10 of the async-feedback spec. The status (`common.login.startingBackend`, then «Входимо…»)
+    follows `onBootStatus` and is screen-reader text, as on the sign-in screens.
+11. **The 3 s minimum applies to the splash too.** `closeSplash()` (called from `App.vue` on mount)
+    waits for `signInLoaderHold()` and then fades the overlay. A launch where the app is ready
+    sooner now waits up to 3 s; otherwise the word would leave mid-gather.
+
+**Changes:** `apps/ui/index.html`, `apps/ui/src/boot/splash.ts` (new), `boot/backend.ts` (no longer
+flips the splash status), `App.vue` (`closeSplash`), `quasar.config.ts` (boot order),
+`AuthLoader.vue` (`status` prop), i18n `common.login.startingBackend`, `kermanych/README.md`.
+
+**Verification** (live preview, web build, signed in):
+
+- Opening `#/` shows the pixel word with a random quote over the app, with the status «Входимо…».
+  The app was mounted underneath. The splash was removed 3287 ms after navigation start: the 3 s hold
+  plus the 200 ms fade.
+- After the splash closed, switching the language to English re-translated the main app (tabs
+  «Agents | Board | …»), so the main vue-i18n instance survives the splash unmount. Reloading in
+  English showed the English quote on the splash.
+- `vue-tsc --noEmit`: no errors. `vitest run test/i18n-completeness.spec.ts`: 10 passed.
+
+Not verified: the desktop build (Electron) launch with the «Запускаю локальний сервіс…» step.
+
 ## Documentation impact
 
-None. README describes sign-in only as pressing «Увійти через GitHub»; the flow and its steps did
-not change, only how the wait looks. The release changelog is written at release time.
+`kermanych/README.md` «Desktop app»: the start-up splash is now the sign-in loader, stays at least
+3 s, and its status is for screen readers. Sign-in itself is still described only as pressing
+«Увійти через GitHub».
