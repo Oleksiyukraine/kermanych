@@ -6,7 +6,7 @@
 //
 // Deliberately NOT a conversation (no map of live children, no idle TTL): keeping the child
 // alive would keep a resident process for a follow-up that arrives, if ever, as a new ask.
-import type { RpcEvent } from "@kermanych/core";
+import type { RpcEvent, ThinkingLevel } from "@kermanych/core";
 import { createRuntime } from "./agent-runtime";
 import { reduceRpcEvents, sumTurnUsage, type TurnSpend } from "../supervisor/transcript-reducer";
 import { limit } from "./limit";
@@ -24,6 +24,7 @@ export type OneShotInput = {
   tools?: string[];
   noTools?: boolean;
   model?: string;
+  thinking?: ThinkingLevel;
   appendSystemPrompt?: string;
   // When the caller's request began, so the spend's wall time includes the work before
   // the spawn (git log, retrieval) exactly as the operator experienced it.
@@ -44,6 +45,7 @@ export async function runOneShot(opts: OneShotInput): Promise<{ text: string; sp
     ...(opts.tools ? { tools: opts.tools } : {}),
     ...(opts.noTools ? { noTools: true } : {}),
     ...(opts.model ? { model: opts.model } : {}),
+    ...(opts.thinking ? { thinking: opts.thinking } : {}),
     ...(opts.appendSystemPrompt ? { appendSystemPrompt: opts.appendSystemPrompt } : {}),
   });
   const events: RpcEvent[] = [];

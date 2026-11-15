@@ -1,12 +1,16 @@
 // apps/api/test/cuk-controller.spec.ts
 // The ЦУК endpoint rebuilds the browser's digest before it reaches a prompt: images only
 // (ЦУК has no file tools), every list capped with the cut added to its omitted count, and
-// the conversation keyed by the guard's user, never by the body.
+// the conversation keyed by the guard's user, never by the body. Its answer is an NDJSON
+// stream (http/assistant-stream.ts): deltas, then one reply or one error.
 import { describe, it, expect } from "vitest";
 import { BadRequestException } from "@nestjs/common";
-import type { ApiErrorBody, CukChatAsk } from "@kermanych/core";
+import type { ApiErrorBody, AssistantStreamFrame, CukChatAsk, CukChatReply } from "@kermanych/core";
 import { CukController } from "../src/http/cuk.controller";
 import type { CukChatService } from "../src/cuk/cuk-chat.service";
+import type { ChatSink } from "../src/assistant/rpc-chat-pool";
+import { CodedError } from "../src/management/coded-error";
+import type { StreamResponse } from "../src/http/assistant-stream";
 
 async function refusal(run: () => Promise<unknown>): Promise<ApiErrorBody> {
   try {
@@ -18,16 +22,52 @@ async function refusal(run: () => Promise<unknown>): Promise<ApiErrorBody> {
   throw new Error("expected the call to be refused");
 }
 
-function make() {
-  const seen: { ask?: CukChatAsk; user?: string; reset?: string } = {};
+// A response that records what the stream wrote.
+function streamRes() {
+  const out = { status: 0, type: "", body: "", ended: false };
+  const res: StreamResponse = {
+    status: (c) => (out.status = c),
+    setHeader: (n, v) => {
+      if (n === "Content-Type") out.type = v;
+    },
+    flushHeaders: () => {},
+    write: (chunk) => (out.body += chunk),
+    end: () => (out.ended = true),
+    get writableEnded() {
+      return out.ended;
+    },
+    destroyed: false,
+  };
+  const frames = () => out.body.split("\n").filter(Boolean).map((l) => JSON.parse(l) as AssistantStreamFrame<CukChatReply>);
+  return { res, out, frames };
+}
+
+type Play = (sink: ChatSink) => Promise<CukChatReply>;
+
+function make(play?: Play) {
+  const seen: { ask?: CukChatAsk; user?: string; reset?: string; stop?: string } = {};
   const chat = {
-    ask: async (a: CukChatAsk, user: string) => ((seen.ask = a), (seen.user = user), {}),
+    ask: async (a: CukChatAsk, user: string, sink: ChatSink) => {
+      seen.ask = a;
+      seen.user = user;
+      return play ? play(sink) : ({} as CukChatReply);
+    },
+    stop: (user: string) => ((seen.stop = user), { ok: true }),
     reset: async (user: string) => ((seen.reset = user), { ok: true }),
   } as unknown as CukChatService;
-  return { ctl: new CukController(chat), seen };
+  const real = new CukController(chat);
+  const stream = streamRes();
+  const ctl = {
+    ask: (b: CukChatAsk, req: typeof REQ) => real.ask(b, req, stream.res),
+    stop: (req: typeof REQ) => real.stop(req),
+    reset: (req: typeof REQ) => real.reset(req),
+  };
+  return { ctl, seen, stream };
 }
 
 const REQ = { user: { id: "u1" } };
+
+const REPLY: CukChatReply = { text: "Готово.", actions: [], rejected: [], notices: [], ms: 5 };
 
 const body = (over: Record<string, unknown> = {}): CukChatAsk =>
   ({
@@ -189,5 +229,51 @@ describe("CukController", () => {
     const { ctl, seen } = make();
     expect(await ctl.reset(REQ)).toEqual({ ok: true });
     expect(seen.reset).toBe("u1");
+  });
+
+  it("stops the caller's own turn", () => {
+    const { ctl, seen } = make();
+    expect(ctl.stop(REQ)).toEqual({ ok: true });
+    expect(seen.stop).toBe("u1");
+  });
+
+  it("streams the prose and the steps, then the reply", async () => {
+    const { ctl, stream } = make(async (sink) => {
+      sink.delta("Гото");
+      sink.step("grep", "pricing");
+      sink.delta("во.");
+      return REPLY;
+    });
+    await ctl.ask(body(), REQ);
+    expect(stream.out.status).toBe(200);
+    expect(stream.out.type).toBe("application/x-ndjson; charset=utf-8");
+    expect(stream.frames()).toEqual([
+      { type: "delta", text: "Гото" },
+      { type: "step", tool: "grep", target: "pricing" },
+      { type: "delta", text: "во." },
+      { type: "reply", reply: REPLY },
+    ]);
+    expect(stream.out.ended).toBe(true);
+  });
+
+  it("ends a stream that broke after it opened with an error frame", async () => {
+    const { ctl, stream } = make(async (sink) => {
+      sink.delta("Почав");
+      throw new CodedError("assistant_no_reply_timeout", "асистент не відповів за 120 с", { seconds: 120 });
+    });
+    await ctl.ask(body(), REQ);
+    expect(stream.frames()).toEqual([
+      { type: "delta", text: "Почав" },
+      { type: "error", code: "assistant_no_reply_timeout", message: "асистент не відповів за 120 с", params: { seconds: 120 } },
+    ]);
+    expect(stream.out.ended).toBe(true);
+  });
+
+  it("relays a failure before the first frame as the HTTP error it always was", async () => {
+    const { ctl, stream } = make(async () => {
+      throw new CodedError("omp_launch_timeout", "не вдалося запустити omp за 30 с", { seconds: 30 });
+    });
+    expect((await refusal(() => ctl.ask(body(), REQ))).code).toBe("omp_launch_timeout");
+    expect(stream.out.body).toBe("");
   });
 });

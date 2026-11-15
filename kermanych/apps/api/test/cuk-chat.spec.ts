@@ -5,16 +5,20 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { CukChatAsk, CukContext, ImageInput, RpcEvent } from "@kermanych/core";
 
-type SpawnOpts = { cwd: string; tools?: string[]; noTools?: boolean; model?: string; mcp?: unknown };
+type SpawnOpts = { cwd: string; tools?: string[]; noTools?: boolean; model?: string; thinking?: string; mcp?: unknown };
 const spawned: SpawnOpts[] = [];
 const sent: { kind: "prompt" | "followUp"; text: string; images?: ImageInput[] }[] = [];
 let stopped = 0;
-let turns: RpcEvent[][] = [];
+let aborted = 0;
+// A turn is either played back whole, or — `{ hold }` — plays its frames and then waits for
+// `abort()`, which ends it the way omp does: the message closes, `agent_end` follows.
+let turns: (RpcEvent[] | { hold: RpcEvent[] })[] = [];
 
 vi.mock("../src/rpc/rpc-session", () => {
   class FakeRpc {
     droppedFrames = 0;
     private cbs: ((e: RpcEvent) => void)[] = [];
+    private held = false;
     constructor(opts: SpawnOpts) {
       spawned.push(opts);
     }
@@ -39,8 +43,20 @@ vi.mock("../src/rpc/rpc-session", () => {
       this.play();
     }
     steer() {}
+    abort() {
+      aborted++;
+      if (!this.held) return;
+      this.held = false;
+      this.emit([{ type: "message_end", message: { role: "assistant" } }, { type: "agent_end", isTerminal: true }]);
+    }
+    private emit(events: RpcEvent[]) {
+      for (const e of events) for (const cb of this.cbs) cb(e);
+    }
     private async play() {
-      for (const e of turns.shift() ?? [{ type: "agent_end" }]) for (const cb of this.cbs) cb(e);
+      const next = turns.shift() ?? [{ type: "agent_end" }];
+      if (Array.isArray(next)) return this.emit(next);
+      this.held = true;
+      this.emit(next.hold);
     }
   }
   return { RpcSession: FakeRpc };
@@ -90,6 +106,7 @@ beforeEach(() => {
   spawned.length = 0;
   sent.length = 0;
   stopped = 0;
+  aborted = 0;
   turns = [];
 });
 
@@ -104,6 +121,9 @@ describe("CukChatService", () => {
     expect(spawned[0]?.tools).toBeUndefined();
     expect(spawned[0]?.mcp).toBeUndefined();
     expect(spawned[0]?.model).toBe("claude-sonnet-5");
+    // Pinned, so the operator's own default (often `max`) does not turn a console answer
+    // into a minute of thinking (docs/specs/2026-11-15-faster-assistant-answers.md).
+    expect(spawned[0]?.thinking).toBe("low");
     expect(sent.map((s) => s.kind)).toEqual(["prompt", "followUp"]);
     // The contract rides the first turn only; the digest rides both.
     expect(sent[0]?.text).toContain("Ти — ЦУК");
@@ -189,5 +209,65 @@ describe("CukChatService", () => {
     turns = [reply("ok")];
     await svc.ask(ask("who is waiting?", { locale: "en" }), "u1");
     expect(sent[0]?.text).toContain("Відповідай англійською мовою (en).");
+  });
+
+  it("streams the prose as it is written, a blank line between the turn's messages", async () => {
+    const svc = make();
+    const delta = (text: string): RpcEvent => ({ type: "message_update", assistantMessageEvent: { type: "text_delta", delta: text } });
+    turns = [
+      [
+        delta("Шукаю"),
+        delta("."),
+        { type: "message_end", message: { role: "assistant" } },
+        delta("Знайшов."),
+        { type: "message_end", message: { role: "assistant" } },
+        { type: "agent_end", isTerminal: true },
+      ],
+    ];
+    const got: string[] = [];
+    const r = await svc.ask(ask("знайди"), "u1", { delta: (t) => got.push(t), step: () => {} });
+    expect(got).toEqual(["Шукаю", ".", "\n\nЗнайшов."]);
+    // What streamed is what the reply says.
+    expect(got.join("")).toBe(r.text);
+  });
+
+  it("stop ends the turn with its prose, runs nothing, and keeps the conversation", async () => {
+    const svc = make();
+    turns = [
+      {
+        hold: [
+          {
+            type: "message_update",
+            assistantMessageEvent: { type: "text_delta", delta: 'Відкриваю.\n\n```kermanych-action\n{ "kind": "navigate", "place": "settings-pro' },
+          },
+        ],
+      },
+      reply("далі"),
+    ];
+    const pending = svc.ask(ask("відкрий налаштування"), "u1");
+    // Stopped mid-answer: the prompt is out and the child is still writing.
+    await vi.waitFor(() => expect(sent).toHaveLength(1));
+    expect(svc.stop("u1")).toEqual({ ok: true });
+    const r = await pending;
+    expect(aborted).toBe(1);
+    expect(r.stopped).toBe(true);
+    expect(r.text).toBe("Відкриваю.");
+    expect(r.actions).toEqual([]);
+    expect(r.rejected).toEqual([]);
+    // The child stays: the next question follows up in the same conversation.
+    await svc.ask(ask("далі"), "u1");
+    expect(spawned).toHaveLength(1);
+    expect(stopped).toBe(0);
+    expect(sent.map((s) => s.kind)).toEqual(["prompt", "followUp"]);
+  });
+
+  it("a stop with no turn running does nothing", async () => {
+    const svc = make();
+    expect(svc.stop("u1")).toEqual({ ok: true });
+    turns = [reply('```kermanych-action\n{ "kind": "navigate", "place": "settings-project" }\n```')];
+    const r = await svc.ask(ask("відкрий"), "u1");
+    expect(aborted).toBe(0);
+    expect(r.stopped).toBeUndefined();
+    expect(r.actions).toEqual([{ kind: "navigate", place: "settings-project" }]);
   });
 });

@@ -147,6 +147,7 @@ import SkillImprovementView from './SkillImprovementView.vue';
 import ScheduleSlipView from './ScheduleSlipView.vue';
 import ScheduleTaskView from './ScheduleTaskView.vue';
 import { useCircleGesture } from '../../composables/useCircleGesture';
+import { useAsyncAction } from '../../composables/useAsyncAction';
 
 const { t } = useI18n();
 const orchestrator = useOrchestrator();
@@ -260,12 +261,17 @@ function onHotkey(e: KeyboardEvent): void {
 
 // Esc closes the window — in the bubble phase, so whatever inside it claims Esc first (the
 // Хелпери panel stops it) keeps it. A Quasar dialog on top (the «Новий чат» confirmation)
-// owns its Esc too. An open notification entry is closed first, back to the console.
+// owns its Esc too. An open notification entry is closed first, back to the console; then a
+// turn in flight in the EXPANDED panel is stopped (docs/specs/2026-11-15-faster-assistant-
+// answers.md, decision 9) — a turn in the folded panel is not what the operator is looking at.
+const stopTurn = useAsyncAction((panel: 'cuk' | 'management') => (panel === 'cuk' ? cuk.stop() : chat.stop()));
 function onEscape(e: KeyboardEvent): void {
   if (e.key !== 'Escape' || e.defaultPrevented || !overlay.open) return;
   if (document.querySelector('.q-dialog')) return;
   e.preventDefault();
+  const expanded = cukFolded.value ? 'management' : 'cuk';
   if (notifications.viewOpen) closeEntry();
+  else if (expanded === 'cuk' ? cuk.busy : chat.busy) void stopTurn.run(expanded);
   else overlay.close();
 }
 

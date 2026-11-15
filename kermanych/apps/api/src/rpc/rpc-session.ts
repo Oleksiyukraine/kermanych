@@ -192,6 +192,10 @@ export class RpcSession implements AgentRuntime {
   followUp(message: string, images?: ImageInput[]) { this.write({ id: `req_${++this.seq}`, type: "prompt", message, streamingBehavior: "followUp", ...imagesFrame(images) }); }
   steer(message: string, images?: ImageInput[]) { this.write({ id: `req_${++this.seq}`, type: "steer", message, ...imagesFrame(images) }); }
   answerUi(res: RpcExtensionUIResponse) { this.write(res); }
+  // Ends the running turn at once: omp closes the assistant message with what it has written,
+  // emits `agent_end`, and the child stays ready for the next prompt. Fire-and-forget like
+  // `prompt` — the turn's own `agent_end` is the acknowledgement.
+  abort() { this.write({ id: `req_${++this.seq}`, type: "abort" }); }
 
   async getState(): Promise<RpcStateData> {
     const r = await this.command("get_state");
