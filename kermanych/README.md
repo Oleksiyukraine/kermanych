@@ -855,12 +855,14 @@ origin, list it in `KERMANYCH_UI_ORIGINS` (comma-separated) for the API.
 Kermanych also runs as a desktop app (Electron via Quasar): one window that
 starts the API in-process — no browser, no separate dev servers.
 
-The window opens as soon as the API's port is chosen, while the API is still starting. A
-splash shows the app mark and what is happening («Запускаю локальний сервіс…», then
-«Входжу…»), and it fades out when the app has mounted. The window background follows the
-last theme you used (`window-theme.json` in Electron's `userData`), so a light-theme user
-does not get a dark frame first. The `backend` boot file holds every request until the API
-is listening; the web build shows the same splash with «Входжу…» only.
+The window opens as soon as the API's port is chosen, while the API is still starting. The
+splash is the sign-in loader: the word КЕРМАНИЧ gathering from pixels and a random engineer's
+quote (`boot/splash.ts`, spec `docs/specs/2026-11-15-sign-in-pixel-loader.md`). It stays at
+least 3 seconds and fades out once the app has mounted. Screen readers hear what is happening
+(«Запускаю локальний сервіс…», then «Входимо…»). The window background follows the last theme
+you used (`window-theme.json` in Electron's `userData`), so a light-theme user does not get a
+dark frame first. The `backend` boot file holds every request until the API is listening; the
+web build shows the same splash.
 
 **The Dock icon calls you when an agent needs you** (spec:
 `docs/specs/2026-11-01-dock-attention.md`). Its number counts the agents whose turn it is, over
