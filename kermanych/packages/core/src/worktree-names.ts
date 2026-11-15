@@ -56,12 +56,20 @@ export function isGitBranchName(name: string): boolean {
   if (name.startsWith("/") || name.endsWith("/") || name.includes("//") || name.endsWith(".")) return false;
   return name.split("/").every((part) => !part.startsWith(".") && !part.endsWith(".lock"));
 }
-// A session's worktree lives inside its project's repository at `.gitworktree/<branch>`, so the
-// folder reads as the work it holds. A slashed branch nests (`feature/x` → `.gitworktree/feature/x`),
+
+// The folders inside a project's repository that hold its session worktrees, the current one
+// first. Not `.gitworktree` any more: Next.js's webpack watcher ignores every path with a segment
+// that starts with `.git` (vercel/next.js#75372), so a Next app run from such a tree never hot
+// reloads. Sessions made before the move keep their stored paths there, so cleanup and the
+// startup GC still recognise it.
+export const WORKTREE_FOLDERS = [".worktrees", ".gitworktree"] as const;
+
+// A session's worktree lives inside its project's repository at `.worktrees/<branch>`, so the
+// folder reads as the work it holds. A slashed branch nests (`feature/x` → `.worktrees/feature/x`),
 // which cannot collide: git refuses a branch `feature` beside `feature/x`, and refuses one branch
 // in two worktrees. The branch is a git-made name, so it has no `..` or leading-dot segment
-// (isGitBranchName) and cannot climb out of `.gitworktree/`.
-export function worktreeDir(repoRoot: string, branch: string): string {
+// (isGitBranchName) and cannot climb out of the folder.
+export function worktreeDir(repoRoot: string, branch: string, folder: (typeof WORKTREE_FOLDERS)[number] = WORKTREE_FOLDERS[0]): string {
   if (!isGitBranchName(branch)) throw new Error(`not a branch name: ${branch}`);
-  return join(repoRoot, ".gitworktree", ...branch.split("/"));
+  return join(repoRoot, folder, ...branch.split("/"));
 }

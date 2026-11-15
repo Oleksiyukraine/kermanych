@@ -75,7 +75,7 @@ test("reopenSession brings the worktree back on the session's own branch and re-
   const id = await seedMerged();
 
   const re = await sup.reopenSession(id);
-  trash.push(re.worktreePath); // worktreeDir lives under the repo's .gitworktree/ — clean it up
+  trash.push(re.worktreePath); // worktreeDir lives under the repo's .worktrees/ — clean it up
 
   expect(re.worktreePath).not.toBe("");
   expect(existsSync(re.worktreePath)).toBe(true); // worktree re-created
