@@ -927,7 +927,7 @@ when the app is opened from Finder, the Dock or the application menu.
 ### Updates and «What's new»
 
 An installed app updates itself from GitHub Releases (`electron-updater`,
-`src-electron/updater.ts`). It checks at launch and every 4 hours and downloads a new version
+`src-electron/updater.ts`). It checks at launch and every hour and downloads a new version
 in the background. A banner then says «Версія X готова» with **Що нового** (the notes of every
 version between the running one and the new one) and **Перезапустити**. A real quit — ⌘Q, the app
 menu's Quit or the menu-bar icon's «Завершити» — installs the update too; with a scheduled task

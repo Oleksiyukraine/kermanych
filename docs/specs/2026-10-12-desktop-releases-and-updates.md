@@ -109,8 +109,9 @@ that tell them what changed.
    separate x64 `.dmg` or a universal binary (unverified output, longer builds).
 
 7. **Updates install on quit or on request, never by force.**
-   - The packaged app checks on launch and every 4 hours, and downloads in the background
-     (`autoDownload: true`).
+   - The packaged app checks on launch and every hour, and downloads in the background
+     (`autoDownload: true`). It checked every 4 hours until 1.3.0, which took hours to reach
+     apps that stayed open; the interval was shortened on 2026-11-15.
    - When an update is downloaded, a non-blocking banner in the main layout shows
      «Version X is ready · What's new · Restart».
    - A normal quit installs it (`autoInstallOnAppQuit: true`): ⌘Q, the app menu's Quit or the
