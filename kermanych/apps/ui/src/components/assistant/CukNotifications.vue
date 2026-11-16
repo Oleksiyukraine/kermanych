@@ -4,8 +4,9 @@
        theme tokens. A clipboard: a board with a clip at its head and the notifications as slips
        held on it, newest on top. Its head switches between «Сповіщення» — skill improvements,
        this machine's schedule slips and the updates of Kermanych this machine received, in one
-       feed — and «Розклад», the scheduled tasks (docs/specs/2026-11-06-scheduled-tasks.md,
-       decision 6; docs/specs/2026-10-12-desktop-releases-and-updates.md, decision 12). -->
+       feed — «Розклад», the scheduled tasks (docs/specs/2026-11-06-scheduled-tasks.md,
+       decision 6; docs/specs/2026-10-12-desktop-releases-and-updates.md, decision 12), and
+       «Оновлення», this build's changelog (docs/specs/2026-11-16-changelog-tab.md). -->
   <aside class="nc" :aria-label="t('cuk.notifications.title')">
     <div class="nc__clip" aria-hidden="true"><span class="nc__clip-ring"></span></div>
     <div class="nc__board">
@@ -32,23 +33,24 @@
             :aria-selected="store.tab === 'schedule'"
             @click="store.tab = 'schedule'"
           >{{ t('cuk.notifications.tabs.schedule') }}</button>
+          <button
+            class="nc__tab mono"
+            :class="{ 'nc__tab--on': store.tab === 'changelog' }"
+            type="button"
+            role="tab"
+            :aria-selected="store.tab === 'changelog'"
+            @click="store.tab = 'changelog'"
+          >{{ t('cuk.notifications.tabs.changelog') }}</button>
         </div>
-        <!-- An icon, not the words: the column is 300 px and the tabs must stay readable. -->
-        <button
-          v-if="store.tab === 'feed' && store.unread"
-          class="nc__all"
-          type="button"
-          :aria-label="t('cuk.notifications.markAll')"
-          v-tip="t('cuk.notifications.markAll')"
-          :disabled="markAll.busy.value"
-          :aria-busy="markAll.busy.value || undefined"
-          @click="markAll.run()"
-        >✓</button>
       </header>
 
       <div v-if="store.tab === 'feed'" class="nc__page" role="tabpanel">
         <KSkeleton v-if="feedPhase === 'skeleton'" variant="rows" :rows="4" />
         <template v-else-if="feedPhase === 'ready'">
+          <!-- Under the tabs, not beside them: three tabs and the unread count fill the 300 px head. -->
+          <div v-if="store.unread" class="nc__bar">
+            <KBtn variant="ghost" :loading="markAll.busy.value" @click="markAll.run()">✓ {{ t('cuk.notifications.markAll') }}</KBtn>
+          </div>
           <div v-if="store.phase === 'error'" class="nc__blank nc__blank--gap" role="alert">
             <p>{{ t('cuk.notifications.loadFailed', { error: store.error }) }}</p>
             <KBtn variant="ghost" :loading="retry.busy.value" @click="retry.run()">{{ t('cuk.notifications.retry') }}</KBtn>
@@ -104,7 +106,7 @@
         </template>
       </div>
 
-      <div v-else class="nc__page" role="tabpanel">
+      <div v-else-if="store.tab === 'schedule'" class="nc__page" role="tabpanel">
         <KSkeleton v-if="schedulePhase === 'skeleton'" variant="rows" :rows="4" />
         <div v-else-if="schedules.loadError && !schedules.tasks" class="nc__blank" role="alert">
           <p>{{ t('cuk.schedule.loadFailed', { error: schedules.loadError }) }}</p>
@@ -113,6 +115,23 @@
         <p v-else-if="schedules.tasks && !schedules.tasks.length" class="nc__blank">{{ t('cuk.schedule.empty') }}</p>
         <ul v-else-if="schedules.tasks" class="nc__list">
           <ScheduleRow v-for="task in sortedTasks" :key="task.id" :task="task" />
+        </ul>
+      </div>
+
+      <!-- Bundled with the build (stores/app-update.ts): nothing to load, so no skeleton. -->
+      <div v-else class="nc__page" role="tabpanel">
+        <p v-if="!appUpdate.changelog.length" class="nc__blank">{{ t('cuk.notifications.changelog.empty') }}</p>
+        <ul v-else class="nc__list">
+          <li v-for="e in appUpdate.changelog" :key="e.version" class="nc__note">
+            <span class="nc__slip-top">
+              <span class="nc__skill mono">{{ e.version }}</span>
+              <span v-if="e.version === APP_VERSION" class="nc__state mono">{{ t('cuk.notifications.changelog.current') }}</span>
+              <span v-if="e.date" class="nc__when mono">{{ e.date }}</span>
+            </span>
+            <!-- html:false (lib/markdown.ts), so the notes render as a controlled tag set. -->
+            <div v-if="e.body" class="nc__notes" v-html="renderReleaseNotes(e.body)"></div>
+            <p v-else class="nc__meta">{{ t('appUpdate.noNotes') }}</p>
+          </li>
         </ul>
       </div>
     </div>
@@ -128,13 +147,14 @@ import { useI18n } from 'vue-i18n';
 import type { SkillImprovementEntry } from '@kermanych/core';
 import { useNotificationCenter } from 'stores/notification-center';
 import { useSchedules } from 'stores/schedules';
-import { useAppUpdate } from 'stores/app-update';
+import { APP_VERSION, useAppUpdate } from 'stores/app-update';
 import { useProjects } from 'stores/projects';
 import { useOrchestrator } from 'stores/orchestrator';
 import { useAsyncAction } from '../../composables/useAsyncAction';
 import { useLoadPhase } from '../../composables/useLoadPhase';
 import { useNow } from '../../composables/useNow';
 import { relativeTime, renderTime } from '../../lib/time';
+import { renderReleaseNotes } from '../../lib/markdown';
 import KBtn from 'components/kit/KBtn.vue';
 import KSkeleton from 'components/kit/KSkeleton.vue';
 import ScheduleRow from './ScheduleRow.vue';
@@ -245,12 +265,13 @@ function origin(e: SkillImprovementEntry): string {
   padding: var(--k-sp-2) var(--k-sp-2) var(--k-sp-3);
 }
 
-// «Сповіщення | Розклад»: two words in the head's uppercase mono, the active one in full ink
-// with the accent under it.
+// «Сповіщення | Розклад | Оновлення»: words in the head's uppercase mono, the active one in full
+// ink with the accent under it. Gap and letter-spacing sized so the three, with a two-digit count,
+// fit the 300 px column in both languages.
 .nc__tabs {
   display: flex;
   align-items: center;
-  gap: var(--k-sp-3);
+  gap: var(--k-sp-2);
   min-width: 0;
 }
 
@@ -265,7 +286,7 @@ function origin(e: SkillImprovementEntry): string {
   background: transparent;
   white-space: nowrap;
   font-size: var(--k-fs-xs);
-  letter-spacing: 0.14em;
+  letter-spacing: 0.1em;
   text-transform: uppercase;
   color: var(--k-muted);
   cursor: pointer;
@@ -297,30 +318,11 @@ function origin(e: SkillImprovementEntry): string {
   text-align: center;
 }
 
-.nc__all {
-  flex: none;
-  margin-left: auto;
-  width: 24px;
-  height: 24px;
-  padding: 0;
-  border: var(--k-rule-thin) solid var(--k-line);
-  border-radius: var(--k-r-pill);
-  background: var(--k-surface);
-  color: var(--k-muted);
-  font-size: var(--k-fs-xs);
-  line-height: 1;
-  cursor: pointer;
-
-  &:hover,
-  &:focus-visible {
-    border-color: var(--k-accent);
-    color: var(--k-text);
-  }
-
-  &:disabled {
-    cursor: progress;
-    opacity: 0.6;
-  }
+// «✓ Позначити все прочитаним» above the feed, at its right.
+.nc__bar {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: var(--k-sp-1);
 }
 
 .nc__page {
@@ -449,5 +451,56 @@ function origin(e: SkillImprovementEntry): string {
   border-radius: var(--k-r-pill);
   font-size: var(--k-fs-xs);
   color: var(--k-muted);
+}
+
+// One version of the changelog: a slip like the feed's, but read, not clicked.
+.nc__note {
+  display: flex;
+  flex-direction: column;
+  gap: var(--k-sp-1);
+  padding: var(--k-sp-2) var(--k-sp-3);
+  border: var(--k-rule-thin) solid var(--k-line);
+  border-radius: var(--k-r);
+  background: var(--k-surface);
+  box-shadow: var(--k-shadow-card);
+  color: var(--k-text);
+}
+
+.nc__notes {
+  font-size: var(--k-fs-sm);
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+
+  :deep(h3) {
+    margin: var(--k-sp-2) 0 2px;
+    font-size: var(--k-fs-xs);
+    // Quasar's global h3 carries a display line-height.
+    line-height: 1.4;
+    font-weight: var(--k-fw-semibold);
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--k-muted);
+  }
+
+  :deep(h3:first-child) {
+    margin-top: 0;
+  }
+
+  :deep(ul) {
+    margin: 0;
+    padding-left: 16px;
+  }
+
+  :deep(li + li) {
+    margin-top: 2px;
+  }
+
+  :deep(p) {
+    margin: 0 0 var(--k-sp-1);
+  }
+
+  :deep(code) {
+    font-size: 0.92em;
+  }
 }
 </style>

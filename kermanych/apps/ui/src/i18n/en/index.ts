@@ -4159,6 +4159,12 @@ export const en: MessageSchema = {
       tabs: {
         feed: 'Notifications',
         schedule: 'Schedule',
+        changelog: 'Updates',
+      },
+      // docs/specs/2026-11-16-changelog-tab.md
+      changelog: {
+        current: 'this version',
+        empty: 'This build carries no changelog.',
       },
       // docs/specs/2026-11-06-scheduled-tasks.md, decisions 6, 8 and 9.
       slip: {

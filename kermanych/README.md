@@ -945,7 +945,9 @@ enabled, closing the window only hides it and installs nothing. The app never re
 asks first, because the restart stops them (their conversations can be continued afterwards).
 On the first launch of a new version a toast «Kermanych оновлено до X» offers **Що нового**, and
 the update stays as an entry in ЦУК's «Центр сповіщень» (see [ЦУК](#цук--the-avatars-control-console))
-to reread later. Settings → Застосунок → «Загальне» shows the version and opens the whole changelog. On Linux
+to reread later. The column's «Оновлення» tab shows this build's whole changelog, newest version on
+top, the running one marked «ця версія»; Settings → Застосунок → «Загальне» shows the version and
+opens the same changelog. On Linux
 only the AppImage updates itself. A dev run (`pnpm dev:app`) and the browser build never check.
 
 The cloud names the oldest version it still serves (`app_release_policy.min_app_version`, see
@@ -2454,7 +2456,8 @@ its left and a notepad on its right. (Specs: `docs/specs/2026-11-04-cuk-control-
   is in the other. Without a workspace it asks you to pick one. Below ~900 px of window width it
   hides behind 📝.
 - **«Центр сповіщень» is the left column.** Built like the notepad — a clipboard with the
-  notifications as slips on it, newest on top, and a second tab, «Розклад» (below). Besides
+  notifications as slips on it, newest on top, a second tab, «Розклад» (below), and a third,
+  «Оновлення», with the changelog of Kermanych. Besides
   scheduled reminders and runs and the updates of Kermanych (below), it lists changes agents made to your
   skills (see «Agents improve your skills» above). A new one also raises a toast in the bottom-right
   corner, «Я вдосконалив навичку X: …», with «Переглянути», on every machine where your Kermanych
@@ -2539,10 +2542,11 @@ else sees them and nothing is written to the cloud apart from a run's hidden boa
   the result line has «Скасувати». Creating, changing or resuming an agent task and «запусти
   зараз» show a card with the project, the editable text, the skills and the next three firings.
   Deleting always asks.
-- **Where to see them.** «Центр сповіщень» has two tabs. «Сповіщення» is the feed: skill changes,
+- **Where to see them.** «Центр сповіщень» has three tabs. «Сповіщення» is the feed: skill changes,
   reminders (with «Готово» and «Відкласти» 10 хв / 1 год), finished runs and runs that were
   skipped or failed, with the reason. «Розклад» lists the tasks with their next firing and a pause
   switch; opening one shows its text, skills, run history, «Запустити зараз» and «Видалити».
+  «Оновлення» is the changelog (see [Updates and «What's new»](#updates-and-whats-new)).
 - **When Kermanych is closed or the Mac sleeps.** Nothing fires then. While at least one enabled
   task has a firing ahead (or a run going), closing the window keeps Kermanych running with an
   icon in the menu bar («Відкрити Керманич», the next firing, «Завершити»); ⌘Q quits. A missed

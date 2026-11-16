@@ -4175,6 +4175,12 @@ export const uk = {
       tabs: {
         feed: 'Сповіщення',
         schedule: 'Розклад',
+        changelog: 'Оновлення',
+      },
+      // docs/specs/2026-11-16-changelog-tab.md
+      changelog: {
+        current: 'ця версія',
+        empty: 'У цій збірці немає історії оновлень.',
       },
       // docs/specs/2026-11-06-scheduled-tasks.md, decisions 6, 8 and 9.
       slip: {
