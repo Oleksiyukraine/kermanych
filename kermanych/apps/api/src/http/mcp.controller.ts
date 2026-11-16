@@ -44,8 +44,8 @@ export class McpController {
   }
 
   @Delete(":name")
-  remove(@Param("id") id: string, @Param("name") name: string): Promise<McpProjectView> {
-    return this.read(() => this.mcp.remove(id, name));
+  remove(@Param("id") id: string, @Param("name") name: string, @Query("location") loc?: string): Promise<McpProjectView> {
+    return this.read(() => this.mcp.remove(id, name, loc === "subdir" ? "subdir" : "root"));
   }
 
   @Post(":name/copy")

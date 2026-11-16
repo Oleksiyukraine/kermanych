@@ -4,70 +4,100 @@
     :model-value="modelValue"
     :title="server ? t('aiTeam.mcp.editor.editTitle', { name: server.name }) : t('aiTeam.mcp.editor.newTitle')"
     :persistent="save.busy.value"
-    width="600px"
+    width="640px"
     @update:model-value="emit('update:modelValue', $event)"
   >
-    <!-- The name is the key in two files; renaming is a delete and an add, so it is fixed once
-         the server exists. -->
-    <KField v-model="draft.name" :label="t('aiTeam.mcp.editor.name')" :disabled="!!server" placeholder="linear" />
-
-    <div class="mcpe__kind">
-      <span class="mcpe__label">{{ t('aiTeam.mcp.editor.kind') }}</span>
-      <div class="mcpe__kinds" role="radiogroup" :aria-label="t('aiTeam.mcp.editor.kind')">
-        <KBtn
-          v-for="o in kindOptions"
-          :key="o.value"
-          :variant="draft.kind === o.value ? 'primary' : 'secondary'"
-          role="radio"
-          :aria-checked="draft.kind === o.value"
-          @click="setKind(o.value)"
-        >{{ o.label }}</KBtn>
+    <div class="mcpe">
+      <!-- The name is the key in two files; renaming is a delete and an add, so it is fixed once
+           the server exists. -->
+      <div class="mcpe__field">
+        <KField v-model="draft.name" :label="t('aiTeam.mcp.editor.name')" :disabled="!!server" placeholder="linear" />
+        <p class="mcpe__hint">{{ t('aiTeam.mcp.editor.nameHint') }}</p>
       </div>
-    </div>
 
-    <template v-if="draft.kind === 'stdio'">
-      <KField v-model="draft.command" :label="t('aiTeam.mcp.editor.command')" placeholder="npx" />
-      <KField v-model="draft.args" :label="t('aiTeam.mcp.editor.args')" multiline :rows="3" placeholder="-y&#10;@playwright/mcp@latest" />
-    </template>
-    <KField v-else v-model="draft.url" :label="t('aiTeam.mcp.editor.url')" placeholder="https://mcp.example.com/mcp" />
-
-    <div class="mcpe__pairs">
-      <span class="mcpe__label">{{ draft.kind === 'stdio' ? t('aiTeam.mcp.editor.env') : t('aiTeam.mcp.editor.headers') }}</span>
-      <div v-for="(p, i) in draft.pairs" :key="i" class="mcpe__pair">
-        <input
-          v-model="p.key"
-          class="mcpe__cell mono"
-          :placeholder="draft.kind === 'stdio' ? 'API_KEY' : 'Authorization'"
-          :aria-label="t('aiTeam.mcp.editor.key')"
-        />
-        <input
-          v-model="p.value"
-          class="mcpe__cell mono"
-          :type="p.secret ? 'password' : 'text'"
-          :placeholder="p.stored ? t('aiTeam.mcp.editor.keepSecret') : t('aiTeam.mcp.editor.value')"
-          :aria-label="t('aiTeam.mcp.editor.value')"
-        />
-        <KCheckbox v-model="p.secret" :label="t('aiTeam.mcp.editor.secret')" />
-        <KIconButton :title="t('aiTeam.mcp.editor.removePair')" @click="draft.pairs.splice(i, 1)">✕</KIconButton>
-        <label v-if="p.secret" class="mcpe__var mono">
-          <span>→ .env</span>
-          <input v-model="p.varName" class="mcpe__cell mono" :placeholder="mcpPairVarName(draft, p)" :aria-label="t('aiTeam.mcp.editor.varName')" />
-        </label>
+      <div class="mcpe__field">
+        <span class="mcpe__label">{{ t('aiTeam.mcp.editor.kind') }}</span>
+        <KToggle class="mcpe__kind" :options="[kindLabel.stdio, kindLabel.http]" :model-value="kindLabel[draft.kind]" @update:model-value="setKind" />
       </div>
-      <KBtn variant="ghost" @click="draft.pairs.push(emptyMcpPair())">
-        {{ draft.kind === 'stdio' ? t('aiTeam.mcp.editor.addEnv') : t('aiTeam.mcp.editor.addHeader') }}
-      </KBtn>
-      <p class="mcpe__hint">{{ t('aiTeam.mcp.editor.secretHint') }}</p>
-      <p v-if="hasSecret && !envIgnored" class="mcpe__warn" role="alert">{{ t('aiTeam.mcp.editor.envNotIgnored') }}</p>
+
+      <template v-if="draft.kind === 'stdio'">
+        <KField v-model="draft.command" :label="t('aiTeam.mcp.editor.command')" placeholder="npx" />
+        <div class="mcpe__field">
+          <KField v-model="draft.args" :label="t('aiTeam.mcp.editor.args')" multiline :rows="3" placeholder="-y&#10;@playwright/mcp@latest" />
+          <p class="mcpe__hint">{{ t('aiTeam.mcp.editor.argsHint') }}</p>
+        </div>
+        <!-- The command line as a session will run it: the one-argument-per-line rule shows here. -->
+        <p v-if="runLine" class="mcpe__run">
+          <span class="mcpe__run-label">{{ t('aiTeam.mcp.editor.run') }}</span>
+          <code class="mono">{{ runLine }}</code>
+        </p>
+      </template>
+      <KField v-else v-model="draft.url" :label="t('aiTeam.mcp.editor.url')" placeholder="https://mcp.example.com/mcp" />
+
+      <div class="mcpe__field">
+        <span class="mcpe__label">{{ draft.kind === 'stdio' ? t('aiTeam.mcp.editor.env') : t('aiTeam.mcp.editor.headers') }}</span>
+        <div v-if="draft.pairs.length" class="mcpe__pairs">
+          <div class="mcpe__pair mcpe__pair--head" aria-hidden="true">
+            <span>{{ keyLabel }}</span>
+            <span>{{ t('aiTeam.mcp.editor.value') }}</span>
+          </div>
+          <div v-for="(p, i) in draft.pairs" :key="i" class="mcpe__pair-block">
+            <div class="mcpe__pair">
+              <input
+                v-model="p.key"
+                class="mcpe__cell mono"
+                :placeholder="draft.kind === 'stdio' ? 'API_KEY' : 'Authorization'"
+                :aria-label="keyLabel"
+              />
+              <input
+                v-model="p.value"
+                class="mcpe__cell mono"
+                :type="p.secret ? 'password' : 'text'"
+                :placeholder="p.stored ? t('aiTeam.mcp.editor.keepSecret') : t('aiTeam.mcp.editor.valuePlaceholder')"
+                :aria-label="t('aiTeam.mcp.editor.value')"
+              />
+              <KCheckbox v-model="p.secret" :label="t('aiTeam.mcp.editor.secret')" />
+              <KIconButton :title="t('aiTeam.mcp.editor.removePair')" @click="draft.pairs.splice(i, 1)">✕</KIconButton>
+            </div>
+            <!-- Where a secret's value goes, in one line; the variable is renamed only on request. -->
+            <p v-if="p.secret && mcpPairVarName(draft, p)" class="mcpe__target">
+              <template v-if="openVars.has(p)">
+                <label class="mcpe__target-edit">
+                  <span>{{ t('aiTeam.mcp.editor.secretTarget') }}</span>
+                  <input
+                    v-model="p.varName"
+                    class="mcpe__cell mcpe__cell--var mono"
+                    :placeholder="autoVarName(p)"
+                    :aria-label="t('aiTeam.mcp.editor.varName')"
+                  />
+                </label>
+              </template>
+              <template v-else>
+                {{ t('aiTeam.mcp.editor.secretTarget') }}
+                <code class="mono">{{ mcpPairVarName(draft, p) }}</code>
+                <button type="button" class="mcpe__link" @click="openVar(p)">{{ t('aiTeam.mcp.editor.secretTargetChange') }}</button>
+              </template>
+            </p>
+          </div>
+        </div>
+        <p v-else class="mcpe__hint">{{ draft.kind === 'stdio' ? t('aiTeam.mcp.editor.noEnv') : t('aiTeam.mcp.editor.noHeaders') }}</p>
+        <div>
+          <KBtn variant="secondary" class="mcpe__add" @click="draft.pairs.push(emptyMcpPair())">
+            + {{ draft.kind === 'stdio' ? t('aiTeam.mcp.editor.addEnv') : t('aiTeam.mcp.editor.addHeader') }}
+          </KBtn>
+        </div>
+        <p v-if="draft.pairs.length" class="mcpe__hint">{{ t('aiTeam.mcp.editor.secretHint') }}</p>
+        <p v-if="hasSecret && !envIgnored" class="mcpe__notice mcpe__notice--warn" role="alert">{{ t('aiTeam.mcp.editor.envNotIgnored') }}</p>
+      </div>
+
+      <p v-if="codexNote" class="mcpe__notice">{{ codexNote }}</p>
+
+      <!-- A save that stopped at a codex table someone wrote by hand: both versions, and the
+           primary button turns into the explicit replace. -->
+      <McpCodexConflict v-if="conflict" :conflict="conflict" :name="draft.name.trim()" />
+
+      <p v-if="formError" class="mcpe__notice mcpe__notice--error mono" role="alert">{{ formError }}</p>
     </div>
-
-    <p v-if="codexNote" class="mcpe__hint">{{ codexNote }}</p>
-
-    <!-- A save that stopped at a codex table someone wrote by hand: both versions, and the
-         primary button turns into the explicit replace. -->
-    <McpCodexConflict v-if="conflict" :conflict="conflict" :name="draft.name.trim()" />
-
-    <p v-if="formError" class="mcpe__error mono">{{ formError }}</p>
 
     <template #controls>
       <KBtn :disabled="save.busy.value" @click="emit('update:modelValue', false)">{{ t('settings.modal.cancel') }}</KBtn>
@@ -80,18 +110,20 @@
 
 <script setup lang="ts">
 // Adds or changes one server of the project's `.mcp.json`; the api mirrors it into
-// `.codex/config.toml` (docs/specs/2026-11-14-project-mcp-servers.md, decisions 5–6).
+// `.codex/config.toml` (docs/specs/2026-11-14-project-mcp-servers.md, decisions 5–6; layout:
+// docs/specs/2026-11-16-mcp-servers-ux-redesign.md, decision 8).
 import { computed, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { mcpToCodex, type McpCodexConflict as Conflict, type McpProjectView, type McpServerRow } from '@kermanych/core';
 import { api } from '../../lib/api';
-import { emptyMcpDraft, emptyMcpPair, mcpDraftFrom, mcpDraftToSave, mcpPairVarName, type McpDraft } from '../../lib/mcp';
+import { emptyMcpDraft, emptyMcpPair, mcpDefLine, mcpDraftFrom, mcpDraftToSave, mcpPairVarName, type McpDraft, type McpPair } from '../../lib/mcp';
 import { errorText, useAsyncAction } from '../../composables/useAsyncAction';
 import KModal from 'components/kit/KModal.vue';
 import KField from 'components/kit/KField.vue';
 import KBtn from 'components/kit/KBtn.vue';
 import KIconButton from 'components/kit/KIconButton.vue';
 import KCheckbox from 'components/kit/KCheckbox.vue';
+import KToggle from 'components/kit/KToggle.vue';
 import McpCodexConflict from './McpCodexConflict.vue';
 
 const props = defineProps<{ modelValue: boolean; projectId: string; server?: McpServerRow | undefined; envIgnored: boolean }>();
@@ -101,26 +133,45 @@ const { t } = useI18n();
 const draft = ref<McpDraft>(emptyMcpDraft());
 const conflict = ref<Conflict>();
 const formError = ref('');
+// Secret rows whose `.env` variable name is open for editing; the rest show it as one line.
+const openVars = ref(new WeakSet<McpPair>());
 
-// Each open starts from the server on screen (or a blank one); a close drops the draft.
+/** The variable a secret row gets when the operator names none. */
+const autoVarName = (p: McpPair) => mcpPairVarName(draft.value, { ...p, varName: '' });
+
+function openVar(p: McpPair): void {
+  if (!p.varName.trim()) p.varName = autoVarName(p);
+  openVars.value.add(p);
+}
+
+// Each open starts from the server on screen (or a blank one); a close drops the draft. A stored
+// secret under a variable of its own name opens with that name on show.
 watch(
   () => props.modelValue,
   (open) => {
     if (!open) return;
     draft.value = props.server ? mcpDraftFrom(props.server.name, props.server.def) : emptyMcpDraft();
+    openVars.value = new WeakSet();
+    for (const p of draft.value.pairs) if (p.secret && p.varName && p.varName !== autoVarName(p)) openVars.value.add(p);
     conflict.value = undefined;
     formError.value = '';
   },
   { immediate: true },
 );
 
-const kindOptions = computed(() => [
-  { value: 'stdio', label: t('aiTeam.mcp.kind.stdio') },
-  { value: 'http', label: t('aiTeam.mcp.kind.http') },
-]);
-function setKind(kind: string): void {
-  draft.value.kind = kind === 'http' ? 'http' : 'stdio';
+const kindLabel = computed(() => ({ stdio: t('aiTeam.mcp.kind.stdio'), http: t('aiTeam.mcp.kind.http') }));
+function setKind(label: string): void {
+  draft.value.kind = label === kindLabel.value.http ? 'http' : 'stdio';
 }
+
+const keyLabel = computed(() => (draft.value.kind === 'stdio' ? t('aiTeam.mcp.editor.envKey') : t('aiTeam.mcp.editor.headerKey')));
+
+const runLine = computed(() => {
+  const d = draft.value;
+  if (d.kind !== 'stdio' || !d.command.trim()) return '';
+  const args = d.args.split('\n').map((a) => a.trim()).filter(Boolean);
+  return mcpDefLine({ kind: 'stdio', command: d.command.trim(), args, env: {} });
+});
 
 const hasSecret = computed(() => draft.value.pairs.some((p) => p.secret && p.key.trim()));
 
@@ -160,67 +211,27 @@ const save = useAsyncAction(
 </script>
 
 <style scoped lang="scss">
-.mcpe__label {
-  display: block;
-  margin-bottom: var(--k-sp-1);
-  font-size: var(--k-fs-xs);
-  color: var(--k-faint);
+.mcpe {
+  display: flex;
+  flex-direction: column;
+  gap: var(--k-sp-4);
+}
+
+.mcpe__field {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 6px;
 }
 
 .mcpe__kind {
-  margin: var(--k-sp-2) 0 var(--k-sp-3);
+  align-self: flex-start;
 }
 
-.mcpe__kinds {
-  display: flex;
-  gap: var(--k-sp-2);
-}
-
-.mcpe__pairs {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: var(--k-sp-2);
-  margin-top: var(--k-sp-3);
-}
-
-.mcpe__pair {
-  display: grid;
-  grid-template-columns: minmax(110px, 1fr) minmax(140px, 1.5fr) auto 28px;
-  align-items: center;
-  gap: var(--k-sp-2);
-  width: 100%;
-}
-
-.mcpe__var {
-  grid-column: 2 / -1;
-  display: flex;
-  align-items: center;
-  gap: var(--k-sp-2);
-  font-size: var(--k-fs-xs);
-  color: var(--k-faint);
-  white-space: nowrap;
-}
-
-.mcpe__cell {
-  min-width: 0;
-  width: 100%;
-  font-family: var(--k-font-mono);
-  font-size: var(--k-fs-sm);
+// The same as KField's label, for the fields KField does not draw.
+.mcpe__label {
+  font-size: 13px;
   color: var(--k-text);
-  background: var(--k-surface);
-  border: var(--k-rule-thin) solid var(--k-line);
-  border-radius: var(--k-r-sm);
-  padding: 5px 7px;
-
-  &::placeholder {
-    color: var(--k-faint);
-  }
-
-  &:focus {
-    outline: none;
-    border-color: var(--k-accent);
-  }
 }
 
 .mcpe__hint {
@@ -230,15 +241,140 @@ const save = useAsyncAction(
   color: var(--k-muted);
 }
 
-.mcpe__warn {
-  margin: 0;
-  font-size: var(--k-fs-sm);
-  color: var(--k-accent);
+.mcpe__run {
+  display: flex;
+  align-items: baseline;
+  gap: var(--k-sp-2);
+  margin: calc(-1 * var(--k-sp-2)) 0 0;
+  padding: var(--k-sp-2);
+  font-size: var(--k-fs-xs);
+  background: var(--k-surface2);
+  border-radius: var(--k-r-sm);
+
+  code {
+    color: var(--k-text);
+    overflow-wrap: anywhere;
+  }
 }
 
-.mcpe__error {
-  margin: var(--k-sp-2) 0 0;
+.mcpe__run-label {
+  flex: none;
+  color: var(--k-faint);
+}
+
+.mcpe__pairs {
+  display: flex;
+  flex-direction: column;
+  gap: var(--k-sp-2);
+}
+
+.mcpe__pair-block {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.mcpe__pair {
+  display: grid;
+  // Fixed tracks for the checkbox and the ✕: the header row has neither, and `auto` would give
+  // it other column widths than the rows under it.
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.5fr) 88px 28px;
+  align-items: center;
+  gap: var(--k-sp-2);
+
+  &--head {
+    font-size: var(--k-fs-xs);
+    color: var(--k-faint);
+  }
+}
+
+.mcpe__target {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 0;
+  font-size: var(--k-fs-xs);
+  color: var(--k-muted);
+
+  code {
+    color: var(--k-text);
+  }
+}
+
+.mcpe__target-edit {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.mcpe__link {
+  padding: 0;
+  font: inherit;
+  color: var(--k-muted);
+  text-decoration: underline;
+  background: none;
+  border: none;
+  cursor: pointer;
+
+  &:hover,
+  &:focus-visible {
+    color: var(--k-text);
+  }
+}
+
+.mcpe__cell {
+  min-width: 0;
+  width: 100%;
+  font-family: var(--k-font-mono);
   font-size: var(--k-fs-sm);
-  color: var(--k-accent);
+  color: var(--k-text);
+  background: var(--k-surface);
+  border: var(--k-rule-thin) solid var(--k-line-strong);
+  border-radius: var(--k-r-sm);
+  padding: 6px 8px;
+
+  &::placeholder {
+    color: var(--k-faint);
+  }
+
+  &:focus {
+    outline: none;
+    border-color: var(--k-accent);
+  }
+
+  &--var {
+    width: 240px;
+    font-size: var(--k-fs-xs);
+    padding: 3px 6px;
+  }
+}
+
+.mcpe__field .mcpe__add {
+  padding: 7px 12px;
+  font-size: var(--k-fs-xs);
+}
+
+.mcpe__notice {
+  margin: 0;
+  padding: var(--k-sp-2) var(--k-sp-3);
+  font-size: var(--k-fs-sm);
+  line-height: 1.5;
+  color: var(--k-muted);
+  border-left: 3px solid var(--k-line-strong);
+  border-radius: var(--k-r-sm);
+  background: var(--k-surface2);
+
+  &--warn {
+    color: var(--k-text);
+    border-left-color: var(--k-warning);
+    background: color-mix(in srgb, var(--k-warning) 8%, transparent);
+  }
+
+  &--error {
+    color: var(--k-text);
+    border-left-color: var(--k-danger);
+    background: color-mix(in srgb, var(--k-danger) 8%, transparent);
+  }
 }
 </style>
