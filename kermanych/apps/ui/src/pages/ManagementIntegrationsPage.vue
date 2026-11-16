@@ -327,7 +327,7 @@
           <KField v-model="planeTokenInput" :label="t('plane.connect.tokenLabel')" type="password" placeholder="plane_api_…" @keydown.enter="planeTokenNext" />
           <p class="int__hint">
             {{ t('plane.connect.tokenHintBefore') }}
-            <a class="int__link" :href="planeWorkspaceLink" target="_blank" rel="noopener noreferrer">{{ t('plane.connect.tokenPath') }}</a>.
+            <a class="int__link" :href="planeTokenLink" target="_blank" rel="noopener noreferrer">{{ t('plane.connect.tokenPath') }}</a>.
             {{ t('plane.connect.tokenHintAfter') }}
           </p>
         </template>
@@ -401,7 +401,7 @@
             <KField v-model="planeTokenInput" :label="t('plane.connect.tokenLabel')" type="password" placeholder="plane_api_…" />
             <p class="int__hint">
               {{ t('plane.connect.tokenHintBefore') }}
-              <a class="int__link" :href="planeWorkspaceLink" target="_blank" rel="noopener noreferrer">{{ t('plane.connect.tokenPath') }}</a>.
+              <a class="int__link" :href="planeTokenLink" target="_blank" rel="noopener noreferrer">{{ t('plane.connect.tokenPath') }}</a>.
             </p>
             <div class="int__row">
               <KBtn variant="secondary" :loading="planeBusy" :disabled="!planeTokenInput.trim()" @click="savePlaneToken">
@@ -586,7 +586,7 @@ import {
   type PlaneProjectOption,
   type SlackChannelOption,
 } from '../lib/api';
-import { parsePlaneAddress, planeWebBase } from '../lib/plane-view';
+import { parsePlaneAddress, planeTokenUrl } from '../lib/plane-view';
 import { IS_PREVIEW } from '../lib/preview';
 import { SLACK_MANIFEST } from '../lib/slack-manifest';
 import { useAuth } from 'stores/auth';
@@ -1024,13 +1024,11 @@ const planeSettingsOptions = computed<KSelectOption[]>(() =>
 const planeProjectOptions = computed<KSelectOption[]>(() =>
   planeProjects.value.map((p) => ({ value: p.id, label: `${p.name} · ${p.identifier}` })),
 );
-// Where the owner makes a token: their Plane workspace, from which the path in the hint is
-// two clicks. The settings card points at the selected project's workspace.
-const planeWorkspaceLink = computed(() => {
+// Where the owner makes a token: Plane's Personal Access Tokens page. The settings card points
+// at the selected project's workspace.
+const planeTokenLink = computed(() => {
   const row = planeSettingsOpen.value ? planeSettingsRow.value : null;
-  const site = row?.siteUrl ?? planeSite.value;
-  const slug = row?.workspaceSlug ?? planeSlug.value;
-  return site ? `${planeWebBase(site)}/${slug ? `${encodeURIComponent(slug)}/` : ''}` : 'https://app.plane.so/';
+  return planeTokenUrl(row?.siteUrl ?? planeSite.value, row?.workspaceSlug ?? planeSlug.value);
 });
 
 // A pasted workspace URL names the slug too: fill the slug field from it, so the paste is
