@@ -199,6 +199,17 @@ export function planeIssueUrl(
   return `${planeWebBase(integration.siteUrl)}/${encodeURIComponent(integration.workspaceSlug)}/browse/${encodeURIComponent(key)}/`;
 }
 
+// Plane's Personal Access Tokens page. The workspace-scoped `{web}/{slug}/settings/account/api-tokens`
+// is that page in Plane v0.28–v1.2 and redirects to it from v1.3 on, so it serves older
+// self-hosted instances too; without a slug only v1.3+'s `{web}/settings/profile/api-tokens` is left.
+// The bare workspace URL is no good: Plane forwards it into some project.
+export function planeTokenUrl(siteUrl: string, workspaceSlug: string): string {
+  const web = planeWebBase(siteUrl || CLOUD_WEB);
+  return workspaceSlug
+    ? `${web}/${encodeURIComponent(workspaceSlug)}/settings/account/api-tokens`
+    : `${web}/settings/profile/api-tokens`;
+}
+
 // What the owner types or pastes as «Plane address». A pasted workspace URL
 // (`https://app.plane.so/my-team/projects/`) carries the workspace slug as its first path
 // segment, so it fills both fields at once; a bare origin leaves the slug to the explicit

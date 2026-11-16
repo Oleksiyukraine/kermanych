@@ -10,6 +10,7 @@ import {
   launchDefaults,
   parsePlaneAddress,
   planeIssueUrl,
+  planeTokenUrl,
   priorityTone,
   priorityValue,
   subtasksOf,
@@ -235,6 +236,18 @@ describe('planeIssueUrl', () => {
     expect(planeIssueUrl(integration({ siteUrl: 'https://plane.acme.io/' }), 'WEB-1')).toBe(
       'https://plane.acme.io/my-team/browse/WEB-1/',
     );
+  });
+});
+
+describe('planeTokenUrl', () => {
+  it("opens the workspace's Personal Access Tokens page, not the workspace root", () => {
+    expect(planeTokenUrl('https://api.plane.so', 'my-team')).toBe('https://app.plane.so/my-team/settings/account/api-tokens');
+    expect(planeTokenUrl('https://plane.acme.io/', 'my-team')).toBe('https://plane.acme.io/my-team/settings/account/api-tokens');
+  });
+
+  it('falls back to the workspace-less token page, on Plane Cloud when no address is typed yet', () => {
+    expect(planeTokenUrl('https://plane.acme.io', '')).toBe('https://plane.acme.io/settings/profile/api-tokens');
+    expect(planeTokenUrl('', '')).toBe('https://app.plane.so/settings/profile/api-tokens');
   });
 });
 
