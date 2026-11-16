@@ -3863,6 +3863,8 @@ export const en: MessageSchema = {
       'omp is not signed in on this machine — run “omp login” in a terminal, then try again',
     runtime_omp_binary_missing:
       'omp was not found on PATH — install omp and make sure the “omp” command resolves, then try again',
+    runtime_project_dir_missing:
+      'the project folder does not exist on this machine — it was deleted or moved. Bind the folder again in the project settings, then try again',
     move_refusal: 'The cloud refused: a project can only move between workspaces you belong to',
     assign_other: 'This task is assigned to someone else — only they can run it.',
     assign_not_member: 'This user is not a member of the task’s workspace.',
@@ -3967,6 +3969,8 @@ export const en: MessageSchema = {
       'omp signed out — the session stopped. Run “omp login” in a terminal and send your message again.',
     omp_binary_missing:
       'omp went missing from PATH — the session stopped. Make sure the “omp” command resolves and send your message again.',
+    project_dir_missing:
+      'the project folder does not exist on this machine — the session stopped. Bind the folder again in the project settings and send your message again.',
     jira_issue_created: 'Jira: created {key} — {summary}',
     jira_issue_updated: 'Jira: updated {key} ({fields})',
     jira_issue_transitioned: 'Jira: {key} → {status}',
