@@ -45,8 +45,9 @@ export const assistantMascot: Ref<AssistantMascotId> = persisted<AssistantMascot
   (id) => id,
 );
 
-// The two panels of the window's accordion: ЦУК, and the Менеджмент assistant (managers only).
-export type AssistantPanel = 'cuk' | 'management';
+// The panels of the window's accordion: ЦУК, «Дослідження» (docs/specs/2026-11-16-research-mode.md)
+// and the Менеджмент assistant (managers only).
+export type AssistantPanel = 'cuk' | 'research' | 'management';
 
 export const useAssistantOverlay = defineStore('assistant-overlay', () => {
   const open = ref(false);
@@ -55,9 +56,10 @@ export const useAssistantOverlay = defineStore('assistant-overlay', () => {
   const summons = ref(0);
   const panel = ref<AssistantPanel>('cuk');
 
-  // Every opening starts on ЦУК: the console is what the window is for (decision 2).
+  // The window opens on the panel used last — ЦУК only on the first opening after a start
+  // (docs/specs/2026-11-16-research-mode.md, decision 4): ⌘K in the middle of a research must
+  // not fold it every time.
   function show(): void {
-    panel.value = 'cuk';
     open.value = true;
     unread.value = false;
   }

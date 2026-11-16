@@ -11,10 +11,9 @@
           type="button"
           :aria-expanded="!folded"
           :aria-label="folded ? t('cuk.expand') : t('cuk.fold')"
-          :disabled="!foldable"
           @click="emit('toggle')"
         >
-          <span v-if="foldable" class="cuk__caret" :class="{ 'cuk__caret--open': !folded }" aria-hidden="true"></span>
+          <span class="cuk__caret" :class="{ 'cuk__caret--open': !folded }" aria-hidden="true"></span>
           <span class="cuk__title mono">{{ t('cuk.title') }}</span>
           <span v-if="folded && chat.busy" class="cuk__busy mono" aria-live="polite">{{ t('management.assistant.busyShort') }}</span>
         </button>
@@ -126,11 +125,8 @@ import CukActionCard from './CukActionCard.vue';
 import { confirmAction } from '../../lib/confirm';
 import { useAsyncAction, useKeyedAction } from '../../composables/useAsyncAction';
 
-defineProps<{
-  folded?: boolean;
-  // There is a second panel to hand the accordion to (decision 9: only managers have one).
-  foldable?: boolean;
-}>();
+// There is always another panel to hand the accordion to: «Дослідження» is everyone's.
+defineProps<{ folded?: boolean }>();
 const emit = defineEmits<{ toggle: [] }>();
 
 const { t } = useI18n();

@@ -14,7 +14,7 @@ const RUNNING_STATUSES: readonly SessionStatus[] = ['queued', 'thinking', 'tool'
 //
 // It is safe on a live session (the server's liveOrResume never respawns a running turn) and
 // de-duplicated per id, so the cases below are about avoiding pointless or harmful spawns,
-// not about correctness of a double call. ChatPage.selectThread applies the same rule.
+// not about correctness of a double call. ResearchAssistant applies the same rule to researches.
 export function historyLoadFor(s: Session): 'resume' | 'load' {
   // A native harness is a TUI process no reaper stops, so browsing sessions would leave one
   // running per session looked at. Its pane offers «Продовжити» explicitly.

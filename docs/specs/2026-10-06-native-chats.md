@@ -1,6 +1,8 @@
 # Native chats: `omp` / `claude` TUI on the «Чат» page
 
 > Superseded in part by docs/specs/2026-11-05-remove-managed-claude-code.md: the «Чат» chip defaults to the provider instead of remembering the last pick, and ▶ on a native thread is shown blocked.
+>
+> Superseded by docs/specs/2026-11-16-research-mode.md: the «Чат» page is gone, chats became «Дослідження» in the avatar window, which runs only in «Керманич»; native chats are no longer created and the old ones are archived at start.
 
 ## Goal
 

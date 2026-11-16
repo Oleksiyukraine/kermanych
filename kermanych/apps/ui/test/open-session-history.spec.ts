@@ -6,7 +6,7 @@ import { historyLoadFor } from '../src/lib/open-session-history';
 // it, so GET /transcript can only answer the "dormant" notice — or, once the idle reaper has
 // stopped the child but kept its Live, an EMPTY list that renders as «Журнал порожній».
 // Only a resume rehydrates, so this is the rule that decides which call an open makes.
-// ChatPage.selectThread already applies the same rule to threads.
+// ResearchAssistant already applies the same rule to researches.
 
 const base: Session = {
   id: 's1',

@@ -20,7 +20,6 @@ import { CodedError } from "../management/coded-error";
 import { claudeHistoryToOmp } from "../runtime/claude-history";
 import { messagesToTranscript, type OmpMessage, type Rehydrated } from "../supervisor/messages-to-transcript";
 import { firstPrUrl } from "../supervisor/pr-url";
-import { CHAT_TOOLS } from "../supervisor/chat-tools";
 import { claudeMcpConfigPath, claudeSettingsPath, codexConfigArgs, codexHookPath, NATIVE_TOKEN_ENV, NATIVE_URL_ENV, ompExtensionPath } from "./native-hooks";
 import { BrowserMcpService } from "../browser/browser-mcp.service";
 import { MCP_TOKEN_ENV, MCP_URL_ENV, ompMcpBridgePath } from "../runtime/omp-mcp-bridge";
@@ -37,9 +36,6 @@ export type NativeEvent =
 
 // claude's switch off the alternate screen (core NativeSettings.claudeFullScreen).
 export const CLAUDE_INLINE_ENV = "CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN";
-
-// CHAT_TOOLS name tools the way omp does (lowercase); Claude Code's built-ins are capitalised.
-const CLAUDE_TOOL_NAMES: Record<string, string> = { read: "Read", grep: "Grep", glob: "Glob", bash: "Bash", edit: "Edit", write: "Write" };
 
 // The live overlay the supervisor merges over a native row while its harness runs.
 export type NativeLive = Pick<Session, "status" | "currentTool" | "error" | "terminalId">;
@@ -564,10 +560,7 @@ export class NativeSessionService implements OnModuleInit, OnModuleDestroy {
   // with a subcommand's name, from being read as an option. With the session browser bound,
   // claude also gets `--mcp-config <file>` — variadic, so it stays right before the `--` tail (or
   // last) and never swallows a following argument — omp a second `--hook`: the MCP bridge, which
-  // reads its server from the pty env, and codex an `mcp_servers` override. A chat runs in the
-  // operator's own checkout, so it keeps the managed chat's read-only built-ins on every launch
-  // (docs/specs/2026-10-06-native-chats.md); `--tools` is variadic for claude too, so it sits
-  // before `--settings`. codex has no tool allowlist: its chat is read-only by sandbox.
+  // reads its server from the pty env, and codex an `mcp_servers` override.
   private async command(
     session: Session,
     cwd: string,
@@ -576,31 +569,28 @@ export class NativeSessionService implements OnModuleInit, OnModuleDestroy {
     mcp?: { name: string; url: string; token: string },
   ): Promise<{ file: string; args: string[] }> {
     const tail = prompt ? ["--", prompt] : [];
-    const chat = session.kind === "chat";
     const harness: NativeHarness = session.runtime ?? "omp";
     switch (harness) {
       case "claude-code": {
-        const tools = chat ? ["--tools", CHAT_TOOLS.map((t) => CLAUDE_TOOL_NAMES[t] ?? t).join(",")] : [];
         const settings = await claudeSettingsPath();
         const mcpArgs = mcp ? ["--mcp-config", await claudeMcpConfigPath(session.id, mcp)] : [];
         if (resume && session.ompSessionId)
-          return { file: "claude", args: ["--resume", session.ompSessionId, ...tools, "--settings", settings, ...mcpArgs, ...tail] };
+          return { file: "claude", args: ["--resume", session.ompSessionId, "--settings", settings, ...mcpArgs, ...tail] };
         // Kermanych names the transcript, so history and usage are findable before any hook.
         const uuid = randomUUID();
         this.registry.updateSession(session.id, { ompSessionId: uuid });
-        return { file: "claude", args: ["--session-id", uuid, ...tools, "--settings", settings, ...mcpArgs, ...tail] };
+        return { file: "claude", args: ["--session-id", uuid, "--settings", settings, ...mcpArgs, ...tail] };
       }
       case "omp": {
         const hook = await ompExtensionPath();
         const from = resume && session.ompSessionFile ? ["--resume", session.ompSessionFile] : [];
         const bridge = mcp ? ["--hook", await ompMcpBridgePath()] : [];
-        const tools = chat ? ["--tools", CHAT_TOOLS.join(",")] : [];
-        return { file: "omp", args: ["launch", ...from, ...tools, "--hook", hook, ...bridge, ...tail] };
+        return { file: "omp", args: ["launch", ...from, "--hook", hook, ...bridge, ...tail] };
       }
       case "codex": {
         // codex mints its own session id; the hooks report it (codexHook). Options go before
         // `resume`'s positional id. The trust override needs the realpath (/private/tmp/…).
-        const flags = [...codexConfigArgs(await realpath(cwd), await codexHookPath(), mcp), ...(chat ? ["-s", "read-only", "-a", "never"] : [])];
+        const flags = codexConfigArgs(await realpath(cwd), await codexHookPath(), mcp);
         if (resume && session.ompSessionId) return { file: "codex", args: ["resume", ...flags, session.ompSessionId, ...tail] };
         return { file: "codex", args: [...flags, ...tail] };
       }
@@ -871,13 +861,6 @@ export class NativeSessionService implements OnModuleInit, OnModuleDestroy {
     }
     const messages = await this.history(session).catch(() => [] as OmpMessage[]);
     const transcript = messagesToTranscript(messages);
-    // A native chat's opening message is typed into its TUI, not sent through the supervisor's
-    // deliver, so it is learned here: it names the thread and seeds «В беклог», as a managed
-    // chat's first message does.
-    if (session.kind === "chat" && !session.task.trim()) {
-      const first = transcript.entries.find((e) => e.kind === "user_text" && e.text.trim());
-      if (first?.kind === "user_text") this.registry.updateSession(id, { task: first.text.trim() });
-    }
     const prUrl = run?.prRequested && !session.prOpened ? this.prUrlIn(messages.slice(run.prFrom ?? 0)) : undefined;
     if (run && prUrl) {
       run.prRequested = false;

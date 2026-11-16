@@ -174,7 +174,6 @@ export const useCukChat = defineStore('cuk-chat', () => {
     const tabs: Place[] = [
       { id: 'agents', label: t('common.nav.viewAgents'), to: { name: 'agents' } },
       { id: 'board', label: t('common.nav.viewBoard'), to: { name: 'board' } },
-      { id: 'chat', label: t('common.nav.viewChat'), to: { name: 'chat' } },
       { id: 'synergy', label: t('common.nav.viewSynergy'), to: { name: 'synergy' } },
       { id: 'ai-team', label: t('common.nav.viewAiTeam'), to: { name: 'ai-team' } },
       { id: 'management', label: t('common.nav.viewManagement'), to: { name: MANAGEMENT_DEFAULT_SECTION } },

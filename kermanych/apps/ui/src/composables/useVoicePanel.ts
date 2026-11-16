@@ -1,7 +1,7 @@
 // apps/ui/src/composables/useVoicePanel.ts
 // What a page hosting KPanel needs for voice: the Live conversation
 // (docs/specs/2026-11-02-voice-conversation.md) and local dictation into the panel's composer
-// (docs/specs/2026-11-14-local-voice-dictation.md). «Агенти», «Чат» and «Синергія» share it so
+// (docs/specs/2026-11-14-local-voice-dictation.md). «Агенти», «Дослідження» and «Синергія» share it so
 // the three panels behave identically; «Синергія» offers dictation only (decision 1).
 import { computed, watch, type ComputedRef, type Ref } from 'vue';
 import type { Session } from '@kermanych/core';

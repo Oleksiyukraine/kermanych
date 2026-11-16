@@ -635,6 +635,7 @@ import { useAsyncAction, useKeyedAction, errorText } from '../composables/useAsy
 import { useLoadPhase } from '../composables/useLoadPhase';
 import { useTerminal } from 'stores/terminal';
 import { useVoice } from 'stores/voice';
+import { useResearch } from 'stores/research';
 import JiraMergePrompt from 'components/jira/JiraMergePrompt.vue';
 import LinearMergePrompt from 'components/linear/LinearMergePrompt.vue';
 import PlaneMergePrompt from 'components/plane/PlaneMergePrompt.vue';
@@ -654,17 +655,24 @@ const terminal = useTerminal();
 const projects = useProjects();
 // ── VOICE CONVERSATION PILL ─────────────────────────────────────────────────
 const voice = useVoice();
+const research = useResearch();
 const voiceSessionName = computed(() => store.sessions.find((s) => s.id === voice.sessionId)?.name ?? '');
 const voiceClock = computed(() => {
   const s = Math.floor((voice.bar?.elapsedMs ?? 0) / 1000);
   return `${String(Math.floor(s / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`;
 });
+// A research's conversation lives in the avatar's window (docs/specs/2026-11-16-research-mode.md),
+// an agent's on «Агенти».
 function openVoiceSession(): void {
   const s = store.sessions.find((x) => x.id === voice.sessionId);
   if (!s) return;
   store.selectProject(s.projectId);
+  if (s.kind === 'chat') {
+    research.open(s.id);
+    return;
+  }
   store.selectSession(s.id);
-  void router.push({ name: s.kind === 'chat' ? 'chat' : 'agents' });
+  void router.push({ name: 'agents' });
 }
 const auth = useAuth();
 // Foreground work started through useAsyncAction / trackLoad — drives the top progress bar.
@@ -1061,7 +1069,6 @@ onBeforeUnmount(() => window.kermanych?.dock?.setBadge(0));
 const VIEWS = [
   { value: 'agents', label: 'common.nav.viewAgents', route: 'agents', section: 'agents' },
   { value: 'board', label: 'common.nav.viewBoard', route: 'board', section: 'board' },
-  { value: 'chat', label: 'common.nav.viewChat', route: 'chat', section: 'chat' },
   { value: 'synergy', label: 'common.nav.viewSynergy', route: 'synergy', section: 'synergy' },
   {
     value: 'management',

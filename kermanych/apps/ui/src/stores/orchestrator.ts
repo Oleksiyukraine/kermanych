@@ -106,7 +106,7 @@ export const useOrchestrator = defineStore('orchestrator', () => {
   // re-inserts). Plain, not reactive: only `transcripts` drives a view.
   const transcriptRecency = new Set<string>();
   // How many places show (or follow live) each session's transcript — the open pane of «Агенти»,
-  // «Чат», «Дизайн», «Синергія», the voice conversation. A held transcript is never evicted:
+  // «Дослідження», «Дизайн», «Синергія», the voice conversation. A held transcript is never evicted:
   // the pane would drop to a skeleton under the operator's eyes. See `holdTranscript`.
   const transcriptHolds = new Map<string, number>();
   // Messages sent from the composer that the transcript does not hold yet — rendered as the
@@ -142,7 +142,7 @@ export const useOrchestrator = defineStore('orchestrator', () => {
   // for good if omp cannot be read — so every picker built on it degrades to «за замовчуванням».
   const models = ref<ModelOption[]>([]);
   // Which «Агенти» tab the page shows. Lives here, not in AgentsPage, because launching from
-  // Чат (promote, «В беклог») picks the tab before the page mounts. See lib/buckets.ts for
+  // «Дослідження» (promote, «В беклог») picks the tab before the page mounts. See lib/buckets.ts for
   // what each bucket holds.
   const selectedBucket = ref<Bucket>(savedSelection.bucket ?? 'agents');
   watch(
@@ -482,8 +482,8 @@ export const useOrchestrator = defineStore('orchestrator', () => {
     return api.syncProjects(cloud, prune);
   }
 
-  function createChat(projectId: string, native?: NativeHarness) {
-    return api.createChat(projectId, native);
+  function createChat(projectId: string) {
+    return api.createChat(projectId);
   }
 
   function promoteChat(id: string, taskId: string) {

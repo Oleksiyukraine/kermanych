@@ -71,8 +71,8 @@ worktrees, the RPC bridge — is shared.
 The provider — `omp`, `claude` or `codex` (stored as `omp | claude-code | codex`) — is a
 per-user choice that sets the **default launch mode**: omp → «Керманич», claude → native
 `claude`, codex → native `codex`. The UI applies it wherever you do not pick a mode yourself:
-«Дошка» ▶, the Jira, Linear and Plane launch dialogs, ЦУК, the «Режим» that «Нова задача» opens
-with and the «Чат» chip (both can still be changed per launch; neither remembers the last pick).
+«Дошка» ▶, the Jira, Linear and Plane launch dialogs, ЦУК and the «Режим» that «Нова задача» opens
+with (it can still be changed per launch and does not remember the last pick).
 «Синергія» cards, Посіпака, Тестувальник, Ревізор and branches always run in «Керманич». The api
 itself keeps «no `native` = managed».
 
@@ -98,8 +98,8 @@ triggers, the skill-overlay config, subscription-plan spend and the plan/todo ch
 features too.
 
 **Legacy rows.** Sessions created on the removed managed `claude-code` backend are fixed up at
-every start: plain agents and chats become native claude sessions continued in the same folder
-with `claude --resume <id>`; discussions, reviews, testers, designs and Посіпака runs are
+every start: plain agents become native claude sessions continued in the same folder
+with `claude --resume <id>`; researches, discussions, reviews, testers, designs and Посіпака runs are
 archived. Any managed spawn of such a row is refused with `managed_claude_removed`.
 
 Native claude reads your own Claude Code settings (`~/.claude/settings.json`, the project's
@@ -157,7 +157,7 @@ places:
 - **The session.** Its status reads «login required» instead of «error» or
   «Launching…», and the panel's banner names the command (`omp login`). The child is
   stopped. Log in in a terminal and send the message again: the next send respawns the
-  session on the new credentials. A chat or a session in review that is signed out
+  session on the new credentials. A research or a session in review that is signed out
   mid-conversation gets the same state.
 - **The top bar.** A «Потрібен вхід в omp» pill appears beside the settings gear while
   omp is signed out. Its tooltip names the command. The app runs the omp check again every
@@ -322,7 +322,7 @@ A failed agent never hides live ones: when a pill is the mark and something also
 the red dot sits on the pill's corner instead.
 
 A workspace row wears the same mark summed over its projects, so a folded workspace still
-shows that something inside it is waiting. Chats, archived and merged agents, and agents
+shows that something inside it is waiting. Researches, archived and merged agents, and agents
 you stopped yourself never mark a row. A result counts as read once you open the agent in
 «Агенти» (a «Синергія» session: in «Синергія») while the window is visible. Read state is kept per machine, in
 the browser's local storage; finished agents from before this feature shipped count as read.
@@ -1140,27 +1140,6 @@ ChatGPT app is not used. A missing binary shows `command not found` in the «Л�
   card shows «чекає», you approve in the «Лог» tab (answer «Yes, proceed» to approve only that
   command), and the commit goes through. Kermanych does not widen codex's sandbox for you.
 
-### Native chats
-
-The «Чат» page offers the same choice per thread (spec:
-`docs/specs/2026-10-06-native-chats.md`). The chip next to «+ Новий» picks the **Режим** of
-the next chat — `Керманич`, `omp`, `claude` or `codex` — and defaults to your provider each time; a thread
-keeps the mode it was created with, and its card shows that harness's mark. A native chat
-opens the harness's TUI idle in the project folder; type the first message into it. After
-each turn the first message becomes the thread's name, as for a managed chat.
-
-- **Read-only, like every chat.** A chat runs in your own checkout, not a worktree, so the
-  harness is started with the chat's read-only built-ins only — `claude --tools
-  Read,Grep,Glob` / `omp launch --tools read,grep,glob` — on every start and resume. MCP and
-  extension tools are unaffected. Nothing else of Kermanych's is added. codex has no tool
-  allowlist, so its chat runs in codex's read-only sandbox instead (`-s read-only -a never`):
-  it can read with any shell command, but cannot write a file or ask to escalate.
-- **Opening a thread does not start its harness.** A stopped native chat shows
-  «Продовжити» instead; ■ stops a running one. Archiving a thread (✕) stops its harness.
-- **Not available** for native chats: «Почати імплементацію» (▶) — promotion forks the
-  conversation into a worktree, and a native conversation cannot be forked. «В беклог» (⊕)
-  works.
-
 ## Voice conversation («Голосова розмова»)
 
 Talk to a session's agent by voice, the way ChatGPT's voice mode works (spec:
@@ -1170,7 +1149,7 @@ with the repository and its tools). GPT-Live is only the agent's voice: it never
 the code itself, and asks back only when it did not hear you. For speaking without a spoken
 reply, see [Voice dictation](#voice-dictation-диктування) — free, local, and the default.
 
-- **Where.** «Агенти» (agents, «Глибокий аналіз», discussions, reviews) and «Чат»: the ▾ beside
+- **Where.** «Агенти» (agents, «Глибокий аналіз», discussions, reviews) and «Дослідження» in the avatar window: the ▾ beside
   🎤 in the composer picks «Live-розмова» or «Диктування»; 🎤 then starts the mode used last
   (dictation until you pick Live; spec: `docs/specs/2026-11-14-local-voice-dictation.md`).
   «Синергія» has dictation only. Not native sessions, not «Менеджмент».
@@ -1231,7 +1210,7 @@ replaced the OpenAI-based `docs/specs/2026-11-03-voice-dictation.md`).
   Parakeet). It lands in `~/.kermanych/models/`, is checked against its sha256, resumes after a
   broken download, and «Видалити модель» removes it. It is loaded (~1 GB of RAM) when 🎤 is
   pressed and released after 10 minutes without dictation.
-- **In a chat composer** — «Синергія», and «Агенти» / «Чат» in the «Диктування» mode: 🎤 or **⌥D**
+- **In a chat composer** — «Синергія», and «Агенти» / «Дослідження» in the «Диктування» mode: 🎤 or **⌥D**
   toggles it. Each phrase lands in the composer when you pause (~0.8 s); after 2.5 s of quiet a
   countdown sends it. Speak again to add to it, edit it by hand to keep it until Enter, Esc to
   cancel the send (the text stays). Dictation stays on between messages until you stop it, the
@@ -1267,7 +1246,7 @@ spawned → their nested subagents.
 - **What is on it.** Chips choose the buckets, the same as the «Агенти» tabs: «Агенти» by
   default, «Завершені» on demand; the choice is remembered (a choice saved before the three
   agent buckets merged reads as «Агенти»). A fork follows its parent's bucket, as in the
-  tabs. Chats and backlog cards are never on the map. A project with nothing under the
+  tabs. Researches and backlog cards are never on the map. A project with nothing under the
   chips is not drawn; projects outside any workspace you can see hang under «Без
   воркспейсу».
 - **Reading it.** Dashed lines mean «belongs to», solid ones «spawned». A working agent has a
@@ -1336,7 +1315,7 @@ instead. Switching a project away from Web stops its web previews and closes its
 - **Page dialogs.** `alert` / `confirm` show as a bar above the page; you or the agent answer
   it (the agent's action reports the dialog). «Leave site?» is always allowed; `prompt()` is
   not supported by Electron.
-- **Agent tools.** Agent and chat sessions (managed and native, not discussion/review
+- **Agent tools.** Agent and research sessions (managed and native agents, not discussion/review
   branches) get an MCP server `kermanych`: `browser_navigate` (no URL → the running preview),
   `browser_snapshot` (page outline with `e1`, `e2`… refs, same-origin iframes included),
   `browser_click` (refuses, naming the cover, when another element covers the target),
@@ -1552,7 +1531,7 @@ is gone: prototyping on the live app is «Синергія» below (spec:
 
 ## Prototyping («Синергія»)
 
-The «Синергія» tab, right after «Чат», is for building a feature by talking to the running
+The «Синергія» tab, right after «Дошка», is for building a feature by talking to the running
 app: «прибери кнопку», «перемісти ліворуч», «перенеси пункт меню в іншу секцію», «додай сторінку
 зі списком замовлень», by text, by voice and with «◎ Вказати». Each change should land in seconds;
 when the result is right, «Імплементувати» hands it to a regular agent, or «Задача →» files it as
@@ -1691,7 +1670,7 @@ channel. Switching to another agent, closing a form, leaving the screen or resta
 keeps it, and it comes back when the same target opens again. Sending or saving drops it.
 Spec: `docs/specs/2026-11-14-persist-input-drafts.md`.
 
-- **What keeps a draft:** each agent's or chat's composer (per session), «Нова задача» on
+- **What keeps a draft:** each agent's or research's composer (per session), «Нова задача» on
   «Агенти» and on «Дошка» (one draft per project, shared by both forms), the form of a card
   being edited (per card), the ЦУК and Менеджмент assistants (Менеджмент per workspace), the
   Jira / Linear / Plane issue editors, comments and work-log notes (per issue), the «Задача з
@@ -1714,12 +1693,12 @@ A **task** is a card in the shared cloud board; a **session** is its execution o
 developer's machine. The direction is always task → session.
 
 1. **Create** — any member of the project's workspace creates a task, from the board
-   (`/#/board`) or from «Агенти» / «Чат», with a title, a description and optional launch
+   (`/#/board`) or from «Агенти» / «Дослідження», with a title, a description and optional launch
    params (model, branch prefix, base branch) and an optional «Оцінка, год» — a person's
    estimate in hours (`1,5` or `1.5`), stored as `tasks.estimate_minutes`. A launch copies it
    onto the local session for «Аналітика» → «Оцінка vs факт»; a Jira or Plane launch takes the
    ticket's own time estimate instead (a points estimate is not hours and is left out). A card filed from the board is
-   unassigned unless its author picks someone; a card filed from «Агенти» or «Чат» is
+   unassigned unless its author picks someone; a card filed from «Агенти» or «Дослідження» is
    assigned to its author, because that is the machine about to run it. Either way it is a
    row in the cloud `tasks` — there is no local-only task — so the whole workspace sees it.
    It starts in `backlog`, which exists only in the cloud. The task text (the description)
@@ -1758,7 +1737,7 @@ developer's machine. The direction is always task → session.
    bounded at 15 s to start and 15 s to answer. When that call fails or times out, the slug is
    the title transliterated to Latin, cut at a whole word within 40 characters. A slug already
    taken in the project gets `-2`, `-3`, … (Specs: `docs/specs/2026-10-26-branch-name-from-task.md`,
-   `docs/specs/2026-11-04-custom-branch-name.md`.) The model naming also applies to a chat
+   `docs/specs/2026-11-04-custom-branch-name.md`.) The model naming also applies to a research
    promoted to an agent and to a reopened session whose branch is
    gone. The branch starts from the session's base — the card's base branch, else the
    project's default branch, else the branch the project checkout is on, recorded on the
@@ -1866,8 +1845,8 @@ review branches have no such tools.
 at most 20 open findings. Past that, the tool refuses and tells the agent to mention further
 problems in its reply.
 
-- **Where.** The session's **Знахідки** tab on «Агенти» lists them (a chat has the same tab on
-  «Чат»). Its counter and the ⚑ mark on the agent's session card show how many are still open.
+- **Where.** The session's **Знахідки** tab on «Агенти» lists them (a research shows the same list
+  behind «Знахідки N» in its panel). Its counter and the ⚑ mark on the agent's session card show how many are still open.
   A new report arrives live, and it does not change the session's status or interrupt the
   agent.
 - **Створити задачу →** opens one dialog for every target, prefilled and editable: the title,
@@ -1990,7 +1969,7 @@ request with nobody watching.
   docs and PR turns. The agent is restarted on the same conversation first, because only a fresh
   child gets the ask tool switched off and `report_outcome` — a turn in progress is cut, like ■.
   It works for an open agent session with a branch, also on a project where the minion is not
-  activated; a chat, discussion, review, design, «Синергія», scheduled or native session is
+  activated; a research, discussion, review, design, «Синергія», scheduled or native session is
   refused. The run takes a place in the machine's minion cap and has the 2-hour limit, but its
   result counts toward neither the failures nor the pause. Writing to the session takes it back,
   as with any minion run; `/minion` again hands it over again.
@@ -2163,7 +2142,7 @@ change applies at once, and you can roll it back.
 - **Limits.** At most 5 improvements per session; a skill may grow to 64 000 bytes. Each change is
   recorded in the cloud table `skill_improvements` (only you read it; the newest 100 are kept).
 - **Who gets the tool and the step.** Managed agent sessions (deep analysis and
-  «Посіпака» runs included) and project chats (the tool only: a chat has none of the three turns).
+  «Посіпака» runs included) and researches (the tool only: a research has none of the three turns).
   Not native sessions, discussion and review forks, or tester runs. A session whose agent was
   launched while the level was `off` gets no step until it is relaunched with the tool.
 - **Seeing and undoing it** happens in ЦУК's «Центр сповіщень» (below).
@@ -2206,7 +2185,7 @@ checkout, because that is where every session's harness starts.
 - **Secrets.** A value marked «секрет» goes to the project's `.env`, and the file gets `${KEY}`
   (an env variable keeps its own name; a header is stored as `<SERVER>_<HEADER>`, and a pasted
   `Bearer …` token is stored without the scheme). At every launch in a project folder — managed
-  sessions, native sessions and chats, «Посіпака», «Тестувальник», scheduled runs — Kermanych adds
+  sessions, native sessions and researches, «Посіпака», «Тестувальник», scheduled runs — Kermanych adds
   to the harness's environment the `.env` variables that folder's MCP files reference, and only
   those. A worktree has its own `.env` copy, so a value saved here reaches new sessions; change a
   running one through «Змінні» in its preview row.
@@ -2225,7 +2204,7 @@ checkout, because that is where every session's harness starts.
 A project can require that its tasks are documented in its repository. The rules live in the
 framed «Документація» subsection of the project's «Основне» settings. The switch «Увімкнути
 правила документації» is off by default, because it can block pull requests for the whole
-project. Once it is on, every session of the project (chats, agents, discussions, reviews,
+project. Once it is on, every session of the project (researches, agents, discussions, reviews,
 resumes) is told where documentation goes and which of it is required, whichever runtime it
 uses, and Kermanych checks the required part before letting work leave the branch.
 
@@ -2356,7 +2335,7 @@ Local work never waits for the cloud:
   that path reads the cloud.
 - CREATING a task and STARTING one are the two steps that need the cloud: a task is a cloud
   card, so Kermanych has to write it and claim it for you. Offline, «Нова задача» and
-  «Запустити» fail with a clear error; chats, the sessions you already started, and every
+  «Запустити» fail with a clear error; researches, the sessions you already started, and every
   merge and finish keep working with no network at all.
 - Every status change is written to a local `status_outbox` table (SQLite) before it is
   pushed. The pusher retries with exponential backoff (~2 s, doubling to a 60 s cap) and
@@ -2493,11 +2472,33 @@ its left and a notepad on its right. (Specs: `docs/specs/2026-11-04-cuk-control-
   `localStorage` (the last 10), not in the cloud. Opening it shows that update's «Що нового».
 
   Below ~1280 px of window width the column hides behind 🔔, which carries the count of new entries.
-- **The Менеджмент assistant is the second panel.** For the owner and managers of the current
-  workspace the window is an accordion: ЦУК expanded (every opening starts there), «Асистент
-  менеджменту» folded to its bar above it. Clicking a bar swaps them; the one composer at the
-  bottom writes to the expanded panel, and each keeps its own draft and attachments. It is the same
-  conversation as the Менеджмент tab's dock, asked as the «Огляд» section. Developers see ЦУК only.
+- **«Дослідження» is the second panel**, for everyone (spec:
+  `docs/specs/2026-11-16-research-mode.md`). An agent that only reads: ask how something works,
+  where it lives, what a feature would take. It runs in the checkout of the selected project
+  (or the open research's), with `read`, `grep`, `glob` and `web_search` — no tool that writes,
+  so it changes neither code nor documentation — and its prompt lists the other projects of the
+  workspace bound on this machine by absolute path, so it reads those too. Unlike ЦУК it is a
+  real session: its log shows the tool rows, it survives a restart, it has its own model and
+  effort chips, voice, Хелпери and `@` files, and it takes no agent slot.
+  - **The bar.** «Історія N ▾» lists the workspace's researches (newest first, each with its
+    project; ✕ archives one), «+» starts a new one (an empty one is reused), a double-click on
+    the name renames it, «Знахідки N» shows what its agent reported.
+  - **▶ «Продовжити агентом»** picks a bound project of the workspace (the research's own is
+    preselected) and «Нова задача» or «Глибокий аналіз». Either files a card assigned to you and
+    turns the research into that card's agent in place: same conversation, now in its own
+    worktree with the full toolset — implementing what was discussed, or opening the
+    deep-analysis interview. The window steps aside onto «Агенти».
+  - **⊕** files the opening question as a backlog card; a text selection in the log does the
+    same with the selection.
+  - Only «Керманич» (omp): the «Чат» tab and its native (omp / claude / codex TUI) chats are
+    gone. Old chats appear in the history of their workspace; native ones were archived.
+- **The Менеджмент assistant is the third panel**, for the owner and managers of the current
+  workspace. The window is an accordion: one panel expanded, the
+  others folded to their bars; a folded bar expands its panel, the expanded one's bar hands the
+  window to the next. The window opens on the panel used last (ЦУК on the first opening after a
+  start). Each panel keeps its own draft and attachments. The Менеджмент panel is the same
+  conversation as the Менеджмент tab's dock, asked as the «Огляд» section. Developers see ЦУК and
+  «Дослідження» only.
 
 Esc, a click outside, <kbd>⌘K</kbd>, the character or another circle closes the window — except
 that while the expanded panel is answering, Esc stops that answer first and a second Esc closes;

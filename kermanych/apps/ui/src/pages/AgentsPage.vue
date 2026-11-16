@@ -1625,7 +1625,7 @@ const inScope = computed(() => new Set(scopedIds.value));
 
 // Every non-chat, non-Синергія session in scope, with the tab bucketOf files it
 // under — the one rule the counts and the list share, so a fork sits in its parent's tab here
-// exactly as it is counted there. Chats live on Чат and Синергія sessions on
+// exactly as it is counted there. Researches live in the avatar window and Синергія sessions on
 // Синергія, each its only view; «Карта агентів» still shows them, because they are running
 // agents (AgentMap reads the store itself). «Імплементувати» clears `synergy`, and the session
 // shows up here as an ordinary agent.
@@ -1884,7 +1884,7 @@ const selectedDecision = computed(() => (selectedSession.value ? sessionDecision
 
 // Inline rename of the open agent: double-click its name in the header. Enter and blur
 // commit, Esc discards; `renaming` also gates the blur so an Enter commit does not save twice
-// (the Чат page's rename works the same way). The new name shows at once and is held until the
+// (the «Дослідження» panel's rename works the same way). The new name shows at once and is held until the
 // session row reports it (useOptimisticValue); it belongs to the session it was made on
 // (`renameFor`), so switching agents mid-save never paints it onto another one.
 const renaming = ref(false);

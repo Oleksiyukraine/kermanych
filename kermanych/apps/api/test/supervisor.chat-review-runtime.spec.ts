@@ -29,8 +29,16 @@ vi.mock("../src/runtime/agent-runtime", () => ({
   },
 }));
 
+// A promotion reads its card for the target project and the deep-analysis flag: an ordinary
+// card of p1. Everything else of the cloud package stays real and is never reached here.
+vi.mock("@kermanych/cloud", async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  getTask: async (_client: unknown, id: string) => ({ id, projectId: "p1", deepAnalysis: false }),
+}));
+
 import { SupervisorService } from "../src/supervisor/supervisor.service";
 import { RegistryService } from "../src/registry/registry.service";
+import type { AuthService } from "../src/auth/auth.service";
 import { offlineAuth } from "./offline-auth";
 import { stubSkills } from "./skills-stub";
 
@@ -49,7 +57,9 @@ function make() {
     forkStart: vi.fn(async (_repo: string, base: string) => ({ ref: base, stale: false })),
     diff: vi.fn().mockResolvedValue("diff --git a/x.ts b/x.ts\n+const answer = 42;"),
   };
-  const sup = new SupervisorService(registry, worktree as unknown as WorktreeService, offlineAuth(), stubSkills());
+  // Signed out, but with a cloud client for the mocked getTask above.
+  const auth = { ...offlineAuth(), cloudClient: () => ({}) } as unknown as AuthService;
+  const sup = new SupervisorService(registry, worktree as unknown as WorktreeService, auth, stubSkills());
   return { sup, registry };
 }
 

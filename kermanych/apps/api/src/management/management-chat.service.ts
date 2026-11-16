@@ -42,11 +42,10 @@ import {
 
 // Read-only on disk, and not a setting: a management chat that can write to the repository
 // is a different — and far more dangerous — product than one that reads it to answer about
-// risks. The same subset the quick chats run with (supervisor.service.ts CHAT_TOOLS), which is
-// the existing proof that omp is happy in a bare project directory with no git and no edit
-// tools. The trackers — Jira and Plane — are the one thing it WRITES, and only through the
-// tracker tools the child is handed over MCP (management-mcp.service.ts), never through a
-// file tool.
+// risks. The same subset reviews run with (chat-tools.ts CHAT_TOOLS), which is the existing
+// proof that omp is happy in a directory with no edit tools. The trackers — Jira and Plane —
+// are the one thing it WRITES, and only through the tracker tools the child is handed over MCP
+// (management-mcp.service.ts), never through a file tool.
 export const MANAGEMENT_TOOLS = ["read", "grep", "glob"] as const;
 
 // The name the tracker tool server is given in the child; omp shows its tools bare.

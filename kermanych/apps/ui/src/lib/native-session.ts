@@ -25,8 +25,8 @@ export function nativeRuntimeFor(mode: LaunchMode): NativeHarness | undefined {
   return MODE_HARNESS[mode];
 }
 
-// The mode a launch takes when the operator does not pick one, and the mode the launcher and
-// the «Чат» chip open with (docs/specs/2026-11-05-remove-managed-claude-code.md, decision 4):
+// The mode a launch takes when the operator does not pick one, and the mode the launcher opens
+// with (docs/specs/2026-11-05-remove-managed-claude-code.md, decision 4):
 // the provider's — omp is «Керманич», claude and codex their own TUI; unset is «Керманич». A
 // card that continues a «Синергія» prototype is always «Керманич»: the «Синергія» page renders only
 // a managed session (docs/specs/2026-11-09-merge-design-into-synergy.md, decision 5).
