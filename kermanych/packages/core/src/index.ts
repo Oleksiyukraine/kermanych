@@ -522,6 +522,7 @@ export {
   changelogEntries,
   changelogSection,
   changelogBetween,
+  changelogSummary,
   type ChangelogEntry,
 } from "./app-release";
 export {

@@ -2,6 +2,7 @@ import { expect, test } from "vitest";
 import {
   changelogBetween,
   changelogSection,
+  changelogSummary,
   compareAppVersions,
   isBelowMinimumVersion,
 } from "../src/app-release";
@@ -78,4 +79,17 @@ test("changelogBetween returns the unseen versions, newest first, bounded on bot
 
 test("changelogBetween falls back to the target's own section when the running version is unknown", () => {
   expect(changelogBetween(CHANGELOG, "0.0.0-dev", "0.2.0").map((e) => e.version)).toEqual(["0.2.0"]);
+});
+
+test("changelogSummary is the first note under the subheadings, wrapped lines joined, marks stripped", () => {
+  const body = [
+    "### New",
+    "",
+    "- **ЦУК** answers faster. Stop it with `Esc`,",
+    "  or see [the docs](https://example.com).",
+    "- Second note.",
+  ].join("\n");
+  expect(changelogSummary(body)).toBe("ЦУК answers faster. Stop it with Esc, or see the docs.");
+  expect(changelogSummary("A paragraph\nover two lines.\n\n- item")).toBe("A paragraph over two lines.");
+  expect(changelogSummary("")).toBe("");
 });

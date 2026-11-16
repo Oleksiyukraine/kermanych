@@ -97,7 +97,7 @@
             />
             <!-- One notification opened from the column or its toast: over the console, which
                  keeps its conversation and draft underneath. A skill improvement, a scheduled
-                 run's full answer, or a scheduled task — one at a time. -->
+                 run's full answer, a scheduled task, or a version of the changelog — one at a time. -->
             <SkillImprovementView
               v-if="notifications.openId"
               :id="notifications.openId"
@@ -116,6 +116,13 @@
               v-else-if="notifications.openTaskId"
               :id="notifications.openTaskId"
               :key="`task:${notifications.openTaskId}`"
+              class="asst-ovl__entry"
+              @close="closeEntry"
+            />
+            <ChangelogEntryView
+              v-else-if="notifications.openVersion"
+              :version="notifications.openVersion"
+              :key="`version:${notifications.openVersion}`"
               class="asst-ovl__entry"
               @close="closeEntry"
             />
@@ -153,6 +160,7 @@ import CukNotifications from './CukNotifications.vue';
 import SkillImprovementView from './SkillImprovementView.vue';
 import ScheduleSlipView from './ScheduleSlipView.vue';
 import ScheduleTaskView from './ScheduleTaskView.vue';
+import ChangelogEntryView from './ChangelogEntryView.vue';
 import { useCircleGesture } from '../../composables/useCircleGesture';
 import { useAsyncAction } from '../../composables/useAsyncAction';
 

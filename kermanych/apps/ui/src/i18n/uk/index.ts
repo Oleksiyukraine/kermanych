@@ -4258,6 +4258,7 @@ export const uk = {
       },
       // docs/specs/2026-11-16-changelog-tab.md
       changelog: {
+        title: 'Kermanych {version}',
         current: 'ця версія',
         empty: 'У цій збірці немає історії оновлень.',
       },

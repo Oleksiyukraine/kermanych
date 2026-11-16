@@ -101,11 +101,12 @@ export const useNotificationCenter = defineStore('notification-center', () => {
   const error = ref('');
   // The improvement the view over the console shows; undefined while it is closed.
   const openId = ref<string | undefined>(undefined);
-  // A slip's full answer (a run without a project, decision 9), or a scheduled task, shown over
-  // the console instead. At most one of the three views is open.
+  // A slip's full answer (a run without a project, decision 9), a scheduled task, or one version
+  // of the «Оновлення» tab's changelog, shown over the console instead. At most one view is open.
   const openSlipId = ref<string | undefined>(undefined);
   const openTaskId = ref<string | undefined>(undefined);
-  const viewOpen = computed(() => !!(openId.value || openSlipId.value || openTaskId.value));
+  const openVersion = ref<string | undefined>(undefined);
+  const viewOpen = computed(() => !!(openId.value || openSlipId.value || openTaskId.value || openVersion.value));
   // Which tab the column's head shows.
   const tab = ref<NotificationTab>('feed');
   // Opened entries, by id. A record's text never changes; its state is patched from Realtime.
@@ -295,10 +296,18 @@ export const useNotificationCenter = defineStore('notification-center', () => {
     overlay.show();
   }
 
+  /** Open one version's notes from the «Оновлення» tab over the console. */
+  function openChangelog(version: string): void {
+    close();
+    openVersion.value = version;
+    overlay.show();
+  }
+
   function close(): void {
     openId.value = undefined;
     openSlipId.value = undefined;
     openTaskId.value = undefined;
+    openVersion.value = undefined;
   }
 
   // The text the skill resolves to without the personal layer, where the record says it came
@@ -400,6 +409,7 @@ export const useNotificationCenter = defineStore('notification-center', () => {
     openId,
     openSlipId,
     openTaskId,
+    openVersion,
     viewOpen,
     details,
     unread,
@@ -410,6 +420,7 @@ export const useNotificationCenter = defineStore('notification-center', () => {
     open,
     openSlip,
     openTask,
+    openChangelog,
     viewSlip,
     close,
     inspect,
