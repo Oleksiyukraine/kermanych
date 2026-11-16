@@ -16,6 +16,7 @@ import { badRequest, CodedError } from "../management/coded-error";
 const LAUNCH_CODES: Record<string, ApiErrorCode> = {
   omp_not_authenticated: "runtime_omp_not_authenticated",
   omp_binary_missing: "runtime_omp_binary_missing",
+  project_dir_missing: "runtime_project_dir_missing",
 };
 
 // A supervisor failure as a 400. A `CodedError` (e.g. a native session's `native_busy`) and a

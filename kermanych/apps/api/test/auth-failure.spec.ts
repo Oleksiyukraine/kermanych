@@ -25,6 +25,20 @@ describe("authFailureCode", () => {
 
   it("reads a missing omp binary as omp_binary_missing", () => {
     expect(authFailureCode("spawn omp ENOENT")).toBe("omp_binary_missing");
+    // An explicit `ompPath` puts the full path in node's spawn error.
+    expect(authFailureCode("spawn /Users/me/.local/bin/omp ENOENT")).toBe("omp_binary_missing");
+  });
+
+  // Verbatim from `omp --mode rpc --cwd <missing dir>` 18.20.2, wrapped in RpcSession's exit
+  // message. omp is installed and ran; the project's folder was deleted or moved. It mentions
+  // both omp and ENOENT, and used to read as a missing binary, sending the operator to
+  // reinstall omp instead of binding the folder again.
+  it("reads omp's failed chdir into the project folder as project_dir_missing", () => {
+    expect(
+      authFailureCode(
+        "omp child exited (code 1) before completing request: Error: Cannot change working directory to /tmp/kermanych-demo/kermanych: ENOENT: no such file or directory, chdir '/Users/me/kermanych' -> '/tmp/kermanych-demo/kermanych'.",
+      ),
+    ).toBe("project_dir_missing");
   });
 
   // The default must stay undefined: an unrecognised failure keeps its own raw text, which is

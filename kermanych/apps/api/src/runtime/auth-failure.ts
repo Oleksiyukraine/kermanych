@@ -16,9 +16,16 @@
 // "No models available. Use /login or set an API key…" is what a signed-out omp prints before
 // it exits (omp 18.2.11): with no provider credentials it has no model to run.
 const OMP_AUTH = /omp login|not authenticated|unauthorized|invalid api key|no models available/i;
-const OMP_BINARY = /spawn omp enoent|enoent.*\bomp\b|\bomp\b.*enoent/i;
+// Node's own spawn failure, `spawn <omp path> ENOENT`: the spawn sets no `cwd` (omp gets
+// `--cwd`), so an ENOENT from spawn itself can only be the binary. Anchored to `spawn`: omp's
+// own ENOENTs (a missing project folder below) also mention omp and must not read as this.
+const OMP_BINARY = /\bspawn \S*\bomp enoent/i;
+// omp 18.20.2 with a `--cwd` that does not exist exits 1 before `ready`:
+// "Error: Cannot change working directory to <dir>: ENOENT: no such file or directory, chdir …".
+// The project's folder was deleted or moved, so the fix is to bind it again, not to install omp.
+const PROJECT_DIR = /cannot change working directory to .*enoent/i;
 
-export type AuthFailureCode = "omp_not_authenticated" | "omp_binary_missing";
+export type AuthFailureCode = "omp_not_authenticated" | "omp_binary_missing" | "project_dir_missing";
 
 // A failure whose cause is already known from a structured signal, so nothing re-reads its prose.
 export class AuthFailure extends Error {
@@ -33,6 +40,7 @@ export class AuthFailure extends Error {
 
 export function authFailureCode(message: string): AuthFailureCode | undefined {
   if (!message.trim()) return undefined;
+  if (PROJECT_DIR.test(message)) return "project_dir_missing";
   if (OMP_BINARY.test(message)) return "omp_binary_missing";
   if (OMP_AUTH.test(message)) return "omp_not_authenticated";
   return undefined;

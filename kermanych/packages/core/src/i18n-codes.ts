@@ -41,6 +41,7 @@ export type NoticeCode =
   // runtime's exit cause (supervisor.service.ts wireLive).
   | "omp_not_authenticated" // rpc-session.ts exit cause — the omp CLI is signed out (params: none)
   | "omp_binary_missing" // rpc-session.ts exit cause — omp is not on PATH (params: none)
+  | "project_dir_missing" // rpc-session.ts exit cause — the project's folder (omp --cwd) does not exist (params: none)
   // supervisor.service.ts — the machine resource profile (docs/specs/2026-10-21-machine-resource-profile.md):
   | "slot_wait" // supervisor.service.ts — a message is accepted but waits for an agent slot (params: { running, limit })
   | "watchdog_killed" // watchdog.service.ts — the watchdog killed an agent command at critical memory pressure (params: { command, size })
@@ -124,6 +125,7 @@ export type ApiErrorCode =
   // than a session that exists but can never answer.
   | "runtime_omp_not_authenticated" // rpc-session.ts start() — omp CLI signed out (params: none)
   | "runtime_omp_binary_missing" // rpc-session.ts start() — omp not on PATH (params: none)
+  | "runtime_project_dir_missing" // rpc-session.ts start() — the project's folder does not exist (params: none)
   // native/native-session.service.ts via supervisor.service.ts — a native session refusing:
   | "native_busy" // a helper prompt while the native harness is mid-turn or waiting on the operator (params: none)
   | "native_unsupported" // an action only a managed session supports (model, effort, branch, review, images…) (params: none)
@@ -170,6 +172,7 @@ export const NOTICE_CODES = [
   "pr_behind_base",
   "omp_not_authenticated",
   "omp_binary_missing",
+  "project_dir_missing",
   "slot_wait",
   "watchdog_killed",
   "jira_issue_created",
@@ -239,6 +242,7 @@ export const API_ERROR_CODES = [
   "model_no_text",
   "runtime_omp_not_authenticated",
   "runtime_omp_binary_missing",
+  "runtime_project_dir_missing",
   "native_busy",
   "native_unsupported",
   "managed_claude_removed",

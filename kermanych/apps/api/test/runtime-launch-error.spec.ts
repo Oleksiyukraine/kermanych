@@ -26,6 +26,7 @@ describe("sessionFailure", () => {
     const cases: Array<[string, string]> = [
       ["omp_not_authenticated", "runtime_omp_not_authenticated"],
       ["omp_binary_missing", "runtime_omp_binary_missing"],
+      ["project_dir_missing", "runtime_project_dir_missing"],
     ];
     for (const [cause, expected] of cases) {
       const err = new Error("x") as Error & { code?: string };
