@@ -87,6 +87,30 @@ export function changelogSection(markdown: string, version: string): ChangelogEn
   return changelogEntries(markdown).find((e) => e.version === version);
 }
 
+// A section's first note as one line of plain text — the short line a list of versions shows
+// under each heading. The first list item (its wrapped lines joined), else the first paragraph;
+// '' for an empty body. Inline markdown is reduced to its text: links to their label, code and
+// emphasis marks dropped.
+export function changelogSummary(body: string): string {
+  const lines: string[] = [];
+  for (const raw of body.split(/\r?\n/)) {
+    const line = raw.trim();
+    if (!line || /^#{1,6}[ \t]/.test(line) || FENCE_RE.test(line)) {
+      if (lines.length) break;
+      continue;
+    }
+    const item = /^[-*+][ \t]+(.*)$/.exec(line) ?? /^\d+[.)][ \t]+(.*)$/.exec(line);
+    if (item && lines.length) break;
+    lines.push(item ? item[1]! : line);
+  }
+  return lines
+    .join(" ")
+    .replace(/!?\[([^\]]*)\]\([^)]*\)/g, "$1")
+    .replace(/(\*\*|__|`)/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 // The sections a user moving from `after` to `upTo` has not seen: after < version <= upTo,
 // newest first. An unparseable `after` yields only `upTo`'s own section.
 export function changelogBetween(markdown: string, after: string, upTo: string): ChangelogEntry[] {

@@ -4157,12 +4157,14 @@ export const en: MessageSchema = {
       markAll: 'Mark all as read',
       empty: 'Reminders and results of scheduled tasks show up here, and so do Kermanych updates and changes your agents make to your skills.',
       tabs: {
-        feed: 'Notifications',
+        // Short: three equal thirds of the 300 px column; «Notifications» does not fit one.
+        feed: 'Alerts',
         schedule: 'Schedule',
         changelog: 'Updates',
       },
       // docs/specs/2026-11-16-changelog-tab.md
       changelog: {
+        title: 'Kermanych {version}',
         current: 'this version',
         empty: 'This build carries no changelog.',
       },

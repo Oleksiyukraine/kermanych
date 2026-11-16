@@ -945,9 +945,11 @@ enabled, closing the window only hides it and installs nothing. The app never re
 asks first, because the restart stops them (their conversations can be continued afterwards).
 On the first launch of a new version a toast «Kermanych оновлено до X» offers **Що нового**, and
 the update stays as an entry in ЦУК's «Центр сповіщень» (see [ЦУК](#цук--the-avatars-control-console))
-to reread later. The column's «Оновлення» tab shows this build's whole changelog, newest version on
-top, the running one marked «ця версія»; Settings → Застосунок → «Загальне» shows the version and
-opens the same changelog. On Linux
+to reread later. The column's «Оновлення» tab lists this build's changelog, newest version on
+top: each version as a slip with its heading, its first note and its date, the running one marked
+«ця версія»; clicking a slip opens that version's full notes over the console, the way a
+notification opens. Settings → Застосунок → «Загальне» shows the version and
+opens the whole changelog. On Linux
 only the AppImage updates itself. A dev run (`pnpm dev:app`) and the browser build never check.
 
 The cloud names the oldest version it still serves (`app_release_policy.min_app_version`, see
