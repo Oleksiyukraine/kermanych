@@ -141,9 +141,12 @@ export const useAppUpdate = defineStore('app-update', () => {
     if (whatsNew.value?.version === version) whatsNew.value = { title: 'ready', version, entries };
   }
 
-  // Settings → «Загальне»: this build's whole changelog.
+  // This build's whole changelog, newest first: Settings → «Загальне» and the «Оновлення» tab of
+  // «Центр сповіщень» (docs/specs/2026-11-16-changelog-tab.md).
+  const changelog = changelogEntries(bundledChangelog);
+
   function openAllNotes(): void {
-    whatsNew.value = { title: 'all', version: APP_VERSION, entries: changelogEntries(bundledChangelog) };
+    whatsNew.value = { title: 'all', version: APP_VERSION, entries: changelog };
   }
 
   function install(): void {
@@ -159,6 +162,7 @@ export const useAppUpdate = defineStore('app-update', () => {
     whatsNew,
     bannerDismissed,
     updates,
+    changelog,
     unseenUpdates,
     init,
     openReadyNotes,

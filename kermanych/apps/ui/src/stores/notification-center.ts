@@ -9,7 +9,8 @@
 // - this machine's schedule slips (stores/schedules.ts): a reminder fired, an agent run ended, a
 //   run skipped or failed. Each that arrives gets a toast, a Dock bounce and, while the window is
 //   unfocused, a system notification.
-// The column's head also switches to «Розклад», the task list; what the column opens over the
+// The column's head also switches to «Розклад», the task list, and «Оновлення», this build's
+// changelog (docs/specs/2026-11-16-changelog-tab.md); what the column opens over the
 // console (an improvement, a slip's full answer, a task) is held here, one at a time.
 //
 // Egress is the hosted project's scarce resource (docs/specs/2026-11-03-board-egress-and-lag.md):
@@ -63,8 +64,8 @@ export type { NotificationItem };
 /** One cloud row of the column. */
 export type SkillImprovementItem = Extract<NotificationItem, { kind: 'skill-improvement' }>;
 
-/** The column's two tabs: the feed, and the scheduled tasks. */
-export type NotificationTab = 'feed' | 'schedule';
+/** The column's tabs: the feed, the scheduled tasks, and the changelog. */
+export type NotificationTab = 'feed' | 'schedule' | 'changelog';
 
 export type NotificationPhase = 'idle' | 'loading' | 'ready' | 'error';
 
