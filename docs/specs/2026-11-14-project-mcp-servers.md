@@ -200,7 +200,7 @@ checkout's git root, with `process.env` plus the referenced `.env` variables. It
 ### 8. Not in this version
 
 - A catalog of popular services with one-click add (Playwright, Postgres, GitHub, Sentry,
-  Linear…).
+  Linear…). *Added later:* `docs/specs/2026-11-16-mcp-catalog.md`.
 - Workspace-wide or personal (home-folder) servers. `~/.claude.json`, `~/.omp/agent/mcp.json`
   and `~/.codex/config.toml` are not shown.
 - OAuth sign-in through Kermanych.

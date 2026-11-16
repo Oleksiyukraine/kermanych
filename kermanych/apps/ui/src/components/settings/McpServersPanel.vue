@@ -43,6 +43,7 @@
           <div v-if="!g.rows.length" class="mcp__empty">
             <p class="mcp__empty-title">{{ t('aiTeam.mcp.empty') }}</p>
             <p class="mcp__hint">{{ t('aiTeam.mcp.emptyHint') }}</p>
+            <KBtn class="mcp__empty-act" @click="openEditor(undefined)">{{ t('aiTeam.mcp.openCatalog') }}</KBtn>
           </div>
 
           <ul v-else class="mcp__list">
@@ -181,6 +182,7 @@
       :project-id="projectId"
       :server="editing"
       :env-ignored="view?.envIgnored ?? true"
+      :existing="existingNames"
       @saved="changed"
     />
 
@@ -248,6 +250,9 @@ const groups = computed(() => {
   if (sub.length) out.push({ key: 'disconnected', rows: sub });
   return out;
 });
+
+// The names a create would refuse (the root `.mcp.json` has them): the catalog marks them added.
+const existingNames = computed(() => (view.value?.servers ?? []).filter((s) => s.editable).map((s) => s.name));
 
 /** A subfolder copy of a server the root `.mcp.json` already has: the api refuses to move it. */
 function duplicate(s: McpServerRow): boolean {
@@ -527,6 +532,10 @@ watch(
   margin: 0 0 4px;
   font-size: var(--k-fs-sm);
   color: var(--k-text);
+}
+
+.mcp__empty-act {
+  margin-top: var(--k-sp-3);
 }
 
 .mcp__empty-line {

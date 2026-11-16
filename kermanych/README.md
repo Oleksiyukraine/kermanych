@@ -2185,6 +2185,16 @@ checkout, because that is where every session's harness starts.
   - the server is only in another root file (`.cursor/mcp.json`, …) → «Скопіювати в .mcp.json»;
   - a subfolder server whose name the root `.mcp.json` already has → «Видалити копію»; another
     subfolder server → «Перенести в корінь» or «Видалити».
+- **The catalog.** «Додати сервер» opens a catalog of popular servers (spec:
+  `docs/specs/2026-11-16-mcp-catalog.md`), by group: browser and tests (Playwright, Chrome
+  DevTools), code and issues (GitHub, Linear, Atlassian, Sentry), docs (Context7, Notion), design
+  (Figma), backend (Supabase, Neon, Vercel, Stripe) and web search (Brave Search, Firecrawl), with
+  a search and «Власний сервер» for anything else. A card says how the service signs in: no key,
+  a key (the form asks for it, links to where it is issued, and stores it in `.env`), or OAuth
+  (sign in inside the agent after saving). A pick fills the form, which you review and save as
+  usual; a name already in `.mcp.json` shows as «вже додано». Supabase is added read-only
+  (`?read_only=true`). The entries live in `apps/ui/src/lib/mcp-catalog.ts`, and a test holds
+  each of them to saving cleanly and reaching codex.
 - **Editing.** «Додати сервер», «Змінити» and «Видалити» write the root `.mcp.json`. Unknown keys
   of a server (`timeout`, `oauth`, …) and the file's indentation are kept. Every write also sets
   the server's `[mcp_servers.<name>]` table in `.codex/config.toml`: env values of the form

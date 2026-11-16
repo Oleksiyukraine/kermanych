@@ -2,12 +2,26 @@
   <!-- Persistent while the write runs: closing mid-write would hide its refusal. -->
   <KModal
     :model-value="modelValue"
-    :title="server ? t('aiTeam.mcp.editor.editTitle', { name: server.name }) : t('aiTeam.mcp.editor.newTitle')"
+    :title="title"
     :persistent="save.busy.value"
-    width="640px"
+    :width="step === 'catalog' ? '760px' : '640px'"
     @update:model-value="emit('update:modelValue', $event)"
   >
-    <div class="mcpe">
+    <!-- A new server starts at the catalog; a pick (or «Власний сервер») fills the form below. -->
+    <McpCatalog v-if="step === 'catalog'" :existing="existing" @pick="pick" />
+    <div v-else class="mcpe">
+      <button v-if="!server" type="button" class="mcpe__back" @click="step = 'catalog'">← {{ t('aiTeam.mcp.catalog.back') }}</button>
+
+      <!-- What the pick needs from the operator: a key, a sign-in in the agent, or nothing. -->
+      <div v-if="picked" class="mcpe__picked">
+        <p class="mcpe__picked-about">{{ t('aiTeam.mcp.catalog.about.' + picked.id) }}</p>
+        <p class="mcpe__picked-auth">{{ t('aiTeam.mcp.catalog.pick.' + picked.auth, { name: draft.name.trim() || picked.name }) }}</p>
+        <p class="mcpe__picked-links">
+          <a v-if="picked.key" :href="picked.key.url" target="_blank" rel="noopener">{{ t('aiTeam.mcp.catalog.getKey') }} ↗</a>
+          <a :href="picked.docs" target="_blank" rel="noopener">{{ t('aiTeam.mcp.catalog.docs') }} ↗</a>
+        </p>
+      </div>
+
       <!-- The name is the key in two files; renaming is a delete and an add, so it is fixed once
            the server exists. -->
       <div class="mcpe__field">
@@ -53,7 +67,7 @@
                 v-model="p.value"
                 class="mcpe__cell mono"
                 :type="p.secret ? 'password' : 'text'"
-                :placeholder="p.stored ? t('aiTeam.mcp.editor.keepSecret') : t('aiTeam.mcp.editor.valuePlaceholder')"
+                :placeholder="p.stored ? t('aiTeam.mcp.editor.keepSecret') : (p.placeholder ?? t('aiTeam.mcp.editor.valuePlaceholder'))"
                 :aria-label="t('aiTeam.mcp.editor.value')"
               />
               <KCheckbox v-model="p.secret" :label="t('aiTeam.mcp.editor.secret')" />
@@ -101,7 +115,7 @@
 
     <template #controls>
       <KBtn :disabled="save.busy.value" @click="emit('update:modelValue', false)">{{ t('settings.modal.cancel') }}</KBtn>
-      <KBtn variant="primary" :loading="save.busy.value" @click="save.run()">
+      <KBtn v-if="step === 'form'" variant="primary" :loading="save.busy.value" @click="save.run()">
         {{ conflict ? t('aiTeam.mcp.replaceCodex') : t('aiTeam.mcp.editor.save') }}
       </KBtn>
     </template>
@@ -111,12 +125,14 @@
 <script setup lang="ts">
 // Adds or changes one server of the project's `.mcp.json`; the api mirrors it into
 // `.codex/config.toml` (docs/specs/2026-11-14-project-mcp-servers.md, decisions 5–6; layout:
-// docs/specs/2026-11-16-mcp-servers-ux-redesign.md, decision 8).
+// docs/specs/2026-11-16-mcp-servers-ux-redesign.md, decision 8; the catalog step:
+// docs/specs/2026-11-16-mcp-catalog.md).
 import { computed, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { mcpToCodex, type McpCodexConflict as Conflict, type McpProjectView, type McpServerRow } from '@kermanych/core';
 import { api } from '../../lib/api';
 import { emptyMcpDraft, emptyMcpPair, mcpDefLine, mcpDraftFrom, mcpDraftToSave, mcpPairVarName, type McpDraft, type McpPair } from '../../lib/mcp';
+import { mcpCatalogDraft, type McpCatalogEntry } from '../../lib/mcp-catalog';
 import { errorText, useAsyncAction } from '../../composables/useAsyncAction';
 import KModal from 'components/kit/KModal.vue';
 import KField from 'components/kit/KField.vue';
@@ -125,8 +141,16 @@ import KIconButton from 'components/kit/KIconButton.vue';
 import KCheckbox from 'components/kit/KCheckbox.vue';
 import KToggle from 'components/kit/KToggle.vue';
 import McpCodexConflict from './McpCodexConflict.vue';
+import McpCatalog from './McpCatalog.vue';
 
-const props = defineProps<{ modelValue: boolean; projectId: string; server?: McpServerRow | undefined; envIgnored: boolean }>();
+const props = defineProps<{
+  modelValue: boolean;
+  projectId: string;
+  server?: McpServerRow | undefined;
+  envIgnored: boolean;
+  /** Names already in the root `.mcp.json`: the catalog marks them as added. */
+  existing: string[];
+}>();
 const emit = defineEmits<{ 'update:modelValue': [open: boolean]; saved: [view: McpProjectView] }>();
 const { t } = useI18n();
 
@@ -144,20 +168,41 @@ function openVar(p: McpPair): void {
   openVars.value.add(p);
 }
 
-// Each open starts from the server on screen (or a blank one); a close drops the draft. A stored
-// secret under a variable of its own name opens with that name on show.
+// Each open starts from the server on screen, or at the catalog for a new one; a close drops the
+// draft.
+const step = ref<'catalog' | 'form'>('catalog');
+const picked = ref<McpCatalogEntry>();
+
+function reset(next: McpDraft): void {
+  draft.value = next;
+  openVars.value = new WeakSet();
+  conflict.value = undefined;
+  formError.value = '';
+}
+
 watch(
   () => props.modelValue,
   (open) => {
     if (!open) return;
-    draft.value = props.server ? mcpDraftFrom(props.server.name, props.server.def) : emptyMcpDraft();
-    openVars.value = new WeakSet();
-    for (const p of draft.value.pairs) if (p.secret && p.varName && p.varName !== autoVarName(p)) openVars.value.add(p);
-    conflict.value = undefined;
-    formError.value = '';
+    picked.value = undefined;
+    step.value = props.server ? 'form' : 'catalog';
+    reset(props.server ? mcpDraftFrom(props.server.name, props.server.def) : emptyMcpDraft());
   },
   { immediate: true },
 );
+
+/** A catalog card fills the form from its entry; «Власний сервер» (no entry) starts blank. */
+function pick(entry: McpCatalogEntry | undefined): void {
+  picked.value = entry;
+  reset(entry ? mcpCatalogDraft(entry) : emptyMcpDraft());
+  step.value = 'form';
+}
+
+const title = computed(() => {
+  if (props.server) return t('aiTeam.mcp.editor.editTitle', { name: props.server.name });
+  if (picked.value && step.value === 'form') return t('aiTeam.mcp.catalog.formTitle', { title: picked.value.title });
+  return t('aiTeam.mcp.editor.newTitle');
+});
 
 const kindLabel = computed(() => ({ stdio: t('aiTeam.mcp.kind.stdio'), http: t('aiTeam.mcp.kind.http') }));
 function setKind(label: string): void {
@@ -215,6 +260,61 @@ const save = useAsyncAction(
   display: flex;
   flex-direction: column;
   gap: var(--k-sp-4);
+}
+
+.mcpe__back {
+  align-self: flex-start;
+  margin-bottom: calc(-1 * var(--k-sp-2));
+  padding: 0;
+  font: inherit;
+  font-size: var(--k-fs-xs);
+  color: var(--k-muted);
+  background: none;
+  border: none;
+  cursor: pointer;
+
+  &:hover,
+  &:focus-visible {
+    color: var(--k-text);
+  }
+}
+
+.mcpe__picked {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: var(--k-sp-2) var(--k-sp-3);
+  font-size: var(--k-fs-sm);
+  line-height: 1.5;
+  background: var(--k-surface2);
+  border-left: 3px solid var(--k-accent);
+  border-radius: var(--k-r-sm);
+
+  p {
+    margin: 0;
+  }
+}
+
+.mcpe__picked-about {
+  color: var(--k-muted);
+}
+
+.mcpe__picked-auth {
+  color: var(--k-text);
+}
+
+.mcpe__picked-links {
+  display: flex;
+  gap: var(--k-sp-3);
+  font-size: var(--k-fs-xs);
+
+  a {
+    color: var(--k-muted);
+
+    &:hover {
+      color: var(--k-text);
+    }
+  }
 }
 
 .mcpe__field {

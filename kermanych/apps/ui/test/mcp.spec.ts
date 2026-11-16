@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import type { McpServerDef } from '@kermanych/core';
+import { mcpToCodex, type McpServerDef } from '@kermanych/core';
 import { emptyMcpDraft, mcpDraftFrom, mcpDraftToSave, type McpDraft, type McpPair } from '../src/lib/mcp';
+import { MCP_CATALOG, mcpCatalogDraft } from '../src/lib/mcp-catalog';
 
 const pair = (over: Partial<McpPair>): McpPair => ({ key: '', value: '', secret: false, varName: '', bearer: false, stored: false, ...over });
 const draft = (over: Partial<McpDraft>): McpDraft => ({ ...emptyMcpDraft(), name: 'linear', ...over });
@@ -53,5 +54,25 @@ describe('mcpDraftToSave', () => {
 
   it('drops a row added and left blank', () => {
     expect(mcpDraftToSave(draft({ command: 'x', pairs: [pair({})] }))).toEqual({ body: { def: { kind: 'stdio', command: 'x', args: [], env: {} } } });
+  });
+});
+
+describe('MCP catalog', () => {
+  it('every entry saves as it is listed and reaches codex too', () => {
+    for (const entry of MCP_CATALOG) {
+      const out = mcpDraftToSave(mcpCatalogDraft(entry));
+      if (!('body' in out)) throw new Error(`${entry.id}: ${out.problem}`);
+      expect(out.body.def, entry.id).toEqual(entry.def);
+      expect(mcpToCodex(out.body.def), entry.id).toHaveProperty('table');
+    }
+    expect(new Set(MCP_CATALOG.map((e) => e.name)).size).toBe(MCP_CATALOG.length);
+  });
+
+  it('asks for the key instead of offering to keep one, and stores a pasted token alone', () => {
+    const github = mcpCatalogDraft(MCP_CATALOG.find((e) => e.id === 'github')!);
+    const [header] = github.pairs;
+    expect(header).toMatchObject({ key: 'Authorization', secret: true, varName: 'GITHUB_PAT', stored: false, placeholder: 'github_pat_…' });
+    header!.value = 'Bearer github_pat_123';
+    expect(mcpDraftToSave(github)).toMatchObject({ body: { def: { headers: { Authorization: 'Bearer ${GITHUB_PAT}' } }, secrets: { GITHUB_PAT: 'github_pat_123' } } });
   });
 });
