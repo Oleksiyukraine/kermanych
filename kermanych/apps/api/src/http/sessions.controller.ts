@@ -28,12 +28,11 @@ export class SessionsController {
     return this.reg.listSessions(projectId);
   }
 
-  // `native` opens the chat as that harness's own TUI (docs/specs/2026-10-06-native-chats.md).
+  // A research session («Дослідження», docs/specs/2026-11-16-research-mode.md).
   @Post("chat")
-  async createChat(@Body() b: { projectId: string; native?: string }) {
-    if (b.native !== undefined && !isNativeHarness(b.native)) throw new BadRequestException(`unknown native harness ${JSON.stringify(b.native)}`);
+  async createChat(@Body() b: { projectId: string }) {
     try {
-      return await this.sup.createChat(b.projectId, b.native);
+      return await this.sup.createChat(b.projectId);
     } catch (err) {
       throw sessionFailure(err);
     }

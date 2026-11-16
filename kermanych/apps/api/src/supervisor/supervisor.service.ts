@@ -136,7 +136,7 @@ import { limit } from "../runtime/limit";
 import { removeMcpConfig } from "../native/native-hooks";
 import { todayIso } from "../management/management-prompt";
 import { firstPrUrl } from "./pr-url";
-import { launchAppendFor, launchToolsFor } from "./chat-tools";
+import { launchAppendFor, launchToolsFor, researchProjects } from "./chat-tools";
 import { MachineResourcesService } from "../machine/machine-resources.service";
 import { WatchdogService } from "../machine/watchdog.service";
 import { BranchNameService, type BranchContext } from "./branch-name.service";
@@ -250,6 +250,11 @@ const MATCH_MAX_CHARS = 1 << 14;
 // How many uncommitted paths an in-place refusal names: enough to recognise the work in the
 // way, short enough for the launcher's one-line error slot.
 const DIRTY_FILES_SHOWN = 5;
+
+// The task a research promoted as «Глибокий аналіз» opens with (docs/specs/2026-11-16-research-mode.md,
+// decision 7), inside the deep-analysis wrapper: the conversation it continues holds the feature.
+const DEEP_ANALYSIS_PROMOTE_ASK =
+  "Run a deep analysis of the feature researched in the conversation above. Treat that conversation as context, not as decisions: every decision still goes through the interview.";
 
 // One agent waiting for a slot (docs/specs/2026-10-21-machine-resource-profile.md, decision 5).
 type SlotWaiter = {
@@ -1409,17 +1414,16 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
   }
 
 
-  // A quick chat: an instant, git-free omp conversation in the project dir with a read-only
-  // tool subset. No branch, no worktree, no opening prompt — it spawns ready and the operator
-  // sends the first message. It can later be promoted (forked) into a real agent, so a throwaway
-  // exploration becomes real work without losing context. `native` opens it as that harness's
-  // own TUI instead (docs/specs/2026-10-06-native-chats.md).
-  async createChat(projectId: string, native?: NativeHarness): Promise<Session> {
+  // A research session («Дослідження», docs/specs/2026-11-16-research-mode.md): an instant,
+  // git-free omp conversation in the project dir that reads the code of the workspace's projects
+  // and searches the web, never writes. No branch, no worktree, no opening prompt — it spawns
+  // ready and the operator sends the first message. It can later be promoted (forked) into a
+  // real agent, so a research becomes real work without losing context.
+  async createChat(projectId: string): Promise<Session> {
     const project = this.boundProject(projectId);
     const n = this.registry.listSessions(projectId).filter((s) => s.kind === "chat").length + 1;
-    if (native) return this.createNativeChat(projectId, `чат ${n}`, native);
     const session = this.registry.createSession({
-      projectId, name: `чат ${n}`, task: "", worktreePath: "", branch: "",
+      projectId, name: `дослідження ${n}`, task: "", worktreePath: "", branch: "",
       worktree: false, kind: "chat", status: "queued", runtime: "omp",
     });
     const configPath = await this.ompSkills(project.id, project.localRepoPath, session.id);
@@ -1450,33 +1454,14 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     return this.merge(session);
   }
 
-  // A native chat: the harness's TUI in the project dir, started without a prompt — the
-  // operator types the first message into it, and the harness settles idle (`done`). No skills,
-  // triggers or system append; the chat's read-only tool set rides on the launch argv
-  // (NativeSessionService.command). A harness that cannot start leaves no row behind.
-  private async createNativeChat(projectId: string, name: string, runtime: NativeHarness): Promise<Session> {
-    const native = this.requireNative();
-    const session = this.registry.createSession({
-      projectId, name, task: "", worktreePath: "", branch: "",
-      worktree: false, kind: "chat", status: "queued", runtime, native: true,
-    });
-    try {
-      await native.start(session, { resume: false });
-    } catch (err) {
-      this.browser?.revoke(session.id);
-      this.registry.removeSession(session.id);
-      this.events.next({ type: "session_removed", sessionId: session.id });
-      throw err;
-    }
-    this.pushUpdate(session.id);
-    return this.merge(this.registry.listSessions().find((x) => x.id === session.id) ?? session);
-  }
-
   // Mature a chat into a real agent IN PLACE: the same row — same id, same conversation, same
   // board entry — grows a branch and a worktree, forks its omp conversation into that worktree
   // with the full toolset, and is immediately told to build what was just discussed. One thing
   // that goes from "we're talking about it" to "it's being built"; there is no second row and
-  // nothing to fill in, so the operator's click is the whole ceremony.
+  // nothing to fill in, so the operator's click is the whole ceremony. The card decides the rest
+  // (docs/specs/2026-11-16-research-mode.md, decision 7): its project is where the agent works —
+  // a research may hand its work to another bound project of the workspace — and a «Глибокий
+  // аналіз» card opens with the deep-analysis wrapper instead of the `promote` instruction.
   async promoteChatToAgent(chatId: string, taskId: string): Promise<Session> {
     const chat = this.registry.listSessions().find((x) => x.id === chatId);
     if (!chat) throw new Error("session not found");
@@ -1484,7 +1469,6 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     // Promotion forks the conversation into a new worktree; a native harness has no fork.
     if (chat.native) throw nativeUnsupported();
     this.refuseManagedClaude(chat);
-    const project = this.boundProject(chat.projectId);
 
     // The fork reads the chat's omp session FILE, the same handle branchSession reads.
     let forkHandle = chat.ompSessionFile;
@@ -1499,12 +1483,22 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     if (live && (live.state.status === "thinking" || live.state.status === "tool"))
       throw new Error("wait for the chat to finish its turn before starting implementation");
 
+    const card = await getTask(this.auth.cloudClient(), taskId);
+    if (!card) throw new Error("task not found");
+    const project = this.boundProject(card.projectId);
+    const deepAnalysis = card.deepAnalysis;
+
     // Everything the launcher used to ask for is derived: the chat's opening message is the
-    // task, its first line the name, and the rest are the project's defaults.
+    // task, its first line the name, and the rest are the target project's defaults.
     const name = taskNameFromText(chat.task) || chat.name;
     const { branch, baseBranch } = await this.resolveLaunchParams(project, { title: name, description: chat.task }, "feature", true, chatId);
-    const { template, block } = await this.agentPrompt(chat.projectId, "promote", project.localRepoPath);
-    const prompt = renderInstruction(agentById("promote")!, { branch }, template) + block;
+    // A deep-analysis row gets this ask wrapped by openingPrompt (the wrapper plus the resolved
+    // skill), exactly like a deep-analysis card launched from the board.
+    let prompt = DEEP_ANALYSIS_PROMOTE_ASK;
+    if (!deepAnalysis) {
+      const { template, block } = await this.agentPrompt(project.id, "promote", project.localRepoPath);
+      prompt = renderInstruction(agentById("promote")!, { branch }, template) + block;
+    }
 
     // The read-only child must die before the worktree one takes over this row's event stream.
     if (live) {
@@ -1522,17 +1516,20 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     // (or becomes) a chat again must not hold the link — otherwise every later chat turn
     // would flip an orphaned card to done/thinking on the shared board. A throw before this
     // point therefore never links the chat at all, and the catch below unlinks it again.
+    // The project moves (and the deep-analysis flag lands) in that same write, so the row never
+    // sits in one project while its worktree is in another.
     const session = this.registry.updateSession(chatId, {
-      taskId, name, kind: "agent", worktree: true, branch, baseBranch, worktreePath: "", prefix: "feature", status: "queued",
+      taskId, projectId: project.id, name, kind: "agent", worktree: true, branch, baseBranch, worktreePath: "", prefix: "feature", status: "queued",
+      ...(deepAnalysis ? { deepAnalysis: true } : {}),
     });
     try {
       return await this.launch(session, project, { fork: forkHandle, firstPrompt: prompt });
     } catch (err) {
-      // Back to being a chat, and back to being unlinked: the row keeps its conversation, and
-      // the next message resumes its read-only omp child through doResume.
+      // Back to being a chat of its own project, and back to being unlinked: the row keeps its
+      // conversation, and the next message resumes its read-only omp child through doResume.
       this.registry.updateSession(chatId, {
-        taskId: undefined, name: chat.name, kind: "chat", worktree: false, branch: "", baseBranch: undefined,
-        worktreePath: "", prefix: undefined, status: "done",
+        taskId: undefined, projectId: chat.projectId, name: chat.name, kind: "chat", worktree: false, branch: "", baseBranch: undefined,
+        worktreePath: "", prefix: undefined, status: "done", deepAnalysis: undefined,
       });
       this.pushUpdate(chatId);
       throw err;
@@ -1606,8 +1603,9 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
   // The system-prompt append for one spawn, shaped for a spread into any createRuntime() opts:
   // the user's agent communication language, then — when the project's documentation switch is
   // on — the policy built from its per-kind rules (docsPolicyAppend), then what the session
-  // kind's tool restriction means for the model (launchAppendFor). Every createRuntime site
-  // passes it, so the policy reaches chats, agents, discussions, reviews and resumes alike.
+  // kind's tool restriction means for the model (launchAppendFor) — for a research session its
+  // role and the workspace's bound projects it may read (researchProjects). Every createRuntime
+  // site passes it, so the policy reaches chats, agents, discussions, reviews and resumes alike.
   // Empty object when nothing applies, so the agent keeps its own default. Read
   // fresh per spawn: a preference or setting change takes on the next spawn without a restart.
   // `synergy`: a «Синергія» child's rendered instruction (synergyInstruction), which takes the
@@ -1616,10 +1614,12 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
   // resumes and `/compact`.
   private systemAppendOpts(projectId: string, kind: Session["kind"], synergy?: string): { appendSystemPrompt?: string } {
     const language = languageAppendFor(this.registry.getAuthSession()?.agentLanguage);
-    const project = this.registry.listProjects().find((p) => p.id === projectId);
+    const projects = this.registry.listProjects();
+    const project = projects.find((p) => p.id === projectId);
     const docs = synergy ? undefined : project?.docsRequired ? docsPolicyAppend(docsPolicy(project.docsPolicy)) : undefined;
+    const research = kind === "chat" && project ? researchProjects(project, projects) : undefined;
     // The machine resource paragraph (test workers, no watch mode) while limits apply.
-    const append = [language, docs, this.resources?.promptParagraph(), launchAppendFor(kind), synergy].filter(Boolean).join("\n\n");
+    const append = [language, docs, this.resources?.promptParagraph(), launchAppendFor(kind, research), synergy].filter(Boolean).join("\n\n");
     return append ? { appendSystemPrompt: append } : {};
   }
 
@@ -3555,17 +3555,16 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
 
   // Archive/unarchive is a pure hide flag: it never touches the worktree. Archiving an active
   // agent is refused (the UI also pre-checks and toasts). The process does go: an archived thread
-  // leaves the board, so a native chat's TUI would keep running with no terminal anywhere, and a
-  // managed session's Live — its whole rendered transcript and tool output, kept in memory for
-  // the life of the api — would be held for a session nobody looks at. Opening it again wakes it
-  // like any dormant session after a restart: the history is re-read from omp's own file.
+  // leaves the board, and a managed session's Live — its whole rendered transcript and tool
+  // output, kept in memory for the life of the api — would be held for a session nobody looks
+  // at. Opening it again wakes it like any dormant session after a restart: the history is
+  // re-read from omp's own file.
   async setArchived(id: string, archived: boolean): Promise<void> {
     const s = this.registry.listSessions().find((x) => x.id === id);
     if (!s) throw new Error("session not found");
     if (archived && ACTIVE_STATUSES.includes(this.merge(s).status)) {
       throw new Error("cannot archive an active agent");
     }
-    if (archived && s.native && s.kind === "chat") await this.native?.stop(id);
     const l = archived ? this.map.get(id) : undefined;
     if (l) {
       // Off the map first, so nothing hands this child out while it stops; its exit reads as a

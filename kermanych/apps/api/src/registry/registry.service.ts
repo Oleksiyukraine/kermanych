@@ -636,7 +636,8 @@ export class RegistryService {
       /* column already exists */
     }
     // Additive migration: a «Глибокий аналіз» session (docs/specs/2026-10-08-deep-analysis-task.md)
-    // opened with the deep-analysis prompt. Fixed at creation, like `native`.
+    // opened with the deep-analysis prompt. Set at creation, or by the updateSession write that
+    // promotes a research into a deep-analysis agent (docs/specs/2026-11-16-research-mode.md).
     try {
       this.db.exec(`ALTER TABLE sessions ADD COLUMN deep_analysis INTEGER NOT NULL DEFAULT 0`);
     } catch {
@@ -715,6 +716,7 @@ export class RegistryService {
       }
     }
     this.retireManagedClaude();
+    this.archiveNativeChats();
     // The first index in this schema: listSessions(projectId) filters on project_id on
     // every board render and every supervisor lookup.
     this.db.exec(`CREATE INDEX IF NOT EXISTS sessions_project_idx ON sessions (project_id)`);
@@ -861,9 +863,10 @@ export class RegistryService {
 
   // Managed claude-code sessions are gone (docs/specs/2026-11-05-remove-managed-claude-code.md,
   // decision 9). A managed row stamped `claude-code` loses its slot-queue entry and stops if it
-  // was running; a plain agent or chat row becomes a native claude session (its claude session
-  // id resumes in the TUI); any other such row (design, «Посіпака», «Тестувальник», review, …)
-  // is archived. Runs on every start; a second run changes nothing.
+  // was running; a plain agent row becomes a native claude session (its claude session id
+  // resumes in the TUI); any other such row (chat, design, «Посіпака», «Тестувальник», review, …)
+  // is archived — native chats are gone too (docs/specs/2026-11-16-research-mode.md, decision 9).
+  // Runs on every start; a second run changes nothing.
   private retireManagedClaude(): void {
     const active = ACTIVE_STATUSES.map(() => "?").join(",");
     this.db.transaction(() => {
@@ -876,11 +879,25 @@ export class RegistryService {
       this.db
         .prepare(
           `UPDATE sessions SET native = 1
-           WHERE runtime = 'claude-code' AND native = 0 AND kind IN ('agent','chat') AND design_dir IS NULL AND minion = 0 AND tester = 0`,
+           WHERE runtime = 'claude-code' AND native = 0 AND kind = 'agent' AND design_dir IS NULL AND minion = 0 AND tester = 0`,
         )
         .run();
       this.db.prepare(`UPDATE sessions SET archived = 1 WHERE runtime = 'claude-code' AND native = 0`).run();
     })();
+  }
+
+  // Native chats are gone (docs/specs/2026-11-16-research-mode.md, decision 9): a research is
+  // always «Керманич» (omp). A native chat row left from before is archived — its harness is
+  // never started again, so one that was mid-turn when the api stopped reads as stopped. Runs
+  // on every start; a second run changes nothing.
+  private archiveNativeChats(): void {
+    const active = ACTIVE_STATUSES.map(() => "?").join(",");
+    this.db
+      .prepare(
+        `UPDATE sessions SET archived = 1, status = CASE WHEN status IN (${active}) THEN 'stopped' ELSE status END
+         WHERE kind = 'chat' AND native = 1`,
+      )
+      .run(...ACTIVE_STATUSES);
   }
 
   // v1 (2026-08-21, team cloud): `groups` becomes `projects`, its id becomes the CLOUD
@@ -1269,7 +1286,7 @@ export class RegistryService {
     const next = { ...cur, ...patch };
     this.db
       .prepare(
-        `UPDATE sessions SET project_id=?, task_id=?, name=?, task=?, worktree_path=?, branch=?, worktree=?, base_branch=?, omp_session_id=?, omp_session_file=?, kind=?, model=?, prefix=?, runtime=?, effort=?, status=?, pr_opened=?, pr_url=?, pr_opened_at=?, archived=?, minion=?, minion_result=?, synergy=?, synergy_page=? WHERE id=?`,
+        `UPDATE sessions SET project_id=?, task_id=?, name=?, task=?, worktree_path=?, branch=?, worktree=?, base_branch=?, omp_session_id=?, omp_session_file=?, kind=?, model=?, prefix=?, runtime=?, effort=?, status=?, pr_opened=?, pr_url=?, pr_opened_at=?, archived=?, minion=?, minion_result=?, synergy=?, synergy_page=?, deep_analysis=? WHERE id=?`,
       )
       .run(
         next.projectId,
@@ -1296,6 +1313,7 @@ export class RegistryService {
         next.minionResult ? JSON.stringify(next.minionResult) : null,
         next.synergy ? 1 : 0,
         next.synergy?.page ?? null,
+        next.deepAnalysis ? 1 : 0,
         id,
       );
     return next;

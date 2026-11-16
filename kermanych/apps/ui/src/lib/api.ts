@@ -447,9 +447,10 @@ export const api = {
   syncProjects: (projects: CloudProject[], prune = false): Promise<Project[]> =>
     post<Project[]>('/projects/sync', { projects, prune }),
 
-  // `native` opens the chat as the harness's own TUI in a pty (docs/specs/2026-10-06-native-chats.md).
-  createChat: (projectId: string, native?: NativeHarness): Promise<Session> =>
-    post<Session>('/sessions/chat', native ? { projectId, native } : { projectId }),
+  // A research of the avatar window (docs/specs/2026-11-16-research-mode.md): a read-only
+  // `kind: 'chat'` session in the project's checkout.
+  createChat: (projectId: string): Promise<Session> =>
+    post<Session>('/sessions/chat', { projectId }),
 
   // The user is NOT sent: the api takes it from the guard's cached token, so a board
   // client cannot launch a task on somebody else's behalf.

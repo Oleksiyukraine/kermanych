@@ -72,23 +72,28 @@
         <div class="asst-ovl__body">
           <CukNotifications class="asst-ovl__alerts" :class="{ 'asst-ovl__alerts--open': alertsOpen }" />
           <div class="asst-ovl__main">
-            <!-- The folded panel is ordered first, so its bar sits on top and the expanded
+            <!-- The folded panels are ordered first, so their bars sit on top and the expanded
                  panel's composer is always the window's last row. -->
             <CukAssistant
               ref="cukEl"
-              :class="{ 'asst-ovl__panel--folded': cukFolded }"
-              :folded="cukFolded"
-              :foldable="hasManagement"
-              @toggle="switchPanel"
+              :class="{ 'asst-ovl__panel--folded': expanded !== 'cuk' }"
+              :folded="expanded !== 'cuk'"
+              @toggle="togglePanel('cuk')"
+            />
+            <ResearchAssistant
+              ref="researchEl"
+              :class="{ 'asst-ovl__panel--folded': expanded !== 'research' }"
+              :folded="expanded !== 'research'"
+              @toggle="togglePanel('research')"
             />
             <ManagementAssistant
               v-if="hasManagement"
               ref="mgmtEl"
-              :class="{ 'asst-ovl__panel--folded': !cukFolded }"
+              :class="{ 'asst-ovl__panel--folded': expanded !== 'management' }"
               variant="overlay"
-              :folded="!cukFolded"
+              :folded="expanded !== 'management'"
               :section="MANAGEMENT_DEFAULT_SECTION"
-              @toggle="switchPanel"
+              @toggle="togglePanel('management')"
             />
             <!-- One notification opened from the column or its toast: over the console, which
                  keeps its conversation and draft underneath. A skill improvement, a scheduled
@@ -126,8 +131,8 @@
 // Mounted once by the shell (layouts/MainLayout.vue). Owns every way in — the character, ⌘K,
 // the circle gesture, ⌘K forwarded from the session browser — and the window itself: the
 // «Центр сповіщень» column (stores/notification-center.ts), the accordion of ЦУК
-// (stores/cuk-chat.ts) and the Менеджмент assistant (stores/management-chat.ts, always asked as
-// «Огляд»), and the notepad.
+// (stores/cuk-chat.ts), «Дослідження» (stores/research.ts) and the Менеджмент assistant
+// (stores/management-chat.ts, always asked as «Огляд»), and the notepad.
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
 import { useRouter } from 'vue-router';
 import { useI18n } from 'vue-i18n';
@@ -136,11 +141,13 @@ import { useOrchestrator } from 'stores/orchestrator';
 import { useProjects } from 'stores/projects';
 import { useManagementChat } from 'stores/management-chat';
 import { useCukChat } from 'stores/cuk-chat';
-import { assistantGestureOn, assistantMascot, useAssistantOverlay } from 'stores/assistant-overlay';
+import { assistantGestureOn, assistantMascot, useAssistantOverlay, type AssistantPanel } from 'stores/assistant-overlay';
 import { useNotificationCenter } from 'stores/notification-center';
+import { useResearch } from 'stores/research';
 import ManagementAssistant from 'components/management/ManagementAssistant.vue';
 import AssistantMascot from './AssistantMascot.vue';
 import CukAssistant from './CukAssistant.vue';
+import ResearchAssistant from './ResearchAssistant.vue';
 import CukNotepad from './CukNotepad.vue';
 import CukNotifications from './CukNotifications.vue';
 import SkillImprovementView from './SkillImprovementView.vue';
@@ -156,6 +163,7 @@ const chat = useManagementChat();
 const cuk = useCukChat();
 const overlay = useAssistantOverlay();
 const notifications = useNotificationCenter();
+const research = useResearch();
 
 cuk.bindRouter(useRouter());
 // The column follows the signed-in user from app start, not from the first opening: a change an
@@ -166,9 +174,11 @@ const workspaceId = computed(() => orchestrator.selectedWorkspaceId);
 const workspace = computed(() => (workspaceId.value ? projects.workspaceById.get(workspaceId.value) : undefined));
 // Decision 9: the Менеджмент panel is the owner's and the managers' of the current workspace.
 const hasManagement = computed(() => !!workspaceId.value && projects.canManageWorkspace(workspaceId.value));
-const cukFolded = computed(() => hasManagement.value && overlay.panel !== 'cuk');
+// The expanded panel: the one used last, ЦУК when that was the Менеджмент panel and it is gone.
+const expanded = computed<AssistantPanel>(() => (overlay.panel === 'management' && !hasManagement.value ? 'cuk' : overlay.panel));
+const panels = computed<AssistantPanel[]>(() => (hasManagement.value ? ['cuk', 'research', 'management'] : ['cuk', 'research']));
 
-const anyBusy = computed(() => chat.busy || cuk.busy);
+const anyBusy = computed(() => chat.busy || cuk.busy || research.busy);
 
 const launcherTip = computed(() =>
   anyBusy.value
@@ -186,18 +196,22 @@ const alertsOpen = ref(false);
 const dialogEl = ref<HTMLElement | null>(null);
 const cukEl = ref<InstanceType<typeof CukAssistant> | null>(null);
 const mgmtEl = ref<InstanceType<typeof ManagementAssistant> | null>(null);
+const researchEl = ref<InstanceType<typeof ResearchAssistant> | null>(null);
 // Where the keyboard was before the window took it, so closing hands it back.
 let returnFocus: HTMLElement | null = null;
 
 function focusPanel(): void {
-  if (overlay.panel === 'management' && mgmtEl.value) mgmtEl.value.focus();
+  if (expanded.value === 'management' && mgmtEl.value) mgmtEl.value.focus();
+  else if (expanded.value === 'research' && researchEl.value) researchEl.value.focus();
   else if (cukEl.value) cukEl.value.focus();
   else dialogEl.value?.focus();
 }
 
-// The accordion: one panel expanded, the other folded to its bar; either bar swaps them.
-function switchPanel(): void {
-  overlay.panel = overlay.panel === 'cuk' ? 'management' : 'cuk';
+// The accordion: one panel expanded, the others folded to their bars. A folded bar expands its
+// panel; the expanded panel's own bar folds it and hands the window to the next one.
+function togglePanel(panel: AssistantPanel): void {
+  const list = panels.value;
+  overlay.panel = panel !== expanded.value ? panel : list[(list.indexOf(panel) + 1) % list.length]!;
   void nextTick(focusPanel);
 }
 
@@ -237,14 +251,8 @@ function closeEntry(): void {
   void nextTick(focusPanel);
 }
 
-// The Менеджмент panel can vanish while it is expanded (another workspace, another role):
-// the accordion then falls back to ЦУК.
-watch(hasManagement, (has) => {
-  if (!has) overlay.panel = 'cuk';
-});
-
 // An answer landing while nobody is looking marks the character until the window is opened —
-// from either assistant.
+// from any assistant.
 watch(anyBusy, (busy, was) => {
   if (was && !busy && !overlay.open) overlay.unread = true;
 });
@@ -263,15 +271,17 @@ function onHotkey(e: KeyboardEvent): void {
 // Хелпери panel stops it) keeps it. A Quasar dialog on top (the «Новий чат» confirmation)
 // owns its Esc too. An open notification entry is closed first, back to the console; then a
 // turn in flight in the EXPANDED panel is stopped (docs/specs/2026-11-15-faster-assistant-
-// answers.md, decision 9) — a turn in the folded panel is not what the operator is looking at.
+// answers.md, decision 9) — a turn in a folded panel is not what the operator is looking at.
 const stopTurn = useAsyncAction((panel: 'cuk' | 'management') => (panel === 'cuk' ? cuk.stop() : chat.stop()));
 function onEscape(e: KeyboardEvent): void {
   if (e.key !== 'Escape' || e.defaultPrevented || !overlay.open) return;
   if (document.querySelector('.q-dialog')) return;
   e.preventDefault();
-  const expanded = cukFolded.value ? 'management' : 'cuk';
+  const panel = expanded.value;
   if (notifications.viewOpen) closeEntry();
-  else if (expanded === 'cuk' ? cuk.busy : chat.busy) void stopTurn.run(expanded);
+  else if (panel === 'research') {
+    if (!researchEl.value?.stopTurn()) overlay.close();
+  } else if (panel === 'cuk' ? cuk.busy : chat.busy) void stopTurn.run(panel);
   else overlay.close();
 }
 

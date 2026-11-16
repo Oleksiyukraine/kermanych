@@ -517,7 +517,7 @@
         :voice-active="voiceSample"
         @voice="voiceSample = !voiceSample"
       />
-      <!-- Composer dictation: 🎤 with the ▾ mode menu («Агенти», «Чат»), the dictation line and the
+      <!-- Composer dictation: 🎤 with the ▾ mode menu («Агенти», «Дослідження»), the dictation line and the
            auto-send countdown ringing the send button. -->
       <KComposer
         v-model="dictatedDraft"
@@ -712,7 +712,6 @@ const topNav = ref('agents');
 const topNavOptions = [
   { value: 'agents', label: t('kit.gallery.topNav.agents') },
   { value: 'board', label: t('kit.gallery.topNav.board') },
-  { value: 'chat', label: t('kit.gallery.topNav.chat') },
 ];
 const subNav = ref('storage');
 const subNavItems = [

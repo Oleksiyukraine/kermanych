@@ -236,7 +236,7 @@ const effortChoices = computed(() => EFFORT_OPTIONS.map((o) => ({ value: o.value
 // v3 controls row — what this session is running as (model, reasoning effort, isolation),
 // how full its context is, what it has spent, and the accent send FAB. Attach images via
 // paste, drag-drop, or the 📎 file-pick. `modelValue` is owned by the host so the same
-// primitive drives both the panel and the Чат screen. The chips are equally host-owned:
+// primitive drives both the panel and the «Дослідження» panel. The chips are equally host-owned:
 // this component reads the session's facts and reports an effort pick; it never talks to
 // the store itself.
 

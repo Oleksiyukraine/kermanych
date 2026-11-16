@@ -3,6 +3,8 @@
 > Superseded in part by docs/specs/2026-11-05-remove-managed-claude-code.md: ЦУК runs on omp and launches agents with the provider's default mode, not a remembered one.
 >
 > Decision 11 is extended by docs/specs/2026-11-15-faster-assistant-answers.md: ЦУК also pins low thinking effort, streams its answer and can be stopped.
+>
+> Decisions 2, 9 and 10 are amended by docs/specs/2026-11-16-research-mode.md: the accordion holds three panels (ЦУК, «Дослідження» for every role, the Менеджмент assistant for managers), each panel keeps its own composer, and the window opens on the panel used last.
 
 - **Branch:** `feature/redesign-avatar-control-console`
 - **Scope:** `apps/ui` (the launcher window, a new ЦУК store and views, the shared composer, the

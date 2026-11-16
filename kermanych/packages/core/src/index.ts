@@ -267,6 +267,7 @@ export {
   type AgentKind,
 } from "./agents";
 export { DEEP_ANALYSIS_SKILL, deepAnalysisPrompt } from "./deep-analysis";
+export { researchAppend, type ResearchProject } from "./research";
 export { DESIGN_SCREENS_DIR, designReadmePath, designDirOf, designScreenshots } from "./design";
 export {
   SYNERGY_DEFAULT_MODEL,

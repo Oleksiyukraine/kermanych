@@ -10,29 +10,6 @@
       <div class="k-panel__controls">
         <span class="k-panel__status mono">{{ statusLabel }}</span>
         <KIconButton
-          v-if="session.kind === 'chat'"
-          :loading="promoting"
-          :disabled="pending"
-          :title="promoting
-            ? t('kit.panel.promoting')
-            : t('kit.panel.promoteAgent')"
-          @click="emit('promoteAgent')"
-        >▶</KIconButton>
-        <KIconButton
-          v-if="session.kind === 'chat'"
-          :loading="filing"
-          :disabled="pending"
-          :title="t('kit.panel.promoteTask')"
-          @click="emit('promoteTask')"
-        >⊕</KIconButton>
-        <KIconButton
-          v-if="session.kind === 'chat'"
-          :loading="clearing"
-          :disabled="pending"
-          :title="t('kit.panel.clear')"
-          @click="emit('clear')"
-        >✕</KIconButton>
-        <KIconButton
           v-if="session.kind === 'agent'"
           :loading="branching"
           :disabled="pending"
@@ -303,14 +280,8 @@ const props = withDefaults(
     placeholder?: string;
     // Busy props (README «Design → Async states»): each turns its control into the kit spinner
     // and blocks it, so the click is answered at once and a second one cannot race the first.
-    // The chat is being turned into an agent (worktree + omp respawn) — ▶.
-    promoting?: boolean;
     // The session is being rehydrated (omp respawn + history reload) — the composer's ↻.
     refreshing?: boolean;
-    // «В беклог» files a cloud card — ⊕.
-    filing?: boolean;
-    // The chat is being discarded and re-created — ✕.
-    clearing?: boolean;
     // A fork is being created — ⑂; stays until the child session appears.
     branching?: boolean;
     // A stop is in flight — ■; stays until the status is no longer running.
@@ -355,10 +326,7 @@ const props = withDefaults(
     dictation?: ComposerDictationState | null;
   }>(),
   {
-    promoting: false,
     refreshing: false,
-    filing: false,
-    clearing: false,
     branching: false,
     stopping: false,
     restarting: false,
@@ -393,9 +361,6 @@ const emit = defineEmits<{
   refresh: [];
   summary: [];
   newTask: [text: string];
-  promoteAgent: [];
-  promoteTask: [];
-  clear: [];
   expandAll: [value: boolean];
   effort: [level: ThinkingLevel];
   setModel: [patch: { model: string; provider?: string }];

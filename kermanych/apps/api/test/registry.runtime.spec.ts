@@ -39,8 +39,8 @@ test("session runtime defaults to undefined", () => {
   expect(r.listSessions(proj.id)[0].runtime).toBeUndefined();
 });
 
-// «Глибокий аналіз»: fixed at creation, surfaced only when set (like `native`), and never
-// rewritten by updateSession.
+// «Глибокий аналіз»: set at creation, or by the write that promotes a research into a
+// deep-analysis agent (and cleared by that promotion's revert); surfaced only when set.
 test("session round-trips deepAnalysis", () => {
   const r = new RegistryService(":memory:");
   const proj = r.upsertProject({ id: "p-1", name: "test" });
@@ -48,13 +48,19 @@ test("session round-trips deepAnalysis", () => {
   const deep = r.createSession({ ...base, deepAnalysis: true });
   const plain = r.createSession({ ...base, deepAnalysis: false });
   const absent = r.createSession(base);
+  const promoted = r.createSession(base);
+  const reverted = r.createSession({ ...base, deepAnalysis: true });
 
   r.updateSession(deep.id, { status: "done" });
-  r.updateSession(plain.id, { status: "done", deepAnalysis: true });
+  r.updateSession(plain.id, { status: "done" });
+  r.updateSession(promoted.id, { deepAnalysis: true });
+  r.updateSession(reverted.id, { deepAnalysis: undefined });
   const byId = new Map(r.listSessions(proj.id).map((s) => [s.id, s]));
   expect(byId.get(deep.id)?.deepAnalysis).toBe(true);
+  expect(byId.get(promoted.id)?.deepAnalysis).toBe(true);
   expect("deepAnalysis" in byId.get(plain.id)!).toBe(false);
   expect("deepAnalysis" in byId.get(absent.id)!).toBe(false);
+  expect("deepAnalysis" in byId.get(reverted.id)!).toBe(false);
 });
 
 test("session guards runtime with isNativeHarness", () => {
@@ -99,8 +105,8 @@ test("updateSession persists runtime changes", () => {
 });
 
 // Decision 9 of docs/specs/2026-11-05-remove-managed-claude-code.md: at start, every managed
-// `claude-code` row loses its slot-queue entry and stops if it was active; plain agent and chat
-// rows become native claude sessions; every other such row is archived. A second start changes nothing.
+// `claude-code` row loses its slot-queue entry and stops if it was active; plain agent rows
+// become native claude sessions; every other such row (chats too) is archived. A second start changes nothing.
 test("start retires managed claude-code rows", () => {
   const dir = mkdtempSync(join(tmpdir(), "kmq-retire-"));
   try {
@@ -130,8 +136,7 @@ test("start retires managed claude-code rows", () => {
     const once = new RegistryService(path);
     const byId = read(once);
     expect(byId.get(agent.id)).toMatchObject({ native: true, status: "stopped", archived: false });
-    expect(byId.get(chat.id)).toMatchObject({ native: true, status: "done", archived: false });
-    for (const id of [design.id, minion.id, tester.id, review.id]) {
+    for (const id of [chat.id, design.id, minion.id, tester.id, review.id]) {
       expect(byId.get(id)?.native).toBeUndefined();
       expect(byId.get(id)?.archived).toBe(true);
     }
@@ -146,6 +151,34 @@ test("start retires managed claude-code rows", () => {
 
     const twice = new RegistryService(path);
     expect(read(twice)).toEqual(byId);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+// docs/specs/2026-11-16-research-mode.md, decision 9: native chats are gone, so the rows left
+// from before are archived at start (one mid-turn reads as stopped); native agents and managed
+// chats stay as they are.
+test("start archives native chat rows", () => {
+  const dir = mkdtempSync(join(tmpdir(), "kmq-native-chat-"));
+  try {
+    const path = join(dir, "k.sqlite");
+    const r = new RegistryService(path);
+    const proj = r.upsertProject({ id: "p-1", name: "test" });
+    const base = { projectId: proj.id, name: "t", task: "", worktreePath: "", branch: "", worktree: false };
+    const idle = r.createSession({ ...base, kind: "chat", runtime: "codex", native: true, status: "done" });
+    const busy = r.createSession({ ...base, kind: "chat", runtime: "omp", native: true, status: "thinking" });
+    const managed = r.createSession({ ...base, kind: "chat", runtime: "omp", status: "done" });
+    const agent = r.createSession({ ...base, kind: "agent", runtime: "omp", native: true, status: "thinking" });
+
+    const once = new Map(new RegistryService(path).listSessions(proj.id).map((s) => [s.id, s]));
+    expect(once.get(idle.id)).toMatchObject({ archived: true, status: "done" });
+    expect(once.get(busy.id)).toMatchObject({ archived: true, status: "stopped" });
+    expect(once.get(managed.id)).toMatchObject({ archived: false, status: "done" });
+    expect(once.get(agent.id)).toMatchObject({ archived: false, status: "thinking" });
+
+    const twice = new Map(new RegistryService(path).listSessions(proj.id).map((s) => [s.id, s]));
+    expect(twice).toEqual(once);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

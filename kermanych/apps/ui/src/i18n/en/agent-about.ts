@@ -15,10 +15,10 @@ export const agentAbout: typeof uk = {
     ends: 'Ready: Kermanych opens the PR itself and the session moves to In review. Not needed: the card closes. Needs a decision or failed: the session waits for you with the reason. After two failures in a row the Minion pauses.',
   },
   promote: {
-    tagline: 'Moves a chat discussion into work with full access',
-    when: 'The “▶” button on the Chat page (“Start implementing what was discussed”). A trigger can also run it.',
+    tagline: 'Moves a research into work with full access',
+    when: 'The “▶” button of the Research panel in the avatar window (“Continue as an agent” → “New task”). A trigger can also run it. For a Deep analysis the agent gets that instruction instead.',
     steps:
-      'Creates a card for the work.\nStops the read-only chat.\nForks the same conversation into a new worktree on a new branch with the full toolset.\nSends the instruction to implement what was discussed.',
+      'Creates a card for the work.\nStops the read-only research.\nForks the same conversation into a new worktree on a new branch with the full toolset.\nSends the instruction to implement what was discussed.',
     inputs: {
       branch: 'The new branch created for the worktree.',
     },

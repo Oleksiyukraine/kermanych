@@ -164,13 +164,6 @@ describe("harness argv", () => {
     expect(resumed.slice(-3)).toEqual(["01a1-x", "--", "more"]);
   });
 
-  it("codex chat: read-only by sandbox, on every start", async () => {
-    const { native, opened, create } = make();
-    const s = create("codex", { kind: "chat" });
-    await native.start(s, { resume: false });
-    expect(opened[0].args.slice(-4)).toEqual(["-s", "read-only", "-a", "never"]);
-  });
-
   it("codex trusted_hash reproduces the value codex itself wrote for a hook", () => {
     // From a real codex 0.147 config.toml after «Trust all» for `-c hooks.Stop=[{hooks=[{type="command",
     // command="/tmp/cxsmoke/hook.sh Stop",timeout=5,async=false}]}]`.
@@ -549,26 +542,6 @@ describe("session-file readers", () => {
     native.ompEvent(s.id, { event: "idle" });
     await native.readTurn(s.id);
     expect(row(s.id).prOpened).toBe(false);
-  });
-
-  it("a chat takes its opening message from the history as `task`, once", async () => {
-    const { native, create, row } = make();
-    const file = join(dir, "s.jsonl");
-    const user = (text: string) => JSON.stringify({ type: "message", message: { role: "user", content: [{ type: "text", text }] } });
-    writeFileSync(file, [user("  why does drag drop land in the wrong cell?\nsecond line "), user("and the board?")].join("\n"));
-    const chat = create("omp", { kind: "chat", task: "", worktreePath: "", ompSessionFile: file });
-    await native.readTurn(chat.id);
-    expect(row(chat.id).task).toBe("why does drag drop land in the wrong cell?\nsecond line");
-
-    // A stamped task is the thread's name; a later turn does not rename it.
-    writeFileSync(file, user("something else"));
-    await native.readTurn(chat.id);
-    expect(row(chat.id).task).toBe("why does drag drop land in the wrong cell?\nsecond line");
-
-    // An agent's task is its card's text, never the history.
-    const agent = create("omp", { task: "", ompSessionFile: file });
-    await native.readTurn(agent.id);
-    expect(row(agent.id).task).toBe("");
   });
 });
 

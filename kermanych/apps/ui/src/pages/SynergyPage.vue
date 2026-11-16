@@ -625,14 +625,14 @@ function onSetModel(patch: { model: string; provider?: string }): void {
   void modelPick.set(patch.model);
 }
 
-// A text selection in the log → a backlog card, the Чат path.
+// A text selection in the log → a backlog card, as «Дослідження» does.
 const { run: onNewTask } = useAsyncAction(async (text: string) => {
   const s = session.value;
   const userId = auth.user?.id;
   const seed = text.trim();
   if (!s || !userId || !seed) return;
   if (!projects.byId.has(s.projectId)) {
-    store.notify(t('chat.page.notifyNotCloudTask'), 'error');
+    store.notify(t('chat.notCloudTask'), 'error');
     return;
   }
   const card = await board.createTask(

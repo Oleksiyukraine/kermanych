@@ -4,8 +4,8 @@
 - **Scope:** `apps/ui` (the avatar window, a research panel and store, removal of the «Чат» page),
   `apps/api` (the research session's tools, system append and promotion), `packages/core`
   (the append text), i18n `uk` / `en`, `kermanych/README.md`. No cloud migration.
-- **Status:** decisions agreed with the operator in the deep-analysis interview (2026-11-16);
-  awaiting the go-ahead to implement.
+- **Status:** decisions agreed with the operator in the deep-analysis interview (2026-11-16),
+  approved the same day; implemented on this branch (see «Verification»).
 - **Replaces in part** `docs/specs/2026-10-06-native-chats.md` (native chats are retired) and
   `docs/specs/2026-11-04-cuk-control-console.md` decision 2 (the accordion gets a third panel,
   the window opens on the last used panel).
@@ -95,8 +95,9 @@ The avatar's window gets it as a third panel:
    `Session.deepAnalysis`, and sends the deep-analysis wrapper (`deepAnalysisPrompt` plus the
    resolved skill) around a short ask to analyse what was researched, instead of the `promote`
    instruction. When another project is picked, the same write that turns the row into an
-   agent moves it to that project. ⊕ files a backlog card from the opening question, as before.
-   The text-selection → card action goes with the page.
+   agent moves it to that project. ⊕ files a backlog card from the opening question, as before,
+   and a text selection in the log files one from the selection (KPanel offers it on every
+   panel, so it stays rather than becoming a dead control).
 8. **Notifications go through the avatar.** The mascot «thinks» while a research turn runs and
    wears the unread dot when one finishes while the window is closed, as for the other two
    panels. Research stays out of «Агенти», the agent map and the attention marks, as chats are
@@ -123,19 +124,24 @@ The avatar's window gets it as a third panel:
     write; the revert on failure restores the project too.
   - Remove `createNativeChat`, the `native` body of `POST /sessions/chat`, and the native chat
     paths in `native/native-session.service.ts` (`--tools` for chats, first-message naming).
-  - Registry migration: archive `kind = 'chat' AND native = 1` rows.
+  - Registry migration: archive `kind = 'chat' AND native = 1` rows at every start;
+    `retireManagedClaude` converts only agents now, so a legacy managed-claude chat is archived
+    directly instead of becoming a native chat first.
 - **ui:**
   - `stores/assistant-overlay.ts`: `AssistantPanel` gains `research`; `show()` keeps the last
     panel.
-  - `stores/research.ts`: the workspace's research list, the selected research per workspace,
-    create / reuse empty / archive / rename, promotion and backlog, the busy and unread signals
-    the mascot reads.
-  - `components/assistant/ResearchAssistant.vue` (header, history, actions, `KPanel` bare,
-    findings) and `ResearchPromote.vue` (the popover); `AssistantLauncher.vue` gets the third
-    accordion panel and hands the composer slot to it.
+  - `lib/research.ts` (pure: the workspace scope, the list, the home project, the title) and
+    `stores/research.ts`: the selected research, the scoped list, the busy signal the mascot
+    reads, and `open(id)` for the voice pill.
+  - `components/assistant/ResearchAssistant.vue` (header, history, actions, `KPanel` bare with
+    its own composer, findings; create / reuse empty / archive / rename / promote / backlog) and
+    `ResearchPromote.vue` (the popover); `composables/useAnchoredMenu.ts` places both popovers.
+    `AssistantLauncher.vue` gets the third accordion panel; `CukAssistant.vue` loses
+    `foldable` (there is always another panel).
   - Delete `pages/ChatPage.vue`, the `chat` route, the `VIEWS` entry, `common.nav.viewChat`,
-    the `chat.page.*` keys no longer used, the «Чат» entry in `stores/cuk-chat.ts`, the kit
-    gallery sample; `KPanel`'s chat-only header buttons go if nothing else uses them.
+    the `chat.page.*` keys (the one still used moves to `chat.notCloudTask`), the «Чат» entry
+    in `stores/cuk-chat.ts`, the kit gallery sample, and `KPanel`'s chat-only header buttons
+    (▶ ⊕ ✕, with their props, events and `kit.panel.*` strings).
   - `layouts/MainLayout.vue`: the voice pill opens the window for a research session.
 - **docs:** `kermanych/README.md` — «Native chats» becomes «Дослідження» under the ЦУК section;
   every mention of the «Чат» tab (provider, machine resources, voice, dictation, Синергія's tab
@@ -143,20 +149,41 @@ The avatar's window gets it as a third panel:
 
 ## Verification
 
-- **api (vitest, `--maxWorkers=4`):** `supervisor.chat.spec.ts` — chat spawn and wake carry
-  `read, grep, glob, web_search` and the research append listing the workspace's bound projects
-  (and only them); promotion of a deep-analysis card stamps `deepAnalysis` and opens with the
-  wrapper; promotion into another project moves the row and reverts it on failure. Remove the
-  native chat cases in `supervisor.native.spec.ts` and `native-session.spec.ts`; registry
-  migration archives native chat rows.
-- **ui:** the overlay store keeps the last panel; the research store lists only the workspace's
-  chats and reuses an empty one.
-- Typecheck `@kermanych/api` and `@kermanych/ui`.
-- **Live preview:** ⌘K → expand «Дослідження»; ask a question about the code and watch the tool
-  rows; close mid-turn → mascot thinking, then the dot; reopen → the research panel is
-  expanded; history, rename, archive, «Новий»; findings toggle; ▶ popover with both modes
-  (cloud launch end to end only if the preview has a cloud board); no «Чат» tab; dark and light
-  themes; a developer sees ЦУК and Дослідження without the management panel.
+- **core:** `test/research.spec.ts` (the append with and without sibling projects) and
+  `deep-analysis.spec.ts` — pass.
+- **api** (`vitest run --maxWorkers=4` on the 23 spec files that touch chats, promotion, native
+  sessions, the registry and reviews): pass. New cases in `supervisor.chat.spec.ts` — the
+  toolset on create and on wake; the append lists only the bound projects of the same workspace,
+  and a project without a workspace gets itself; a deep-analysis card stamps the flag and opens
+  with the wrapper, the ask and the skill block; promotion into another project moves the row
+  and works in that checkout; a failed launch reverts the project and clears the flag; a card of
+  an unbound project is refused with nothing changed. `registry.runtime.spec.ts`: native chat
+  rows are archived at start, a second start changes nothing. `supervisor.native.spec.ts`: an
+  old native chat row still cannot be promoted. `tsc --noEmit` clean.
+- **ui:** `vitest run --maxWorkers=4` — 103 files, 1071 tests pass, including
+  `test/research.spec.ts` (workspace scope, list order and filtering, home project fallbacks,
+  titles). `vue-tsc --noEmit` clean.
+- **Live preview** (web build, seeded API; the demo project's folder linked to this repository
+  so omp could run in it):
+  - no «Чат» tab; ⌘K shows ЦУК expanded with the «Дослідження» bar above it;
+  - expanding «Дослідження» before the folder existed showed «Не вдалося запустити дослідження:
+    …» with «Спробувати ще» in the panel; after linking the folder, «Спробувати ще» opened
+    `дослідження 1` with its greeting and the bare panel's composer (model, effort, voice,
+    Хелпери, `@`);
+  - asked to list its tools and create `probe.txt`, the agent named `read`, `grep`, `glob`,
+    `web_search` (plus MCP tools), declined to write and pointed at ▶; no file appeared. Asked
+    where `RESEARCH_TOOLS` is defined, it ran `grep` (a tool row with «4 збігів / 3 ф») and
+    answered with `apps/api/src/supervisor/chat-tools.ts:10`;
+  - Esc closed the window and ⌘K reopened it on «Дослідження» (last panel); Esc inside «Історія
+    ▾» closed only the menu;
+  - «+» created `дослідження 2`; ✕ archived it and the panel fell back to the first research
+    («Історія 1»);
+  - a question sent and the window closed by the mascot: tooltip «Асистент думає…», then
+    «Асистент відповів» with the dot.
+- **Not exercised:** ▶ promotion end to end (the preview has no cloud board, so the popover
+  correctly showed «Жоден проєкт воркспейсу не привʼязаний… або не у хмарі» and ▶ stayed
+  disabled) — covered by the api tests; a workspace with several projects and the Менеджмент
+  panel as a third bar (the preview has no workspaces); the Electron build; the light themes.
 
 ## Out of scope
 
