@@ -2167,12 +2167,34 @@ checkout, because that is where every session's harness starts.
 | `mcp.json`, `.omp/mcp.json`, `.claude/mcp.json`, `.cursor/mcp.json`, `.vscode/mcp.json` | yes | no | no |
 | `.codex/config.toml` (`[mcp_servers.*]`) | yes | no | yes |
 
-- **The list** has one row per server name, merged across those files: its command or URL, the
-  files that define it, which harness sees it, and the variables it needs with where each value
-  is (`.env`, Kermanych's environment, or not set). An unset variable can be filled in from the
-  row. «не закомічено» marks `.mcp.json` or `.codex/config.toml` that `git status` lists: new
-  sessions fork from the base branch, so they get a change once it is committed and pushed.
-  Running sessions get it after a restart.
+- **The list** has one card per server name, merged across those files, in two groups:
+  «Підключені» (the git root, what sessions get) and «Не підключені» (a bound subfolder, where no
+  session starts; the group says so once). A card shows the command or URL, «Агенти» as omp /
+  claude / codex chips (a harness that does not see the server is struck through, and its tooltip
+  names the files it does not read), «Файли», and «Змінні» with where each value is (`.env`,
+  Kermanych's environment, or not set). An unset variable can be filled in from the card
+  («Задати», Enter saves, Escape cancels). The toolbar above the list holds the repository path
+  and «Додати сервер». «не закомічено» marks `.mcp.json` or `.codex/config.toml` that
+  `git status` lists: new sessions fork from the base branch, so they get a change once it is
+  committed and pushed. Running sessions get it after a restart.
+- **Problems come with their fix** on the card:
+  - codex has no table for the server → «Додати в codex» (the same definition saved again, which
+    writes the table);
+  - codex's table differs → «Порівняти» shows both tables and replaces only after you confirm;
+  - the server cannot be written for codex → the reason, without an action;
+  - the server is only in another root file (`.cursor/mcp.json`, …) → «Скопіювати в .mcp.json»;
+  - a subfolder server whose name the root `.mcp.json` already has → «Видалити копію»; another
+    subfolder server → «Перенести в корінь» or «Видалити».
+- **The catalog.** «Додати сервер» opens a catalog of popular servers (spec:
+  `docs/specs/2026-11-16-mcp-catalog.md`), by group: browser and tests (Playwright, Chrome
+  DevTools), code and issues (GitHub, Linear, Atlassian, Sentry), docs (Context7, Notion), design
+  (Figma), backend (Supabase, Neon, Vercel, Stripe) and web search (Brave Search, Firecrawl), with
+  a search and «Власний сервер» for anything else. A card says how the service signs in: no key,
+  a key (the form asks for it, links to where it is issued, and stores it in `.env`), or OAuth
+  (sign in inside the agent after saving). A pick fills the form, which you review and save as
+  usual; a name already in `.mcp.json` shows as «вже додано». Supabase is added read-only
+  (`?read_only=true`). The entries live in `apps/ui/src/lib/mcp-catalog.ts`, and a test holds
+  each of them to saving cleanly and reaching codex.
 - **Editing.** «Додати сервер», «Змінити» and «Видалити» write the root `.mcp.json`. Unknown keys
   of a server (`timeout`, `oauth`, …) and the file's indentation are kept. Every write also sets
   the server's `[mcp_servers.<name>]` table in `.codex/config.toml`: env values of the form
@@ -2180,10 +2202,9 @@ checkout, because that is where every session's harness starts.
   header that is one `${V}` becomes `env_http_headers`. Only that table changes; comments, other
   servers and its keys Kermanych does not manage (`startup_timeout_sec`, `tools.*`) stay. codex
   expands no `${VAR}`, so a server with a variable in its command, arguments or URL (or an SSE
-  server) gets no codex table, and the row says so. A codex table someone wrote differently is
-  replaced only after you compare both and confirm. A server defined only in another file gets
-  «Скопіювати в .mcp.json»; one in a bound subfolder, which sessions do not see, gets
-  «Перенести в корінь».
+  server) gets no codex table, and both the card and the form say so. The form shows the command
+  line a session will run («Запуск»), and under a secret row the `.env` variable its value goes
+  to («змінити» renames it).
 - **Secrets.** A value marked «секрет» goes to the project's `.env`, and the file gets `${KEY}`
   (an env variable keeps its own name; a header is stored as `<SERVER>_<HEADER>`, and a pasted
   `Bearer …` token is stored without the scheme). At every launch in a project folder — managed
@@ -2192,14 +2213,17 @@ checkout, because that is where every session's harness starts.
   those. A worktree has its own `.env` copy, so a value saved here reaches new sessions; change a
   running one through «Змінні» in its preview row.
 - **«Перевірити»** starts the server in the git root with the api's environment plus the
-  project's `.env`, asks `initialize` and `tools/list`, and stops its whole process group. It
-  shows the tools, or the error with the server's last stderr lines (60 s limit, because `npx -y`
+  project's `.env`, asks `initialize` and `tools/list`, and stops its whole process group. The
+  card shows one status line («Працює: N інструментів», or «Не запускається» and the error) with
+  the tool list or the server's last stderr lines folded under it (60 s limit, because `npx -y`
   downloads on first use). A 401/403 from a URL server means it signs in with OAuth: sign in
   inside the harness (`/mcp` in omp or claude, `codex mcp login`).
 - **Routes.** `GET /api/projects/:id/mcp`, `POST /api/projects/:id/mcp` (`{ name, def, secrets? }`),
-  `PUT` and `DELETE /api/projects/:id/mcp/:name`, `POST …/:name/copy`, `POST …/:name/move-to-root`
-  (writes answer `{ view }`, or `{ conflict: { current, next } }` when a codex table differs; send
-  again with `replaceCodex: true`), and `POST …/:name/check?location=root|subdir`.
+  `PUT /api/projects/:id/mcp/:name`, `DELETE /api/projects/:id/mcp/:name?location=root|subdir`
+  (`subdir` removes the server from the bound subfolder's MCP files), `POST …/:name/copy`,
+  `POST …/:name/move-to-root` (writes answer `{ view }`, or `{ conflict: { current, next } }` when
+  a codex table differs; send again with `replaceCodex: true`), and
+  `POST …/:name/check?location=root|subdir`.
 
 ### Project documentation
 

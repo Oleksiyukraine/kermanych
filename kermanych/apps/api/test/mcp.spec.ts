@@ -122,6 +122,16 @@ test("a server of a bound subfolder moves to the root", async () => {
   expect(JSON.parse(read("app/.mcp.json"))).toEqual({ mcpServers: {} });
 });
 
+test("a subfolder copy is deleted from the subfolder only, the root server stays", async () => {
+  const sub = join(repo, "app");
+  write(".mcp.json", JSON.stringify({ mcpServers: { "project-docs": NEXT_DOCS } }));
+  write(".mcp.json", JSON.stringify({ mcpServers: { "project-docs": NEXT_DOCS, figma: { url: "http://127.0.0.1:3845/mcp" } } }), sub);
+  const view = await service(sub).remove("p1", "project-docs", "subdir");
+  expect(view.servers.map((s) => `${s.location}:${s.name}`)).toEqual(["root:project-docs", "subdir:figma"]);
+  expect(JSON.parse(read("app/.mcp.json")).mcpServers).toEqual({ figma: { url: "http://127.0.0.1:3845/mcp" } });
+  expect(JSON.parse(read(".mcp.json")).mcpServers["project-docs"]).toMatchObject(NEXT_DOCS);
+});
+
 test("mcpLaunchEnv hands over only the referenced .env keys", async () => {
   expect(mcpLaunchEnv(repo)).toEqual({});
   write(".mcp.json", JSON.stringify({ mcpServers: { "dev-db": DEV_DB } }));

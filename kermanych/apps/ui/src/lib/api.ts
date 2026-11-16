@@ -950,8 +950,8 @@ export const api = {
     post<McpWriteResult>(`/projects/${id}/mcp`, { ...body, name }),
   mcpUpdate: (id: string, name: string, body: McpSaveBody): Promise<McpWriteResult> =>
     put<McpWriteResult>(`/projects/${id}/mcp/${encodeURIComponent(name)}`, body),
-  mcpRemove: (id: string, name: string): Promise<McpProjectView> =>
-    delJson<McpProjectView>(`/projects/${id}/mcp/${encodeURIComponent(name)}`),
+  mcpRemove: (id: string, name: string, location: McpServerRow['location'] = 'root'): Promise<McpProjectView> =>
+    delJson<McpProjectView>(`/projects/${id}/mcp/${encodeURIComponent(name)}?location=${location}`),
   mcpCopy: (id: string, name: string, replaceCodex = false): Promise<McpWriteResult> =>
     post<McpWriteResult>(`/projects/${id}/mcp/${encodeURIComponent(name)}/copy`, { replaceCodex }),
   mcpMoveToRoot: (id: string, name: string, replaceCodex = false): Promise<McpWriteResult> =>

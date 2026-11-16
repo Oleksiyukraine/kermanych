@@ -22,6 +22,8 @@ export type McpPair = {
   bearer: boolean;
   /** The secret was already in the file: an empty value keeps what `.env` has. */
   stored: boolean;
+  /** What the value looks like (a catalog pick: «github_pat_…»); the form's default otherwise. */
+  placeholder?: string;
 };
 
 export type McpDraft = {

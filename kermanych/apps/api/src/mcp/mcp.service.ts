@@ -162,7 +162,16 @@ export class McpService {
     return this.view(projectId);
   }
 
-  async remove(projectId: string, name: string): Promise<McpProjectView> {
+  /**
+   * «Видалити»: from the root `.mcp.json` and its codex mirror; at `subdir`, from every MCP file
+   * of the bound subfolder (a copy sessions never saw, often a stale duplicate of a root server).
+   */
+  async remove(projectId: string, name: string, location: McpServerRow["location"] = "root"): Promise<McpProjectView> {
+    if (location === "subdir") {
+      const { place, found } = await this.found(projectId, name, "subdir");
+      for (const file of found.files.keys()) await removeServer(place.repo, file, name);
+      return this.view(projectId);
+    }
     const { root } = this.place(projectId);
     if (!(await this.rootServers(root)).has(name)) throw new McpError(`«${name}» is not in ${MCP_JSON_FILE}`);
     await writeJsonServer(root, MCP_JSON_FILE, name, null);
