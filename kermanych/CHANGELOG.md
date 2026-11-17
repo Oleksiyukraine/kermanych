@@ -4,6 +4,28 @@ What changed in each release of the Kermanych desktop app. The newest version is
 The release workflow publishes a version's section as its GitHub Release notes, and the app
 shows it as «What's new». Write each section for the people who use the app, in English.
 
+## 1.4.0 — 2026-11-17
+
+### New
+
+- The avatar window (⌘K) is now «ЦТ», the central terminal. ЦУК, «Дослідження» and Менеджмент
+  are tall strips in it: click one to switch. Switching keeps your drafts and scroll
+  position, and a strip pulses while its assistant answers out of sight.
+- «Дослідження» replaces the «Чат» page and lives in «ЦТ». It is an agent that reads your
+  projects and the web but does not change code. «Продовжити агентом» turns a research into a
+  task or a deep analysis in one of your projects. Old chats are archived.
+- «Центр сповіщень» has a new «Оновлення» tab with the notes of every Kermanych version. Click
+  a version to read all its notes.
+- «ШІ-команда → MCP-сервери» is redesigned. Servers are grouped by whether agents can use them,
+  and each problem comes with a button that fixes it. «Додати сервер» opens a catalog of 15
+  popular servers, such as Playwright, GitHub, Linear, Sentry and Supabase.
+
+### Fixes
+
+- When a project's folder is missing on this computer, the app now says so and asks you to bind
+  the folder again. Before, it asked you to install omp.
+- The Plane token link in «Інтеграції» opens Plane's token page instead of a project.
+
 ## 1.3.1 — 2026-11-15
 
 ### New
