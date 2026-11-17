@@ -68,7 +68,7 @@
           <p v-else class="asst__res mono" :class="`asst__res--${e.level}`">{{ e.text }}</p>
         </template>
         <!-- The turn in flight. A management turn can grep three repositories before
-             it answers (the api allows four minutes), so the wait needs a heartbeat:
+             it answers (the api allows ten minutes), so the wait needs a heartbeat:
              without one the chat looks dead and the operator sends the question again.
              Same «Думаю…» idiom as the agent panel, with the seconds counting up
              because a static label held for two minutes reads as a hang. While a tool runs

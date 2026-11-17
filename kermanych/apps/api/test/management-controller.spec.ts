@@ -186,13 +186,13 @@ describe("ManagementController — CodedError relay", () => {
     const controller = make({
       chat: {
         ask: async () => {
-          throw new CodedError("assistant_no_reply_timeout", "асистент не відповів за 240 с", { seconds: 240 });
+          throw new CodedError("assistant_no_reply_timeout", "асистент не відповів за 600 с", { seconds: 600 });
         },
       },
     });
     const body = await refusal(() => controller.ask(chatAsk(), REQ));
     expect(body.code).toBe("assistant_no_reply_timeout");
-    expect(body.params).toEqual({ seconds: 240 });
+    expect(body.params).toEqual({ seconds: 600 });
   });
 });
 
