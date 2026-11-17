@@ -1,8 +1,9 @@
 <template>
-  <!-- The avatar and its window (docs/specs/2026-11-04-cuk-control-console.md). The character
-       peeks out of the window's left edge on every tab; it, ⌘K and a counter-clockwise mouse
-       circle all open the window: ЦУК expanded, the Менеджмент assistant folded under its bar
-       for owners and managers, the notepad on the right. -->
+  <!-- The avatar and its window, «ЦТ — Центральний термінал» (docs/specs/2026-11-04-cuk-control-
+       console.md, docs/specs/2026-11-17-central-terminal-curtain.md). The character peeks out of
+       the window's left edge on every tab; it, ⌘K and a counter-clockwise mouse circle all open
+       the window: notifications on the left, the notepad on the right, and in the middle ЦУК,
+       «Дослідження» and, for owners and managers, the Менеджмент assistant behind a curtain. -->
   <button
     type="button"
     class="asst-launch"
@@ -33,7 +34,7 @@
         role="dialog"
         aria-modal="true"
         tabindex="-1"
-        :aria-label="t('cuk.title')"
+        :aria-label="t('cuk.terminal.name')"
       >
         <header class="asst-ovl__head">
           <!-- Which workspace the notepad and the Менеджмент panel are about: nothing else on
@@ -72,32 +73,70 @@
         <div class="asst-ovl__body">
           <CukNotifications class="asst-ovl__alerts" :class="{ 'asst-ovl__alerts--open': alertsOpen }" />
           <div class="asst-ovl__main">
-            <!-- The folded panels are ordered first, so their bars sit on top and the expanded
-                 panel's composer is always the window's last row. -->
-            <CukAssistant
-              ref="cukEl"
-              :class="{ 'asst-ovl__panel--folded': expanded !== 'cuk' }"
-              :folded="expanded !== 'cuk'"
-              @toggle="togglePanel('cuk')"
-            />
-            <ResearchAssistant
-              ref="researchEl"
-              :class="{ 'asst-ovl__panel--folded': expanded !== 'research' }"
-              :folded="expanded !== 'research'"
-              @toggle="togglePanel('research')"
-            />
-            <ManagementAssistant
-              v-if="hasManagement"
-              ref="mgmtEl"
-              :class="{ 'asst-ovl__panel--folded': expanded !== 'management' }"
-              variant="overlay"
-              :folded="expanded !== 'management'"
-              :section="MANAGEMENT_DEFAULT_SECTION"
-              @toggle="togglePanel('management')"
-            />
-            <!-- One notification opened from the column or its toast: over the console, which
-                 keeps its conversation and draft underneath. A skill improvement, a scheduled
-                 run's full answer, a scheduled task, or a version of the changelog — one at a time. -->
+            <div class="asst-ovl__stage">
+              <CukAssistant
+                id="asst-pane-cuk"
+                ref="cukEl"
+                role="tabpanel"
+                aria-labelledby="asst-tab-cuk"
+                class="asst-ovl__pane"
+                :class="paneClass('cuk')"
+              />
+              <ResearchAssistant
+                id="asst-pane-research"
+                ref="researchEl"
+                role="tabpanel"
+                aria-labelledby="asst-tab-research"
+                class="asst-ovl__pane"
+                :class="paneClass('research')"
+                :active="expanded === 'research'"
+              />
+              <ManagementAssistant
+                v-if="hasManagement"
+                id="asst-pane-management"
+                ref="mgmtEl"
+                role="tabpanel"
+                aria-labelledby="asst-tab-management"
+                class="asst-ovl__pane"
+                :class="paneClass('management')"
+                variant="overlay"
+                :section="MANAGEMENT_DEFAULT_SECTION"
+              />
+            </div>
+            <!-- The curtain: one tall strip per panel, stacked top to bottom down the stage's
+                 right edge, between it and the notepad, like a door curtain's strips. A strip
+                 shows its panel on the stage; the panels stay mounted and laid out, so drafts,
+                 attachments and scroll positions survive the switch. -->
+            <div
+              class="asst-ovl__curtain"
+              role="tablist"
+              aria-orientation="vertical"
+              :aria-label="t('cuk.terminal.curtain')"
+              @keydown="onCurtainKey"
+            >
+              <button
+                v-for="s in strips"
+                :id="`asst-tab-${s.id}`"
+                :key="s.id"
+                type="button"
+                role="tab"
+                class="asst-ovl__strip"
+                :class="{ 'asst-ovl__strip--on': expanded === s.id }"
+                :aria-selected="expanded === s.id"
+                :aria-controls="`asst-pane-${s.id}`"
+                :aria-label="s.busy ? `${s.title} — ${s.busyLabel}` : s.title"
+                :tabindex="expanded === s.id ? 0 : -1"
+                v-tip="s.title"
+                @click="pickPanel(s.id, true)"
+              >
+                <span class="asst-ovl__strip-label mono">{{ s.label }}</span>
+                <span v-if="s.busy" class="asst-ovl__strip-busy" aria-hidden="true"></span>
+              </button>
+            </div>
+            <!-- One notification opened from the column or its toast: over the curtain and the
+                 stage, which keep their conversations and drafts underneath. A skill
+                 improvement, a scheduled run's full answer, a scheduled task, or a version of
+                 the changelog — one at a time. -->
             <SkillImprovementView
               v-if="notifications.openId"
               :id="notifications.openId"
@@ -136,9 +175,9 @@
 
 <script setup lang="ts">
 // Mounted once by the shell (layouts/MainLayout.vue). Owns every way in — the character, ⌘K,
-// the circle gesture, ⌘K forwarded from the session browser — and the window itself: the
-// «Центр сповіщень» column (stores/notification-center.ts), the accordion of ЦУК
-// (stores/cuk-chat.ts), «Дослідження» (stores/research.ts) and the Менеджмент assistant
+// the circle gesture, ⌘K forwarded from the session browser — and the window itself, the
+// central terminal: the «Центр сповіщень» column (stores/notification-center.ts), the curtain
+// over ЦУК (stores/cuk-chat.ts), «Дослідження» (stores/research.ts) and the Менеджмент assistant
 // (stores/management-chat.ts, always asked as «Огляд»), and the notepad.
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
 import { useRouter } from 'vue-router';
@@ -182,11 +221,33 @@ const workspaceId = computed(() => orchestrator.selectedWorkspaceId);
 const workspace = computed(() => (workspaceId.value ? projects.workspaceById.get(workspaceId.value) : undefined));
 // Decision 9: the Менеджмент panel is the owner's and the managers' of the current workspace.
 const hasManagement = computed(() => !!workspaceId.value && projects.canManageWorkspace(workspaceId.value));
-// The expanded panel: the one used last, ЦУК when that was the Менеджмент panel and it is gone.
+// The panel on the stage: the one used last, ЦУК when that was the Менеджмент panel and it is gone.
 const expanded = computed<AssistantPanel>(() => (overlay.panel === 'management' && !hasManagement.value ? 'cuk' : overlay.panel));
 const panels = computed<AssistantPanel[]>(() => (hasManagement.value ? ['cuk', 'research', 'management'] : ['cuk', 'research']));
 
 const anyBusy = computed(() => chat.busy || cuk.busy || research.busy);
+
+// The curtain's strips, in the panels' order: a short name on the strip, the full one in its tip,
+// and a pulse while that panel's assistant is answering — it may be the hidden one.
+const strips = computed(() =>
+  panels.value.map((id) => ({
+    id,
+    label: t(`cuk.terminal.tabs.${id}`),
+    title: id === 'cuk' ? t('cuk.title') : id === 'research' ? t('research.title') : t('management.assistant.title'),
+    busy: id === 'cuk' ? cuk.busy : id === 'research' ? research.busy : chat.busy,
+    busyLabel: id === 'research' ? t('research.busyShort') : t('management.assistant.busyShort'),
+  })),
+);
+
+// Where a panel lies against the one on the stage. A hidden panel is clipped to nothing on
+// the edge it lies on — above the shown one or below it, as its strip does on the curtain — so
+// a switch is one vertical wipe toward the strip picked.
+function paneClass(panel: AssistantPanel): string {
+  const list = panels.value;
+  const at = list.indexOf(panel);
+  const on = list.indexOf(expanded.value);
+  return at === on ? 'asst-ovl__pane--on' : at < on ? 'asst-ovl__pane--before' : 'asst-ovl__pane--after';
+}
 
 const launcherTip = computed(() =>
   anyBusy.value
@@ -215,12 +276,26 @@ function focusPanel(): void {
   else dialogEl.value?.focus();
 }
 
-// The accordion: one panel expanded, the others folded to their bars. A folded bar expands its
-// panel; the expanded panel's own bar folds it and hands the window to the next one.
-function togglePanel(panel: AssistantPanel): void {
+// A click hands the keyboard to the panel's composer; the arrow keys keep it on the curtain.
+function pickPanel(panel: AssistantPanel, focusComposer: boolean): void {
+  overlay.panel = panel;
+  if (focusComposer) void nextTick(focusPanel);
+}
+
+// The tablist's keys: ↑/↓ (and ←/→) step through the strips, Home and End jump to the ends.
+function onCurtainKey(e: KeyboardEvent): void {
   const list = panels.value;
-  overlay.panel = panel !== expanded.value ? panel : list[(list.indexOf(panel) + 1) % list.length]!;
-  void nextTick(focusPanel);
+  const at = list.indexOf(expanded.value);
+  let next: number;
+  if (e.key === 'ArrowRight' || e.key === 'ArrowDown') next = (at + 1) % list.length;
+  else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') next = (at - 1 + list.length) % list.length;
+  else if (e.key === 'Home') next = 0;
+  else if (e.key === 'End') next = list.length - 1;
+  else return;
+  e.preventDefault();
+  const panel = list[next]!;
+  pickPanel(panel, false);
+  void nextTick(() => document.getElementById(`asst-tab-${panel}`)?.focus());
 }
 
 watch(
@@ -279,7 +354,7 @@ function onHotkey(e: KeyboardEvent): void {
 // Хелпери panel stops it) keeps it. A Quasar dialog on top (the «Новий чат» confirmation)
 // owns its Esc too. An open notification entry is closed first, back to the console; then a
 // turn in flight in the EXPANDED panel is stopped (docs/specs/2026-11-15-faster-assistant-
-// answers.md, decision 9) — a turn in a folded panel is not what the operator is looking at.
+// answers.md, decision 9) — a turn in a hidden panel is not what the operator is looking at.
 const stopTurn = useAsyncAction((panel: 'cuk' | 'management') => (panel === 'cuk' ? cuk.stop() : chat.stop()));
 function onEscape(e: KeyboardEvent): void {
   if (e.key !== 'Escape' || e.defaultPrevented || !overlay.open) return;
@@ -505,9 +580,13 @@ useCircleGesture(assistantGestureOn, () => overlay.summon());
   line-height: 16px;
 }
 
-// Notifications on the left, the console in the middle, the notepad on the right — the two
-// side columns at the console's full height.
+// Notifications on the left, the console in the middle, the notepad on the right, all three at
+// one height. `--asst-ovl-lip` is the room above them that the clipboard's clip, the notepad's
+// rings and the curtain's rod rise into: the side columns pad their paper down by it
+// (CukNotifications.vue, CukNotepad.vue), the middle column starts below it, so the three tops
+// and bottoms line up.
 .asst-ovl__body {
+  --asst-ovl-lip: 12px;
   position: relative;
   flex: 1;
   min-height: 0;
@@ -520,12 +599,9 @@ useCircleGesture(assistantGestureOn, () => overlay.summon());
   position: relative;
   min-width: 0;
   min-height: 0;
+  margin-top: var(--asst-ovl-lip);
   display: flex;
-  flex-direction: column;
-}
-
-.asst-ovl__panel--folded {
-  order: -1;
+  gap: var(--k-sp-2);
 }
 
 .asst-ovl__notes,
@@ -533,7 +609,161 @@ useCircleGesture(assistantGestureOn, () => overlay.summon());
   min-height: 0;
 }
 
-// An opened notification lies over the console, which keeps its conversation underneath.
+// ── The curtain ─────────────────────────────────────────────────────────────
+// A column of tall strips down the stage's right edge, between it and the notepad, one per
+// panel, splitting the column's height between them — a door curtain's strips. Built from
+// theme tokens only, the way the notepad and the clipboard are, so it reads in every theme.
+.asst-ovl__curtain {
+  flex: none;
+  width: 44px;
+  display: flex;
+  flex-direction: column;
+  gap: var(--k-sp-2);
+}
+
+.asst-ovl__strip {
+  position: relative;
+  flex: 1 1 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--k-sp-3);
+  padding: var(--k-sp-3) 0;
+  overflow: hidden;
+  appearance: none;
+  border: var(--k-rule-thin) solid var(--k-line-strong);
+  border-radius: var(--k-r-lg);
+  // The fabric's folds: darker at the edges, a soft highlight down the middle.
+  background:
+    linear-gradient(
+      to right,
+      color-mix(in srgb, #000 18%, transparent),
+      transparent 30%,
+      color-mix(in srgb, #fff 5%, transparent) 50%,
+      transparent 70%,
+      color-mix(in srgb, #000 18%, transparent)
+    ),
+    color-mix(in srgb, var(--k-surface) 94%, transparent);
+  box-shadow:
+    var(--k-shadow-toast),
+    inset 0 1px 0 color-mix(in srgb, #fff 8%, transparent);
+  color: var(--k-muted);
+  cursor: pointer;
+  transition:
+    transform 0.2s ease,
+    color 0.15s,
+    border-color 0.15s;
+
+  // The edge toward the stage: lit on the strip whose panel is shown.
+  &::before {
+    content: '';
+    position: absolute;
+    top: var(--k-sp-3);
+    bottom: var(--k-sp-3);
+    left: 0;
+    width: 3px;
+    border-radius: 0 var(--k-r-pill) var(--k-r-pill) 0;
+    background: var(--k-accent);
+    transform: scaleY(0);
+    transition: transform 0.35s cubic-bezier(0.65, 0, 0.35, 1);
+  }
+
+  // Touched, the strip leans a little toward the stage.
+  &:hover {
+    color: var(--k-text);
+    transform: translateX(-2px);
+  }
+
+  &:focus-visible {
+    outline: 2px solid var(--k-accent);
+    outline-offset: 2px;
+  }
+}
+
+// The strip whose panel is on the stage: lit in the accent, like the panels' own titles.
+.asst-ovl__strip--on {
+  color: var(--k-accent);
+  border-color: color-mix(in srgb, var(--k-accent) 60%, var(--k-line-strong));
+  background-color: color-mix(in srgb, var(--k-accent) 10%, var(--k-surface));
+
+  &::before {
+    transform: none;
+  }
+
+  &:hover {
+    color: var(--k-accent);
+  }
+}
+
+// The name runs down the strip, top to bottom.
+.asst-ovl__strip-label {
+  writing-mode: vertical-rl;
+  font-size: var(--k-fs-xs);
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+// That panel's assistant is answering — shown on its strip, since the panel may be hidden.
+.asst-ovl__strip-busy {
+  flex: none;
+  width: 7px;
+  height: 7px;
+  border-radius: var(--k-r-pill);
+  background: var(--k-accent);
+  animation: asst-strip-busy 1.4s ease-in-out infinite;
+}
+
+@keyframes asst-strip-busy {
+  0%,
+  100% {
+    opacity: 0.35;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+// ── The stage ───────────────────────────────────────────────────────────────
+// Every panel lies on it, stacked. A hidden one is clipped to nothing on the edge it lies on
+// (above the shown one or below it, the order of the strips) and is invisible, so the switch is
+// one vertical wipe: the old panel rolls up or down out of view as the new one rolls in behind
+// the same edge. The clip reaches past the edges so the shown panel keeps its shadow.
+.asst-ovl__stage {
+  --pane-bleed: -24px;
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+}
+
+.asst-ovl__pane {
+  position: absolute;
+  inset: 0;
+  visibility: hidden;
+  transition:
+    clip-path 0.5s cubic-bezier(0.65, 0, 0.35, 1),
+    visibility 0s linear 0.5s;
+}
+
+.asst-ovl__pane--before {
+  clip-path: inset(var(--pane-bleed) var(--pane-bleed) 100% var(--pane-bleed));
+}
+
+.asst-ovl__pane--after {
+  clip-path: inset(100% var(--pane-bleed) var(--pane-bleed) var(--pane-bleed));
+}
+
+.asst-ovl__pane--on {
+  z-index: 1;
+  visibility: visible;
+  clip-path: inset(var(--pane-bleed));
+  transition: clip-path 0.5s cubic-bezier(0.65, 0, 0.35, 1);
+}
+
+// An opened notification lies over the curtain and the stage, which keep their panels underneath.
 .asst-ovl__entry {
   position: absolute;
   z-index: 3;
@@ -615,8 +845,15 @@ useCircleGesture(assistantGestureOn, () => overlay.summon());
   }
 
   .asst-ovl__notes,
-  .asst-ovl__alerts {
+  .asst-ovl__alerts,
+  .asst-ovl__strip,
+  .asst-ovl__strip::before,
+  .asst-ovl__pane {
     transition: none;
+  }
+
+  .asst-ovl__strip-busy {
+    animation: none;
   }
 }
 </style>

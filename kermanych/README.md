@@ -944,7 +944,7 @@ menu's Quit or the menu-bar icon's «Завершити» — installs the updat
 enabled, closing the window only hides it and installs nothing. The app never restarts on its own; «Перезапустити» while agents are working
 asks first, because the restart stops them (their conversations can be continued afterwards).
 On the first launch of a new version a toast «Kermanych оновлено до X» offers **Що нового**, and
-the update stays as an entry in ЦУК's «Центр сповіщень» (see [ЦУК](#цук--the-avatars-control-console))
+the update stays as an entry in ЦУК's «Центр сповіщень» (see [ЦТ](#цт--the-avatars-central-terminal))
 to reread later. The column's «Оновлення» tab lists this build's changelog, newest version on
 top: each version as a slip with its heading, its first note and its date, the running one marked
 «ця версія»; clicking a slip opens that version's full notes over the console, the way a
@@ -2433,15 +2433,18 @@ local SQLite only, nothing is sent to the cloud, and every signed-in user sees t
   are named separately), and spend with no session behind it: ЦУК, the Менеджмент chat, release
   notes, branch naming.
 
-## ЦУК — the avatar's control console
+## ЦТ — the avatar's central terminal
 
 A small character — the logo's `›_` as a face — peeks out of the window's left edge on every tab.
 Click it, press <kbd>Ctrl</kbd>/<kbd>⌘</kbd>+<kbd>K</kbd> (matched by the physical key, so the
 Ukrainian layout works; also inside a session's browser page), or draw a counter-clockwise circle
 with the mouse, no button held, and a large window opens in the middle of the screen:
-**ЦУК — «Центр управління Керманича»**, a console for Kermanych itself, with «Центр сповіщень» on
-its left and a notepad on its right. (Specs: `docs/specs/2026-11-04-cuk-control-console.md`,
-`docs/specs/2026-11-04-skill-self-improvement.md`.)
+**ЦТ — «Центральний термінал»**. «Центр сповіщень» is on its left, a notepad on its right, and in
+the middle, behind a curtain, **ЦУК — «Центр управління Керманича»** (a console for Kermanych
+itself), «Дослідження» and the Менеджмент assistant. The character's tooltip names the window
+and says when an assistant is thinking, has answered, or there are new notifications. (Specs:
+`docs/specs/2026-11-04-cuk-control-console.md`, `docs/specs/2026-11-04-skill-self-improvement.md`,
+`docs/specs/2026-11-17-central-terminal-curtain.md`.)
 
 - **One conversation for the whole app.** ЦУК sees every workspace, project and session on this
   machine and the open board cards; whatever the header has selected is its default target
@@ -2501,7 +2504,7 @@ its left and a notepad on its right. (Specs: `docs/specs/2026-11-04-cuk-control-
   `localStorage` (the last 10), not in the cloud. Opening it shows that update's «Що нового».
 
   Below ~1280 px of window width the column hides behind 🔔, which carries the count of new entries.
-- **«Дослідження» is the second panel**, for everyone (spec:
+- **«Дослідження» is the second strip of the curtain**, for everyone (spec:
   `docs/specs/2026-11-16-research-mode.md`). An agent that only reads: ask how something works,
   where it lives, what a feature would take. It runs in the checkout of the selected project
   (or the open research's), with `read`, `grep`, `glob` and `web_search` — no tool that writes,
@@ -2521,18 +2524,21 @@ its left and a notepad on its right. (Specs: `docs/specs/2026-11-04-cuk-control-
     same with the selection.
   - Only «Керманич» (omp): the «Чат» tab and its native (omp / claude / codex TUI) chats are
     gone. Old chats appear in the history of their workspace; native ones were archived.
-- **The Менеджмент assistant is the third panel**, for the owner and managers of the current
-  workspace. The window is an accordion: one panel expanded, the
-  others folded to their bars; a folded bar expands its panel, the expanded one's bar hands the
-  window to the next. The window opens on the panel used last (ЦУК on the first opening after a
-  start). Each panel keeps its own draft and attachments. The Менеджмент panel is the same
-  conversation as the Менеджмент tab's dock, asked as the «Огляд» section. Developers see ЦУК and
-  «Дослідження» only.
+- **The Менеджмент assistant is the third strip**, for the owner and managers of the current
+  workspace. **The curtain** is a column of tall strips between the middle panel and the notepad,
+  one per panel, stacked top to bottom and sharing the column's height, with the panel's name
+  down each; the lit strip's panel is on the stage. A click on a strip rolls its panel onto the
+  stage from above or below, the side its strip is on, and hands the keyboard to its field;
+  <kbd>↑</kbd>/<kbd>↓</kbd> on a focused strip step through them. A strip
+  whose assistant is answering pulses, even while its panel is hidden. The window opens on the
+  panel used last (ЦУК on the first opening after a start). Each panel keeps its own draft,
+  attachments and scroll position. The Менеджмент panel is the same conversation as the
+  Менеджмент tab's dock, asked as the «Огляд» section. Developers see ЦУК and «Дослідження» only.
 
 Esc, a click outside, <kbd>⌘K</kbd>, the character or another circle closes the window — except
-that while the expanded panel is answering, Esc stops that answer first and a second Esc closes;
-a question in flight in the folded panel, or one left when the window closes, keeps running, the
-character shows it is thinking, then wears a dot until you look at
+that while the panel on the stage is answering, Esc stops that answer first and a second Esc
+closes; a question in flight in a hidden panel, or one left when the window closes, keeps
+running, the character shows it is thinking, then wears a dot until you look at
 the answer. The circle can be switched off in Settings → «Загальне» if it fires by accident; it
 does not work over a session's browser page, which the app cannot see the mouse over. The
 character is yours to pick in the same pane, under «Персонаж ЦУК»: ten drawings, from the
@@ -2589,7 +2595,7 @@ else sees them and nothing is written to the cloud apart from a run's hidden boa
 Менеджмент is the non-code half of the product: seven workspace-scoped sections
 (`packages/core/src/management.ts` is the one table that names them) plus a chat
 field docked to the foot of the page. Owners and managers also reach the same conversation as
-the second panel of the ЦУК window (above).
+the third panel of the central terminal (above).
 
 Wherever it is opened, that chat is a real assistant, and it is deliberately narrow:
 
@@ -2834,7 +2840,7 @@ Wherever it is opened, that chat is a real assistant, and it is deliberately nar
 - **It answers as it writes, and says what it is doing.** The reply streams in like ЦУК's; while
   it searches the code or calls Jira or Plane, the line under the transcript names the step with a
   seconds count («Шукаю в коді: `pricing` · 12 с», «Читаю `README.md`», «Звертаюся до Jira»).
-  «■» or <kbd>Esc</kbd> (with the focus in the dock, or the panel expanded in the ЦУК window)
+  «■» or <kbd>Esc</kbd> (with the focus in the dock, or the panel on the central terminal's stage)
   stops the answer: what was written stays, marked «зупинено», and none of its actions run — a
   tracker write it already made through its tools did happen and is still listed. Documentation
   questions (Проєктна документація) run on `claude-sonnet-5` with low thinking effort, since they

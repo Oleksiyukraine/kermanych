@@ -3630,8 +3630,6 @@ export const en: MessageSchema = {
   // that only reads the code of the workspace's projects and searches the web.
   research: {
     title: 'Research',
-    expand: 'Expand Research',
-    fold: 'Fold Research',
     busyShort: 'researching…',
     history: 'History',
     new: 'New research',
@@ -4178,8 +4176,15 @@ export const en: MessageSchema = {
   cuk: {
     title: 'ЦУК · Kermanych Control Center',
     logLabel: 'Conversation with ЦУК',
-    expand: 'Expand ЦУК',
-    fold: 'Fold ЦУК',
+    terminal: {
+      name: 'ЦТ · Central terminal',
+      curtain: 'Central terminal panels',
+      tabs: {
+        cuk: 'ЦУК',
+        research: 'Research',
+        management: 'Management',
+      },
+    },
     hello: 'I am ЦУК, the Kermanych control center. I see the agents, the board, the projects and your schedule on this machine: I tell you who is working, what failed and who is waiting for you, open the screens you need, launch agents and write to them, set reminders and recurring runs, and keep the notepad.',
     helloNote: 'Opening a screen or writing to the notepad happens at once. A launch, a card, a message to an agent, a stop or a preview I only prepare — they wait for your «Run». I cannot delete sessions or cards, finish or merge: I open the screen with the button instead.',
     templates: {
@@ -4216,10 +4221,10 @@ export const en: MessageSchema = {
     attach: 'Attach an image — ЦУК sees images, not documents',
     openSession: 'Open the session',
     me: 'me',
-    launcherTip: 'ЦУК — Ctrl/⌘ K or a counter-clockwise mouse circle',
-    launcherBusy: 'The assistant is thinking…',
-    launcherUnread: 'The assistant has answered',
-    launcherNotifications: 'New notifications: {n}',
+    launcherTip: 'ЦТ · Central terminal — Ctrl/⌘ K or a counter-clockwise mouse circle',
+    launcherBusy: 'ЦТ: the assistant is thinking…',
+    launcherUnread: 'ЦТ: the assistant has answered',
+    launcherNotifications: 'ЦТ: new notifications — {n}',
     places: {
       settings: 'Settings',
     },

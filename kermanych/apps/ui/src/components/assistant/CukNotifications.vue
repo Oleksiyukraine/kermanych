@@ -218,8 +218,9 @@ function origin(e: SkillImprovementEntry): string {
   flex-direction: column;
   min-height: 0;
   height: 100%;
-  // Room above the board for the clip to grip its top edge.
-  padding-top: 12px;
+  // Room above the board for the clip to grip its top edge: the window's lip
+  // (AssistantLauncher.vue), so the board's top lines up with the notepad and the middle column.
+  padding-top: var(--asst-ovl-lip);
 }
 
 // The clip: a metal bar across the board's head with a ring, the way a clipboard holds paper.
