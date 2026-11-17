@@ -73,6 +73,68 @@ it("never signals a pid whose start time no longer matches the record", async ()
   expect(alive(stranger.pid!)).toBe(true);
 });
 
+// `ps` lays lstart out by the caller's locale. Two apis on one machine often run under different
+// ones (the Electron app's LANG, a terminal's `pnpm dev:api`), so a start time read under one must
+// still match when read under the other.
+async function underLocale<T>(locale: string, fn: () => Promise<T>): Promise<T> {
+  const saved = { LC_ALL: process.env.LC_ALL, LANG: process.env.LANG };
+  process.env.LC_ALL = locale;
+  process.env.LANG = locale;
+  try {
+    return await fn();
+  } finally {
+    for (const [k, v] of Object.entries(saved)) {
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+    }
+  }
+}
+
+it("keeps the file of a live api that wrote it under another locale", async () => {
+  const owner = group();
+  const child = group();
+  await underLocale("uk_UA.UTF-8", async () =>
+    write("live.json", { pid: owner.pid!, started: await processStarted(owner.pid!) }, [
+      { pid: child.pid!, started: await processStarted(child.pid!), label: "omp" },
+    ]),
+  );
+
+  await underLocale("en_NZ.UTF-8", () => new ChildLedger(dir, processStarted, 200).sweep());
+
+  expect(alive(child.pid!)).toBe(true);
+  expect(existsSync(join(dir, "live.json"))).toBe(true);
+});
+
+it("stops the groups of a dead api that wrote them under another locale", async () => {
+  const orphan = group();
+  const started = await underLocale("uk_UA.UTF-8", () => processStarted(orphan.pid!));
+  write("dead.json", { pid: process.pid + 100_000, started: "Thu Jan  1 00:00:00 1970" }, [{ pid: orphan.pid!, started, label: "omp" }]);
+
+  await underLocale("en_NZ.UTF-8", () => new ChildLedger(dir, processStarted, 200).sweep());
+
+  await vi.waitFor(() => expect(alive(orphan.pid!)).toBe(false), { timeout: 3_000 });
+});
+
+// Files written before start times were read in the C locale carry the owner's own layout, which
+// no longer compares. While that pid runs the file stays: it may be a live, older api.
+it("keeps a file in an older locale layout while its owner pid runs", async () => {
+  const owner = group();
+  write("old.json", { pid: owner.pid!, started: "Tue 17 Nov 12:24:59 2026" }, []);
+
+  await new ChildLedger(dir, processStarted, 200).sweep();
+
+  expect(existsSync(join(dir, "old.json"))).toBe(true);
+});
+
+it("forgets the file of an api whose pid now belongs to another process", async () => {
+  const stranger = group();
+  write("reused.json", { pid: stranger.pid!, started: "Thu Jan  1 00:00:00 1970" }, []);
+
+  await new ChildLedger(dir, processStarted, 200).sweep();
+
+  expect(existsSync(join(dir, "reused.json"))).toBe(false);
+});
+
 it("writes a child down once its start time is known and drops it when it exits", async () => {
   const ledger = new ChildLedger(dir, processStarted, 200);
   await ledger.open();

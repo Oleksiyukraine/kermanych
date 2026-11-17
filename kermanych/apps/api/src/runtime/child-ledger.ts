@@ -11,9 +11,11 @@
 //
 // One file per running api, `<home>/children/<pid>.json`, written only by that api: no two
 // processes ever write the same file, so there is no lock. A file whose owner is gone is swept
-// at the next start. Every pid is stored with its start time (`ps -o lstart`), and a process is
-// signalled only when both still match: after a reboot or a long gap the pid may belong to
-// somebody else's program, and a reused pid never shares the start time of the one recorded.
+// at the next start. Every pid is stored with its start time (`ps -o lstart`, read in the C locale:
+// `ps` lays it out by the caller's locale, and two apis on one machine often run under different
+// ones), and a process is signalled only when both still match: after a reboot or a long gap the
+// pid may belong to somebody else's program, and a reused pid never shares the start time of the
+// one recorded.
 // The owner is identified the same way, so another Kermanych that is still running (a preview
 // api, the packaged app beside `pnpm dev`) keeps its children.
 //
@@ -37,12 +39,17 @@ export function childLedgerRoot(): string {
   return join(process.env.KERMANYCH_SKILLS_HOME ?? join(homedir(), ".kermanych"), "children");
 }
 
-// The process's start time as `ps` prints it, or "" when there is no such process.
+// The process's start time as `ps` prints it in the C locale, or "" when there is no such process.
 export function processStarted(pid: number): Promise<string> {
   const { promise, resolve } = Promise.withResolvers<string>();
-  execFile("ps", ["-o", "lstart=", "-p", String(pid)], { timeout: 5_000 }, (err, out) => resolve(err ? "" : out.trim()));
+  execFile("ps", ["-o", "lstart=", "-p", String(pid)], { timeout: 5_000, env: { ...process.env, LC_ALL: "C" } }, (err, out) =>
+    resolve(err ? "" : out.trim()),
+  );
   return promise;
 }
+
+// lstart in the C locale: "Tue Nov 17 12:24:59 2026", the day padded with a space.
+const C_LSTART = /^[A-Z][a-z]{2} [A-Z][a-z]{2} [ \d]\d \d{2}:\d{2}:\d{2} \d{4}$/;
 
 export class ChildLedger {
   private readonly children = new Map<number, Entry>();
@@ -103,7 +110,13 @@ export class ChildLedger {
         continue;
       }
       if (ledger.owner?.pid === process.pid) continue;
-      if (ledger.owner?.started && (await this.started(ledger.owner.pid)) === ledger.owner.started) continue;
+      if (ledger.owner?.started) {
+        const now = await this.started(ledger.owner.pid);
+        if (now === ledger.owner.started) continue;
+        // An api from before the C-locale reading wrote its own locale's layout, which compares to
+        // nothing: its file stays while that pid runs, as the api may be live.
+        if (now && !C_LSTART.test(ledger.owner.started)) continue;
+      }
       for (const c of ledger.children ?? []) stops.push(this.stop(c));
       rmSync(path, { force: true });
     }
