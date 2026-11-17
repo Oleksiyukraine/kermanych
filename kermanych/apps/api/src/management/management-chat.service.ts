@@ -71,10 +71,10 @@ function childKey(conversationId: string, section: string | undefined): string {
 
 // A legitimate turn here can grep three repositories and then call the tracker tools (Jira,
 // Plane) several times before it answers: each round trip is a provider call plus network or
-// disk work, and a chain of them routinely runs past four minutes. Ten minutes is the first
-// number that cannot be reached by honest work, so hitting it means the child is stuck, and
-// the child is dropped rather than retried.
-const TURN_TIMEOUT_MS = 600_000;
+// disk work, and a chain of them routinely runs past four minutes — long research or bulk
+// ticket work runs much longer. An hour leaves that work room to finish; the operator can stop
+// a turn sooner, and hitting the cap means the child is stuck, so it is dropped, not retried.
+const TURN_TIMEOUT_MS = 60 * 60_000;
 
 // How many of a conversation's file names one turn carries. The block is a reminder, not
 // an archive: ten files per message is the controller's own cap, and a chat that has
