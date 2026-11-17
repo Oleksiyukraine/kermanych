@@ -45,8 +45,9 @@ const workspace = computed(() => (workspaceId.value ? projects.workspaceById.get
   flex-direction: column;
   min-height: 0;
   height: 100%;
-  // Room above the page for the rings to rise out of it.
-  padding-top: 9px;
+  // Room above the page for the rings to rise out of it: the window's lip (AssistantLauncher.vue),
+  // so the page's top lines up with the clipboard and the middle column.
+  padding-top: var(--asst-ovl-lip);
 }
 
 // The binding: a row of rings that rise above the page's top edge and pass through punched
@@ -54,7 +55,8 @@ const workspace = computed(() => (workspaceId.value ? projects.workspaceById.get
 .note__binding {
   position: absolute;
   z-index: 1;
-  top: 0;
+  // The rings rise 9 px above the page's top edge.
+  top: calc(var(--asst-ovl-lip) - 9px);
   left: var(--k-sp-4);
   right: var(--k-sp-4);
   display: flex;

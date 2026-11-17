@@ -1,36 +1,37 @@
 <template>
   <!-- The Менеджмент assistant: transcript and the composer pill. Two hosts render it: the
-       Менеджмент tab docks it at the section pane's foot (`dock`), and the avatar's window
-       shows it as the second panel of its accordion beside ЦУК (`overlay`,
-       docs/specs/2026-11-04-cuk-control-console.md, decision 2). One conversation behind
-       both — stores/management-chat.ts. In the window the header is always there: folded,
-       it is the bar that expands this panel. -->
-  <div class="asst" :class="[`asst--${variant}`, { 'asst--folded': folded }]" @keydown.esc="onDockEscape">
+       Менеджмент tab docks it at the section pane's foot (`dock`), and the central terminal
+       shows it as the third panel behind its curtain (`overlay`,
+       docs/specs/2026-11-17-central-terminal-curtain.md). One conversation behind both —
+       stores/management-chat.ts. In the window the header is always there, a plain title. -->
+  <div class="asst" :class="`asst--${variant}`" @keydown.esc="onDockEscape">
     <section
       v-if="chat.hasConversation || variant === 'overlay'"
       class="asst__log"
       :aria-label="t('management.assistant.logLabel')"
     >
       <header class="asst__log-head">
-        <!-- The title doubles as the collapse control: pressing it folds the transcript
-             to this bar and back. It is a VIEW toggle only — the turn in flight lives in
-             the store (`chat.send`), so folding the window never touches the request. The
-             heartbeat moves up here while collapsed so a working assistant still says so
-             with its transcript hidden. -->
+        <!-- On the dock the title doubles as the collapse control: pressing it folds the
+             transcript to this bar and back. It is a VIEW toggle only — the turn in flight lives
+             in the store (`chat.send`), so folding never touches the request. The heartbeat
+             moves up here while collapsed so a working assistant still says so with its
+             transcript hidden. In the window the curtain picks the panel, so it is a title. -->
+        <span v-if="variant === 'overlay'" class="asst__log-title asst__log-title--overlay mono">{{ t('management.assistant.title') }}</span>
         <button
+          v-else
           class="asst__log-toggle"
           type="button"
-          :aria-expanded="!isFolded"
-          :aria-label="isFolded ? t('management.assistant.expand') : t('management.assistant.collapse')"
+          :aria-expanded="!collapsed"
+          :aria-label="collapsed ? t('management.assistant.expand') : t('management.assistant.collapse')"
           @click="toggleCollapsed"
         >
           <span
             class="asst__log-caret"
-            :class="{ 'asst__log-caret--open': !isFolded }"
+            :class="{ 'asst__log-caret--open': !collapsed }"
             aria-hidden="true"
           ></span>
           <span class="asst__log-title mono">{{ t('management.assistant.title') }}</span>
-          <span v-if="isFolded && chat.busy" class="asst__log-busy mono" aria-live="polite">{{ t('management.assistant.busyShort') }}</span>
+          <span v-if="collapsed && chat.busy" class="asst__log-busy mono" aria-live="polite">{{ t('management.assistant.busyShort') }}</span>
         </button>
         <button
           v-if="chat.hasConversation"
@@ -43,7 +44,7 @@
           @click="newChat()"
         ><KSpinner v-if="chat.resetting" :size="10" /><template v-else>×</template></button>
       </header>
-      <div v-show="!isFolded" ref="logEl" class="asst__log-body" @click="onLogClick">
+      <div v-show="!collapsed" ref="logEl" class="asst__log-body" @click="onLogClick">
         <p v-if="!chat.hasConversation" class="asst__empty">{{ t('management.assistant.empty') }}</p>
         <template v-for="e in chat.entries" :key="e.id">
           <KChatMessage v-if="e.kind === 'user'" role="user">
@@ -78,7 +79,6 @@
     </section>
 
     <AssistantComposer
-      v-show="!folded"
       ref="composerEl"
       :busy="chat.busy"
       :locked="composerLocked"
@@ -119,13 +119,7 @@ import type { AttachedFile } from '../../lib/files';
 const props = defineProps<{
   section: string;
   variant: 'dock' | 'overlay';
-  // The window's accordion: this panel is the folded one — only its title bar shows.
-  folded?: boolean;
 }>();
-
-// In the window the title bar does not fold the transcript in place: it hands the accordion
-// to the other panel or takes it back (decision 2), which the host decides.
-const emit = defineEmits<{ toggle: [] }>();
 
 const { t } = useI18n();
 const route = useRoute();
@@ -160,28 +154,20 @@ function onLogClick(ev: MouseEvent): void {
   void docs.openFile(projectId, folder, path);
 }
 
-// Folds the transcript to its header bar and back. Purely a VIEW state — the conversation and
-// any turn in flight live in the store, so folding never aborts `chat.send`; the answer lands
-// in the transcript whether it is on screen or not. Expanding re-pins the newest entry, since
-// the body was display:none while folded and could not follow the log down. In the window the
-// fold is the accordion's (`folded`), not this component's.
+// Folds the dock's transcript to its header bar and back. Purely a VIEW state — the
+// conversation and any turn in flight live in the store, so folding never aborts `chat.send`;
+// the answer lands in the transcript whether it is on screen or not. Expanding re-pins the
+// newest entry, since the body was display:none while folded and could not follow the log
+// down. The window has no fold: its curtain shows or hides the whole panel.
 const collapsed = ref(false);
-const isFolded = computed(() => (props.variant === 'overlay' ? !!props.folded : collapsed.value));
 function toggleCollapsed(): void {
-  if (props.variant === 'overlay') {
-    emit('toggle');
-    return;
-  }
   collapsed.value = !collapsed.value;
   if (!collapsed.value) scrollLog();
 }
-watch(isFolded, (folded) => {
-  if (!folded) scrollLog();
-});
 
 // Take the keyboard: unfold the transcript and put the caret in the field.
 function focus(): void {
-  if (props.variant === 'dock' && collapsed.value) toggleCollapsed();
+  if (collapsed.value) toggleCollapsed();
   composerEl.value?.focus();
 }
 defineExpose({ focus });
@@ -308,10 +294,9 @@ onUnmounted(() => clearInterval(thinkTimer));
   }
 }
 
-// ── Window — one panel of the avatar window's accordion ──────────────────────
-// Expanded, the panel takes the column's height left over by the folded one and the
-// transcript scrolls inside it, so a long conversation never pushes the pill off screen.
-// Folded, only the title bar is left: the bar that hands the accordion back to this panel.
+// ── Window — one panel behind the central terminal's curtain ─────────────────
+// The panel takes the stage's height and the transcript scrolls inside it, so a long
+// conversation never pushes the pill off screen.
 .asst--overlay {
   display: flex;
   flex-direction: column;
@@ -325,18 +310,6 @@ onUnmounted(() => clearInterval(thinkTimer));
     // Over a whole page rather than a section's own canvas, the dock's 74% frost lets the
     // page's text read through the transcript; the window's glass is denser.
     background: color-mix(in srgb, var(--k-surface) 94%, transparent);
-  }
-}
-
-.asst--overlay.asst--folded {
-  flex: none;
-
-  .asst__log {
-    flex: none;
-  }
-
-  .asst__log-head {
-    border-bottom: none;
   }
 }
 
@@ -437,6 +410,13 @@ onUnmounted(() => clearInterval(thinkTimer));
   letter-spacing: 0.14em;
   text-transform: uppercase;
   color: var(--k-faint);
+}
+
+// In the window the title is a label, not a control: the accent of ЦУК's and «Дослідження»'s,
+// as tall as the «×» beside it, so the three panels' bars match.
+.asst__log-title--overlay {
+  line-height: 22px;
+  color: var(--k-accent);
 }
 
 .asst__log-close {

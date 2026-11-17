@@ -1,43 +1,31 @@
 <template>
-  <!-- «Дослідження» (docs/specs/2026-11-16-research-mode.md): the second panel of the avatar
-       window's accordion. A read-only agent session (`kind: 'chat'`) that answers questions about
-       the code of the workspace's projects and researches features; it writes nothing. Expanded
-       it is the session's bar over the same bare KPanel the Агенти detail renders, composer
-       included; folded it is the title bar that hands the accordion back. -->
-  <div class="rs" :class="{ 'rs--folded': folded }">
+  <!-- «Дослідження» (docs/specs/2026-11-16-research-mode.md): the second panel behind the central
+       terminal's curtain (docs/specs/2026-11-17-central-terminal-curtain.md). A read-only agent
+       session (`kind: 'chat'`) that answers questions about the code of the workspace's projects
+       and researches features; it writes nothing. The session's bar over the same bare KPanel the
+       Агенти detail renders, composer included. -->
+  <div class="rs">
     <section class="rs__box" :aria-label="t('research.title')">
       <header class="rs__head">
+        <span class="rs__title mono">{{ t('research.title') }}</span>
         <button
-          class="rs__toggle"
+          ref="historyAnchor"
           type="button"
-          :aria-expanded="!folded"
-          :aria-label="folded ? t('research.expand') : t('research.fold')"
-          @click="emit('toggle')"
-        >
-          <span class="rs__caret" :class="{ 'rs__caret--open': !folded }" aria-hidden="true"></span>
-          <span class="rs__title mono">{{ t('research.title') }}</span>
-          <span v-if="folded && research.busy" class="rs__busy mono" aria-live="polite">{{ t('research.busyShort') }}</span>
-        </button>
-        <template v-if="!folded">
-          <button
-            ref="historyAnchor"
-            type="button"
-            class="rs__history-btn mono"
-            aria-haspopup="menu"
-            :aria-expanded="history.open.value"
-            :disabled="!research.list.length"
-            @click="history.toggle()"
-          >{{ t('research.history') }} <span class="rs__count">{{ research.list.length }}</span> ▾</button>
-          <KIconButton
-            :loading="creating"
-            :disabled="!homeProject"
-            :title="t('research.new')"
-            @click="newResearch"
-          >+</KIconButton>
-        </template>
+          class="rs__history-btn mono"
+          aria-haspopup="menu"
+          :aria-expanded="history.open.value"
+          :disabled="!research.list.length"
+          @click="history.toggle()"
+        >{{ t('research.history') }} <span class="rs__count">{{ research.list.length }}</span> ▾</button>
+        <KIconButton
+          :loading="creating"
+          :disabled="!homeProject"
+          :title="t('research.new')"
+          @click="newResearch"
+        >+</KIconButton>
       </header>
 
-      <div v-show="!folded" class="rs__main">
+      <div class="rs__main">
         <template v-if="session">
           <div class="rs__bar">
             <div class="rs__id">
@@ -227,8 +215,9 @@ import KSkeleton from 'components/kit/KSkeleton.vue';
 import SessionFindings from 'components/agents/SessionFindings.vue';
 import ResearchPromote from './ResearchPromote.vue';
 
-const props = defineProps<{ folded?: boolean }>();
-const emit = defineEmits<{ toggle: [] }>();
+// Whether the curtain shows this panel: a hidden one keeps its layout (and its scroll) but
+// spawns nothing and holds no transcript.
+const props = defineProps<{ active: boolean }>();
 
 const { t } = useI18n();
 const store = useOrchestrator();
@@ -273,14 +262,14 @@ const sessionPending = computed(() => !!session.value && pending.isPending('sess
 // ── Load and resume ─────────────────────────────────────────────────────
 // Opening a research puts its log on screen the way opening an agent does (historyLoadFor): a
 // resume when the api may have reaped the child, a plain read while a turn runs. Only while
-// the panel is expanded — a folded panel spawns nothing.
+// the panel is shown — a hidden panel spawns nothing.
 const resumingId = ref<string | undefined>(undefined);
 const refreshing = ref(false);
 const logFailed = ref<Set<string>>(new Set());
 const logPhase = useLoadPhase(
   () => !!session.value && store.transcripts[session.value.id] === undefined && !logFailed.value.has(session.value.id),
 );
-useHeldTranscript(() => (props.folded ? undefined : research.selectedId));
+useHeldTranscript(() => (props.active ? research.selectedId : undefined));
 
 async function loadLog(id: string): Promise<void> {
   try {
@@ -317,7 +306,7 @@ function select(id: string, created = false): void {
   research.selectedId = id;
 }
 async function ensure(): Promise<void> {
-  if (props.folded || ensuring.value) return;
+  if (!props.active || ensuring.value) return;
   const cur = session.value;
   if (!cur && awaiting !== undefined && research.selectedId === awaiting) return;
   if (cur && !cur.archived && research.scopeIds.includes(cur.projectId)) return;
@@ -342,16 +331,16 @@ async function ensure(): Promise<void> {
 }
 const { run: retry, busy: retrying } = useAsyncAction(ensure);
 watch(
-  () => [props.folded, research.scopeIds.join('|'), session.value?.id, session.value?.archived, research.list.length] as const,
+  () => [props.active, research.scopeIds.join('|'), session.value?.id, session.value?.archived, research.list.length] as const,
   () => void ensure(),
   { immediate: true },
 );
 // Put the open research's log on screen once per opening, when its row is there.
 watch(
-  () => [session.value?.id, props.folded] as const,
-  ([id, folded]) => {
+  () => [session.value?.id, props.active] as const,
+  ([id, active]) => {
     const s = session.value;
-    if (!id || !s || folded || resumedId === id) return;
+    if (!id || !s || !active || resumedId === id) return;
     resumedId = id;
     if (historyLoadFor(s) === 'resume') void resumeOpen(id);
     else void loadLog(id);
@@ -634,17 +623,12 @@ defineExpose({ focus, stopTurn });
   flex: 1 1 auto;
 }
 
-.rs--folded {
-  flex: none;
-}
-
-// The window's dense glass — ЦУК's recipe, so the panels read as one accordion.
+// The window's dense glass — ЦУК's recipe, so the panels behind the curtain read as one set.
 .rs__box {
   flex: 1 1 auto;
   min-height: 0;
   display: flex;
   flex-direction: column;
-  margin-bottom: var(--k-sp-2);
   background: color-mix(in srgb, var(--k-surface) 94%, transparent);
   -webkit-backdrop-filter: blur(22px) saturate(150%);
   backdrop-filter: blur(22px) saturate(150%);
@@ -656,10 +640,6 @@ defineExpose({ focus, stopTurn });
   overflow: hidden;
 }
 
-.rs--folded .rs__box {
-  flex: none;
-}
-
 .rs__head {
   flex: none;
   display: flex;
@@ -669,57 +649,14 @@ defineExpose({ focus, stopTurn });
   border-bottom: var(--k-rule-thin) solid var(--k-line);
 }
 
-.rs--folded .rs__head {
-  border-bottom: none;
-}
-
-.rs__toggle {
+.rs__title {
   flex: 1;
   min-width: 0;
-  min-height: 22px;
-  display: inline-flex;
-  align-items: center;
-  gap: var(--k-sp-2);
-  appearance: none;
-  border: none;
-  padding: 0;
-  background: transparent;
-  cursor: pointer;
-  text-align: left;
-
-  &:hover .rs__caret {
-    color: var(--k-text);
-  }
-}
-
-.rs__caret {
-  flex: none;
-  width: 6px;
-  height: 10px;
-  background: currentColor;
-  clip-path: polygon(0 0, 100% 50%, 0 100%);
-  color: var(--k-muted);
-  transition: transform 0.15s ease, color 0.12s;
-}
-
-.rs__caret--open {
-  transform: rotate(90deg);
-}
-
-.rs__title {
   font-size: var(--k-fs-xs);
   letter-spacing: 0.14em;
   text-transform: uppercase;
+  line-height: 22px;
   color: var(--k-accent);
-}
-
-.rs__busy {
-  flex: none;
-  margin-left: auto;
-  font-size: var(--k-fs-xs);
-  font-style: italic;
-  color: var(--k-muted);
-  animation: rs-pulse 1.4s ease-in-out infinite;
 }
 
 .rs__history-btn,
@@ -978,21 +915,5 @@ defineExpose({ focus, stopTurn });
   white-space: nowrap;
   font-size: var(--k-fs-xs);
   color: var(--k-muted);
-}
-
-@keyframes rs-pulse {
-  0%,
-  100% {
-    opacity: 0.45;
-  }
-  50% {
-    opacity: 1;
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .rs__busy {
-    animation: none;
-  }
 }
 </style>

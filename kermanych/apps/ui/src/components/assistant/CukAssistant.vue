@@ -1,22 +1,12 @@
 <template>
   <!-- ЦУК — «Центр управління Керманича» (docs/specs/2026-11-04-cuk-control-console.md): the first
-       panel of the avatar window's accordion. Expanded it is a console with a transcript that
-       never collapses to nothing (decision 7: an empty ЦУК greets and offers examples); folded it
-       is the title bar that hands the accordion back. The conversation is stores/cuk-chat.ts. -->
-  <div class="cuk" :class="{ 'cuk--folded': folded }">
+       panel behind the central terminal's curtain (docs/specs/2026-11-17-central-terminal-curtain.md).
+       A console with a transcript that never collapses to nothing (decision 7: an empty ЦУК greets
+       and offers examples). The conversation is stores/cuk-chat.ts. -->
+  <div class="cuk">
     <section class="cuk__log" :aria-label="t('cuk.logLabel')">
       <header class="cuk__head">
-        <button
-          class="cuk__toggle"
-          type="button"
-          :aria-expanded="!folded"
-          :aria-label="folded ? t('cuk.expand') : t('cuk.fold')"
-          @click="emit('toggle')"
-        >
-          <span class="cuk__caret" :class="{ 'cuk__caret--open': !folded }" aria-hidden="true"></span>
-          <span class="cuk__title mono">{{ t('cuk.title') }}</span>
-          <span v-if="folded && chat.busy" class="cuk__busy mono" aria-live="polite">{{ t('management.assistant.busyShort') }}</span>
-        </button>
+        <span class="cuk__title mono">{{ t('cuk.title') }}</span>
         <button
           v-if="chat.hasConversation"
           v-tip="t('management.assistant.newChat')"
@@ -29,7 +19,7 @@
         ><KSpinner v-if="chat.resetting" :size="10" /><template v-else>×</template></button>
       </header>
 
-      <div v-show="!folded" ref="logEl" class="cuk__body">
+      <div ref="logEl" class="cuk__body">
         <div v-if="!chat.hasConversation" class="cuk__hello">
           <p class="cuk__hello-text">{{ t('cuk.hello') }}</p>
           <p class="cuk__hello-note">{{ t('cuk.helloNote') }}</p>
@@ -94,7 +84,6 @@
     </section>
 
     <AssistantComposer
-      v-show="!folded"
       ref="composerEl"
       images-only
       dense
@@ -124,10 +113,6 @@ import AssistantComposer from './AssistantComposer.vue';
 import CukActionCard from './CukActionCard.vue';
 import { confirmAction } from '../../lib/confirm';
 import { useAsyncAction, useKeyedAction } from '../../composables/useAsyncAction';
-
-// There is always another panel to hand the accordion to: «Дослідження» is everyone's.
-defineProps<{ folded?: boolean }>();
-const emit = defineEmits<{ toggle: [] }>();
 
 const { t } = useI18n();
 const chat = useCukChat();
@@ -236,10 +221,6 @@ onUnmounted(() => clearInterval(thinkTimer));
   flex: 1 1 auto;
 }
 
-.cuk--folded {
-  flex: none;
-}
-
 // The window's dense glass, the Менеджмент panel's recipe.
 .cuk__log {
   flex: 1 1 auto;
@@ -258,11 +239,6 @@ onUnmounted(() => clearInterval(thinkTimer));
   overflow: hidden;
 }
 
-.cuk--folded .cuk__log {
-  flex: none;
-  margin-bottom: var(--k-sp-2);
-}
-
 .cuk__head {
   flex: none;
   display: flex;
@@ -273,63 +249,14 @@ onUnmounted(() => clearInterval(thinkTimer));
   border-bottom: var(--k-rule-thin) solid var(--k-line);
 }
 
-.cuk--folded .cuk__head {
-  border-bottom: none;
-}
-
-.cuk__toggle {
-  flex: 1;
-  min-width: 0;
-  min-height: 22px;
-  display: inline-flex;
-  align-items: center;
-  gap: var(--k-sp-2);
-  appearance: none;
-  border: none;
-  padding: 0;
-  background: transparent;
-  cursor: pointer;
-  text-align: left;
-
-  &:disabled {
-    cursor: default;
-  }
-
-  &:not(:disabled):hover .cuk__caret {
-    color: var(--k-text);
-  }
-}
-
-// The Менеджмент panel's drawn caret, so both bars fold the same way.
-.cuk__caret {
-  flex: none;
-  width: 6px;
-  height: 10px;
-  background: currentColor;
-  clip-path: polygon(0 0, 100% 50%, 0 100%);
-  color: var(--k-muted);
-  transition: transform 0.15s ease, color 0.12s;
-}
-
-.cuk__caret--open {
-  transform: rotate(90deg);
-}
-
-// The console's name in the accent: it is the panel the window is FOR.
+// The console's name in the accent. As tall as the «×» beside it, so the bar keeps its height
+// before the first message too.
 .cuk__title {
   font-size: var(--k-fs-xs);
   letter-spacing: 0.14em;
   text-transform: uppercase;
+  line-height: 22px;
   color: var(--k-accent);
-}
-
-.cuk__busy {
-  flex: none;
-  margin-left: auto;
-  font-size: var(--k-fs-xs);
-  font-style: italic;
-  color: var(--k-muted);
-  animation: cuk-pulse 1.4s ease-in-out infinite;
 }
 
 .cuk__close {
@@ -545,7 +472,6 @@ onUnmounted(() => clearInterval(thinkTimer));
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .cuk__busy,
   .cuk__think {
     animation: none;
   }
