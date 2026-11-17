@@ -2525,10 +2525,11 @@ and says when an assistant is thinking, has answered, or there are new notificat
   - Only «Керманич» (omp): the «Чат» tab and its native (omp / claude / codex TUI) chats are
     gone. Old chats appear in the history of their workspace; native ones were archived.
 - **The Менеджмент assistant is the third strip**, for the owner and managers of the current
-  workspace. **The curtain** is a row of strips hanging from a rod at the left of the middle
-  column, one per panel, with the panel's name down it; the lit strip's panel is on the stage.
-  A click on a strip draws its panel in across the stage, toward the strip's side, and hands the
-  keyboard to its field; <kbd>←</kbd>/<kbd>→</kbd> on a focused strip step through them. A strip
+  workspace. **The curtain** is a column of tall strips between the middle panel and the notepad,
+  one per panel, stacked top to bottom and sharing the column's height, with the panel's name
+  down each; the lit strip's panel is on the stage. A click on a strip rolls its panel onto the
+  stage from above or below, the side its strip is on, and hands the keyboard to its field;
+  <kbd>↑</kbd>/<kbd>↓</kbd> on a focused strip step through them. A strip
   whose assistant is answering pulses, even while its panel is hidden. The window opens on the
   panel used last (ЦУК on the first opening after a start). Each panel keeps its own draft,
   attachments and scroll position. The Менеджмент panel is the same conversation as the

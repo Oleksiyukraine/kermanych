@@ -73,36 +73,6 @@
         <div class="asst-ovl__body">
           <CukNotifications class="asst-ovl__alerts" :class="{ 'asst-ovl__alerts--open': alertsOpen }" />
           <div class="asst-ovl__main">
-            <!-- The curtain: one hanging strip per panel, side by side on a rod like a door
-                 curtain's. A strip shows its panel on the stage; the panels stay mounted and
-                 laid out, so drafts, attachments and scroll positions survive the switch. -->
-            <div
-              class="asst-ovl__curtain"
-              role="tablist"
-              aria-orientation="horizontal"
-              :aria-label="t('cuk.terminal.curtain')"
-              @keydown="onCurtainKey"
-            >
-              <button
-                v-for="s in strips"
-                :id="`asst-tab-${s.id}`"
-                :key="s.id"
-                type="button"
-                role="tab"
-                class="asst-ovl__strip"
-                :class="{ 'asst-ovl__strip--on': expanded === s.id, 'asst-ovl__strip--sway': swaying === s.id }"
-                :aria-selected="expanded === s.id"
-                :aria-controls="`asst-pane-${s.id}`"
-                :aria-label="s.busy ? `${s.title} — ${s.busyLabel}` : s.title"
-                :tabindex="expanded === s.id ? 0 : -1"
-                v-tip="s.title"
-                @click="pickPanel(s.id, true)"
-                @animationend.self="swaying = null"
-              >
-                <span class="asst-ovl__strip-label mono">{{ s.label }}</span>
-                <span v-if="s.busy" class="asst-ovl__strip-busy" aria-hidden="true"></span>
-              </button>
-            </div>
             <div class="asst-ovl__stage">
               <CukAssistant
                 id="asst-pane-cuk"
@@ -132,6 +102,36 @@
                 variant="overlay"
                 :section="MANAGEMENT_DEFAULT_SECTION"
               />
+            </div>
+            <!-- The curtain: one tall strip per panel, stacked top to bottom down the stage's
+                 right edge, between it and the notepad, like a door curtain's strips. A strip
+                 shows its panel on the stage; the panels stay mounted and laid out, so drafts,
+                 attachments and scroll positions survive the switch. -->
+            <div
+              class="asst-ovl__curtain"
+              role="tablist"
+              aria-orientation="vertical"
+              :aria-label="t('cuk.terminal.curtain')"
+              @keydown="onCurtainKey"
+            >
+              <button
+                v-for="s in strips"
+                :id="`asst-tab-${s.id}`"
+                :key="s.id"
+                type="button"
+                role="tab"
+                class="asst-ovl__strip"
+                :class="{ 'asst-ovl__strip--on': expanded === s.id }"
+                :aria-selected="expanded === s.id"
+                :aria-controls="`asst-pane-${s.id}`"
+                :aria-label="s.busy ? `${s.title} — ${s.busyLabel}` : s.title"
+                :tabindex="expanded === s.id ? 0 : -1"
+                v-tip="s.title"
+                @click="pickPanel(s.id, true)"
+              >
+                <span class="asst-ovl__strip-label mono">{{ s.label }}</span>
+                <span v-if="s.busy" class="asst-ovl__strip-busy" aria-hidden="true"></span>
+              </button>
             </div>
             <!-- One notification opened from the column or its toast: over the curtain and the
                  stage, which keep their conversations and drafts underneath. A skill
@@ -240,8 +240,8 @@ const strips = computed(() =>
 );
 
 // Where a panel lies against the one on the stage. A hidden panel is clipped to nothing on
-// the side it lies on, so a switch wipes the stage toward the strip picked: the old panel
-// draws away to one side as the new one draws in from the other.
+// the edge it lies on — above the shown one or below it, as its strip does on the curtain — so
+// a switch is one vertical wipe toward the strip picked.
 function paneClass(panel: AssistantPanel): string {
   const list = panels.value;
   const at = list.indexOf(panel);
@@ -276,19 +276,13 @@ function focusPanel(): void {
   else dialogEl.value?.focus();
 }
 
-// The strip that swings for a moment after it is picked, as a touched curtain strip does.
-const swaying = ref<AssistantPanel | null>(null);
-
 // A click hands the keyboard to the panel's composer; the arrow keys keep it on the curtain.
 function pickPanel(panel: AssistantPanel, focusComposer: boolean): void {
-  if (panel !== expanded.value) {
-    overlay.panel = panel;
-    swaying.value = panel;
-  }
+  overlay.panel = panel;
   if (focusComposer) void nextTick(focusPanel);
 }
 
-// The tablist's keys: ←/→ (and ↑/↓) step through the strips, Home and End jump to the ends.
+// The tablist's keys: ↑/↓ (and ←/→) step through the strips, Home and End jump to the ends.
 function onCurtainKey(e: KeyboardEvent): void {
   const list = panels.value;
   const at = list.indexOf(expanded.value);
@@ -616,95 +610,70 @@ useCircleGesture(assistantGestureOn, () => overlay.summon());
 }
 
 // ── The curtain ─────────────────────────────────────────────────────────────
-// A rod across the top with the strips hanging from it on rings, a door curtain's. Built from
+// A column of tall strips down the stage's right edge, between it and the notepad, one per
+// panel, splitting the column's height between them — a door curtain's strips. Built from
 // theme tokens only, the way the notepad and the clipboard are, so it reads in every theme.
 .asst-ovl__curtain {
-  --strip-rod: 7px;
-  position: relative;
   flex: none;
+  width: 44px;
   display: flex;
-  gap: 4px;
-  padding: 0 4px;
-
-  // The rod, in the lip above the column.
-  &::before {
-    content: '';
-    position: absolute;
-    top: calc(-1 * var(--strip-rod));
-    left: 0;
-    right: 0;
-    height: 4px;
-    border-radius: var(--k-r-pill);
-    border: 1.5px solid var(--k-muted);
-    background: linear-gradient(to bottom, var(--k-surface2), var(--k-line-strong));
-    box-shadow: 0 1px 0 color-mix(in srgb, #000 35%, transparent);
-  }
+  flex-direction: column;
+  gap: var(--k-sp-2);
 }
 
 .asst-ovl__strip {
-  // The fabric's folds: darker at the edges, a soft highlight down the middle.
-  --strip-folds: linear-gradient(
-    to right,
-    color-mix(in srgb, #000 22%, transparent),
-    transparent 28%,
-    color-mix(in srgb, #fff 6%, transparent) 50%,
-    transparent 72%,
-    color-mix(in srgb, #000 22%, transparent)
-  );
   position: relative;
-  width: 34px;
+  flex: 1 1 0;
+  min-height: 0;
   display: flex;
   flex-direction: column;
   align-items: center;
+  justify-content: center;
   gap: var(--k-sp-3);
-  padding: var(--k-sp-4) 0 var(--k-sp-3);
+  padding: var(--k-sp-3) 0;
+  overflow: hidden;
   appearance: none;
   border: var(--k-rule-thin) solid var(--k-line-strong);
-  border-radius: 3px 3px var(--k-r-lg) var(--k-r-lg);
+  border-radius: var(--k-r-lg);
+  // The fabric's folds: darker at the edges, a soft highlight down the middle.
   background:
-    var(--strip-folds),
+    linear-gradient(
+      to right,
+      color-mix(in srgb, #000 18%, transparent),
+      transparent 30%,
+      color-mix(in srgb, #fff 5%, transparent) 50%,
+      transparent 70%,
+      color-mix(in srgb, #000 18%, transparent)
+    ),
     color-mix(in srgb, var(--k-surface) 94%, transparent);
   box-shadow:
     var(--k-shadow-toast),
     inset 0 1px 0 color-mix(in srgb, #fff 8%, transparent);
   color: var(--k-muted);
   cursor: pointer;
-  // Swings from the ring on the rod, not from its middle.
-  transform-origin: 50% calc(-1 * var(--strip-rod));
   transition:
     transform 0.2s ease,
     color 0.15s,
-    border-color 0.15s,
-    background 0.2s;
+    border-color 0.15s;
 
-  // The ring round the rod.
+  // The edge toward the stage: lit on the strip whose panel is shown.
   &::before {
     content: '';
     position: absolute;
-    top: calc(-1 * var(--strip-rod) - 4px);
-    left: 50%;
-    width: 10px;
-    height: 11px;
-    transform: translateX(-50%);
-    border: 1.5px solid var(--k-muted);
-    border-radius: 50%;
+    top: var(--k-sp-3);
+    bottom: var(--k-sp-3);
+    left: 0;
+    width: 3px;
+    border-radius: 0 var(--k-r-pill) var(--k-r-pill) 0;
+    background: var(--k-accent);
+    transform: scaleY(0);
+    transition: transform 0.35s cubic-bezier(0.65, 0, 0.35, 1);
   }
 
-  // The weight at the strip's hem.
-  &::after {
-    content: '';
-    margin-top: auto;
-    width: 6px;
-    height: 6px;
-    border-radius: 50%;
-    background: currentColor;
-    opacity: 0.55;
-  }
-
-  // Touched, the strip gives a little under the hand.
+  // Touched, the strip leans a little toward the stage.
   &:hover {
     color: var(--k-text);
-    transform: translateY(2px);
+    transform: translateX(-2px);
   }
 
   &:focus-visible {
@@ -717,32 +686,14 @@ useCircleGesture(assistantGestureOn, () => overlay.summon());
 .asst-ovl__strip--on {
   color: var(--k-accent);
   border-color: color-mix(in srgb, var(--k-accent) 60%, var(--k-line-strong));
-  background:
-    var(--strip-folds),
-    linear-gradient(color-mix(in srgb, var(--k-accent) 14%, transparent), color-mix(in srgb, var(--k-accent) 14%, transparent)),
-    color-mix(in srgb, var(--k-surface) 94%, transparent);
+  background-color: color-mix(in srgb, var(--k-accent) 10%, var(--k-surface));
+
+  &::before {
+    transform: none;
+  }
 
   &:hover {
     color: var(--k-accent);
-  }
-}
-
-.asst-ovl__strip--sway {
-  animation: asst-strip-sway 0.6s ease-out;
-}
-
-@keyframes asst-strip-sway {
-  0% {
-    transform: rotate(0.9deg);
-  }
-  35% {
-    transform: rotate(-0.6deg);
-  }
-  65% {
-    transform: rotate(0.3deg);
-  }
-  100% {
-    transform: none;
   }
 }
 
@@ -776,10 +727,10 @@ useCircleGesture(assistantGestureOn, () => overlay.summon());
 }
 
 // ── The stage ───────────────────────────────────────────────────────────────
-// Every panel lies on it, stacked. A hidden one is clipped to nothing on the side of the stage
-// it lies on (before or after the shown one) and is invisible, so the switch is one wipe: the
-// old panel draws away to its side as the new one draws in from the other. The clip reaches
-// past the edges so the shown panel keeps its shadow.
+// Every panel lies on it, stacked. A hidden one is clipped to nothing on the edge it lies on
+// (above the shown one or below it, the order of the strips) and is invisible, so the switch is
+// one vertical wipe: the old panel rolls up or down out of view as the new one rolls in behind
+// the same edge. The clip reaches past the edges so the shown panel keeps its shadow.
 .asst-ovl__stage {
   --pane-bleed: -24px;
   position: relative;
@@ -798,11 +749,11 @@ useCircleGesture(assistantGestureOn, () => overlay.summon());
 }
 
 .asst-ovl__pane--before {
-  clip-path: inset(var(--pane-bleed) 100% var(--pane-bleed) var(--pane-bleed));
+  clip-path: inset(var(--pane-bleed) var(--pane-bleed) 100% var(--pane-bleed));
 }
 
 .asst-ovl__pane--after {
-  clip-path: inset(var(--pane-bleed) var(--pane-bleed) var(--pane-bleed) 100%);
+  clip-path: inset(100% var(--pane-bleed) var(--pane-bleed) var(--pane-bleed));
 }
 
 .asst-ovl__pane--on {
@@ -896,11 +847,11 @@ useCircleGesture(assistantGestureOn, () => overlay.summon());
   .asst-ovl__notes,
   .asst-ovl__alerts,
   .asst-ovl__strip,
+  .asst-ovl__strip::before,
   .asst-ovl__pane {
     transition: none;
   }
 
-  .asst-ovl__strip--sway,
   .asst-ovl__strip-busy {
     animation: none;
   }
