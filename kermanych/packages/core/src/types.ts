@@ -8,6 +8,7 @@ import type { NativeHarness } from "./runtime";
 import type { MachineAlert } from "./machine-profile";
 import type { MinionResult, MinionState } from "./minion";
 import type { FindingKind } from "./findings";
+import type { GitCloneState } from "./git-setup";
 import type { QaChecklist } from "./task-actions";
 import type { ScheduledTask, ScheduleRun, ScheduleSlip } from "./schedules";
 
@@ -321,7 +322,10 @@ export type ServerEvent =
   // re-fired by a snooze — and one run's record as it starts and ends.
   | { type: "schedules_update"; tasks: ScheduledTask[] }
   | { type: "schedule_slip"; slip: ScheduleSlip }
-  | { type: "schedule_run_update"; run: ScheduleRun };
+  | { type: "schedule_run_update"; run: ScheduleRun }
+  // A project-wizard clone job (docs/specs/2026-11-18-first-run-and-project-wizard.md): every
+  // progress step and the final phase. `POST /api/git/clone` answers with the first state.
+  | { type: "git_clone"; state: GitCloneState };
 
 // How much of omp's subagent activity a session subscribes to. "progress" streams lifecycle
 // + coalesced progress (enough for the agent map); "events" adds every subagent tool/message
