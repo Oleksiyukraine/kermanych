@@ -179,6 +179,15 @@ export const useOrchestrator = defineStore('orchestrator', () => {
   function pickFileSource(scope: string, key: string): void {
     fileSourcePick.value = { scope, key };
   }
+  // A file the operator asked to see from outside the dock — a link in an agent's log
+  // (KLogBlock): open the dock if it is shut; KFileManager switches to the session's tree,
+  // opens the file full screen and clears the request. A fresh object per click, so the same
+  // link clicked twice opens it again.
+  const fileOpenRequest = ref<{ sessionId: string; path: string } | undefined>();
+  function openSessionFile(sessionId: string, path: string): void {
+    fileOpenRequest.value = { sessionId, path };
+    if (!fileManagerVisible.value) toggleFileManager(fileManagerSide.value);
+  }
 
   let socket: Socket | undefined;
 
@@ -846,6 +855,8 @@ export const useOrchestrator = defineStore('orchestrator', () => {
     toggleFileManager,
     fileSourcePick,
     pickFileSource,
+    fileOpenRequest,
+    openSessionFile,
     connect,
     onServerEvent,
     selectProject,

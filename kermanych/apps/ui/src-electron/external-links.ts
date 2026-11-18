@@ -30,11 +30,16 @@ export function routeLinksToDefaultBrowser(
     open(url);
     return { action: 'deny' };
   });
-  // A plain link to another origin would otherwise replace the app in this window.
-  // Same-origin loads (Vite reload in dev, `file://` in production) stay here.
+  // A plain link to another origin would otherwise replace the app in this window, and so
+  // would a relative one (`docs/spec.md` from an agent's markdown): it resolves against the
+  // app's own origin — `file://` in production, the Vite server in dev — and loads a page
+  // that is not the app, leaving the window on the boot splash. Only the app's own document
+  // (a reload) may load here; the renderer opens repo paths itself (lib/log-links.ts).
   win.webContents.on('will-navigate', (event) => {
-    if (parseUrl(event.url)?.origin === parseUrl(win.webContents.getURL())?.origin) return;
+    const to = parseUrl(event.url);
+    const at = parseUrl(win.webContents.getURL());
+    if (to && at && to.origin === at.origin && to.pathname === at.pathname) return;
     event.preventDefault();
-    open(event.url);
+    if (to && to.origin !== at?.origin) open(event.url);
   });
 }

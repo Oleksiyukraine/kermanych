@@ -5,6 +5,7 @@ import { readdir, readFile, rm, rmdir, stat } from "node:fs/promises";
 import { basename, dirname, join, resolve } from "node:path";
 import { addedFileDiff, splitDiff, type SplitDiff } from "./split-diff";
 import { isGitBranchName, WORKTREE_FOLDERS, type TreeEntry, type FileContent, type ReleaseCommit } from "@kermanych/core";
+import { credentialEnv } from "../git/git-credentials";
 
 export type ChangedFile = { path: string; added: number; removed: number };
 
@@ -157,21 +158,11 @@ export class WorktreeService {
 
   // Push a local branch to origin and set its upstream (docs/specs/2026-11-09-merge-design-into-
   // synergy.md, decision 2). `token`, the project's GIT_TOKEN, reaches git as a credential helper
-  // through the environment, never the command line or the output, so an https origin
-  // authenticates as the project's account; without one, and over SSH, the machine's own
-  // credentials do. No prompt, a timeout; git's own message on failure.
+  // (credentialEnv), so an https origin authenticates as the project's account; without one, and
+  // over SSH, the machine's own credentials do. No prompt, a timeout; git's own message on failure.
   async pushBranch(repoDir: string, branch: string, token: string): Promise<void> {
     if (!isGitBranchName(branch)) throw new Error(`not a branch name: ${branch}`);
-    const env: NodeJS.ProcessEnv = { ...process.env, GIT_TERMINAL_PROMPT: "0" };
-    if (token)
-      Object.assign(env, {
-        KERMANYCH_GIT_TOKEN: token,
-        GIT_CONFIG_COUNT: "2",
-        GIT_CONFIG_KEY_0: "credential.helper",
-        GIT_CONFIG_VALUE_0: "",
-        GIT_CONFIG_KEY_1: "credential.helper",
-        GIT_CONFIG_VALUE_1: '!f() { test "$1" = get && echo username=x-access-token && echo "password=$KERMANYCH_GIT_TOKEN"; }; f',
-      });
+    const env = credentialEnv(token);
     const r = await this.serialRemote(repoDir, () =>
       git(repoDir, ["push", "--quiet", "--set-upstream", "origin", `refs/heads/${branch}:refs/heads/${branch}`], { env, timeoutMs: PUSH_TIMEOUT_MS }),
     );

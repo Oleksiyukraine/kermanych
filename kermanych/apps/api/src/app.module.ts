@@ -71,9 +71,11 @@ import { ScheduleService } from "./schedules/schedule.service";
 import { AnalyticsController } from "./analytics/analytics.controller";
 import { AnalyticsService } from "./analytics/analytics.service";
 import { StartupGcService } from "./gc/startup-gc.service";
+import { GitSetupService } from "./git/git-setup.service";
+import { GitController } from "./http/git.controller";
 
 @Module({
-  controllers: [AuthController, ProjectsController, SessionsController, FsController, UsageController, CloudController, SkillsController, SkillImportController, McpController, ManagementController, ManagementMcpController, CukController, ModelsController, JiraController, LinearController, PlaneController, SlackController, AccountController, DocsController, NativeController, BrowserMcpController, MachineController, MinionController, TesterController, VoiceController, DeviceController, SchedulesController, AnalyticsController],
+  controllers: [AuthController, ProjectsController, SessionsController, FsController, UsageController, CloudController, SkillsController, SkillImportController, McpController, ManagementController, ManagementMcpController, CukController, ModelsController, JiraController, LinearController, PlaneController, SlackController, AccountController, DocsController, NativeController, BrowserMcpController, MachineController, MinionController, TesterController, VoiceController, DeviceController, SchedulesController, AnalyticsController, GitController],
   providers: [
     RegistryService, WorktreeService, SupervisorService, PreviewService, EnvFileService, EventsGateway, McpService,
     UsageService,
@@ -199,6 +201,10 @@ import { StartupGcService } from "./gc/startup-gc.service";
     // `~/.kermanych/worktrees/` leftovers and native sessions' MCP configs. Runs once, awaited in
     // its onModuleInit, so it ends before the api listens; nothing depends on it.
     StartupGcService,
+    // The project wizard's git (docs/specs/2026-11-18-first-run-and-project-wizard.md): folder
+    // inspection, a remote's HEAD, and the background clone jobs whose `git_clone` events ride
+    // the supervisor's `events$` to the socket. The supervisor never knows it.
+    GitSetupService,
     // Global by design: the api binds 127.0.0.1 but was previously drivable by
     // anything on the machine, including GET /fs/list (arbitrary local directory
     // enumeration). Opt out per route with @Public(), never per module.

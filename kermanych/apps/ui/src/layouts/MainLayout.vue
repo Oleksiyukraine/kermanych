@@ -431,10 +431,11 @@
       </template>
     </KModal>
 
-    <!-- CREATE-PROJECT MODAL — a project is born in the CLOUD (Requirement 2: any signed-in
-         user may create one and becomes its owner) INSIDE a known workspace, which is why the
-         open state is that workspace's id rather than a boolean. The local row arrives through
-         POST /api/projects/sync and starts out UNBOUND — no directory picker here. -->
+    <!-- QUICK CREATE-PROJECT MODAL — the wizard's «Швидке створення: без теки на цій машині». A
+         project is born in the CLOUD (Requirement 2: any signed-in user may create one and
+         becomes its owner) INSIDE a known workspace, which is why the open state is that
+         workspace's id rather than a boolean. The local row arrives through POST
+         /api/projects/sync and starts out UNBOUND — no directory picker here. -->
     <KModal
       :model-value="createProjectFor !== undefined"
       :title="t('common.nav.newProjectIn', { name: projects.workspaceById.get(createProjectFor ?? '')?.name ?? '' })"
@@ -514,15 +515,25 @@
       </template>
     </KModal>
 
-    <!-- FIRST-RUN CHECKLIST — the workspace → project → folder walk-through (design/onboarding.html).
-         The three setup acts reuse this layout's own create/bind modals, wired through the emits
-         below; every other card routes to its surface on its own. -->
-    <OnboardingChecklist
-      @create-workspace="onOnboardingCreateWorkspace"
-      @create-project="onOnboardingCreateProject"
-      @bind-folder="onOnboardingBindFolder"
+    <!-- FIRST-RUN CHECKLIST — the «Розпочати» walk-through once a project is bound here
+         (design/onboarding.html). Every card routes to its surface on its own. -->
+    <OnboardingChecklist />
+
+    <!-- PROJECT WIZARD — hosted once and opened through the onboarding store: the sidebar's
+         «+», the welcome screen, the board's first «Запустити» and Settings' binding of an
+         unbound project (docs/specs/2026-11-18-first-run-and-project-wizard.md). Keyed by the
+         open, so each one starts from step 1. -->
+    <ProjectWizard
+      v-if="onb.wizard"
+      :key="onb.wizardSeq"
+      :mode="onb.wizard.mode"
+      :workspace-id="onb.wizard.mode === 'create' ? onb.wizard.workspaceId : undefined"
+      :project-id="onb.wizard.mode === 'connect' ? onb.wizard.projectId : undefined"
+      :done-label="onb.wizard.mode === 'connect' ? onb.wizard.doneLabel : undefined"
+      @close="onb.closeWizard()"
+      @quick="onWizardQuick"
+      @done="onWizardDone"
     />
-    <KDirPicker v-model="onbPickerOpen" :start="onbPickerStart" @select="onOnboardingFolderChosen($event)" />
 
     <!-- MACHINE RESOURCES CONSENT (spec decision 2). Dismissible, unlike the provider gate:
          Керманич runs without limits, so closing it any way other than the three buttons
@@ -644,8 +655,8 @@ import JiraMergePrompt from 'components/jira/JiraMergePrompt.vue';
 import LinearMergePrompt from 'components/linear/LinearMergePrompt.vue';
 import PlaneMergePrompt from 'components/plane/PlaneMergePrompt.vue';
 import AssistantLauncher from 'components/assistant/AssistantLauncher.vue';
-import KDirPicker from 'components/kit/KDirPicker.vue';
 import OnboardingChecklist from 'components/onboarding/OnboardingChecklist.vue';
+import ProjectWizard from 'components/onboarding/ProjectWizard.vue';
 import { useOnboarding } from 'stores/onboarding';
 import FeedbackDialog from 'components/feedback/FeedbackDialog.vue';
 import { useFeedback } from 'stores/feedback';
@@ -943,13 +954,9 @@ onMounted(async () => {
       6000,
     );
   }
-  // Now the cloud list is in, decide whether a fresh account needs the checklist. Skipped
-  // until the provider gate is settled and down: the gate is answered first, and its watcher
-  // below opens the checklist the moment it is.
-  if (providerSettled.value) {
-    onb.maybeAutoOpen();
-    void offerResources();
-  }
+  // Now the cloud list is in, ask about machine resources. Skipped until the provider gate is
+  // settled and down: the gate is answered first, and its watcher below asks the moment it is.
+  if (providerSettled.value) void offerResources();
 });
 
 // The board store is app-wide now: Агенти renders my backlog cards from it and its «Задачі»
@@ -1410,16 +1417,19 @@ const contextLabel = computed(() => {
   return `${selectedName.value} · ${folder || t('common.nav.notBound')}`;
 });
 
-// Two create modals, because the sidebar's two «+» buttons create different things. The
-// project one is keyed by the workspace it will create INSIDE — an id rather than a
-// boolean, since «new project» is not a question that can be asked without a group — and
+// The workspace modal and the QUICK project modal (the wizard's «Швидке створення»). The
+// project one is keyed by the workspace it will create INSIDE — an id rather than a boolean,
+// since «new project» is not a question that can be asked without a group — and
 // `createError` is shared: only one of the two can be open at a time. Each has its own busy
 // (submitCreateWorkspace / submitCreate below).
 //
-// Neither has a directory field: creating a project and binding a repo are different acts
-// on different machines (Requirement 3).
+// Neither has a directory field: the project wizard is the path that also brings the code
+// onto this machine.
 const createWorkspaceOpen = ref(false);
 const createWorkspaceName = ref('');
+// Asked from the welcome screen: a new workspace is followed by the wizard for its first
+// project (decision 2). The sidebar's «+» creates just the workspace.
+const wizardAfterWorkspace = ref(false);
 const createProjectFor = ref<string | undefined>(undefined);
 const createName = ref('');
 const createRemote = ref('');
@@ -1434,15 +1444,49 @@ const canCreate = computed(() => createName.value.trim() !== '');
 function openCreateWorkspace(): void {
   createWorkspaceName.value = '';
   createError.value = null;
+  wizardAfterWorkspace.value = false;
   createWorkspaceOpen.value = true;
 }
 
+watch(
+  () => onb.createWorkspaceAsked,
+  () => {
+    openCreateWorkspace();
+    wizardAfterWorkspace.value = true;
+  },
+);
+
+// The sidebar's «+» on a workspace row: the project wizard.
 function openCreateProject(workspaceId: string): void {
+  onb.openWizard({ mode: 'create', workspaceId });
+}
+
+function openQuickCreateProject(workspaceId: string): void {
   createName.value = '';
   createRemote.value = '';
   createPlatform.value = '';
   createError.value = null;
   createProjectFor.value = workspaceId;
+}
+
+// PROJECT WIZARD host. «Швидке створення» swaps the wizard for the quick modal of the same
+// workspace; a finished wizard runs the opener's own next step, or by default selects the
+// project and lands on «Агенти», where its first task starts.
+function onWizardQuick(): void {
+  const req = onb.wizard;
+  onb.closeWizard();
+  if (req?.mode === 'create') openQuickCreateProject(req.workspaceId);
+}
+
+function onWizardDone(projectId: string): void {
+  const req = onb.wizard;
+  onb.closeWizard();
+  if (req?.mode === 'connect' && req.onDone) {
+    req.onDone(projectId);
+    return;
+  }
+  store.selectProject(projectId);
+  void router.push({ name: 'agents' });
 }
 
 
@@ -1507,61 +1551,17 @@ const { run: submitOnboarding, busy: onboardingBusy } = useAsyncAction(async () 
   await auth.chooseProvider(onboardingChoice.value);
 });
 
-// FIRST-RUN CHECKLIST — the open/dismiss/ack state lives in stores/onboarding.ts; this layout
-// only supplies the three setup acts (create workspace, create project, bind a folder) that
-// reuse the create/bind modals already defined above.
-const onbPickerOpen = ref(false);
-const onbPickerStart = ref('');
-const onbBindProjectId = ref<string | undefined>(undefined);
-
-function onOnboardingCreateWorkspace(): void {
-  openCreateWorkspace();
-}
-
-function onOnboardingCreateProject(): void {
-  // The project modal is scoped to a workspace: land on the one in scope, then the first the
-  // account has. With none, the workspace step is the real next act — open that instead.
-  const workspaceId = store.selectedWorkspaceId ?? projects.workspaces[0]?.id;
-  if (!workspaceId) {
-    openCreateWorkspace();
-    return;
-  }
-  openCreateProject(workspaceId);
-}
-
-function onOnboardingBindFolder(): void {
-  const projectId = store.selectedProjectId ?? store.projects[0]?.id;
-  if (!projectId) return; // no project yet — the project step comes first
-  onbBindProjectId.value = projectId;
-  onbPickerStart.value = store.projects.find((p) => p.id === projectId)?.localRepoPath ?? '';
-  onbPickerOpen.value = true;
-}
-
-// Through useAsyncAction: the picker has already closed, so the top bar is the feedback that
-// the binding is being written, and a failure toasts.
-const { run: onOnboardingFolderChosen } = useAsyncAction(async (path: string) => {
-  const projectId = onbBindProjectId.value;
-  const trimmed = path.trim();
-  if (!projectId || !trimmed) return;
-  // The api emits a project_update over the socket, so the local row — and the checklist's
-  // «folder» tick, which reads it — refresh on their own.
-  await store.setProjectBinding(projectId, trimmed);
-  store.notify(t('settings.binding.bound', { path: trimmed }));
-});
-
-// Auto-open once the provider gate is answered or the read lands without one. The onMounted
-// call above covers an account already settled by the time the cloud project list is in.
+// Ask about machine resources once the provider gate is answered or the read lands without
+// one. The onMounted call above covers an account already settled by the time the cloud
+// project list is in.
 watch(providerSettled, (settled) => {
-  if (settled) {
-    onb.maybeAutoOpen();
-    void offerResources();
-  }
+  if (settled) void offerResources();
 });
 
 // ── MACHINE RESOURCES CONSENT ───────────────────────────────────────────────
 // Asked once per window, after the provider gate (never stacked over it: both call sites wait
-// for `providerSettled`) and AFTER the first-run checklist: a fresh account sets up its first
-// project before being asked about limits, and two modals never stack.
+// for `providerSettled`) and never over the checklist or the project wizard, so two modals
+// never stack.
 const consent = useResourcesConsent();
 const consentBusy = ref(false);
 let resourcesOffered = false;
@@ -1576,18 +1576,17 @@ async function offerResources(): Promise<void> {
     return; // an older api without the endpoint, or a restart: ask on the next start
   }
   if (!r.askConsent) return;
-  if (!onb.open) {
+  // Never stacked over the checklist or the project wizard: asked once both are down.
+  const busy = (): boolean => onb.open || !!onb.wizard;
+  if (!busy()) {
     consent.open(r);
     return;
   }
-  const stop = watch(
-    () => onb.open,
-    (open) => {
-      if (open) return;
-      stop();
-      consent.open(r);
-    },
-  );
+  const stop = watch(busy, (up) => {
+    if (up) return;
+    stop();
+    consent.open(r);
+  });
 }
 
 // The EFFECTIVE values (profile ⊕ overrides kept from before), because that is what
@@ -1643,6 +1642,7 @@ const { run: submitCreateWorkspace, busy: createWorkspaceBusy } = useAsyncAction
     // Scope moves to the new group, so the next «+» on its row is the obvious next step.
     store.selectWorkspace(created.id);
     store.notify(t('common.nav.notifyWorkspaceCreated', { name: created.name }));
+    if (wizardAfterWorkspace.value) onb.openWizard({ mode: 'create', workspaceId: created.id });
   },
   { onError: (e) => (createError.value = errorText(e)) },
 );

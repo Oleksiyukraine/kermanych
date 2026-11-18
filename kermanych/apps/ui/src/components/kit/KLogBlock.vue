@@ -5,7 +5,7 @@
     <KToolRow v-if="entry.kind === 'tool'" :entry="entry" :session-id="sessionId" :expand-all="expandAll" />
 
     <!-- assistant_text — Markdown-rendered prose, UI font -->
-    <div v-else-if="entry.kind === 'assistant_text'" class="k-log__markdown" v-html="renderedText" />
+    <div v-else-if="entry.kind === 'assistant_text'" class="k-log__markdown" @click="onMarkdownClick" v-html="renderedText" />
 
     <!-- user_text — the operator's own message: prompt text + any attached images -->
     <template v-else-if="entry.kind === 'user_text'">
@@ -32,7 +32,7 @@
         <span class="k-log__reason-caret" aria-hidden="true">{{ open ? '▾' : '▸' }}</span>
         {{ chip }}
       </button>
-      <div v-if="open" class="k-log__reason-body k-log__markdown" v-html="renderedThinking" />
+      <div v-if="open" class="k-log__reason-body k-log__markdown" @click="onMarkdownClick" v-html="renderedThinking" />
     </div>
 
     <!-- notice — muted by default; warn and error lift into the accent -->
@@ -46,7 +46,9 @@
 import { computed, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import type { TranscriptEntry } from '@kermanych/core';
+import { useOrchestrator } from 'stores/orchestrator';
 import { localizeNotice } from '../../lib/i18n-coded';
+import { logLinkTarget } from '../../lib/log-links';
 import { renderMarkdown } from '../../lib/markdown';
 import type { ExpandAllCommand } from '../../lib/expand-all';
 import { dur, renderTime } from '../../lib/time';
@@ -70,6 +72,24 @@ const noticeText = computed(() =>
 const renderedText = computed(() =>
   props.entry.kind === 'assistant_text' ? renderMarkdown(props.entry.text) : '',
 );
+
+// A link in the prose that names a file of the session's tree (`docs/specs/x.md`, an absolute
+// path in the worktree) opens in the file-manager dock instead of being followed: followed, it
+// resolves against the app's own origin and is not a page at all. Web links keep the default
+// (the main process sends them to the default browser).
+const store = useOrchestrator();
+function onMarkdownClick(e: MouseEvent): void {
+  const a = e.target instanceof Element ? e.target.closest('a') : null;
+  if (!a) return;
+  const session = store.sessions.find((s) => s.id === props.sessionId);
+  const root =
+    session?.worktreePath ??
+    (session && !session.worktree ? store.projects.find((p) => p.id === session.projectId)?.localRepoPath : undefined);
+  const target = logLinkTarget(a.getAttribute('href') ?? '', root ?? undefined);
+  if (!target) return;
+  e.preventDefault();
+  if (target.kind === 'file') store.openSessionFile(props.sessionId, target.path);
+}
 
 // Reasoning is collapsed by default; expand to read the full chain. The detail toolbar
 // reaches it too — `деталі: розгорнути все` that left every reasoning chain shut would be

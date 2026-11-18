@@ -174,7 +174,7 @@
               <span class="set__path mono" :class="{ 'set__path--empty': !boundPath }">
                 {{ boundPath || t('settings.project.notBound') }}
               </span>
-              <KBtn variant="secondary" :loading="binding" @click="pickerOpen = true">{{ t('settings.project.choose') }}</KBtn>
+              <KBtn variant="secondary" :loading="binding" @click="chooseFolder()">{{ t('settings.project.choose') }}</KBtn>
             </div>
             <p class="set__note">{{ t('settings.project.folderNote') }}</p>
           </div>
@@ -1113,9 +1113,11 @@ import KSkeleton from 'components/kit/KSkeleton.vue';
 import SteGuide from 'components/settings/SteGuide.vue';
 import { APP_VERSION, useAppUpdate } from 'stores/app-update';
 import { useFeedback } from 'stores/feedback';
+import { useOnboarding } from 'stores/onboarding';
 
 const store = useOrchestrator();
 const projects = useProjects();
+const onb = useOnboarding();
 const { t } = useI18n();
 const auth = useAuth();
 const appUpdate = useAppUpdate();
@@ -1791,6 +1793,18 @@ onBeforeRouteLeave(() => {
 
 // ── BINDING ─────────────────────────────────────────────────────────────────
 const pickerOpen = ref(false);
+
+// An unbound project is brought onto this machine by the project wizard in «Підключити» mode,
+// which can also clone it; it stays on this screen when done. Moving an already bound project
+// to another folder is just the folder picker.
+function chooseFolder(): void {
+  const id = projectId.value;
+  if (id && !isBound.value) {
+    onb.openWizard({ mode: 'connect', projectId: id, doneLabel: t('onboarding.wizard.done.toSettings'), onDone: () => {} });
+    return;
+  }
+  pickerOpen.value = true;
+}
 
 // The three refusals PUT /api/projects/:id/binding actually returns — the first
 // two from bindProject, the third from registry.patchProject when this machine has

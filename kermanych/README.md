@@ -243,8 +243,68 @@ workspace ──► project ──► task ──► session
   a git worktree plus one `omp` child — on the machine of whoever runs it; see
   [Cloud tasks and local sessions](#cloud-tasks-and-local-sessions).
 
-Press **+** beside «Воркспейси» in the sidebar to create your first workspace,
-then **+** on its row to create projects inside it.
+Press **+** beside «Воркспейси» in the sidebar to create a workspace, then **+** on its row to
+create a project inside it — or follow the welcome screen below, which does the same.
+
+#### First run: the welcome screen
+
+Until there is something to work with, the centre of «Агенти» is a welcome screen instead of
+an empty view (spec: `docs/specs/2026-11-18-first-run-and-project-wizard.md`). It changes by
+itself as the account's workspaces and projects arrive:
+
+- **No workspace.** «Створити воркспейс» creates one and opens the project wizard for it.
+  «Мене запросили в команду» shows the email this account signed in with, to copy and give to
+  the workspace owner, who adds it in the workspace's settings → «Учасники».
+- **A workspace without projects.** «Створіть перший проєкт» opens the wizard.
+- **Projects, none of them connected on this machine** (an invited teammate). The projects are
+  listed by workspace, each with «Підключити», which opens the wizard in connect mode.
+
+The «Розпочати» checklist no longer covers this setup and no longer opens by itself; it appears
+in the sidebar once a project is connected on this machine and walks through the first agent,
+skills and the team.
+
+#### The project wizard
+
+**+** on a workspace row opens a four-step wizard. «Швидке створення: без теки на цій машині»
+on its first step opens the old short form instead (name, git remote, platform): a project in
+the cloud that this machine does not connect.
+
+1. **Доступ до git.** `GIT_TOKEN`, with a link to create a fine-grained GitHub token (Contents
+   and Pull requests read/write, Metadata read). «Використати токен з проєкту X» copies the
+   token of another project connected on this machine. «Перевірити» asks GitHub whose token it
+   is. «Пропустити» goes on without one: cloning a public repository or picking an existing
+   folder works, but the agents cannot push or open pull requests until a token is set.
+2. **Репозиторій.** «GitHub» lists the repositories the token can read, with a search; «За URL»
+   takes any https or ssh URL; «Вже є на цій машині» picks a folder that is already a clone and
+   reads its `origin`, branch and name — nothing is cloned then.
+3. **Куди і як.** The parent folder (by default the one holding the last connected project,
+   else `~/Projects`), the final path, the name, colour, platform and default branch (from the
+   remote's `HEAD`). A path that exists and is not empty is refused.
+4. **Створення.** Clone → project in the cloud → connect the folder → `GIT_TOKEN` into its
+   `.env`. A failed clone leaves nothing in the cloud; a credentials refusal offers the token
+   step again. A failed cloud write keeps the clone, and «Спробувати ще раз» does not clone
+   again. «Скасувати» during the clone stops git and deletes only the folder the wizard created.
+
+**Connect mode** is the same wizard for a project that already exists: the token, then «Склонувати»
+the project's remote or «Вже є на цій машині» (warned when the folder's `origin` is another
+repository), then the parent folder. Name, colour and platform belong to the project and are
+shown read-only. A URL typed for a project that had no remote is saved to it. Connect mode opens
+wherever a project not connected on this machine is first needed: the welcome screen, the first
+«Запустити» on the board (the launch continues afterwards) and the project's settings.
+Re-binding a connected project to another folder keeps the plain folder picker.
+
+**The token stays in the project's `.env`** — the file every agent reads it from. When git does
+not ignore that file, writing `GIT_TOKEN` (from the wizard or from Settings) appends it to the
+repository's `.git/info/exclude`, a local rule that is never committed, so an agent cannot
+commit the token.
+
+Routes: `POST /api/git/inspect` (`{ path }`), `POST /api/git/remote-head` (`{ url, token? }`),
+`POST /api/git/clone` (`{ url, parentDir, dirName, token? }`; progress through the `git_clone`
+socket event), `GET /api/git/clone/:jobId`, `POST /api/git/clone/:jobId/cancel`,
+`POST /api/github/token-check` and `POST /api/github/repos` (`{ token }`; the token is only ever
+in the request body). A clone authenticates the way a «Синергія» push does: the token reaches
+git as a credential helper through the environment, never in the URL, the command line or the
+clone's `origin`.
 
 **Membership is per workspace.** In a workspace's settings its owner invites a
 colleague by the email address their account signed in with, and that one
@@ -899,6 +959,12 @@ and Linear tickets, attachments, storage downloads and markdown links — opens 
 default browser (Chrome, Arc, Safari, …). The session live preview opens in the session's
 own browser instead (see [Session browser](#session-browser)).
 
+A link in an agent's log that names a file rather than a page — `docs/specs/x.md`,
+`src/a.ts:280`, an absolute path or `file://` URL inside the session's tree — opens that file
+full screen in the file manager (the dock opens if it is shut, and switches to the session's
+tree). The desktop window never navigates away from the app itself: a link that would load
+another page of the app's own origin is ignored.
+
 The other deliberate exception is **Менеджмент → Project Documentation → Посилання**.
 The screen splits documentation into two tabs, always both present, on two levels:
 **Репозиторій** is per project (pick the project, then browse the bound checkout's doc
@@ -1182,7 +1248,7 @@ reply, see [Voice dictation](#voice-dictation-диктування) — free, lo
 - **Where.** «Агенти» (agents, «Глибокий аналіз», discussions, reviews) and «Дослідження» in the avatar window: the ▾ beside
   🎤 in the composer picks «Live-розмова» or «Диктування»; 🎤 then starts the mode used last
   (dictation until you pick Live; spec: `docs/specs/2026-11-14-local-voice-dictation.md`).
-  «Синергія» has dictation only. Not native sessions, not «Менеджмент».
+  «Синергія», ЦУК and «Менеджмент» have dictation only. Not native sessions.
 - **Interrupting.** Start speaking and GPT-Live goes quiet at once: the window mutes its voice
   and drops the rest of a retelling (sent to GPT-Live a part at a time for that reason); you are
   heard again 0.8 s after you stop.
@@ -1240,11 +1306,14 @@ replaced the OpenAI-based `docs/specs/2026-11-03-voice-dictation.md`).
   Parakeet). It lands in `~/.kermanych/models/`, is checked against its sha256, resumes after a
   broken download, and «Видалити модель» removes it. It is loaded (~1 GB of RAM) when 🎤 is
   pressed and released after 10 minutes without dictation.
-- **In a chat composer** — «Синергія», and «Агенти» / «Дослідження» in the «Диктування» mode: 🎤 or **⌥D**
+- **In a chat composer** — «Синергія», ЦУК, the «Менеджмент» assistant (its dock and its panel in
+  «ЦТ»), and «Агенти» / «Дослідження» in the «Диктування» mode: 🎤 or **⌥D**
   toggles it. Each phrase lands in the composer when you pause (~0.8 s); after 2.5 s of quiet a
   countdown sends it. Speak again to add to it, edit it by hand to keep it until Enter, Esc to
-  cancel the send (the text stays). Dictation stays on between messages until you stop it, the
-  page closes, or 10 minutes pass without speech. A «Потрібне рішення» block can be answered by
+  cancel the send (the text stays; in «ЦТ» that Esc does not close the window). Dictation stays
+  on between messages until you stop it, the page closes, or 10 minutes pass without speech. In
+  ЦУК and «Менеджмент» words said while the assistant answers wait in the field and are sent
+  after the answer, behind the same countdown. A «Потрібне рішення» block can be answered by
   voice: «другий», «варіант три», «так» / «ні» highlight the choice and send it after the same
   countdown; for a text answer the words go into the block's own field.
 - **In task popups.** «Диктувати» under the description of every popup that creates or edits a
@@ -1752,8 +1821,9 @@ developer's machine. The direction is always task → session.
    is greyed out before the attempt rather than explaining afterwards. An active task
    (`queued`, `thinking`, `tool`, `waiting_input`) can be neither reassigned nor deleted.
 3. **Bind** — a cloud project has no idea where its repo lives on your disk. The first
-   «Запустити» for an unbound project asks for the local git repository and stores that
-   path locally (it never reaches the cloud).
+   «Запустити» for an unbound project opens the project wizard in connect mode — clone the
+   project's remote or pick an existing clone, see [The project wizard](#the-project-wizard) —
+   stores that path locally (it never reaches the cloud) and then runs the launch.
 4. **Run** — `POST /api/sessions/from-task` creates a git worktree under
    the project's `.worktrees/<branch>`, copies the project's `carryFiles` (`.env` by
    default) into it, and spawns one `omp --mode rpc` child. From here on the session is an
@@ -2603,7 +2673,10 @@ else sees them and nothing is written to the cloud apart from a run's hidden boa
 - **Where to see them.** «Центр сповіщень» has three tabs. «Сповіщення» is the feed: skill changes,
   reminders (with «Готово» and «Відкласти» 10 хв / 1 год), finished runs and runs that were
   skipped or failed, with the reason. «Розклад» lists the tasks with their next firing and a pause
-  switch; opening one shows its text, skills, run history, «Запустити зараз» and «Видалити».
+  switch; opening one shows its text, skills, run history, «Запустити зараз» and «Видалити». Like
+  the notepad beside it, «Розклад» shows the workspace picked in the switcher: the tasks of its
+  projects plus reminders and tasks without a project, which belong to no workspace. With no
+  workspace picked, it shows every task.
   «Оновлення» is the changelog (see [Updates and «What's new»](#updates-and-whats-new)).
 - **When Kermanych is closed or the Mac sleeps.** Nothing fires then. While at least one enabled
   task has a firing ahead (or a run going), closing the window keeps Kermanych running with an
