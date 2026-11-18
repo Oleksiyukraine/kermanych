@@ -716,6 +716,12 @@ for the author, `select` for `service_role` only), its rate-limit trigger and th
 adds, and no older client reads it, but push it before shipping a client that has the form:
 until then «Надіслати» fails with the database's «table not found».
 
+`20261118090000_nail_game.sql` adds «Гвіздки»: the table `nail_game_scores` (insert-only for the
+player), its guard trigger and the function `nail_game_leaderboard` (see [Break game
+(«Гвіздки»)](#break-game-гвіздки)). It only adds, and no older client reads it, but push it
+before shipping a client that has the game: until then its leaderboard and every save fail with
+`PGRST202 Could not find the function`.
+
 ### Running against a local stack or your own project
 
 Everything below is for pointing Kermanych somewhere OTHER than the team's
@@ -1062,6 +1068,26 @@ order by f.created_at desc;
 
 A `before insert` trigger allows 10 reports per user per hour; the eleventh is refused with
 `feedback_rate_limited`, which the form shows as «Забагато відгуків за годину».
+
+## Break game («Гвіздки»)
+
+Spec: `docs/specs/2026-11-18-nail-hammer-minigame.md`. A one-minute break: the hammer icon in the
+header, left of «Надіслати відгук», opens it. Nails with eyes pop up right over the app and the
+cursor becomes a hammer; the player drives in as many as they can in 60 seconds (after a 3-2-1
+countdown). A straight nail takes 2 hits and scores 1, a bent one takes 3 hits and scores 2. A
+nail left alone hides again; misses cost nothing. Esc leaves at any time, and a round left early
+is not saved. The sound is synthesised in the browser; its toggle is remembered on this device
+(`localStorage`, `kermanych.nail-game.muted`). The round's rules live in
+`apps/ui/src/lib/nail-game.ts`.
+
+A finished round with a score above 0 is one row in `public.nail_game_scores` (the player is the
+signed-in account). Nobody reads the table directly. The leaderboard is
+`nail_game_leaderboard(p_workspace, p_limit)`: each player's best score, the top 10 plus the
+player's own row, ranked across everyone («Усі») or across the members of the workspace in the
+sidebar's scope. The `profiles` name and avatar it shows are already visible to every signed-in
+user. Scores can be forged from a client, so the table bounds them: 0…400 (perfect play reaches
+less, and a test proves it), and a `before insert` trigger refuses a second score within 50
+seconds with `nail_game_too_soon` (a real round takes 63).
 
 ## Integrated terminal
 
