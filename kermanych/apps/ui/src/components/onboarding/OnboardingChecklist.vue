@@ -128,18 +128,16 @@ import { ONBOARDING_GROUPS, useOnboarding, type OnboardingCard } from 'stores/on
 import KModal from 'components/kit/KModal.vue';
 import KBtn from 'components/kit/KBtn.vue';
 
-// The first-run checklist modal (design/onboarding.html). It owns none of the truth: the
+// The «Розпочати» checklist modal (design/onboarding.html). It owns none of the truth: the
 // onboarding store decides what is done and whether the account is ready, this only renders it
-// and turns a card's button into either a routed navigation (done here) or one of the three
-// setup acts that reuse MainLayout's own modals (emitted upward).
+// and turns a card's button into a routed navigation. Connecting code to the machine is the
+// project wizard's job, so no card here opens a setup act of its own.
 const onb = useOnboarding();
 const { t } = useI18n();
 const router = useRouter();
 
-const emit = defineEmits<{ 'create-workspace': []; 'create-project': []; 'bind-folder': [] }>();
-
 // Which group is expanded. One at a time, accordion-style, like the design.
-const openGroup = ref<string>('connect');
+const openGroup = ref<string>(ONBOARDING_GROUPS[0]!.key);
 
 const firstIncompleteGroup = (): string =>
   ONBOARDING_GROUPS.find((g) => g.cards.some((c) => !onb.isDone(c)))?.key ?? ONBOARDING_GROUPS[0]!.key;
@@ -159,15 +157,11 @@ function toggleGroup(key: string): void {
 
 const pct = computed(() => Math.round((onb.doneCount / onb.totalCount) * 100));
 
-// «ще N до першого запуску», counted over the three steps that actually gate launching
-// (workspace, project, folder) — not every required card — so the number matches the pill.
-const launchStepsLeft = computed(
-  () => [onb.hasWorkspace, onb.hasProject, onb.hasFolder].filter((done) => !done).length,
-);
+// «ще N обовʼязкових»: the cards of the required groups that are still open.
 const etaText = computed(() =>
-  onb.readyToLaunch
+  onb.requiredLeft === 0
     ? t('onboarding.checklist.etaReady')
-    : t('onboarding.checklist.etaLeft', { n: launchStepsLeft.value }),
+    : t('onboarding.checklist.etaLeft', { n: onb.requiredLeft }),
 );
 
 // The view model — every i18n lookup resolved here so the template stays declarative and the
@@ -180,9 +174,7 @@ const groups = computed(() =>
       return {
         key: c.key,
         kind: c.kind,
-        action: c.action,
-        // exactOptionalPropertyTypes: an absent route is an absent KEY, not `undefined`.
-        ...(c.route ? { route: c.route } : {}),
+        route: c.route,
         done: onb.isDone(c),
         title: t(`${ck}.title`),
         body: t(`${ck}.body`),
@@ -222,23 +214,11 @@ const help = computed(() =>
   })),
 );
 
-function runCard(card: Pick<OnboardingCard, 'kind' | 'action' | 'route' | 'key'>): void {
-  if (card.action === 'create-workspace') {
-    emit('create-workspace');
-    return;
-  }
-  if (card.action === 'create-project') {
-    emit('create-project');
-    return;
-  }
-  if (card.action === 'bind-folder') {
-    emit('bind-folder');
-    return;
-  }
-  // A routed surface: seeing it is the whole point of an ack card, so opening it ticks it.
+function runCard(card: Pick<OnboardingCard, 'kind' | 'route' | 'key'>): void {
+  // Seeing the surface is the whole point of an ack card, so opening it ticks it.
   if (card.kind === 'ack') onb.markAck(card.key);
   onb.hide();
-  if (card.route) void router.push(card.route);
+  void router.push(card.route);
 }
 
 function primary(): void {

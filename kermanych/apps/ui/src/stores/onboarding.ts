@@ -1,23 +1,22 @@
 // apps/ui/src/stores/onboarding.ts
 import { defineStore } from 'pinia';
-import { computed, ref, watch } from 'vue';
+import { computed, ref, shallowRef, watch } from 'vue';
 import { useAuth } from './auth';
 import { useProjects } from './projects';
 import { useOrchestrator } from './orchestrator';
+import { IS_PREVIEW } from '../lib/preview';
 
-// The first-run checklist (design/onboarding.html). It steers a brand-new account through the
-// one path that makes any agent work possible — workspace → project → local folder — and then
-// points at the surfaces where the rest lives. Completion is NOT a set of manual toggles: the
-// steps that have an objective answer (a workspace exists, a project exists, a folder is bound,
-// a session has run) read it off the two stores that already own that truth. Only the steps
-// whose "done" is "I have seen this surface" are acknowledgements, and those are persisted.
+// The first run (docs/specs/2026-11-18-first-run-and-project-wizard.md). Two surfaces share
+// this store:
 //
-// Everything shared between the sidebar entry and the modal — open state, the ack set, the
-// permanent dismissal — lives here so the two never disagree about what the account has done.
-
-// What a card's primary button does. The three setup acts reuse MainLayout's own modals (the
-// component emits them upward); `nav` routes to a surface the component can reach on its own.
-export type OnboardingActionKind = 'create-workspace' | 'create-project' | 'bind-folder' | 'nav';
+// - the welcome screen and the project wizard (components/onboarding/WelcomeScreen.vue,
+//   ProjectWizard.vue): workspace → project → folder on this machine. The wizard is hosted once,
+//   by MainLayout, and opened from anywhere through `openWizard`;
+// - the «Розпочати» checklist (design/onboarding.html), which takes over once a project is
+//   bound here and points at the surfaces where the rest lives. Completion is NOT a set of
+//   manual toggles: the step that has an objective answer (a session has run) reads it off the
+//   store that owns it. Only the steps whose "done" is "I have seen this surface" are
+//   acknowledgements, and those are persisted.
 
 export interface OnboardingRoute {
   name: string;
@@ -29,61 +28,60 @@ export interface OnboardingCard {
   // `auto` reads done off real state and cannot be toggled by hand; `ack` is a persisted
   // "I've seen it" tick the operator owns.
   kind: 'auto' | 'ack';
-  action: OnboardingActionKind;
-  route?: OnboardingRoute;
+  // Where the card's button goes.
+  route: OnboardingRoute;
 }
 
 export interface OnboardingGroup {
   key: string;
-  // The first two groups are what the design marks «обовʼязково»; the last two «за потреби».
+  // «обовʼязково» in the design; the others are «за потреби».
   required: boolean;
   cards: OnboardingCard[];
 }
 
 // The checklist itself. i18n keys are derived from these ids at the callsite
 // (`onboarding.checklist.groups.<group>.cards.<card>.*`), so adding a step is one row here
-// plus its strings in both locales.
+// plus its strings in both locales. Connecting the code is the wizard's job, not a group here.
 export const ONBOARDING_GROUPS: readonly OnboardingGroup[] = [
-  {
-    key: 'connect',
-    required: true,
-    cards: [
-      { key: 'ws', kind: 'auto', action: 'create-workspace' },
-      { key: 'repo', kind: 'auto', action: 'create-project' },
-      { key: 'folder', kind: 'auto', action: 'bind-folder' },
-      { key: 'token', kind: 'ack', action: 'nav', route: { name: 'settings', params: { section: 'project-env' } } },
-    ],
-  },
   {
     key: 'run',
     required: true,
     cards: [
-      { key: 'task', kind: 'auto', action: 'nav', route: { name: 'agents' } },
-      { key: 'watch', kind: 'ack', action: 'nav', route: { name: 'agents' } },
-      { key: 'diff', kind: 'ack', action: 'nav', route: { name: 'agents' } },
-      { key: 'accept', kind: 'ack', action: 'nav', route: { name: 'agents' } },
+      { key: 'task', kind: 'auto', route: { name: 'agents' } },
+      { key: 'watch', kind: 'ack', route: { name: 'agents' } },
+      { key: 'diff', kind: 'ack', route: { name: 'agents' } },
+      { key: 'accept', kind: 'ack', route: { name: 'agents' } },
     ],
   },
   {
     key: 'teach',
     required: false,
     cards: [
-      { key: 'skill', kind: 'ack', action: 'nav', route: { name: 'ai-team', params: { section: 'skills' } } },
-      { key: 'trigger', kind: 'ack', action: 'nav', route: { name: 'ai-team', params: { section: 'triggers' } } },
-      { key: 'helper', kind: 'ack', action: 'nav', route: { name: 'ai-team', params: { section: 'helpers' } } },
+      { key: 'skill', kind: 'ack', route: { name: 'ai-team', params: { section: 'skills' } } },
+      { key: 'trigger', kind: 'ack', route: { name: 'ai-team', params: { section: 'triggers' } } },
+      { key: 'helper', kind: 'ack', route: { name: 'ai-team', params: { section: 'helpers' } } },
     ],
   },
   {
     key: 'team',
     required: false,
     cards: [
-      { key: 'invite', kind: 'ack', action: 'nav', route: { name: 'settings', params: { section: 'workspace-members' } } },
-      { key: 'jira', kind: 'ack', action: 'nav', route: { name: 'management-integrations' } },
+      { key: 'invite', kind: 'ack', route: { name: 'settings', params: { section: 'workspace-members' } } },
+      { key: 'jira', kind: 'ack', route: { name: 'management-integrations' } },
     ],
   },
 ];
 
 const ALL_CARDS: readonly OnboardingCard[] = ONBOARDING_GROUPS.flatMap((g) => g.cards);
+const CARD_KEYS: ReadonlySet<string> = new Set(ALL_CARDS.map((c) => c.key));
+
+// What the hosted project wizard is asked to do. `create` makes a new cloud project in a
+// workspace; `connect` brings an existing one onto this machine. `doneLabel` / `onDone` let a
+// caller that opened it in the middle of something (the board's «Запустити») name and run its
+// own next step instead of the default «Поставити першу задачу».
+export type ProjectWizardRequest =
+  | { mode: 'create'; workspaceId: string }
+  | { mode: 'connect'; projectId: string; doneLabel?: string; onDone?: (projectId: string) => void };
 
 export const useOnboarding = defineStore('onboarding', () => {
   const auth = useAuth();
@@ -97,8 +95,6 @@ export const useOnboarding = defineStore('onboarding', () => {
   const open = ref(false);
   const ack = ref<string[]>([]);
   const dismissed = ref(false);
-  // Auto-open fires at most once per account load, so closing the modal does not bounce it back.
-  let autoShown = false;
 
   // The localStorage key contract, stamped per account (uid, or 'anon' when signed out) so
   // two accounts on one origin never inherit each other's progress.
@@ -109,7 +105,11 @@ export const useOnboarding = defineStore('onboarding', () => {
     try {
       const raw = localStorage.getItem(ackKey());
       const parsed: unknown = raw ? JSON.parse(raw) : [];
-      ack.value = Array.isArray(parsed) ? parsed.filter((x): x is string => typeof x === 'string') : [];
+      // Keys of cards that no longer exist (the old «connect» group's `token`) are dropped, so
+      // they neither count nor come back if a card of that name returns with another meaning.
+      ack.value = Array.isArray(parsed)
+        ? parsed.filter((x): x is string => typeof x === 'string' && CARD_KEYS.has(x))
+        : [];
     } catch {
       // A corrupt entry is not worth a crash; the next tick overwrites it.
       ack.value = [];
@@ -122,10 +122,7 @@ export const useOnboarding = defineStore('onboarding', () => {
   // the signed-in account rather than `anon`.
   watch(
     () => auth.user?.id,
-    () => {
-      autoShown = false;
-      loadPersisted();
-    },
+    () => loadPersisted(),
     { immediate: true },
   );
 
@@ -137,24 +134,26 @@ export const useOnboarding = defineStore('onboarding', () => {
   const hasSession = computed(() => orch.sessions.length > 0);
 
   // The honest readiness gate: an agent can only run once there is a workspace, a project and
-  // a bound folder. The «run» group's cards are guidance, not part of this — a first task is
-  // possible the moment these three are true.
+  // a bound folder.
   const readyToLaunch = computed(() => hasWorkspace.value && hasProject.value && hasFolder.value);
 
+  // What the welcome screen in the centre of «Агенти» shows (decision 2), or null once a
+  // project is bound here and there is something to work with. A bound folder settles it at
+  // once, from the local snapshot alone; everything else waits for the cloud lists, so a
+  // returning account never sees «create a workspace» flash up before its workspaces arrive.
+  // `offline`: the cloud did not answer and nothing cached says what the account has.
+  const welcomeState = computed<'loading' | 'offline' | 'no-workspace' | 'no-project' | 'connect' | null>(() => {
+    if (!orch.snapshotReceived) return 'loading';
+    if (hasFolder.value) return null;
+    if (!IS_PREVIEW && !projects.loadSettled) return 'loading';
+    if (!hasWorkspace.value) return projects.offlineError && !projects.listRead ? 'offline' : 'no-workspace';
+    if (!hasProject.value) return 'no-project';
+    return 'connect';
+  });
+
   function isDone(card: OnboardingCard): boolean {
-    if (card.kind === 'ack') return ack.value.includes(card.key);
-    switch (card.key) {
-      case 'ws':
-        return hasWorkspace.value;
-      case 'repo':
-        return hasProject.value;
-      case 'folder':
-        return hasFolder.value;
-      case 'task':
-        return hasSession.value;
-      default:
-        return ack.value.includes(card.key);
-    }
+    if (card.kind === 'auto' && card.key === 'task') return hasSession.value;
+    return ack.value.includes(card.key);
   }
 
   function groupDone(group: OnboardingGroup): number {
@@ -163,6 +162,10 @@ export const useOnboarding = defineStore('onboarding', () => {
 
   const totalCount = ALL_CARDS.length;
   const doneCount = computed(() => ALL_CARDS.filter((c) => isDone(c)).length);
+  // What «обовʼязково» still holds, for the checklist's «ще N обовʼязкових».
+  const requiredLeft = computed(
+    () => ONBOARDING_GROUPS.filter((g) => g.required).flatMap((g) => g.cards).filter((c) => !isDone(c)).length,
+  );
 
   function persistAck(): void {
     try {
@@ -201,22 +204,33 @@ export const useOnboarding = defineStore('onboarding', () => {
     open.value = false;
   }
 
-  // Open the checklist on first sight of a fresh account: signed in, not permanently
-  // dismissed, and not yet able to launch. The caller waits for the provider gate (MainLayout)
-  // to be settled and down, so the one-time provider picker never has this stacked over it.
-  function maybeAutoOpen(): void {
-    if (autoShown) return;
-    autoShown = true;
-    if (!auth.user) return;
-    if (dismissed.value) return;
-    if (readyToLaunch.value) return;
-    open.value = true;
+  // The sidebar's «Розпочати» appears once a project is bound on this machine — before that
+  // the welcome screen is the guide — and stays until the account permanently dismisses it, so
+  // a finished-but-not-dismissed account can still reopen it.
+  const sidebarVisible = computed(() => !!auth.user && !dismissed.value && hasFolder.value);
+
+  // The hosted project wizard. A shallowRef: the request may carry a callback, which has no
+  // business being made deeply reactive. `wizardSeq` keys the host, so every open starts the
+  // wizard from its first step with nothing left over from the last one.
+  const wizard = shallowRef<ProjectWizardRequest | null>(null);
+  const wizardSeq = ref(0);
+
+  function openWizard(req: ProjectWizardRequest): void {
+    wizard.value = req;
+    wizardSeq.value++;
   }
 
-  // The sidebar keeps its «Розпочати» entry until the account permanently dismisses the
-  // checklist — the design's «лишається в панелі, поки не пройдений», widened to "or hidden",
-  // so a finished-but-not-dismissed account can still reopen it.
-  const sidebarVisible = computed(() => !!auth.user && !dismissed.value);
+  function closeWizard(): void {
+    wizard.value = null;
+  }
+
+  // The welcome screen's «Створити воркспейс»: the create-workspace modal lives in MainLayout,
+  // which watches this counter, opens it, and follows a successful create with the wizard.
+  const createWorkspaceAsked = ref(0);
+
+  function askCreateWorkspace(): void {
+    createWorkspaceAsked.value++;
+  }
 
   return {
     open,
@@ -229,6 +243,7 @@ export const useOnboarding = defineStore('onboarding', () => {
     readyToLaunch,
     totalCount,
     doneCount,
+    requiredLeft,
     sidebarVisible,
     isDone,
     groupDone,
@@ -237,6 +252,12 @@ export const useOnboarding = defineStore('onboarding', () => {
     show,
     hide,
     dismiss,
-    maybeAutoOpen,
+    welcomeState,
+    wizard,
+    wizardSeq,
+    openWizard,
+    closeWizard,
+    createWorkspaceAsked,
+    askCreateWorkspace,
   };
 });

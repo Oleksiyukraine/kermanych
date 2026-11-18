@@ -66,6 +66,9 @@ import type {
   SchedulePatch,
   ScheduleRun,
   ScheduleSlip,
+  GitInspect,
+  GithubRepo,
+  GitCloneState,
 } from '@kermanych/core';
 import { LineSplitter } from '@kermanych/core';
 import type {
@@ -934,6 +937,22 @@ export const api = {
     const qs = q.toString();
     return get<DirListing>(`/fs/list${qs ? `?${qs}` : ''}`);
   },
+
+  // The project wizard (docs/specs/2026-11-18-first-run-and-project-wizard.md). A token only
+  // ever travels in a request BODY, never in a URL, so it cannot end up in an access log.
+  gitInspect: (path: string): Promise<GitInspect> => post<GitInspect>('/git/inspect', { path }),
+  gitRemoteHead: (url: string, token?: string): Promise<{ defaultBranch: string | null }> =>
+    post<{ defaultBranch: string | null }>('/git/remote-head', token ? { url, token } : { url }),
+  // Answers the job in `cloning`; every later state arrives as the `git_clone` server event.
+  gitClone: (body: { url: string; parentDir: string; dirName: string; token?: string }): Promise<GitCloneState> =>
+    post<GitCloneState>('/git/clone', body),
+  gitCloneState: (jobId: string): Promise<GitCloneState> =>
+    get<GitCloneState>(`/git/clone/${encodeURIComponent(jobId)}`),
+  gitCloneCancel: (jobId: string): Promise<GitCloneState> =>
+    post<GitCloneState>(`/git/clone/${encodeURIComponent(jobId)}/cancel`, {}),
+  githubTokenCheck: (token: string): Promise<{ login: string }> =>
+    post<{ login: string }>('/github/token-check', { token }),
+  githubRepos: (token: string): Promise<GithubRepo[]> => post<GithubRepo[]>('/github/repos', { token }),
 
   // The «Навички» import picker: this machine's skill folders, read by the local api.
   skillImportRoots: (): Promise<SkillImportRoot[]> => get<SkillImportRoot[]>('/skills/import/roots'),

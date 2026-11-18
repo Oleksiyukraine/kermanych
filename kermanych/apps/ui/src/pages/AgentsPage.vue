@@ -1,7 +1,11 @@
 <template>
   <main class="agents">
+    <!-- Nothing to work with on this machine yet: the first-run welcome leads the way
+         (docs/specs/2026-11-18-first-run-and-project-wizard.md, decision 2). -->
+    <WelcomeScreen v-if="showWelcome" />
+
     <!-- Nothing in scope — neither a workspace nor a project — so the rail invites a choice. -->
-    <div v-if="!store.selectedProjectId && !store.selectedWorkspaceId" class="agents__blank">
+    <div v-else-if="!store.selectedProjectId && !store.selectedWorkspaceId" class="agents__blank">
       <div class="agents__blank-eyebrow mono">{{ t('agents.blank.eyebrow') }}</div>
       <p class="agents__blank-text">{{ t('agents.blank.text') }}</p>
     </div>
@@ -1487,6 +1491,8 @@ import { useHeldTranscript } from '../composables/useHeldTranscript';
 import { useTaskDetails } from '../composables/useTaskDetails';
 import { usePending } from 'stores/pending';
 import { needsSignIn } from '../lib/session-auth';
+import WelcomeScreen from 'components/onboarding/WelcomeScreen.vue';
+import { useOnboarding } from 'stores/onboarding';
 
 // The Агенти screen (design-system section 07): the board of session cards for whatever is
 // in scope — one project, or every project of a workspace — plus the full panel for the
@@ -1495,6 +1501,16 @@ const store = useOrchestrator();
 const { t } = useI18n();
 // Sessions waiting for the server to report an action's result (stopped, deleted, forked…).
 const pending = usePending();
+
+// The welcome takes the centre while the account has nothing bound here. While the lists are
+// still loading it takes it only with nothing selected: a selection is a returning account,
+// whose board is about to render, and a welcome skeleton in between would be a flash.
+const onb = useOnboarding();
+const showWelcome = computed(() =>
+  onb.welcomeState === 'loading'
+    ? !store.selectedProjectId && !store.selectedWorkspaceId
+    : onb.welcomeState !== null,
+);
 
 // ── Agent map (spec docs/specs/2026-10-22-agent-map.md) ───────────────────
 // Open: the map stands in for the chat pane. Not persisted — a reload shows the usual screen.
