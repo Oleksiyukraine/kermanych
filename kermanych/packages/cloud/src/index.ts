@@ -115,6 +115,13 @@ export {
   FeedbackRateLimitedError,
   sendFeedback,
 } from "./feedback";
+export type { NailGameLeaderRow } from "./nail-game";
+export {
+  NAIL_GAME_MAX_SCORE,
+  NailGameTooSoonError,
+  submitNailGameScore,
+  nailGameLeaderboard,
+} from "./nail-game";
 
 export type { CloudProjectPatch, CloudProjectInsert } from "./projects";
 export {

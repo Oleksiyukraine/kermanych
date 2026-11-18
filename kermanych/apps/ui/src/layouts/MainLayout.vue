@@ -202,6 +202,8 @@
           :aria-label="`${t('common.nav.aiLoginRequired')}. ${signInHint}`"
           @click="ompCheck.recheck()"
         ><span aria-hidden="true">⚠</span> {{ t('common.nav.aiLoginRequired') }}</button>
+        <!-- «Гвіздки», a one-minute break game (docs/specs/2026-11-18-nail-hammer-minigame.md). -->
+        <KIconButton :title="t('nailGame.open')" :active="nailGame.open" @click="nailGame.show()"><KIcon name="hammer" /></KIconButton>
         <!-- «Надіслати відгук» (docs/specs/2026-11-13-feedback-form.md): always on screen, so a
              bug can be reported from the screen it happened on. -->
         <KIconButton :title="t('feedback.open')" :active="feedback.open" @click="feedback.show()"><KIcon name="feedback" /></KIconButton>
@@ -575,6 +577,8 @@
     <KConfirmDialog />
     <!-- «Надіслати відгук»: the header icon and Налаштування → «Загальне» open it. -->
     <FeedbackDialog />
+    <!-- «Гвіздки»: the header's hammer opens it. -->
+    <NailGameOverlay />
 
     <!-- TRACKER MERGE PROMPTS — global on purpose: a shadow task reaches `merged` wherever
          the user happens to be, and the «куди перенести тікет?» question must not depend
@@ -656,6 +660,8 @@ import ProjectWizard from 'components/onboarding/ProjectWizard.vue';
 import { useOnboarding } from 'stores/onboarding';
 import FeedbackDialog from 'components/feedback/FeedbackDialog.vue';
 import { useFeedback } from 'stores/feedback';
+import NailGameOverlay from 'components/nail-game/NailGameOverlay.vue';
+import { useNailGame } from 'stores/nail-game';
 
 // The Kermanych app shell (design-system section 07): project rail, brand header, page
 // container, fleet status bar. Two stores back it — `store` (useOrchestrator) owns the LOCAL
@@ -692,6 +698,7 @@ const board = useBoard();
 const projectDocs = useProjectDocs();
 const onb = useOnboarding();
 const feedback = useFeedback();
+const nailGame = useNailGame();
 // Created with the shell, before the socket connects: it listens for the first `snapshot` to
 // read «Посіпака»'s state, and for every `minion_update` after it (a pause is announced from any
 // screen, so the store cannot wait for the map or «ШІ-команда» to be opened). The sidebar marks

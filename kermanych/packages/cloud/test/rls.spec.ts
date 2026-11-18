@@ -22,6 +22,7 @@ import { createWorkspaceRisk, listRiskEvents, listWorkspaceRisks } from "../src/
 import { deleteAiSkill, listAiSkills, upsertAiSkill } from "../src/skills";
 import { deleteAiTrigger, listAiTriggers, setAiTriggerSkills, upsertAiTrigger } from "../src/triggers";
 import { listMembers } from "../src/workspaces";
+import { NailGameTooSoonError, nailGameLeaderboard, submitNailGameScore } from "../src/nail-game";
 import { FEEDBACK_IMAGE_BUCKET, FeedbackRateLimitedError, sendFeedback } from "../src/feedback";
 import {
   deleteJiraIntegration,
@@ -1479,6 +1480,70 @@ describe.skipIf(!URL || !ANON || !SERVICE)("supabase RLS and triggers", () => {
         .from("app_feedback")
         .insert({ kind: "other", message: "from the past", created_at: "2000-01-01T00:00:00Z" });
       expect(backDated.error?.message).toContain("feedback_rate_limited");
+    });
+  });
+
+  describe("nail game", () => {
+    it("ranks a workspace's members only, best first, and only for a member", async () => {
+      // Its own workspace: earlier tests move `member` in and out of the fixture's.
+      const ws = await owner.client.from("workspaces").insert({ name: "nails-ws", owner_id: owner.id }).select().single();
+      if (ws.error) throw ws.error;
+      const nailsWs = ws.data.id as string;
+      const seated = await owner.client.rpc("invite_workspace_member", { p_workspace_id: nailsWs, p_email: member.email });
+      if (seated.error) throw seated.error;
+
+      await submitNailGameScore(owner.client, 30);
+      await submitNailGameScore(member.client, 12);
+      await submitNailGameScore(outsider.client, 50);
+
+      const board = await nailGameLeaderboard(member.client, { workspaceId: nailsWs });
+      expect(board.map((r) => [r.place, r.userId, r.bestScore, r.players])).toEqual([
+        [1, owner.id, 30, 2],
+        [2, member.id, 12, 2],
+      ]);
+      expect(board[0]?.githubUsername?.startsWith("owner-")).toBe(true);
+
+      // Outside the top `limit`, the caller's own row still comes back, with its place.
+      const top1 = await nailGameLeaderboard(member.client, { workspaceId: nailsWs, limit: 1 });
+      expect(top1.map((r) => [r.place, r.userId])).toEqual([
+        [1, owner.id],
+        [2, member.id],
+      ]);
+
+      expect(await nailGameLeaderboard(outsider.client, { workspaceId: nailsWs })).toEqual([]);
+      const everyone = await nailGameLeaderboard(outsider.client, { limit: 50 });
+      expect(everyone.some((r) => r.userId === outsider.id && r.bestScore === 50)).toBe(true);
+    });
+
+    it("a second score within a round's length is refused, also back-dated", async () => {
+      const player = await makeUser("nails");
+      await submitNailGameScore(player.client, 7);
+      await expect(submitNailGameScore(player.client, 8)).rejects.toBeInstanceOf(NailGameTooSoonError);
+      const backDated = await player.client
+        .from("nail_game_scores")
+        .insert({ score: 9, created_at: "2000-01-01T00:00:00Z" });
+      expect(backDated.error?.message).toContain("nail_game_too_soon");
+    });
+
+    it("the table is insert-only, as yourself, within the score bound", async () => {
+      const player = await makeUser("nails-forge");
+      const read = await player.client.from("nail_game_scores").select("id");
+      expect(read.error?.code).toBe("42501");
+
+      // At someone who has not played: the trigger runs before the policy and would refuse a
+      // recent player as «too soon» instead.
+      const victim = await makeUser("nails-victim");
+      const forged = await player.client.from("nail_game_scores").insert({ score: 5, user_id: victim.id });
+      expect(forged.error?.code).toBe("42501");
+
+      const tooHigh = await player.client.from("nail_game_scores").insert({ score: 401 });
+      expect(tooHigh.error?.code).toBe("23514");
+
+      const anon = createClient(URL ?? "", ANON ?? "", { auth: { autoRefreshToken: false, persistSession: false } });
+      const anonymous = await anon.from("nail_game_scores").insert({ score: 5 });
+      expect(anonymous.error?.code).toBe("42501");
+      const anonBoard = await anon.rpc("nail_game_leaderboard", { p_workspace: null, p_limit: 10 });
+      expect(anonBoard.error?.code).toBe("42501");
     });
   });
 });
