@@ -4322,6 +4322,7 @@ export const en: MessageSchema = {
         agent: 'Agent task',
       },
       empty: 'No scheduled tasks yet. Ask ЦУК — «remind me to take vitamins at 19:00» or «every evening at 19:00 write a report on project X».',
+      emptyWorkspace: 'No scheduled tasks in this workspace. Tasks of other workspaces’ projects are in their «Розклад».',
       loadFailed: 'Could not read the schedule: {error}',
       enabled: 'on',
       enabledTip: 'On: the task fires on its schedule. Clear it to pause the task.',
