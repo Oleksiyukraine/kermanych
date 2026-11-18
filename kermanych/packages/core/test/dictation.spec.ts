@@ -45,6 +45,11 @@ describe("isInventedPhrase", () => {
     expect(isInventedPhrase("*coughs*")).toBe(true);
     expect(isInventedPhrase("*клук*")).toBe(true);
     expect(isInventedPhrase("[музика]")).toBe(true);
+    // A bare «Музика» with no brackets came back for a pure 220 Hz tone.
+    expect(isInventedPhrase("Музика")).toBe(true);
+    expect(isInventedPhrase("Музика.")).toBe(true);
+    expect(isInventedPhrase("Music")).toBe(true);
+    expect(isInventedPhrase("music.")).toBe(true);
   });
 
   it("keeps a real request that merely contains such words", () => {
