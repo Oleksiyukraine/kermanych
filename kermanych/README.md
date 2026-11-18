@@ -2577,7 +2577,10 @@ else sees them and nothing is written to the cloud apart from a run's hidden boa
 - **Where to see them.** «Центр сповіщень» has three tabs. «Сповіщення» is the feed: skill changes,
   reminders (with «Готово» and «Відкласти» 10 хв / 1 год), finished runs and runs that were
   skipped or failed, with the reason. «Розклад» lists the tasks with their next firing and a pause
-  switch; opening one shows its text, skills, run history, «Запустити зараз» and «Видалити».
+  switch; opening one shows its text, skills, run history, «Запустити зараз» and «Видалити». Like
+  the notepad beside it, «Розклад» shows the workspace picked in the switcher: the tasks of its
+  projects plus reminders and tasks without a project, which belong to no workspace. With no
+  workspace picked, it shows every task.
   «Оновлення» is the changelog (see [Updates and «What's new»](#updates-and-whats-new)).
 - **When Kermanych is closed or the Mac sleeps.** Nothing fires then. While at least one enabled
   task has a firing ahead (or a run going), closing the window keeps Kermanych running with an
