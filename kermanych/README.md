@@ -893,6 +893,12 @@ and Linear tickets, attachments, storage downloads and markdown links — opens 
 default browser (Chrome, Arc, Safari, …). The session live preview opens in the session's
 own browser instead (see [Session browser](#session-browser)).
 
+A link in an agent's log that names a file rather than a page — `docs/specs/x.md`,
+`src/a.ts:280`, an absolute path or `file://` URL inside the session's tree — opens that file
+full screen in the file manager (the dock opens if it is shut, and switches to the session's
+tree). The desktop window never navigates away from the app itself: a link that would load
+another page of the app's own origin is ignored.
+
 The other deliberate exception is **Менеджмент → Project Documentation → Посилання**.
 The screen splits documentation into two tabs, always both present, on two levels:
 **Репозиторій** is per project (pick the project, then browse the bound checkout's doc
