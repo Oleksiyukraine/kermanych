@@ -38,7 +38,9 @@ const client = markRaw(
 const LOOPBACK_REDIRECT = 'http://127.0.0.1:53170/callback';
 
 export const useAuth = defineStore('auth', () => {
-  const user = ref<{ id: string } | null>(null);
+  // `email` is what a workspace owner invites by (stores/projects.ts inviteMember), so the
+  // first-run screen shows it to an account waiting for an invitation.
+  const user = ref<{ id: string; email?: string } | null>(null);
   const profile = ref<Profile | null>(null);
   const accessToken = ref<string | null>(null);
   // The AI provider: the default launch mode (omp → «Керманич», claude-code / codex → that
@@ -112,7 +114,7 @@ export const useAuth = defineStore('auth', () => {
         full_name?: string;
         avatar_url?: string;
       };
-      user.value = { id: session.user.id };
+      user.value = { id: session.user.id, ...(session.user.email ? { email: session.user.email } : {}) };
       profile.value = {
         id: session.user.id,
         // `exactOptionalPropertyTypes` is on: an explicit `undefined` is not the

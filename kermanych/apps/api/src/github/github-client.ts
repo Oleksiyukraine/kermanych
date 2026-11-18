@@ -1,10 +1,14 @@
 // apps/api/src/github/github-client.ts
-// The one place that speaks HTTP to GitHub: the merged-PR check
+// The one place that speaks HTTP to GitHub. The merged-PR check
 // (docs/specs/2026-10-26-pr-merged-close-prompt.md) reads a pull request, or the closed pull
-// requests of a branch, from the REST API. Built per check with the bound project's
+// requests of a branch, from the REST API; it is built per check with the bound project's
 // `GIT_TOKEN` — the token the agent opened the PR with — or none: a public repository answers
-// anonymously (60 requests per hour per IP), a private one answers 404. The token rides only in
-// the Authorization header; it is never logged and never part of an error message.
+// anonymously (60 requests per hour per IP), a private one answers 404. The project wizard
+// (docs/specs/2026-11-18-first-run-and-project-wizard.md) builds one with the token being typed
+// in, to say whose it is and to list the repositories it can read. The token rides only in the
+// Authorization header; it is never logged and never part of an error message.
+import type { GithubRepo } from "@kermanych/core";
+
 const API_URL = "https://api.github.com";
 const TIMEOUT_MS = 10_000;
 
@@ -32,6 +36,20 @@ export type GithubPull = {
   base: { ref: string };
 };
 
+// The fields of a repository the wizard's picker reads.
+type GithubRepoBody = {
+  full_name: string;
+  clone_url: string;
+  private: boolean;
+  default_branch: string;
+  description: string | null;
+  pushed_at: string | null;
+};
+
+// The picker lists at most this many pages of 100, most recently pushed first: an account that
+// sees more than 500 repositories finds the rest by URL.
+const MAX_REPO_PAGES = 5;
+
 export class GithubClient {
   constructor(private readonly token = "") {}
 
@@ -43,6 +61,40 @@ export class GithubClient {
   closedPullsByHead(owner: string, repo: string, ownerColonBranch: string): Promise<GithubPull[]> {
     const q = new URLSearchParams({ state: "closed", head: ownerColonBranch, per_page: "100" });
     return this.get(`/repos/${enc(owner)}/${enc(repo)}/pulls?${q}`);
+  }
+
+  // Whose token this is. A 401 is a token GitHub does not know (or an expired one).
+  user(): Promise<{ login: string }> {
+    return this.get("/user");
+  }
+
+  // The repositories the token can read — own, collaborator and organization ones — most
+  // recently pushed first.
+  async repos(): Promise<GithubRepo[]> {
+    const byName = new Map<string, GithubRepo>();
+    for (let page = 1; page <= MAX_REPO_PAGES; page++) {
+      const q = new URLSearchParams({
+        per_page: "100",
+        sort: "pushed",
+        affiliation: "owner,collaborator,organization_member",
+        page: String(page),
+      });
+      const batch = await this.get<GithubRepoBody[]>(`/user/repos?${q}`);
+      for (const r of batch)
+        byName.set(r.full_name, {
+          fullName: r.full_name,
+          cloneUrl: r.clone_url,
+          private: r.private,
+          defaultBranch: r.default_branch,
+          description: r.description,
+          pushedAt: r.pushed_at,
+        });
+      if (batch.length < 100) break;
+    }
+    // Pages are fetched one after another and a push between two of them can move a repository
+    // across the page boundary — seen twice, or out of order: keep one of each, order the whole
+    // list again, never-pushed ones last.
+    return [...byName.values()].sort((a, b) => (b.pushedAt ?? "").localeCompare(a.pushedAt ?? ""));
   }
 
   private async get<T>(path: string): Promise<T> {

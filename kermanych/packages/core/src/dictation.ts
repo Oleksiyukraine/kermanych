@@ -55,6 +55,9 @@ const INVENTED: Record<string, true> = {
   "дякуємо за перегляд": true,
   "продовження далі": true,
   "продовження буде": true,
+  // Music or a hum in the background, written without the brackets of a described sound.
+  "музика": true,
+  "music": true,
   "thank you": true,
   "thanks for watching": true,
   "thank you for watching": true,

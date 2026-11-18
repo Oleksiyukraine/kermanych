@@ -107,7 +107,8 @@ The operator wants tasks on a schedule, the way Hermes Agent has them
    - **Розклад** lists the tasks: kind, project, the schedule in words, the next firing, a pause
      switch. Opening a row shows, over the console (as a skill improvement opens today), its
      prompt, skills, history of runs (time, status, a link to the session), «Запустити зараз» and
-     «Видалити».
+     «Видалити». The list is scoped to the selected workspace, as the notepad is
+     (`docs/specs/2026-11-18-schedule-by-workspace.md`).
    - Local slips and cloud skill improvements merge into one feed by time.
    - Rejected: a single feed with a pinned «Найближче» block (no full overview with a dozen
      tasks); the right column beside the notepad; a section on «Агенти»; Settings.
