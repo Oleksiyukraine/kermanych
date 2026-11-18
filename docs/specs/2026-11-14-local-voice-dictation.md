@@ -169,10 +169,10 @@ the texts:
     it — a click, not speech (`docs/specs/2026-11-18-voice-dictation-click-phrase.md`).
 11. **Hallucinations are filtered, whisper.cpp's VAD is not used.** A phrase whose whole text is a
     known Whisper invention («Дякую.», «Дякую за перегляд!», «Субтитри …», «Продовження далі»,
-    their English counterparts) or a described sound («*coughs*», «*клук*», «[музика]» — seen on
-    the cough-only recording with some prompts — and the bare «Музика» / «Оплески») is dropped — a
-    pure core rule with a spec. Silero VAD inside whisper.cpp is off: it cut quiet speech in the
-    comparison.
+    their English counterparts, a bare «Музика» / «Music» / «Оплески» heard for background music,
+    a hum or a click at the start of dictation) or a described sound («*coughs*», «*клук*»,
+    «[музика]» — seen on the cough-only recording with some prompts) is dropped — a pure core
+    rule with a spec. Silero VAD inside whisper.cpp is off: it cut quiet speech in the comparison.
 12. **Language and vocabulary.** The engine's language is the agent's language («Мова спілкування
     агента»), else the UI locale, as dictation picks it today. Whisper gets a fixed one-sentence
     prompt with technical vocabulary (`DICTATION_PROMPT`). Measured on the recordings:

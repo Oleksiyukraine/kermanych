@@ -6,7 +6,7 @@
 // project has more than one tree, a selector under the header switches between them.
 // Shell-level placement (which side, whether it is open) lives in the store; this component
 // owns only the tree.
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { useOrchestrator } from 'stores/orchestrator';
 import type { TreeEntry, FileContent } from '@kermanych/core';
@@ -234,6 +234,29 @@ watch(
   },
   { immediate: true },
 );
+
+// A file asked for from outside the dock (store.openSessionFile — a link in an agent's log).
+// The path is relative to that session's tree: show that tree first if the selector points at
+// another (the switch runs the watcher above, which clears the viewer), then open the file
+// full screen. A session whose tree the dock does not list (a retired worktree shows the
+// dock's «gone» state) opens nothing. Runs after the watcher above, so on a
+// mount the requested file wins over the restored one (openTreeFileAt's run counter).
+async function openRequestedFile(): Promise<void> {
+  const req = store.fileOpenRequest;
+  if (!req) return;
+  store.fileOpenRequest = undefined;
+  const session = store.sessions.find((s) => s.id === req.sessionId);
+  const opt =
+    sourceOptions.value.find((o) => o.source.kind === 'session' && o.source.id === req.sessionId) ??
+    (session?.worktreePath ? sourceOptions.value.find((o) => o.path === session.worktreePath) : undefined);
+  if (opt && opt.key !== sourceCurrentKey.value) {
+    pickSource(opt.key);
+    await nextTick();
+  }
+  if (!opt && source.value?.id !== req.sessionId) return;
+  void openTreeFileAt(req.path);
+}
+watch(() => store.fileOpenRequest, () => void openRequestedFile(), { immediate: true });
 </script>
 
 <template>

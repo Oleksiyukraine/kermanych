@@ -54,6 +54,15 @@ export {
 } from "./worktree-names";
 export { PLATFORMS, isPlatform, platformHasBrowser, platformHasDevice, platformHasPreview, type Platform } from "./platform";
 export {
+  repoDirName,
+  remoteIdentity,
+  sameRemote,
+  type GitInspect,
+  type GithubRepo,
+  type GitClonePhase,
+  type GitCloneState,
+} from "./git-setup";
+export {
   PREVIEW_CONFIG_PATH,
   PREVIEW_SETUP_STEP,
   PREVIEW_DEVICE_STEP,

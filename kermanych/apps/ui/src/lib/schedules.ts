@@ -62,6 +62,19 @@ export function scheduleUndo(before: ScheduledTask | undefined, after: Scheduled
 }
 
 /**
+ * «Розклад»'s rows for the workspace the switcher holds, as the notepad beside it shows that
+ * workspace's «Список дій». `projectIds` are the workspace's projects (lib/scope.ts
+ * `sessionScopedProjectIds`); `undefined` is no workspace selected, which keeps every task. A task
+ * without a project — a reminder, or an agent run without one (decision 9) — belongs to no
+ * workspace, so it stays in every one: hiding it would leave it on no list at all.
+ */
+export function tasksInWorkspace(tasks: ScheduledTask[], projectIds: readonly string[] | undefined): ScheduledTask[] {
+  if (!projectIds) return tasks;
+  const inScope = new Set(projectIds);
+  return tasks.filter((t) => !t.projectId || inScope.has(t.projectId));
+}
+
+/**
  * The sentence for a skipped or failed run: the UI's own wording of `reason`, so the column and
  * the history speak the active locale; the api's text when there is no reason to word.
  */

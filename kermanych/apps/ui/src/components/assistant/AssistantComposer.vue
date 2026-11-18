@@ -33,6 +33,18 @@
       </div>
     </div>
 
+    <!-- Dictation (docs/specs/2026-11-18-assistant-voice-dictation.md): the microphone's level,
+         what it is doing, and the auto-send countdown with its way out — the same line as
+         KComposer's, in the attachment strip's frost above the one-row pill. -->
+    <div v-if="dictationState" class="acomp__dictation mono" role="status" aria-live="polite">
+      <KSpinner v-if="dictationState.phase === 'starting'" :size="10" />
+      <span v-else class="acomp__level" aria-hidden="true">
+        <span class="acomp__level-fill" :style="{ transform: `scaleX(${dictationState.level})` }"></span>
+      </span>
+      <span class="acomp__dictation-state" :class="{ 'acomp__dictation-state--due': dictationState.countdown }">{{ dictationWords }}</span>
+      <span v-if="dictationState.countdown" class="acomp__dictation-hint">{{ t('kit.composer.dictation.cancelHint') }}</span>
+    </div>
+
     <form
       class="acomp__pill"
       :class="{ 'acomp__pill--grown': grown }"
@@ -50,7 +62,6 @@
         :disabled="locked || !!ompBlock"
         :placeholder="placeholder"
         :aria-label="inputLabel"
-        @input="autoGrow"
         @keydown="onKeydown"
         @paste="onAttachPaste"
       ></textarea>
@@ -78,6 +89,23 @@
         multiple
         @change="onAttachPick"
       />
+      <!-- 🎤 / ⌥D: local dictation into this field, as in «Синергія». Usable during a turn — the
+           dictated text waits for the answer. `mousedown.prevent`: the field keeps its caret. -->
+      <button
+        v-tip="dictationState ? t('kit.composer.dictateStop') : t('kit.composer.dictateTip')"
+        class="acomp__tool acomp__mic"
+        :class="{ 'acomp__mic--on': dictationState }"
+        type="button"
+        :aria-label="dictationState ? t('kit.composer.dictateStop') : t('kit.composer.dictateTip')"
+        :aria-pressed="!!dictationState"
+        :aria-busy="dictationState?.phase === 'starting' || dictationState?.phase === 'stopping' || undefined"
+        :disabled="!dictationState && !!ompBlock"
+        @mousedown.prevent
+        @click="toggleDictation"
+      >
+        <KSpinner v-if="dictationState?.phase === 'starting'" :size="12" />
+        <KIcon v-else class="acomp__mic-icon" name="mic" />
+      </button>
       <!-- The plan the turn is charged to. Both assistants run through the same `omp`, the
            same provider account and the same subscription as every agent, so a message
            here is a message debited there — the figure sits in the composer because
@@ -104,10 +132,23 @@
         v-else
         v-tip="t('management.assistant.send')"
         class="acomp__send"
+        :class="{ 'acomp__send--due': dictationState?.countdown }"
         type="submit"
         :disabled="!canSend"
         :aria-label="t('management.assistant.sendShort')"
-      ><span class="acomp__glyph" aria-hidden="true">↑</span></button>
+      >
+        <!-- The auto-send countdown: the ring empties until the message goes. -->
+        <svg
+          v-if="dictationState?.countdown"
+          :key="dictationState.countdown.at"
+          class="acomp__send-ring"
+          viewBox="0 0 36 36"
+          aria-hidden="true"
+        >
+          <circle cx="18" cy="18" r="16" pathLength="100" :style="{ animationDuration: `${dictationState.countdown.ms}ms` }" />
+        </svg>
+        <span class="acomp__glyph" aria-hidden="true">↑</span>
+      </button>
     </form>
   </div>
 </template>
@@ -115,16 +156,20 @@
 <script setup lang="ts">
 // Extracted from the Менеджмент assistant so ЦУК types into the very same pill: Enter sends,
 // Shift+Enter breaks the line, `/` on an empty draft opens Хелпери, files arrive by paste, drop
-// or 📎, the field grows to six lines and then scrolls.
+// or 📎, 🎤 / ⌥D dictates, the field grows to six lines and then scrolls.
 import { computed, nextTick, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { prependHelper } from '@kermanych/core';
 import KHelperPicker from 'components/kit/KHelperPicker.vue';
+import KIcon from 'components/kit/KIcon.vue';
+import KSpinner from 'components/kit/KSpinner.vue';
 import { percent, planWindow, renderWindow } from '../../lib/format';
 import { until, renderTime } from '../../lib/time';
 import { useNow } from '../../composables/useNow';
 import { useSubscriptionUsage } from '../../composables/useSubscriptionUsage';
 import { useFileAttach } from '../../composables/useFileAttach';
+import { useComposerDictation, type ComposerDictationHost } from '../../composables/useComposerDictation';
+import { useDictationWords } from '../../composables/useDictationWords';
 import { ATTACH_ACCEPT, type AttachedFile } from '../../lib/files';
 import { SUPPORTED_IMAGE_TYPES } from '../../lib/images';
 import { useDraft } from '../../lib/drafts';
@@ -157,12 +202,12 @@ const { t } = useI18n();
 const draft = ref('');
 const fieldEl = ref<HTMLTextAreaElement | null>(null);
 const typed = useDraft({ text: draft });
+// Every change of the text re-fits the field: typing, a restored draft, a helper, a clear after
+// sending, a dictated phrase.
+watch(draft, () => void nextTick(autoGrow));
 watch(
   () => props.draftKey,
-  (key) => {
-    typed.bind(key ?? null, { text: '' });
-    void nextTick(autoGrow);
-  },
+  (key) => typed.bind(key ?? null, { text: '' }),
   { immediate: true },
 );
 
@@ -230,7 +275,6 @@ function submit(): void {
   // keeps the sent text invites sending it twice.
   draft.value = '';
   clearAttachments();
-  void nextTick(autoGrow);
   emit('submit', text, files);
 }
 
@@ -240,6 +284,23 @@ function send(text: string): void {
   submit();
 }
 
+// Dictation (docs/specs/2026-11-18-assistant-voice-dictation.md): each phrase lands at the caret
+// and the message sends itself after a pause, as in «Синергія». The assistants have no decision
+// block, so nothing is ever answered there. While the composer cannot send (a turn in flight,
+// omp blocked) the dictated text waits in the field and its countdown starts afterwards.
+const dictationHost: ComposerDictationHost = {
+  text: draft,
+  field: () => fieldEl.value,
+  send: submit,
+  sendable: () => !props.locked && !ompBlock.value,
+  request: () => undefined,
+  answer: () => {},
+  blockText: ref(''),
+  blockField: () => null,
+};
+const { state: dictationState, toggle: toggleDictation } = useComposerDictation(() => dictationHost);
+const dictationWords = useDictationWords(() => dictationState.value);
+
 // Хелпери. The panel component is shared with KComposer; the caret handling is three lines.
 const pickerOpen = ref(false);
 function closePicker(): void {
@@ -248,13 +309,18 @@ function closePicker(): void {
 }
 function onHelper(name: string): void {
   draft.value = prependHelper(draft.value, name);
-  void nextTick(autoGrow);
 }
 
 // Enter sends; Shift+Enter inserts a newline. Enter mid-IME-composition is ignored, so
 // committing a Ukrainian or CJK candidate does not fire the message. `/` on an empty draft
 // opens the picker instead of typing the slash, exactly as in KComposer.
 function onKeydown(e: KeyboardEvent): void {
+  // ⌥D toggles dictation, as in KComposer. `code`, not `key`: on macOS ⌥D types «∂».
+  if (e.altKey && !e.metaKey && !e.ctrlKey && !e.shiftKey && e.code === 'KeyD') {
+    e.preventDefault();
+    toggleDictation();
+    return;
+  }
   if (e.key === '/' && draft.value === '') {
     e.preventDefault();
     pickerOpen.value = true;
@@ -273,7 +339,6 @@ function focus(): void {
 // the operator adds the question and sends it himself.
 function setDraft(text: string): void {
   draft.value = text;
-  void nextTick(autoGrow);
   focus();
 }
 defineExpose({ focus, send, setDraft });
@@ -447,6 +512,59 @@ const planChip = computed(() => {
   display: none;
 }
 
+// ── Dictation — the quiet line above the pill ─────────────────────────────────
+// The attachment strip's frost, one row: level, what the microphone does, the countdown.
+.acomp__dictation {
+  display: flex;
+  align-items: center;
+  gap: var(--k-sp-2);
+  min-width: 0;
+  margin-bottom: var(--k-sp-2);
+  padding: var(--k-sp-1) var(--k-sp-3);
+  font-size: var(--k-fs-xs);
+  color: var(--k-muted);
+  background: color-mix(in srgb, var(--k-surface) 74%, transparent);
+  -webkit-backdrop-filter: blur(22px) saturate(150%);
+  backdrop-filter: blur(22px) saturate(150%);
+  border: var(--k-rule-thin) solid var(--k-line-strong);
+  border-radius: var(--k-r-lg);
+  box-shadow: var(--k-shadow-toast);
+}
+
+.acomp--dense .acomp__dictation {
+  background: color-mix(in srgb, var(--k-surface) 94%, transparent);
+}
+
+.acomp__level {
+  flex: none;
+  width: 48px;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--k-line);
+  overflow: hidden;
+}
+
+.acomp__level-fill {
+  display: block;
+  height: 100%;
+  background: var(--k-accent);
+  transform-origin: left center;
+  transition: transform 120ms linear;
+}
+
+.acomp__dictation-state {
+  white-space: nowrap;
+}
+
+.acomp__dictation-state--due {
+  color: var(--k-accent);
+}
+
+.acomp__dictation-hint {
+  color: var(--k-faint);
+  white-space: nowrap;
+}
+
 .acomp__pill {
   // The Хелпери panel is anchored to this pill, above it.
   position: relative;
@@ -552,6 +670,27 @@ const planChip = computed(() => {
   }
 }
 
+// 🎤: a tool button like 📎, lit in the accent while this field dictates.
+.acomp__mic {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+
+  &[aria-busy='true'] {
+    cursor: progress;
+  }
+}
+
+.acomp__mic--on,
+.acomp__mic--on:hover:not(:disabled) {
+  border-color: var(--k-accent);
+  color: var(--k-accent);
+}
+
+.acomp__mic-icon {
+  --k-icon-size: var(--k-icon-sm);
+}
+
 // The plan chip. Mono because it is a figure, quiet because it is context for a decision
 // rather than the decision — the tooltip carries the per-window detail.
 .acomp__plan {
@@ -597,12 +736,50 @@ const planChip = computed(() => {
   display: inline-flex;
 }
 
+// The ring runs around the disc, so the disc is its containing block.
+.acomp__send--due {
+  position: relative;
+}
+
+// The auto-send countdown: a ring around the arrow that empties as the send nears.
+.acomp__send-ring {
+  position: absolute;
+  inset: -3px;
+  width: calc(100% + 6px);
+  height: calc(100% + 6px);
+  transform: rotate(-90deg);
+  pointer-events: none;
+
+  circle {
+    fill: none;
+    stroke: var(--k-accent);
+    stroke-width: 2;
+    stroke-dasharray: 100;
+    stroke-dashoffset: 0;
+    animation-name: acomp-ring;
+    animation-timing-function: linear;
+    animation-fill-mode: forwards;
+  }
+}
+
+@keyframes acomp-ring {
+  to {
+    stroke-dashoffset: 100;
+  }
+}
+
 // «■» is a smaller glyph than «↑» at the same size; the disc stays the same.
 .acomp__send--stop {
   font-size: 13px;
 
   &[aria-busy='true'] {
     cursor: progress;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .acomp__level-fill {
+    transition: none;
   }
 }
 </style>

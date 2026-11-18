@@ -55,16 +55,16 @@ const INVENTED: Record<string, true> = {
   "дякуємо за перегляд": true,
   "продовження далі": true,
   "продовження буде": true,
-  "thank you": true,
-  "thanks for watching": true,
-  "thank you for watching": true,
-  "you": true,
-  // A sound Whisper names instead of transcribing, written as a bare word (heard on a phrase
-  // cut from a click at the start of dictation: «Музика»).
+  // Music or a hum in the background, or a click at the start of dictation, written without
+  // the brackets of a described sound.
   "музика": true,
   "music": true,
   "оплески": true,
   "applause": true,
+  "thank you": true,
+  "thanks for watching": true,
+  "thank you for watching": true,
+  "you": true,
 };
 const INVENTED_PREFIXES = ["субтитри", "субтитрування", "subtitles by", "редактор субтитрів", "переклад субтитрів"];
 

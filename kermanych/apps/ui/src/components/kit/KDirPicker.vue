@@ -74,15 +74,17 @@ const phase = useLoadPhase(() => loading.value);
 // Each load bumps the counter; a reply that is no longer the newest (a fast double click
 // down the tree, a reopen) is dropped, so the listing never jumps back to an older folder.
 let runId = 0;
-async function load(path: string): Promise<void> {
+async function load(path: string): Promise<boolean> {
   const run = ++runId;
   error.value = null;
   loading.value = true;
   try {
     const next = await api.listDirs(path, { hidden: props.skills });
     if (run === runId) listing.value = next;
+    return true;
   } catch (e) {
     if (run === runId) error.value = e instanceof Error ? e.message : String(e);
+    return false;
   } finally {
     if (run === runId) loading.value = false;
   }
@@ -102,15 +104,17 @@ function choose(): void {
   close();
 }
 
-// Fresh load whenever opened — from the current field value, or home when empty.
+// Fresh load whenever opened — from the current field value, or home when empty. A start that
+// does not exist (the project wizard proposes `~/Projects`, which the clone creates) opens at
+// home instead: an error with no listing would leave no way to navigate anywhere.
 watch(
   () => props.modelValue,
-  (open) => {
-    if (open) {
-      listing.value = null;
-      error.value = null;
-      void load(props.start ?? '');
-    }
+  async (open) => {
+    if (!open) return;
+    listing.value = null;
+    error.value = null;
+    const start = props.start ?? '';
+    if (!(await load(start)) && start && props.modelValue) void load('');
   },
 );
 </script>

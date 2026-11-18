@@ -113,6 +113,7 @@
           <KBtn variant="ghost" :loading="reloadSchedules.busy.value" @click="reloadSchedules.run()">{{ t('cuk.notifications.retry') }}</KBtn>
         </div>
         <p v-else-if="schedules.tasks && !schedules.tasks.length" class="nc__blank">{{ t('cuk.schedule.empty') }}</p>
+        <p v-else-if="schedules.tasks && !sortedTasks.length" class="nc__blank">{{ t('cuk.schedule.emptyWorkspace') }}</p>
         <ul v-else-if="schedules.tasks" class="nc__list">
           <ScheduleRow v-for="task in sortedTasks" :key="task.id" :task="task" />
         </ul>
@@ -163,6 +164,8 @@ import { useAsyncAction } from '../../composables/useAsyncAction';
 import { useLoadPhase } from '../../composables/useLoadPhase';
 import { useNow } from '../../composables/useNow';
 import { relativeTime, renderTime } from '../../lib/time';
+import { tasksInWorkspace } from '../../lib/schedules';
+import { sessionScopedProjectIds } from '../../lib/scope';
 import KBtn from 'components/kit/KBtn.vue';
 import KSkeleton from 'components/kit/KSkeleton.vue';
 import ScheduleRow from './ScheduleRow.vue';
@@ -183,9 +186,20 @@ const feedPhase = useLoadPhase(
 );
 const schedulePhase = useLoadPhase(() => !schedules.tasks && !schedules.loadError);
 
+// Only the selected workspace's tasks, like the notepad on the right (lib/schedules.ts
+// tasksInWorkspace); its projects are read as the Агенти page reads them, from the cached map
+// while the cloud list is unread.
+const scopedTasks = computed(() => {
+  const workspaceId = local.selectedWorkspaceId;
+  const ids = workspaceId
+    ? sessionScopedProjectIds({ workspaceId }, { projects: projects.projects, listRead: projects.listRead }, local.projectWorkspace)
+    : undefined;
+  return tasksInWorkspace(schedules.tasks ?? [], ids);
+});
+
 // What fires soonest on top; paused and finished tasks after them, by name.
 const sortedTasks = computed(() =>
-  [...(schedules.tasks ?? [])].sort((a, b) => {
+  [...scopedTasks.value].sort((a, b) => {
     const an = a.enabled && a.nextAt ? Date.parse(a.nextAt) : Infinity;
     const bn = b.enabled && b.nextAt ? Date.parse(b.nextAt) : Infinity;
     return an - bn || a.name.localeCompare(b.name);

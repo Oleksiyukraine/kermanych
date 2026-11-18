@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { ScheduleSlip, ScheduledTask, SkillImprovementEntry } from '@kermanych/core';
-import { scheduleUndo } from '../src/lib/schedules';
+import { scheduleUndo, tasksInWorkspace } from '../src/lib/schedules';
 import { isUnseen, mergeFeed, type NotificationItem } from '../src/lib/notification-feed';
 import type { AppUpdateEntry } from '../src/stores/app-update';
 import { cukScheduleRows } from '../src/lib/cuk-digest';
@@ -64,6 +64,22 @@ describe('scheduleUndo', () => {
       id: task().id,
       patch: { enabled: false },
     });
+  });
+});
+
+describe('tasksInWorkspace', () => {
+  const reminder = task({ id: 'r' });
+  const here = task({ id: 'here', kind: 'agent', projectId: 'p1' });
+  const elsewhere = task({ id: 'elsewhere', kind: 'agent', projectId: 'p2' });
+  const all = [reminder, here, elsewhere];
+
+  it('keeps the workspace’s project tasks and the project-less ones, drops other workspaces’', () => {
+    expect(tasksInWorkspace(all, ['p1']).map((t) => t.id)).toEqual(['r', 'here']);
+    expect(tasksInWorkspace(all, []).map((t) => t.id)).toEqual(['r']);
+  });
+
+  it('keeps every task when no workspace is selected', () => {
+    expect(tasksInWorkspace(all, undefined)).toEqual(all);
   });
 });
 

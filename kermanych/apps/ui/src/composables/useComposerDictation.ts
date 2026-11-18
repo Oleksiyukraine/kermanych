@@ -1,10 +1,12 @@
 // apps/ui/src/composables/useComposerDictation.ts
-// Local dictation into a panel's composer (docs/specs/2026-11-14-local-voice-dictation.md): every
+// Local dictation into a chat composer (docs/specs/2026-11-14-local-voice-dictation.md): every
 // finished phrase lands at the composer's caret, and after a pause the message sends itself
 // behind a visible countdown (decision 3); while the agent waits on a decision block, a phrase
 // that answers it goes to the block instead (decision 8). The host side of KPanel — kit
 // components do not talk to stores — so the panel hands its composer and its decision block
-// over as a `ComposerDictationHost` and renders the `ComposerDictationState` this returns.
+// over as a `ComposerDictationHost` and renders the `ComposerDictationState` this returns. The
+// assistants' composer (AssistantComposer.vue, docs/specs/2026-11-18-assistant-voice-dictation.md)
+// is a host too, with no decision block.
 import { computed, nextTick, onScopeDispose, ref, watch, type ComputedRef, type Ref } from 'vue';
 import {
   DICTATION_COMPOSER_IDLE_MS,
@@ -17,13 +19,16 @@ import {
 import { useDictation } from '../stores/dictation';
 import { useDictationStartError } from './useDictationField';
 
-/** What KPanel lends the dictation: its composer and its decision block. */
+/** What a composer lends the dictation: its text and send, and its decision block if it has one. */
 export type ComposerDictationHost = {
   /** The composer's text. */
   text: Ref<string>;
   field: () => HTMLTextAreaElement | null;
   /** The composer's own submit: the attached images ride along, the text is cleared. */
   send: () => void;
+  /** False while the composer cannot send (the assistant's turn in flight): the countdown waits
+   *  and starts once it is true again. Absent: always sendable. */
+  sendable?: () => boolean;
   /** The decision block the agent waits on. */
   request: () => RpcExtensionUIRequest | undefined;
   /** Answers the decision block; an input / editor answer clears its field. */
@@ -90,12 +95,13 @@ export function useComposerDictation(host: () => ComposerDictationHost | null): 
     countdown.value = null;
   }
 
+  // The dictated message is due once the composer can send it; until then it waits in the field.
+  function composerReady(h: ComposerDictationHost): boolean {
+    return composerDue && !composerHeld && !!h.text.value.trim() && (h.sendable?.() ?? true);
+  }
+
   function anythingDue(h: ComposerDictationHost): boolean {
-    return (
-      !!blockAnswer.value ||
-      (blockDue && !blockHeld && !!h.blockText.value.trim()) ||
-      (composerDue && !composerHeld && !!h.text.value.trim())
-    );
+    return !!blockAnswer.value || (blockDue && !blockHeld && !!h.blockText.value.trim()) || composerReady(h);
   }
 
   // The countdown runs while there is something to send, nothing is being said and every phrase
@@ -129,7 +135,7 @@ export function useComposerDictation(host: () => ComposerDictationHost | null): 
       h.answer({ type: 'extension_ui_response', id: req.id, value: h.blockText.value.trim() });
     }
     blockDue = false;
-    if (composerDue && !composerHeld && h.text.value.trim()) {
+    if (composerReady(h)) {
       composerDue = false;
       h.send();
     }
@@ -196,14 +202,19 @@ export function useComposerDictation(host: () => ComposerDictationHost | null): 
     forget();
   }
 
-  // Esc anywhere cancels the send that is about to happen; the text stays (decision 3).
+  // Esc anywhere cancels the send that is about to happen; the text stays (decision 3). Heard in
+  // the capture phase and claimed, so a host's own Esc (closing «ЦТ», AssistantLauncher.vue) does
+  // not act on the same press.
   function onWindowKeydown(e: KeyboardEvent): void {
     if (e.key !== 'Escape' || !countdown.value) return;
+    e.preventDefault();
     forget();
   }
 
   const sync = { flush: 'sync' } as const;
   watch([() => dictation.speaking, () => dictation.transcribing, () => dictation.phase, () => dictation.owner, () => dictation.lastSpeechAt], reconsider, sync);
+  // The composer could not send (a turn in flight) and now can, or the other way round.
+  watch(() => host()?.sendable?.() ?? true, reconsider, sync);
   // Not live any more (stopped, idle, another field took the microphone): nothing sends by
   // itself after that, and no option stays lit for an answer that will not go.
   watch(
@@ -259,9 +270,9 @@ export function useComposerDictation(host: () => ComposerDictationHost | null): 
     },
     sync,
   );
-  window.addEventListener('keydown', onWindowKeydown);
+  window.addEventListener('keydown', onWindowKeydown, true);
   onScopeDispose(() => {
-    window.removeEventListener('keydown', onWindowKeydown);
+    window.removeEventListener('keydown', onWindowKeydown, true);
     cancel();
   });
 
