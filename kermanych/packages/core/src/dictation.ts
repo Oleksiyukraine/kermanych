@@ -59,6 +59,12 @@ const INVENTED: Record<string, true> = {
   "thanks for watching": true,
   "thank you for watching": true,
   "you": true,
+  // A sound Whisper names instead of transcribing, written as a bare word (heard on a phrase
+  // cut from a click at the start of dictation: «Музика»).
+  "музика": true,
+  "music": true,
+  "оплески": true,
+  "applause": true,
 };
 const INVENTED_PREFIXES = ["субтитри", "субтитрування", "subtitles by", "редактор субтитрів", "переклад субтитрів"];
 
@@ -77,8 +83,12 @@ export function isInventedPhrase(text: string): boolean {
 }
 
 // ── client-side VAD ──
-// The mic level is the capture's meter (0…1, normal speech fills most of it).
+// The mic level is the capture's meter (0…1, normal speech fills most of it), read every 100 ms.
 export const DICTATION_SPEECH_LEVEL = 0.1;
+// A phrase needs this many meter readings above the level: a click, the 🎤 press or the
+// microphone opening is one loud reading, the shortest word («так», «ні») spans at least two.
+// A phrase of one reading is dropped before it reaches Whisper, which writes «Музика» for it.
+export const DICTATION_MIN_SPEECH_READINGS = 2;
 // A pause this long after speech ends the phrase: it is cut and transcribed (decision 6).
 export const DICTATION_PAUSE_MS = 800;
 // A popup's dictation stops after this long without speech.
@@ -95,10 +105,17 @@ export type VadState = {
   lastSpeechAt: number;
   /** Speech was heard since the last commit. */
   pending: boolean;
+  /** Readings above the level since the last commit. */
+  voiced: number;
 };
 
 export function vadStart(now: number): VadState {
-  return { lastSpeechAt: now, pending: false };
+  return { lastSpeechAt: now, pending: false, voiced: 0 };
+}
+
+/** The phrase being spoken holds enough speech to transcribe (not a lone click). */
+export function vadHasSpeech(state: VadState): boolean {
+  return state.pending && state.voiced >= DICTATION_MIN_SPEECH_READINGS;
 }
 
 export type VadOptions = {
@@ -108,11 +125,24 @@ export type VadOptions = {
   idleMs?: number;
 };
 
-export function vadStep(state: VadState, level: number, now: number, opts: VadOptions = {}): { state: VadState; commit: boolean; idle: boolean } {
-  if (level >= Math.max(DICTATION_SPEECH_LEVEL, opts.speechLevel ?? 0)) return { state: { lastSpeechAt: now, pending: true }, commit: false, idle: false };
+/**
+ * One meter reading. `commit`: the pause ended a phrase worth transcribing; `drop`: the pause
+ * ended one too short to be speech, whose audio is discarded.
+ */
+export function vadStep(
+  state: VadState,
+  level: number,
+  now: number,
+  opts: VadOptions = {},
+): { state: VadState; commit: boolean; drop: boolean; idle: boolean } {
+  if (level >= Math.max(DICTATION_SPEECH_LEVEL, opts.speechLevel ?? 0))
+    return { state: { lastSpeechAt: now, pending: true, voiced: state.voiced + 1 }, commit: false, drop: false, idle: false };
   const quiet = now - state.lastSpeechAt;
-  if (state.pending && quiet >= DICTATION_PAUSE_MS) return { state: { ...state, pending: false }, commit: true, idle: false };
-  return { state, commit: false, idle: quiet >= (opts.idleMs ?? DICTATION_IDLE_MS) };
+  if (state.pending && quiet >= DICTATION_PAUSE_MS) {
+    const commit = vadHasSpeech(state);
+    return { state: { ...state, pending: false, voiced: 0 }, commit, drop: !commit, idle: false };
+  }
+  return { state, commit: false, drop: false, idle: quiet >= (opts.idleMs ?? DICTATION_IDLE_MS) };
 }
 
 // ── inserting a phrase ──
