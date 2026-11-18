@@ -168,8 +168,9 @@ the texts:
     never crossed it is not sent.
 11. **Hallucinations are filtered, whisper.cpp's VAD is not used.** A phrase whose whole text is a
     known Whisper invention («Дякую.», «Дякую за перегляд!», «Субтитри …», «Продовження далі»,
-    their English counterparts) or a described sound («*coughs*», «*клук*», «[музика]» — seen on
-    the cough-only recording with some prompts) is dropped — a pure core rule with a spec. Silero
+    their English counterparts, a bare «Музика» / «Music» heard for background music or a hum)
+    or a described sound («*coughs*», «*клук*», «[музика]» — seen on the cough-only recording
+    with some prompts) is dropped — a pure core rule with a spec. Silero
     VAD inside whisper.cpp is off: it cut quiet speech in the comparison.
 12. **Language and vocabulary.** The engine's language is the agent's language («Мова спілкування
     агента»), else the UI locale, as dictation picks it today. Whisper gets a fixed one-sentence
