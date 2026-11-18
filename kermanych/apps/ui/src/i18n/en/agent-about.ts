@@ -72,7 +72,7 @@ export const agentAbout: typeof uk = {
       notes: 'The notes for the tester from the project settings.',
       items: 'The QA checklist items to check, with their ids — or the ask to compose a checklist first.',
     },
-    adds: 'The reporting rules: a verdict per item through report_qa_result, a screenshot for every failure, passwords only through browser_type_credential (device_type_credential on a device), change nothing. The qa-tester skill when there is no checklist yet.',
+    adds: 'The reporting rules: a verdict per item through report_qa_result, a screenshot for every failure, passwords only through browser_type_credential (device_type_credential on a device), change nothing. Speed rules: a known flow, not an investigation; an action and its check in one step. The qa-tester skill when there is no checklist yet. The run starts on Claude Sonnet 5.5 at a low effort unless the project’s tester settings choose another model.',
     ends: '✓ / ✗ / ⏸ verdicts beside the items on the QA tab and on the card. “⤴ Hand over to the doer” sends the failed items to the doer and closes the session; “Discard” closes it without a message.',
   },
   'pull-request': {

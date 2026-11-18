@@ -2127,6 +2127,14 @@ project, on the session's device — item by item, and records a verdict for eac
   instruction and skills are the «Тестувальник» agent's on the workspace scope, as for every agent.
   The same accounts and sign-in page serve your own **Увійти як** in every session browser of the
   project (see [Session browser](#session-browser)).
+- **Model and speed.** A run starts on Claude Sonnet 5.5 (`claude-sonnet-5-5`) at effort «Низький»
+  (spec: `docs/specs/2026-11-18-faster-tester-runs.md`): it walks a known flow in many short turns, so
+  its time is the model's per-turn latency. «Модель» and «Зусилля» on the same settings page choose
+  another pair for the project on this machine (SQLite `tester_settings.model`, `.effort`); a model the
+  machine's catalogue lacks falls back to the project's default model. The pair is stored on the
+  tester's session row (`sessions.model`, `.effort`), so a run the slot queue replays after a restart
+  starts on the same pair. Kermanych's appended contract also asks the agent to put an action and the
+  check of its result into one step.
 - **The checklist is kept.** «Створити ПР» asks for a QA checklist only when the card has none, so a
   second PR run no longer wipes ticks and verdicts. Ticks and verdicts are written per item in the
   database (`qa_checklist_patch_items`, `qa_checklist_set_if_empty`, migration

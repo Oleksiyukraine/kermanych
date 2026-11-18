@@ -1,6 +1,6 @@
 import { BadRequestException, Body, Controller, Get, NotFoundException, Param, Put } from "@nestjs/common";
 import { randomUUID } from "node:crypto";
-import type { TesterAccount, TesterSettings } from "@kermanych/core";
+import { isThinkingLevel, type TesterAccount, type TesterSettings } from "@kermanych/core";
 import { RegistryService } from "../registry/registry.service";
 
 // «Тестувальник» settings of one project on THIS machine (docs/specs/2026-11-04-qa-tester-agent.md,
@@ -32,6 +32,7 @@ export class TesterController {
 
 // The body as stored: trimmed strings, accounts without a name or a login dropped, a fresh id for
 // an account that has none, the order kept. A password is kept as typed (spaces may be part of it).
+// An empty model or effort means Kermanych's fast default (docs/specs/2026-11-18-faster-tester-runs.md).
 export function normalizeTesterSettings(raw: unknown): TesterSettings {
   if (!raw || typeof raw !== "object") throw new BadRequestException("body must be an object");
   const b = raw as Record<string, unknown>;
@@ -54,5 +55,7 @@ export function normalizeTesterSettings(raw: unknown): TesterSettings {
     seen.add(id);
     accounts.push({ id, name, login, password: s(a.password, "account password"), note: s(a.note, "account note").trim() });
   }
-  return { loginPath: s(b.loginPath, "loginPath").trim(), notes: s(b.notes, "notes").trim(), accounts };
+  const effort = s(b.effort, "effort").trim();
+  if (effort && !isThinkingLevel(effort)) throw new BadRequestException(`unknown effort level ${JSON.stringify(effort)}`);
+  return { loginPath: s(b.loginPath, "loginPath").trim(), notes: s(b.notes, "notes").trim(), accounts, model: s(b.model, "model").trim(), effort: isThinkingLevel(effort) ? effort : "" };
 }

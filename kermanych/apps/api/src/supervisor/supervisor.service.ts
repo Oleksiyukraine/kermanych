@@ -65,6 +65,8 @@ import {
   SYNERGY_IMPLEMENT_AGENT_ID,
   SYNERGY_DEFAULT_MODEL,
   SYNERGY_DEFAULT_EFFORT,
+  TESTER_DEFAULT_MODEL,
+  TESTER_DEFAULT_EFFORT,
   synergyRequestOf,
   synergyCheckpointMessage,
   synergyRestoreMessage,
@@ -2071,6 +2073,11 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
       `\n\n${testerContract(qaScreenshotDir(new Date(), s.branch), g.platform)}` +
       block;
 
+    // The model and effort ride the row (docs/specs/2026-11-18-faster-tester-runs.md, decisions 1
+    // and 2): the operator's choice, else the fast default; a model this machine's catalogue lacks
+    // falls back to the project's default (and with neither, omp's own). On the row, a run the slot
+    // queue replays after a restart starts on the same pair, and the session header shows it.
+    const model = (await this.models.validModel(settings.model || TESTER_DEFAULT_MODEL)) ?? (await this.models.validModel(g.defaultModel));
     const child = this.registry.createSession({
       projectId: s.projectId,
       name: `тестування: ${s.name}`,
@@ -2082,6 +2089,8 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
       parentSessionId: parentId,
       runtime: "omp",
       tester: true,
+      model,
+      effort: settings.effort || TESTER_DEFAULT_EFFORT,
     });
     // Run now in a free slot, or replayed by the queue when one frees up.
     const start = () => this.startTester(child, cwd, prompt);
@@ -2103,7 +2112,7 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     const configPath = await this.ompSkills(child.projectId, cwd, child.id);
     const extensionPath = await this.ompTriggers(child.projectId, cwd, child.id);
     const browserMcp = this.browser?.bindingFor(child.id);
-    const rpc = createRuntime({ cwd, ...launchToolsFor({ kind: "review" }), ...(await this.spawnOpts(child.id, cwd, configPath)), ...(extensionPath ? { extensionPath } : {}), ...(browserMcp ? { mcp: browserMcp } : {}), ...this.systemAppendOpts(child.projectId, "review") });
+    const rpc = createRuntime({ cwd, ...(child.model ? { model: child.model } : {}), ...(child.effort ? { thinking: child.effort } : {}), ...launchToolsFor({ kind: "review" }), ...(await this.spawnOpts(child.id, cwd, configPath)), ...(extensionPath ? { extensionPath } : {}), ...(browserMcp ? { mcp: browserMcp } : {}), ...this.systemAppendOpts(child.projectId, "review") });
     const childLive = this.wireLive(child.id, rpc, "queued");
     try {
       await this.startChild(child.id, rpc);

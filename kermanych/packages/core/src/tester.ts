@@ -6,6 +6,16 @@
 
 import { platformHasBrowser, platformHasDevice, platformHasPreview, type Platform } from "./platform";
 import { QA_VERDICT_STATUSES, type QaAgentVerdict, type QaChecklistItem, type QaVerdictStatus } from "./task-actions";
+import type { ThinkingLevel } from "./thinking";
+
+/**
+ * What a run starts on when the project's tester settings choose nothing
+ * (docs/specs/2026-11-18-faster-tester-runs.md, decision 1): the run walks a known flow in many
+ * short turns, so the time is the model's per-turn latency, not its reasoning — Синергія's pair.
+ * A model the machine's catalogue lacks falls back to the project's default.
+ */
+export const TESTER_DEFAULT_MODEL = "claude-sonnet-5-5";
+export const TESTER_DEFAULT_EFFORT: ThinkingLevel = "low";
 
 /** The MCP tool that records one item's verdict. */
 export const QA_RESULT_TOOL = "report_qa_result";
@@ -130,9 +140,13 @@ export type TesterSettings = {
   /** Free text for the tester: test data, limits, what never to press. */
   notes: string;
   accounts: TesterAccount[];
+  /** The model a run starts on; empty means TESTER_DEFAULT_MODEL (faster-tester-runs, decision 2). */
+  model: string;
+  /** The effort a run starts on; empty means TESTER_DEFAULT_EFFORT. */
+  effort: ThinkingLevel | "";
 };
 
-export const EMPTY_TESTER_SETTINGS: TesterSettings = { loginPath: "", notes: "", accounts: [] };
+export const EMPTY_TESTER_SETTINGS: TesterSettings = { loginPath: "", notes: "", accounts: [], model: "", effort: "" };
 
 // ── prompt pieces (model-facing, so English) ──────────────────────────────────────
 
@@ -202,8 +216,10 @@ export function testerContract(screenshotDir: string, platform: Platform | null 
         "page's console and network requests count as what you observed.\n",
       ];
   const where = device ? "on the device" : "in the browser";
-  const shot = device ? "device_screenshot" : "browser_screenshot";
+  const pre = device ? "device" : "browser";
+  const shot = `${pre}_screenshot`;
   const credential = device ? DEVICE_CREDENTIAL_TOOL : CREDENTIAL_TOOL;
+  const action = device ? "device_tap" : "browser_click";
   return [
     "How this run works and reports — this step is Kermanych's own and applies whatever the instruction above says:\n",
     ...surface,
@@ -214,6 +230,17 @@ export function testerContract(screenshotDir: string, platform: Platform | null 
     "the note says what stopped you. Never report a result you did not observe.\n",
     `- For every \`failed\` item, save a screenshot with \`${shot}\` and \`path\` set to \`${screenshotDir}/<itemId>.png\`, `,
     `and pass that path as \`screenshot\` to \`${QA_RESULT_TOOL}\`.\n`,
+    // Fewer round trips (docs/specs/2026-11-18-faster-tester-runs.md, decision 3): a run's time is
+    // its number of model turns, and a quarter of them only looked at the result of the previous one.
+    "- Be quick: the checklist already says what to check, so this is a walk through a known flow, not an ",
+    "investigation. Open code or docs only when an item does not tell you where to go, and do not repeat a check ",
+    "you have already observed.\n",
+    "- Put calls that follow each other into one response — they run one after another, in order: an action ",
+    `together with the check of its result (\`${action}\` then \`${pre}_wait_for\` or \`${pre}_snapshot\`), and an `,
+    `item's \`${QA_RESULT_TOOL}\` together with the first action of the next item. Make a separate step only when `,
+    "the next call depends on what you are about to see.\n",
+    `- Read the ${device ? "screen" : "page"} with \`${pre}_snapshot\` and \`${pre}_wait_for\`; take a screenshot only to `,
+    "judge something visual (layout, colour, an image) or for a failed item.\n",
     `- Type logins and passwords only with \`${credential}\`; you are never given a password and must not `,
     `read one back from the ${device ? "screen" : "page"}.\n`,
     "- Write the notes in the language you were told to communicate in.\n",
