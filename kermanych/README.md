@@ -1156,7 +1156,7 @@ reply, see [Voice dictation](#voice-dictation-диктування) — free, lo
 - **Where.** «Агенти» (agents, «Глибокий аналіз», discussions, reviews) and «Дослідження» in the avatar window: the ▾ beside
   🎤 in the composer picks «Live-розмова» or «Диктування»; 🎤 then starts the mode used last
   (dictation until you pick Live; spec: `docs/specs/2026-11-14-local-voice-dictation.md`).
-  «Синергія» has dictation only. Not native sessions, not «Менеджмент».
+  «Синергія», ЦУК and «Менеджмент» have dictation only. Not native sessions.
 - **Interrupting.** Start speaking and GPT-Live goes quiet at once: the window mutes its voice
   and drops the rest of a retelling (sent to GPT-Live a part at a time for that reason); you are
   heard again 0.8 s after you stop.
@@ -1214,11 +1214,14 @@ replaced the OpenAI-based `docs/specs/2026-11-03-voice-dictation.md`).
   Parakeet). It lands in `~/.kermanych/models/`, is checked against its sha256, resumes after a
   broken download, and «Видалити модель» removes it. It is loaded (~1 GB of RAM) when 🎤 is
   pressed and released after 10 minutes without dictation.
-- **In a chat composer** — «Синергія», and «Агенти» / «Дослідження» in the «Диктування» mode: 🎤 or **⌥D**
+- **In a chat composer** — «Синергія», ЦУК, the «Менеджмент» assistant (its dock and its panel in
+  «ЦТ»), and «Агенти» / «Дослідження» in the «Диктування» mode: 🎤 or **⌥D**
   toggles it. Each phrase lands in the composer when you pause (~0.8 s); after 2.5 s of quiet a
   countdown sends it. Speak again to add to it, edit it by hand to keep it until Enter, Esc to
-  cancel the send (the text stays). Dictation stays on between messages until you stop it, the
-  page closes, or 10 minutes pass without speech. A «Потрібне рішення» block can be answered by
+  cancel the send (the text stays; in «ЦТ» that Esc does not close the window). Dictation stays
+  on between messages until you stop it, the page closes, or 10 minutes pass without speech. In
+  ЦУК and «Менеджмент» words said while the assistant answers wait in the field and are sent
+  after the answer, behind the same countdown. A «Потрібне рішення» block can be answered by
   voice: «другий», «варіант три», «так» / «ні» highlight the choice and send it after the same
   countdown; for a text answer the words go into the block's own field.
 - **In task popups.** «Диктувати» under the description of every popup that creates or edits a

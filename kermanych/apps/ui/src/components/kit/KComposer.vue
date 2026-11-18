@@ -224,6 +224,7 @@ import { modelOptions } from '../../lib/models';
 import { tokens, usageTokens, usd } from '../../lib/format';
 import { placeMenu } from '../../lib/menu';
 import type { ComposerDictationState } from '../../composables/useComposerDictation';
+import { useDictationWords } from '../../composables/useDictationWords';
 import type { VoiceMode } from '../../composables/useVoicePanel';
 
 const { t } = useI18n();
@@ -353,32 +354,8 @@ function pickMode(mode: VoiceMode): void {
 }
 onBeforeUnmount(closeModeMenu);
 
-// The dictation line's words, and the countdown's whole seconds. The clock ticks only while a
-// countdown runs.
-const now = ref(Date.now());
-let clock: ReturnType<typeof setInterval> | undefined;
-watch(
-  () => props.dictation?.countdown?.at,
-  (at) => {
-    clearInterval(clock);
-    clock = undefined;
-    now.value = Date.now();
-    if (at) clock = setInterval(() => (now.value = Date.now()), 100);
-  },
-  { immediate: true },
-);
-onBeforeUnmount(() => clearInterval(clock));
-const dictationWords = computed(() => {
-  const d = props.dictation;
-  if (!d) return '';
-  if (d.countdown) {
-    const n = Math.max(1, Math.ceil((d.countdown.at - now.value) / 1000));
-    return t(d.countdown.answer ? 'kit.composer.dictation.answerIn' : 'kit.composer.dictation.sendIn', { n });
-  }
-  if (d.phase === 'starting') return t('kit.composer.dictation.starting');
-  if (d.phase === 'stopping' || d.recognising) return t('kit.composer.dictation.recognising');
-  return t('kit.composer.dictation.listening');
-});
+// The dictation line's words, and the countdown's whole seconds.
+const dictationWords = useDictationWords(() => props.dictation);
 
 const focused = ref(false);
 

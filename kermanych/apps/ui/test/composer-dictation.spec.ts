@@ -47,6 +47,8 @@ describe('composer dictation', () => {
   let dictation: ComposerDictation;
   let host: ComposerDictationHost;
   const request = ref<RpcExtensionUIRequest | undefined>();
+  // AssistantComposer's lock: false while a turn is in flight.
+  const sendable = ref(true);
   const send = vi.fn();
   const answer = vi.fn();
 
@@ -70,6 +72,7 @@ describe('composer dictation', () => {
     send.mockReset();
     answer.mockReset();
     request.value = undefined;
+    sendable.value = true;
     const text = ref('');
     const blockText = ref('');
     host = {
@@ -80,6 +83,7 @@ describe('composer dictation', () => {
         send(text.value);
         text.value = '';
       },
+      sendable: () => sendable.value,
       request: () => request.value,
       answer: (res) => {
         answer(res);
@@ -160,6 +164,32 @@ describe('composer dictation', () => {
     await vi.advanceTimersByTimeAsync(DICTATION_SEND_MS * 2);
     expect(send).not.toHaveBeenCalled();
     expect(host.text.value).toBe('Додай кнопку.');
+  });
+
+  it('Esc during a countdown is claimed, so the host does not also act on it', async () => {
+    await say('Додай кнопку.');
+    const hostEsc = vi.fn((e: KeyboardEvent) => e.defaultPrevented);
+    window.addEventListener('keydown', hostEsc);
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', cancelable: true }));
+    window.removeEventListener('keydown', hostEsc);
+    expect(hostEsc).toHaveReturnedWith(true);
+    // No countdown: Esc is left to the host.
+    const free = new KeyboardEvent('keydown', { key: 'Escape', cancelable: true });
+    window.dispatchEvent(free);
+    expect(free.defaultPrevented).toBe(false);
+  });
+
+  it('waits while the composer cannot send and counts down once it can', async () => {
+    sendable.value = false;
+    await say('Додай кнопку.');
+    expect(host.text.value).toBe('Додай кнопку.');
+    expect(dictation.state.value?.countdown).toBeNull();
+    await vi.advanceTimersByTimeAsync(DICTATION_SEND_MS * 2);
+    expect(send).not.toHaveBeenCalled();
+    sendable.value = true;
+    expect(dictation.state.value?.countdown?.ms).toBe(DICTATION_SEND_NOTICE_MS);
+    await vi.advanceTimersByTimeAsync(DICTATION_SEND_NOTICE_MS);
+    expect(send).toHaveBeenCalledWith('Додай кнопку.');
   });
 
   it('«другий» with a pending select lights option 2 and answers it after the countdown', async () => {
