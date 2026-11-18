@@ -16,6 +16,7 @@ import {
   segmentCommitted,
   segmentSettled,
   segmentsDone,
+  vadHasSpeech,
   vadStart,
   vadStep,
   type DictationSegments,
@@ -159,6 +160,11 @@ export const useDictation = defineStore('dictation', () => {
     }
     speaking.value = vad.pending;
     if (step.commit || phraseSamples >= MAX_PHRASE_SAMPLES) send();
+    // A click, not speech: its audio would come back as Whisper's «Музика».
+    else if (step.drop) {
+      phrase = [];
+      phraseSamples = 0;
+    }
     if (step.idle) {
       orchestrator.notify(globalTr.t('dictation.idleStopped', { minutes: Math.round(idleMs / 60_000) }), 'info');
       void stop();
@@ -204,7 +210,8 @@ export const useDictation = defineStore('dictation', () => {
       phase.value = 'stopping';
       clearInterval(ticker);
       const fresh = capture.take();
-      if (vad.pending) {
+      // The phrase being spoken goes out only if it holds speech, not a lone click.
+      if (vadHasSpeech(vad)) {
         phrase.push(fresh);
         send();
       }

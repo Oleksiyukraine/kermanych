@@ -154,6 +154,7 @@ export {
   segmentCommitted,
   segmentSettled,
   segmentsDone,
+  vadHasSpeech,
   vadStart,
   vadStep,
   type DictationSegments,

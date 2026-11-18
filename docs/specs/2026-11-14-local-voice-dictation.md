@@ -165,13 +165,14 @@ the texts:
     noise suppression on, as today), runs `vadStep` on it, and posts each finished phrase as a
     16 kHz mono WAV to `POST /api/voice/transcribe` → `{ text }`. The noise gate's threshold
     (Settings → «Голос» → «Поріг шуму мікрофона») applies to dictation too: a phrase whose level
-    never crossed it is not sent.
+    never crossed it is not sent, and neither is one with fewer than two 100 ms readings above
+    it — a click, not speech (`docs/specs/2026-11-18-voice-dictation-click-phrase.md`).
 11. **Hallucinations are filtered, whisper.cpp's VAD is not used.** A phrase whose whole text is a
     known Whisper invention («Дякую.», «Дякую за перегляд!», «Субтитри …», «Продовження далі»,
-    their English counterparts, a bare «Музика» / «Music» heard for background music or a hum)
-    or a described sound («*coughs*», «*клук*», «[музика]» — seen on the cough-only recording
-    with some prompts) is dropped — a pure core rule with a spec. Silero
-    VAD inside whisper.cpp is off: it cut quiet speech in the comparison.
+    their English counterparts, a bare «Музика» / «Music» / «Оплески» heard for background music,
+    a hum or a click at the start of dictation) or a described sound («*coughs*», «*клук*»,
+    «[музика]» — seen on the cough-only recording with some prompts) is dropped — a pure core
+    rule with a spec. Silero VAD inside whisper.cpp is off: it cut quiet speech in the comparison.
 12. **Language and vocabulary.** The engine's language is the agent's language («Мова спілкування
     агента»), else the UI locale, as dictation picks it today. Whisper gets a fixed one-sentence
     prompt with technical vocabulary (`DICTATION_PROMPT`). Measured on the recordings:

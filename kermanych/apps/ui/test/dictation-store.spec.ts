@@ -177,6 +177,35 @@ describe('the dictation store', () => {
     expect(transcribe).toHaveBeenCalledOnce();
   });
 
+  it('a click as dictation starts is never sent, and the phrase after it carries none of its audio', async () => {
+    const d = useDictation();
+    await d.start(OWNER, { onText: (t) => inserted.push(t) });
+    const m = mics[0]!;
+    // One loud reading — the 🎤 press heard by the microphone — then silence.
+    m.level = 0.9;
+    await vi.advanceTimersByTimeAsync(100);
+    expect(d.speaking).toBe(true);
+    m.level = 0;
+    await vi.advanceTimersByTimeAsync(DICTATION_PAUSE_MS + 500);
+    expect(transcribe).not.toHaveBeenCalled();
+    expect(d.speaking).toBe(false);
+
+    await phrase(m);
+    expect(transcribe).toHaveBeenCalledOnce();
+    // Pre-roll, 200 ms of speech, the pause: the click's audio is not in it.
+    expect(samplesSent(0)).toBe(3 * BLOCK + 2 * BLOCK + 8 * BLOCK);
+  });
+
+  it('stop right after a click sends nothing', async () => {
+    const d = useDictation();
+    await d.start(OWNER, { onText: (t) => inserted.push(t) });
+    mics[0]!.level = 0.9;
+    await vi.advanceTimersByTimeAsync(100);
+    await d.stop();
+    expect(transcribe).not.toHaveBeenCalled();
+    expect(d.phase).toBe('idle');
+  });
+
   it('stop sends the phrase being spoken, closes the microphone and waits for its text', async () => {
     const d = useDictation();
     await d.start(OWNER, { onText: (t) => inserted.push(t) });

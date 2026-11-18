@@ -1325,8 +1325,9 @@ replaced the OpenAI-based `docs/specs/2026-11-03-voice-dictation.md`).
   it. One dictation per app: starting another stops the current one.
 - **What is heard.** The agent's language («Мова спілкування агента», else the UI language);
   Whisper is primed with English technical terms. Noise below «Поріг шуму мікрофона» is not
-  sent, and Whisper's inventions on a cough or silence («Дякую за перегляд!», «*coughs*») are
-  dropped. «еее» / «ммм» do not come through. No other clean-up — the text is what was heard.
+  sent, nor is a lone click (the 🎤 press, a key) shorter than 200 ms of sound, and Whisper's
+  inventions on a cough or silence («Дякую за перегляд!», «*coughs*», «Музика») are dropped.
+  «еее» / «ммм» do not come through. No other clean-up — the text is what was heard.
 - **With a voice conversation.** Dictation mutes a running Live conversation's microphone and
   unmutes it afterwards (a conversation you muted stays muted), so the agent never gets the
   dictated text twice.

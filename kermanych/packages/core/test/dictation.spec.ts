@@ -10,6 +10,7 @@ import {
   segmentCommitted,
   segmentSettled,
   segmentsDone,
+  vadHasSpeech,
   vadStart,
   vadStep,
 } from "../src/dictation";
@@ -45,16 +46,19 @@ describe("isInventedPhrase", () => {
     expect(isInventedPhrase("*coughs*")).toBe(true);
     expect(isInventedPhrase("*клук*")).toBe(true);
     expect(isInventedPhrase("[музика]")).toBe(true);
-    // A bare «Музика» with no brackets came back for a pure 220 Hz tone.
+    // A bare «Музика» with no brackets came back for a pure 220 Hz tone, and for a click at
+    // the start of dictation.
     expect(isInventedPhrase("Музика")).toBe(true);
     expect(isInventedPhrase("Музика.")).toBe(true);
     expect(isInventedPhrase("Music")).toBe(true);
     expect(isInventedPhrase("music.")).toBe(true);
+    expect(isInventedPhrase("Оплески")).toBe(true);
   });
 
   it("keeps a real request that merely contains such words", () => {
     expect(isInventedPhrase("Дякую, а тепер зроби кнопку синьою.")).toBe(false);
     expect(isInventedPhrase("Другий варіант.")).toBe(false);
+    expect(isInventedPhrase("Додай музику на фон.")).toBe(false);
     expect(isInventedPhrase("Зміни текст (той, що в хедері).")).toBe(false);
   });
 });
@@ -62,12 +66,23 @@ describe("isInventedPhrase", () => {
 describe("vadStep", () => {
   it("commits once after a pause that follows speech", () => {
     let s = vadStart(0);
-    s = vadStep(s, 0.5, 100).state;
+    s = vadStep(vadStep(s, 0.5, 0).state, 0.5, 100).state;
     const early = vadStep(s, 0, 100 + DICTATION_PAUSE_MS - 1);
     expect(early.commit).toBe(false);
     const pause = vadStep(early.state, 0, 100 + DICTATION_PAUSE_MS);
     expect(pause.commit).toBe(true);
     expect(vadStep(pause.state, 0, 100 + DICTATION_PAUSE_MS + 500).commit).toBe(false);
+  });
+
+  it("drops a phrase of one loud reading — a click, not speech", () => {
+    const click = vadStep(vadStart(0), 0.9, 100).state;
+    expect(vadHasSpeech(click)).toBe(false);
+    const pause = vadStep(click, 0, 100 + DICTATION_PAUSE_MS);
+    expect(pause).toMatchObject({ commit: false, drop: true });
+    // The next phrase counts its own readings.
+    const word = vadStep(vadStep(pause.state, 0.5, 2_000).state, 0.5, 2_100).state;
+    expect(vadHasSpeech(word)).toBe(true);
+    expect(vadStep(word, 0, 2_100 + DICTATION_PAUSE_MS)).toMatchObject({ commit: true, drop: false });
   });
 
   it("never commits silence alone, and reports idle after the silence limit", () => {
