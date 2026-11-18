@@ -243,8 +243,68 @@ workspace ──► project ──► task ──► session
   a git worktree plus one `omp` child — on the machine of whoever runs it; see
   [Cloud tasks and local sessions](#cloud-tasks-and-local-sessions).
 
-Press **+** beside «Воркспейси» in the sidebar to create your first workspace,
-then **+** on its row to create projects inside it.
+Press **+** beside «Воркспейси» in the sidebar to create a workspace, then **+** on its row to
+create a project inside it — or follow the welcome screen below, which does the same.
+
+#### First run: the welcome screen
+
+Until there is something to work with, the centre of «Агенти» is a welcome screen instead of
+an empty view (spec: `docs/specs/2026-11-18-first-run-and-project-wizard.md`). It changes by
+itself as the account's workspaces and projects arrive:
+
+- **No workspace.** «Створити воркспейс» creates one and opens the project wizard for it.
+  «Мене запросили в команду» shows the email this account signed in with, to copy and give to
+  the workspace owner, who adds it in the workspace's settings → «Учасники».
+- **A workspace without projects.** «Створіть перший проєкт» opens the wizard.
+- **Projects, none of them connected on this machine** (an invited teammate). The projects are
+  listed by workspace, each with «Підключити», which opens the wizard in connect mode.
+
+The «Розпочати» checklist no longer covers this setup and no longer opens by itself; it appears
+in the sidebar once a project is connected on this machine and walks through the first agent,
+skills and the team.
+
+#### The project wizard
+
+**+** on a workspace row opens a four-step wizard. «Швидке створення: без теки на цій машині»
+on its first step opens the old short form instead (name, git remote, platform): a project in
+the cloud that this machine does not connect.
+
+1. **Доступ до git.** `GIT_TOKEN`, with a link to create a fine-grained GitHub token (Contents
+   and Pull requests read/write, Metadata read). «Використати токен з проєкту X» copies the
+   token of another project connected on this machine. «Перевірити» asks GitHub whose token it
+   is. «Пропустити» goes on without one: cloning a public repository or picking an existing
+   folder works, but the agents cannot push or open pull requests until a token is set.
+2. **Репозиторій.** «GitHub» lists the repositories the token can read, with a search; «За URL»
+   takes any https or ssh URL; «Вже є на цій машині» picks a folder that is already a clone and
+   reads its `origin`, branch and name — nothing is cloned then.
+3. **Куди і як.** The parent folder (by default the one holding the last connected project,
+   else `~/Projects`), the final path, the name, colour, platform and default branch (from the
+   remote's `HEAD`). A path that exists and is not empty is refused.
+4. **Створення.** Clone → project in the cloud → connect the folder → `GIT_TOKEN` into its
+   `.env`. A failed clone leaves nothing in the cloud; a credentials refusal offers the token
+   step again. A failed cloud write keeps the clone, and «Спробувати ще раз» does not clone
+   again. «Скасувати» during the clone stops git and deletes only the folder the wizard created.
+
+**Connect mode** is the same wizard for a project that already exists: the token, then «Склонувати»
+the project's remote or «Вже є на цій машині» (warned when the folder's `origin` is another
+repository), then the parent folder. Name, colour and platform belong to the project and are
+shown read-only. A URL typed for a project that had no remote is saved to it. Connect mode opens
+wherever a project not connected on this machine is first needed: the welcome screen, the first
+«Запустити» on the board (the launch continues afterwards) and the project's settings.
+Re-binding a connected project to another folder keeps the plain folder picker.
+
+**The token stays in the project's `.env`** — the file every agent reads it from. When git does
+not ignore that file, writing `GIT_TOKEN` (from the wizard or from Settings) appends it to the
+repository's `.git/info/exclude`, a local rule that is never committed, so an agent cannot
+commit the token.
+
+Routes: `POST /api/git/inspect` (`{ path }`), `POST /api/git/remote-head` (`{ url, token? }`),
+`POST /api/git/clone` (`{ url, parentDir, dirName, token? }`; progress through the `git_clone`
+socket event), `GET /api/git/clone/:jobId`, `POST /api/git/clone/:jobId/cancel`,
+`POST /api/github/token-check` and `POST /api/github/repos` (`{ token }`; the token is only ever
+in the request body). A clone authenticates the way a «Синергія» push does: the token reaches
+git as a credential helper through the environment, never in the URL, the command line or the
+clone's `origin`.
 
 **Membership is per workspace.** In a workspace's settings its owner invites a
 colleague by the email address their account signed in with, and that one
@@ -1726,8 +1786,9 @@ developer's machine. The direction is always task → session.
    is greyed out before the attempt rather than explaining afterwards. An active task
    (`queued`, `thinking`, `tool`, `waiting_input`) can be neither reassigned nor deleted.
 3. **Bind** — a cloud project has no idea where its repo lives on your disk. The first
-   «Запустити» for an unbound project asks for the local git repository and stores that
-   path locally (it never reaches the cloud).
+   «Запустити» for an unbound project opens the project wizard in connect mode — clone the
+   project's remote or pick an existing clone, see [The project wizard](#the-project-wizard) —
+   stores that path locally (it never reaches the cloud) and then runs the launch.
 4. **Run** — `POST /api/sessions/from-task` creates a git worktree under
    the project's `.worktrees/<branch>`, copies the project's `carryFiles` (`.env` by
    default) into it, and spawns one `omp --mode rpc` child. From here on the session is an
