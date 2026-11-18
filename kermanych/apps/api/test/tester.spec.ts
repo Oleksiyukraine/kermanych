@@ -13,7 +13,7 @@ import type { PreviewService } from "../src/preview/preview.service";
 import { fakeDevice } from "./fake-device";
 import type { BrowserMcpService as BrowserMcp } from "../src/browser/browser-mcp.service";
 
-type RpcOpts = { cwd: string; tools?: string[] };
+type RpcOpts = { cwd: string; tools?: string[]; model?: string; thinking?: string };
 const started: RpcOpts[] = [];
 const prompts: string[] = [];
 vi.mock("../src/rpc/rpc-session", () => {
@@ -89,9 +89,12 @@ function card(id: string, items: Partial<QaChecklistItem>[] = []): Task {
   return t;
 }
 
-function make(opts: { platform?: "web" | "backend" | "mobile"; host?: boolean } = {}) {
+function make(opts: { platform?: "web" | "backend" | "mobile"; host?: boolean; catalog?: string[] } = {}) {
   const registry = new RegistryService(":memory:");
-  registry.upsertProject({ id: "p1", name: "p", localRepoPath: "/tmp/kmq-tester", ...(opts.platform ? { platform: opts.platform } : {}) });
+  registry.upsertProject({ id: "p1", name: "p", localRepoPath: "/tmp/kmq-tester", defaultModel: "claude-opus-5-5", ...(opts.platform ? { platform: opts.platform } : {}) });
+  // ModelsService.validModel: a model of the machine's catalogue, else undefined.
+  const catalog = opts.catalog ?? ["claude-sonnet-5-5", "claude-opus-5-5", "claude-haiku-5-5"];
+  const models = { validModel: async (m: string | undefined) => (m && catalog.includes(m) ? m : undefined) };
   const worktree = {
     currentBranch: vi.fn().mockResolvedValue("main"),
     unmergedFiles: vi.fn().mockResolvedValue([]),
@@ -117,7 +120,7 @@ function make(opts: { platform?: "web" | "backend" | "mobile"; host?: boolean } 
   const fake = fakeDevice();
   const browser = new BrowserMcpService(registry, preview as unknown as PreviewService, fake.device, http, auth);
   const bindingFor = vi.spyOn(browser, "bindingFor");
-  const sup = new SupervisorService(registry, worktree as unknown as WorktreeService, auth, stubSkills(), undefined as never, undefined, browser, undefined, undefined, undefined, undefined, undefined, preview as unknown as PreviewService);
+  const sup = new SupervisorService(registry, worktree as unknown as WorktreeService, auth, stubSkills(), models as never, undefined, browser, undefined, undefined, undefined, undefined, undefined, preview as unknown as PreviewService);
   const events: ServerEvent[] = [];
   sup.events$.subscribe((e) => events.push(e));
   const host = fakeHost();
@@ -199,6 +202,24 @@ describe("POST qa-run guard", () => {
     expect(prompt).not.toContain("`q1`: item 1");
     expect(prompt).toContain("report_qa_result");
   });
+
+  // docs/specs/2026-11-18-faster-tester-runs.md, decisions 1 and 2.
+  it("runs on the fast default pair, on the project's settings when chosen, and on the project default when the catalogue lacks the model", async () => {
+    const fast = make();
+    cards.set("t1", card("t1", [{}]));
+    const child = await fast.sup.runTester(fast.doer.id, "all");
+    expect(started.at(-1)).toMatchObject({ model: "claude-sonnet-5-5", thinking: "low" });
+    expect(fast.registry.listSessions().find((s) => s.id === child.id)).toMatchObject({ model: "claude-sonnet-5-5", effort: "low" });
+
+    const chosen = make();
+    chosen.registry.setTesterSettings("p1", { loginPath: "", notes: "", accounts: [], model: "claude-haiku-5-5", effort: "medium" });
+    await chosen.sup.runTester(chosen.doer.id, "all");
+    expect(started.at(-1)).toMatchObject({ model: "claude-haiku-5-5", thinking: "medium" });
+
+    const lacking = make({ catalog: ["claude-opus-5-5"] });
+    await lacking.sup.runTester(lacking.doer.id, "all");
+    expect(started.at(-1)).toMatchObject({ model: "claude-opus-5-5", thinking: "low" });
+  });
 });
 
 describe("tester MCP tools", () => {
@@ -220,7 +241,7 @@ describe("tester MCP tools", () => {
   it("browser_type_credential types the password into the ephemeral page and never answers it", async () => {
     const { sup, browser, doer, registry, host } = make();
     cards.set("t1", card("t1", [{}]));
-    registry.setTesterSettings("p1", { loginPath: "/login", notes: "", accounts: [{ id: "a1", name: "Адмін", login: "admin@x.io", password: "s3cret-pw", note: "" }] });
+    registry.setTesterSettings("p1", { loginPath: "/login", notes: "", accounts: [{ id: "a1", name: "Адмін", login: "admin@x.io", password: "s3cret-pw", note: "" }], model: "", effort: "" });
     const tester = await sup.runTester(doer.id, "all");
     expect(prompts.at(-1)).not.toContain("s3cret-pw");
 
@@ -324,7 +345,7 @@ describe("a Mobile project's tester (docs/specs/2026-11-04-tester-mobile-device.
   it("locks the doer out of the device until the run is handed over, and types a credential without answering it", async () => {
     const { sup, browser, doer, preview, fake, registry } = make({ platform: "mobile" });
     cards.set("t1", card("t1", [{}]));
-    registry.setTesterSettings("p1", { loginPath: "myapp://login", notes: "", accounts: [{ id: "a1", name: "Адмін", login: "admin@x.io", password: "s3cret-pw", note: "" }] });
+    registry.setTesterSettings("p1", { loginPath: "myapp://login", notes: "", accounts: [{ id: "a1", name: "Адмін", login: "admin@x.io", password: "s3cret-pw", note: "" }], model: "", effort: "" });
     const tester = await sup.runTester(doer.id, "all");
     expect(prompts.at(-1)).toContain("`myapp://login` — open it with `device_open_url`");
     fake.boot(doer.id, runtime);
@@ -405,6 +426,8 @@ describe("tester settings", () => {
     const saved = ctl.put("p1", {
       loginPath: " /login ",
       notes: " no deletes ",
+      model: " claude-haiku-5-5 ",
+      effort: "medium",
       accounts: [
         { id: "", name: " Адмін ", login: " a@x.io ", password: " pw ", note: "" },
         { name: "", login: "nobody" },
@@ -414,10 +437,13 @@ describe("tester settings", () => {
 
     expect(saved.loginPath).toBe("/login");
     expect(saved.notes).toBe("no deletes");
+    expect([saved.model, saved.effort]).toEqual(["claude-haiku-5-5", "medium"]);
     expect(saved.accounts.map((a) => [a.name, a.login, a.password, a.note])).toEqual([["Адмін", "a@x.io", " pw ", ""], ["User", "u@x.io", "p2", "n"]]);
     expect(saved.accounts[0].id).not.toBe("");
     expect(saved.accounts[1].id).toBe("keep");
     expect(ctl.get("p1")).toEqual(saved);
+    expect(ctl.put("p1", { accounts: [] })).toMatchObject({ model: "", effort: "" });
+    expect(() => ctl.put("p1", { effort: "turbo" })).toThrow(/unknown effort level/);
     expect(() => ctl.get("nope")).toThrow(/project not found/);
   });
 });

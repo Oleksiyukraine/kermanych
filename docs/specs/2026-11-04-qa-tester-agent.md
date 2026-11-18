@@ -282,7 +282,8 @@ Api: `GET /api/tester/projects/:id` and `PUT /api/tester/projects/:id` (settings
 list). The GET returns passwords to the local UI only (same trust as the other local tokens); the
 agent never gets them (decision 5).
 
-Not now: model / effort choice (no agent has it), a time limit per run, the browser-partition switch.
+Not now: a time limit per run, the browser-partition switch. (The model / effort choice was added on
+2026-11-18 by `docs/specs/2026-11-18-faster-tester-runs.md`, decision 2.)
 
 ### 15. The `tester` agent and its contract
 

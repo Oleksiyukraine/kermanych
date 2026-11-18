@@ -813,6 +813,15 @@ export class RegistryService {
     // «Тестувальник» settings (docs/specs/2026-11-04-qa-tester-agent.md, decision 4): per project,
     // THIS machine only and never synced — the Jira/Linear custody rule, passwords in plaintext.
     this.db.exec(`CREATE TABLE IF NOT EXISTS tester_settings (project_id TEXT PRIMARY KEY, login_path TEXT NOT NULL DEFAULT '', notes TEXT NOT NULL DEFAULT '')`);
+    // Additive: the model and effort a run starts on (docs/specs/2026-11-18-faster-tester-runs.md,
+    // decision 2); empty means Kermanych's fast default.
+    for (const col of ["model", "effort"]) {
+      try {
+        this.db.exec(`ALTER TABLE tester_settings ADD COLUMN ${col} TEXT NOT NULL DEFAULT ''`);
+      } catch {
+        /* column already exists */
+      }
+    }
     this.db.exec(
       `CREATE TABLE IF NOT EXISTS tester_accounts (id TEXT PRIMARY KEY, project_id TEXT NOT NULL, name TEXT NOT NULL, login TEXT NOT NULL, password TEXT NOT NULL, note TEXT NOT NULL DEFAULT '', position INTEGER NOT NULL)`,
     );
@@ -1856,13 +1865,14 @@ export class RegistryService {
 
   // No row yet reads as empty settings.
   getTesterSettings(projectId: string): TesterSettings {
-    const s = this.db.prepare(`SELECT login_path, notes FROM tester_settings WHERE project_id = ?`).get(projectId) as
-      | { login_path: string; notes: string }
+    const s = this.db.prepare(`SELECT login_path, notes, model, effort FROM tester_settings WHERE project_id = ?`).get(projectId) as
+      | { login_path: string; notes: string; model: string; effort: string }
       | undefined;
     const accounts = this.db
       .prepare(`SELECT id, name, login, password, note FROM tester_accounts WHERE project_id = ? ORDER BY position, rowid`)
       .all(projectId) as TesterSettings["accounts"];
-    return { loginPath: s?.login_path ?? "", notes: s?.notes ?? "", accounts };
+    const effort = s?.effort;
+    return { loginPath: s?.login_path ?? "", notes: s?.notes ?? "", accounts, model: s?.model ?? "", effort: isThinkingLevel(effort) ? effort : "" };
   }
 
   // Replaces the settings and the whole account list in one transaction; accounts keep the
@@ -1870,8 +1880,8 @@ export class RegistryService {
   setTesterSettings(projectId: string, settings: TesterSettings): void {
     this.db.transaction(() => {
       this.db
-        .prepare(`INSERT OR REPLACE INTO tester_settings (project_id, login_path, notes) VALUES (?,?,?)`)
-        .run(projectId, settings.loginPath, settings.notes);
+        .prepare(`INSERT OR REPLACE INTO tester_settings (project_id, login_path, notes, model, effort) VALUES (?,?,?,?,?)`)
+        .run(projectId, settings.loginPath, settings.notes, settings.model, settings.effort);
       this.db.prepare(`DELETE FROM tester_accounts WHERE project_id = ?`).run(projectId);
       const insert = this.db.prepare(`INSERT INTO tester_accounts (id, project_id, name, login, password, note, position) VALUES (?,?,?,?,?,?,?)`);
       settings.accounts.forEach((a, i) => insert.run(a.id, projectId, a.name, a.login, a.password, a.note, i));

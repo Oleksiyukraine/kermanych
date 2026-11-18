@@ -40,6 +40,13 @@
           <p class="ts__hint">{{ loginPathHint }}</p>
         </div>
         <KField v-model="draft.notes" :label="t('tester.panel.notes')" :placeholder="t('tester.panel.notesPlaceholder')" multiline :rows="4" />
+        <!-- What a run starts on (docs/specs/2026-11-18-faster-tester-runs.md, decision 2). Empty is
+             Kermanych's fast default, named in the first row of each list. -->
+        <div class="ts__run">
+          <KSelect :model-value="draft.model" :label="t('tester.panel.model')" :options="modelPick" searchable @update:model-value="pickModel" />
+          <KSelect :model-value="draft.effort" :label="t('tester.panel.effort')" :options="effortPick" @update:model-value="pickEffort" />
+        </div>
+        <p class="ts__hint">{{ t('tester.panel.runHint') }}</p>
 
         <p v-if="saveError" class="ts__error" role="alert">{{ saveError }}</p>
         <p v-else-if="dirty" class="ts__hint">{{ t('tester.panel.unsaved') }}</p>
@@ -61,13 +68,16 @@
 // scope like every agent's. This block sits on the «Тестувальник» page at the project scope.
 import { computed, reactive, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
-import { platformHasDevice, type TesterAccount, type TesterSettings } from '@kermanych/core';
+import { isThinkingLevel, platformHasDevice, TESTER_DEFAULT_EFFORT, TESTER_DEFAULT_MODEL, type TesterAccount, type TesterSettings } from '@kermanych/core';
 import { useOrchestrator } from 'stores/orchestrator';
 import { errorText, useAsyncAction } from '../../composables/useAsyncAction';
+import { EFFORT_OPTIONS, effortLabelKey } from '../../lib/effort';
+import { effortOptions, modelOptions } from '../../lib/models';
 import { useLoadPhase } from '../../composables/useLoadPhase';
 import KBtn from 'components/kit/KBtn.vue';
 import KField from 'components/kit/KField.vue';
 import KIconButton from 'components/kit/KIconButton.vue';
+import KSelect from 'components/kit/KSelect.vue';
 import KSkeleton from 'components/kit/KSkeleton.vue';
 
 const props = defineProps<{ projectId: string }>();
@@ -91,6 +101,27 @@ const phase = useLoadPhase(() => !saved.value && !loadError.value);
 
 const copy = (s: TesterSettings): TesterSettings => ({ ...s, accounts: s.accounts.map((a) => ({ ...a })) });
 const dirty = computed(() => !!draft.value && !!saved.value && JSON.stringify(draft.value) !== JSON.stringify(saved.value));
+
+// The model and effort pickers: the machine's catalogue behind a «default» row that names the
+// fast pair a run gets when nothing is chosen. The efforts are those the effective model admits.
+const modelPick = computed(() => {
+  const name = store.models.find((m) => m.id === TESTER_DEFAULT_MODEL)?.name ?? TESTER_DEFAULT_MODEL;
+  return [{ value: '', label: t('tester.panel.defaultOption', { name }) }, ...modelOptions(store.models)];
+});
+const allowedEfforts = computed(() => effortOptions(store.models, draft.value?.model || TESTER_DEFAULT_MODEL));
+const effortPick = computed(() => [
+  { value: '', label: t('tester.panel.defaultOption', { name: t(effortLabelKey(TESTER_DEFAULT_EFFORT)) }) },
+  ...EFFORT_OPTIONS.filter((o) => allowedEfforts.value.includes(o.value)).map((o) => ({ value: o.value, label: t(o.labelKey) })),
+]);
+// A model picked that does not admit the chosen effort drops it back to the default.
+function pickModel(model: string): void {
+  if (!draft.value) return;
+  draft.value.model = model;
+  if (draft.value.effort && !effortOptions(store.models, model || TESTER_DEFAULT_MODEL).includes(draft.value.effort)) draft.value.effort = '';
+}
+function pickEffort(effort: string): void {
+  if (draft.value) draft.value.effort = isThinkingLevel(effort) ? effort : '';
+}
 
 // A new account has no id until the api assigns one, so rows are keyed by object identity.
 const keys = new WeakMap<TesterAccount, number>();
@@ -194,6 +225,7 @@ const save = useAsyncAction(
 .ts__account-actions { display: flex; flex-direction: column; gap: 2px; padding-top: 20px; }
 .ts__add { display: flex; }
 .ts__path { display: grid; gap: 4px; max-width: 320px; }
+.ts__run { display: grid; grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); gap: 8px 12px; max-width: 760px; }
 .ts__actions { display: flex; justify-content: flex-end; gap: 6px; }
 .ts__link {
   justify-self: start;
