@@ -484,11 +484,13 @@ import PlaneBoardView from 'components/plane/PlaneBoardView.vue';
 import { useJira } from 'stores/jira';
 import { useLinear } from 'stores/linear';
 import { usePlane } from 'stores/plane';
+import { useOnboarding } from 'stores/onboarding';
 
 const auth = useAuth();
 const board = useBoard();
 const cloud = useProjects();
 const local = useOrchestrator();
+const onb = useOnboarding();
 const now = useNow();
 const router = useRouter();
 const { t } = useI18n();
@@ -1208,10 +1210,24 @@ async function runLaunch(task: Task, report: (message: string) => void): Promise
   }
 }
 
+// A project with no folder here gets the project wizard in «Підключити» mode (it can clone
+// too), and the launch continues once it is done; the wizard is closed by then, so a refused
+// launch is a toast. A row that still names a folder (the api raced an unbind) keeps the
+// plain path modal.
 function openBinding(task: Task): void {
+  const path = local.projects.find((p) => p.id === task.projectId)?.localRepoPath ?? '';
+  if (!path) {
+    onb.openWizard({
+      mode: 'connect',
+      projectId: task.projectId,
+      doneLabel: t('board.binding.launchAfter', { title: task.title }),
+      onDone: () => void runLaunch(task, (msg) => local.notify(msg, 'error')),
+    });
+    return;
+  }
   pendingLaunch.value = task;
   bindingProjectId.value = task.projectId;
-  bindingPath.value = local.projects.find((p) => p.id === task.projectId)?.localRepoPath ?? '';
+  bindingPath.value = path;
   bindingError.value = null;
   bindingOpen.value = true;
 }
