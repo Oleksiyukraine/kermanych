@@ -101,8 +101,9 @@ export const useNotificationCenter = defineStore('notification-center', () => {
   const error = ref('');
   // The improvement the view over the console shows; undefined while it is closed.
   const openId = ref<string | undefined>(undefined);
-  // A slip's full answer (a run without a project, decision 9), a scheduled task, or one version
-  // of the «Оновлення» tab's changelog, shown over the console instead. At most one view is open.
+  // A schedule slip's details (with a run's full answer when it has no project, decision 9), a
+  // scheduled task, or one version of the «Оновлення» tab's changelog, shown over the console
+  // instead. At most one view is open.
   const openSlipId = ref<string | undefined>(undefined);
   const openTaskId = ref<string | undefined>(undefined);
   const openVersion = ref<string | undefined>(undefined);
@@ -281,7 +282,7 @@ export const useNotificationCenter = defineStore('notification-center', () => {
     void markSeen([id]).catch(() => undefined);
   }
 
-  /** Open a run's full answer over the console (a run without a project, decision 9). */
+  /** Open a schedule slip's details over the console — a click on the slip in the feed. */
   function openSlip(id: string): void {
     close();
     openSlipId.value = id;

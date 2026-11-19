@@ -150,8 +150,8 @@
 <script setup lang="ts">
 // Reads stores/notification-center.ts, which follows the signed-in user for the life of the app,
 // and stores/schedules.ts; this component only paints them. An improvement's slip opens the entry
-// view over the console, a «Розклад» row the task's view, an «Оновлення» row the version's notes
-// (the launcher renders them).
+// view over the console, a schedule slip its details, a «Розклад» row the task's view, an
+// «Оновлення» row the version's notes (the launcher renders them).
 import { computed } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { changelogSummary, type SkillImprovementEntry } from '@kermanych/core';

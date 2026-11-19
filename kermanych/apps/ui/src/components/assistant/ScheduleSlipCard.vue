@@ -1,22 +1,25 @@
 <template>
   <!-- One schedule slip on «Центр сповіщень»'s board (docs/specs/2026-11-06-scheduled-tasks.md,
        decision 6): a reminder that fired, an agent run that ended, or a run skipped or failed.
-       Not a button like an improvement's slip: it carries its own actions. -->
+       Like a «Розклад» row (ScheduleRow): the slip itself opens its details over the console
+       (ScheduleSlipView); the actions under it are their own controls. -->
   <article
     class="ssc"
     :class="{ 'ssc--new': !slip.seen, 'ssc--open': open, 'ssc--failed': failed }"
     :aria-label="slip.scheduleName"
   >
-    <header class="ssc__top">
-      <span class="ssc__kind" aria-hidden="true"><KIcon name="clock" /></span>
-      <span class="ssc__name mono">{{ heading }}</span>
-      <span class="ssc__when mono">{{ renderTime(t, relativeTime(slip.at, now)) }}</span>
-    </header>
-    <p class="ssc__text">{{ line }}</p>
-    <p v-if="marker || due" class="ssc__meta mono">
-      <span v-if="marker" class="ssc__mark">{{ marker }}</span>
-      <span v-if="due">{{ due }}</span>
-    </p>
+    <button class="ssc__main" type="button" :aria-current="open || undefined" @click="nc.openSlip(slip.id)">
+      <span class="ssc__top">
+        <span class="ssc__kind" aria-hidden="true"><KIcon name="clock" /></span>
+        <span class="ssc__name mono">{{ heading }}</span>
+        <span class="ssc__when mono">{{ renderTime(t, relativeTime(slip.at, now)) }}</span>
+      </span>
+      <span class="ssc__text">{{ line }}</span>
+      <span v-if="marker || due" class="ssc__meta mono">
+        <span v-if="marker" class="ssc__mark">{{ marker }}</span>
+        <span v-if="due">{{ due }}</span>
+      </span>
+    </button>
     <div class="ssc__actions">
       <template v-if="slip.kind === 'reminder'">
         <KBtn v-if="!slip.seen" variant="ghost" :loading="done.busy.value" @click="done.run()">{{ t('cuk.notifications.slip.done') }}</KBtn>
@@ -27,13 +30,7 @@
           {{ t('cuk.notifications.slip.snooze60') }}
         </KBtn>
       </template>
-      <template v-else-if="!failed">
-        <KBtn v-if="slip.sessionId" variant="ghost" :loading="openSession.busy.value" @click="openSession.run()">
-          {{ t('cuk.openSession') }}
-        </KBtn>
-        <KBtn v-else-if="slip.body" variant="ghost" @click="nc.openSlip(slip.id)">{{ t('cuk.notifications.slip.open') }}</KBtn>
-      </template>
-      <KBtn v-else-if="task && !task.running" variant="ghost" :loading="runNow.busy.value" @click="runNow.run()">
+      <KBtn v-else-if="failed && task && !task.running" variant="ghost" :loading="runNow.busy.value" @click="runNow.run()">
         {{ t('cuk.schedule.runNow') }}
       </KBtn>
     </div>
@@ -42,13 +39,12 @@
 
 <script setup lang="ts">
 // Rendered by CukNotifications for a `schedule-slip` row. The writes go through stores/schedules.ts
-// (the local api); every action also marks the slip seen, as opening an improvement does.
+// (the local api); every action also marks the slip seen, as opening it (nc.openSlip) does.
 import { computed } from 'vue';
 import { useI18n } from 'vue-i18n';
 import type { ScheduleSlip } from '@kermanych/core';
 import { useNotificationCenter } from 'stores/notification-center';
 import { useSchedules } from 'stores/schedules';
-import { useCukChat } from 'stores/cuk-chat';
 import { useOrchestrator } from 'stores/orchestrator';
 import { useAsyncAction, useKeyedAction } from '../../composables/useAsyncAction';
 import { useNow } from '../../composables/useNow';
@@ -63,7 +59,6 @@ const props = defineProps<{ slip: ScheduleSlip }>();
 const { t } = useI18n();
 const nc = useNotificationCenter();
 const schedules = useSchedules();
-const chat = useCukChat();
 const local = useOrchestrator();
 const now = useNow(60_000);
 
@@ -93,13 +88,6 @@ const seen = () => schedules.markSlipsSeen([props.slip.id]);
 
 const done = useAsyncAction(seen);
 const snooze = useKeyedAction((minutes: string) => schedules.snooze(props.slip.id, minutes === '60' ? 60 : 10));
-const openSession = useAsyncAction(async () => {
-  const id = props.slip.sessionId;
-  if (!id) return;
-  void seen().catch(() => undefined);
-  nc.close();
-  await chat.openSession(id);
-});
 const runNow = useAsyncAction(async () => {
   await schedules.runNow(props.slip.scheduleId);
   void seen().catch(() => undefined);
@@ -139,6 +127,31 @@ const runNow = useAsyncAction(async () => {
 
 .ssc--failed .ssc__text {
   color: var(--k-danger);
+}
+
+// The slip's body is the button that opens it, laid out like a «Розклад» row's (.srow__main).
+.ssc__main {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+
+  &:hover .ssc__name,
+  &:focus-visible .ssc__name {
+    text-decoration: underline;
+  }
+
+  &:focus-visible {
+    outline: none;
+    box-shadow: var(--k-glow-focus);
+  }
 }
 
 .ssc__top {
