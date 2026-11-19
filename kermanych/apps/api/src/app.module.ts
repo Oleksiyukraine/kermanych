@@ -13,6 +13,8 @@ import { McpService } from "./mcp/mcp.service";
 import { ManagementController } from "./http/management.controller";
 import { CukController } from "./http/cuk.controller";
 import { ModelsController } from "./http/models.controller";
+import { NailGameController } from "./http/nail-game.controller";
+import { NailGameAiService } from "./nail-game/nail-game-ai.service";
 import { RegistryService } from "./registry/registry.service";
 import { WorktreeService } from "./worktree/worktree.service";
 import { SupervisorService } from "./supervisor/supervisor.service";
@@ -75,7 +77,7 @@ import { GitSetupService } from "./git/git-setup.service";
 import { GitController } from "./http/git.controller";
 
 @Module({
-  controllers: [AuthController, ProjectsController, SessionsController, FsController, UsageController, CloudController, SkillsController, SkillImportController, McpController, ManagementController, ManagementMcpController, CukController, ModelsController, JiraController, LinearController, PlaneController, SlackController, AccountController, DocsController, NativeController, BrowserMcpController, MachineController, MinionController, TesterController, VoiceController, DeviceController, SchedulesController, AnalyticsController, GitController],
+  controllers: [AuthController, ProjectsController, SessionsController, FsController, UsageController, CloudController, SkillsController, SkillImportController, McpController, ManagementController, ManagementMcpController, CukController, ModelsController, JiraController, LinearController, PlaneController, SlackController, AccountController, DocsController, NativeController, BrowserMcpController, MachineController, MinionController, TesterController, VoiceController, DeviceController, SchedulesController, AnalyticsController, GitController, NailGameController],
   providers: [
     RegistryService, WorktreeService, SupervisorService, PreviewService, EnvFileService, EventsGateway, McpService,
     UsageService,
@@ -109,6 +111,9 @@ import { GitController } from "./http/git.controller";
     // tool-less child per user on the same chat pool as the Менеджмент assistant. Knows only
     // the language preference (RegistryService) and the renice (MachineResourcesService).
     CukChatService,
+    // «Гвіздки»'s AI opponents (docs/specs/2026-11-19-nail-game-ai-opponents.md): one tool-less
+    // child per opponent per round on the same chat pool, the model checked against ModelsService.
+    NailGameAiService,
     // The Release Notes generator: one one-shot omp child per request, reading the bound
     // repo's git history through { RegistryService, WorktreeService }. Like the chat it
     // knows nothing about SupervisorService — a generation has no session and no worktree.

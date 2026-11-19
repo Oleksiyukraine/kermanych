@@ -1137,17 +1137,33 @@ A `before insert` trigger allows 10 reports per user per hour; the eleventh is r
 
 ## Break game («Гвіздки»)
 
-Spec: `docs/specs/2026-11-18-nail-hammer-minigame.md`. A one-minute break: the hammer icon in the
-header, left of «Надіслати відгук», opens it. Nails with eyes pop up right over the app and the
-cursor becomes a hammer; the player drives in as many as they can in 60 seconds (after a 3-2-1
-countdown). A straight nail takes 2 hits and scores 1, a bent one takes 3 hits and scores 2. A
-nail left alone hides again; misses cost nothing. Esc leaves at any time, and a round left early
-is not saved. The sound is synthesised in the browser; its toggle is remembered on this device
-(`localStorage`, `kermanych.nail-game.muted`). The round's rules live in
+Specs: `docs/specs/2026-11-18-nail-hammer-minigame.md`, `docs/specs/2026-11-19-nail-game-ai-opponents.md`.
+A one-minute break: the hammer icon in the header, left of «Надіслати відгук», opens it. Nails
+with eyes pop up right over the app and the cursor becomes a hammer; the player drives in as many
+as they can in 60 seconds (after a 3-2-1 countdown). A straight nail takes 2 hits and scores 1, a
+bent one takes 3 hits and scores 2. A swing counts within 18 px around the nail's sprite, the
+same area for every blow. A driven nail stays on the board, flush with the ground, until the
+round ends; a nail left alone hides again; misses cost nothing. Esc leaves at any time, and a
+round left early is not saved. The sound is synthesised in the browser; its toggle is remembered
+on this device (`localStorage`, `kermanych.nail-game.muted`). The round's rules live in
 `apps/ui/src/lib/nail-game.ts`.
 
-A finished round with a score above 0 is one row in `public.nail_game_scores` (the player is the
-signed-in account). Nobody reads the table directly. The leaderboard is
+**AI opponents.** «Суперники (ШІ)» on the start screen picks up to 3 models from this machine's
+omp catalogue (`GET /models`): one is a duel, two or three an arena where everyone plays on one
+board. Each opponent is the real model: the api starts a tool-less omp child per model when the
+round starts (`POST /nail-game/ai/warm`, thinking off), the window sends it the board whenever
+its hammer is about to run out of planned strikes (`POST /nail-game/ai/move`), and the model
+answers with up to 6 nail ids. Its hammer then strikes once every 180 ms in that order, the same
+hand speed for every model; a nail gone by then is skipped. The children stop when the round
+ends or the player leaves (`POST /nail-game/ai/release`), and the chat pool's idle sweep stops
+any whose release was lost. The points of a nail go to whoever lands the blow that drives it
+in; a driven nail is ringed in that player's colour. A round costs each model ~30–50 calls on
+the operator's own plan; the result screen shows each opponent's moves, round trip and spend.
+The choice is remembered on this device (`kermanych.nail-game.opponents`). The seat logic lives
+in `apps/ui/src/lib/nail-game-ai.ts`, the prompt in `apps/api/src/nail-game/nail-game-prompt.ts`.
+
+Only a solo round is saved. A finished solo round with a score above 0 is one row in
+`public.nail_game_scores` (the player is the signed-in account). Nobody reads the table directly. The leaderboard is
 `nail_game_leaderboard(p_workspace, p_limit)`: each player's best score, the top 10 plus the
 player's own row, ranked across everyone («Усі») or across the members of the workspace in the
 sidebar's scope. The `profiles` name and avatar it shows are already visible to every signed-in

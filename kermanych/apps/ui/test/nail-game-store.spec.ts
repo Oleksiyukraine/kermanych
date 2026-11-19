@@ -17,7 +17,11 @@ vi.mock('@kermanych/cloud', async (importOriginal) => ({
   submitNailGameScore: (client: unknown, score: number) => submitScore(client, score),
 }));
 vi.mock('../src/stores/auth', () => ({ useAuth: () => ({ user: { id: 'me' }, client: {} }) }));
-vi.mock('../src/stores/orchestrator', () => ({ useOrchestrator: () => ({ selectedWorkspaceId: 'w1', notify: vi.fn() }) }));
+// The machine's model catalog, as GET /models would fill it.
+const catalog: { id: string }[] = [];
+vi.mock('../src/stores/orchestrator', () => ({
+  useOrchestrator: () => ({ selectedWorkspaceId: 'w1', notify: vi.fn(), models: catalog, loadModels: async () => undefined }),
+}));
 vi.mock('../src/stores/projects', () => ({ useProjects: () => ({ workspaces: [{ id: 'w1', name: 'Team' }] }) }));
 vi.mock('../src/boot/i18n', () => ({ globalTr: { t: (k: string) => k, te: () => false } }));
 
@@ -104,5 +108,20 @@ describe('nail game store', () => {
 
     expect(game.board?.map((r) => r.userId)).toEqual(['me']);
     expect(game.myBest).toBe(3);
+  });
+
+  it('keeps up to three distinct opponents, and drops one the catalog no longer lists', async () => {
+    localStorage.setItem('kermanych.nail-game.opponents', JSON.stringify(['gone-model', 'claude-opus-5']));
+    catalog.splice(0, catalog.length, { id: 'claude-opus-5' }, { id: 'claude-haiku-4-5' });
+    leaderboard.mockResolvedValue([]);
+    const game = useNailGame();
+    game.setOpponents(['a', 'a', 'b', 'c', 'd']);
+    expect(game.opponents).toEqual(['a', 'b', 'c']);
+
+    game.setOpponents(['gone-model', 'claude-opus-5']);
+    game.show();
+    await vi.waitFor(() => expect(game.catalogLoaded).toBe(true));
+    expect(game.opponents).toEqual(['claude-opus-5']);
+    catalog.splice(0);
   });
 });
