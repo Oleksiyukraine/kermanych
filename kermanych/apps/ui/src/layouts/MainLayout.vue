@@ -202,8 +202,15 @@
           :aria-label="`${t('common.nav.aiLoginRequired')}. ${signInHint}`"
           @click="ompCheck.recheck()"
         ><span aria-hidden="true">⚠</span> {{ t('common.nav.aiLoginRequired') }}</button>
-        <!-- «Гвіздки», a one-minute break game (docs/specs/2026-11-18-nail-hammer-minigame.md). -->
-        <KIconButton :title="t('nailGame.open')" :active="nailGame.open" @click="nailGame.show()"><KIcon name="hammer" /></KIconButton>
+        <!-- «Кімната відпочинку», a one-minute break game (docs/specs/2026-11-18-nail-hammer-minigame.md):
+             a labelled button rather than a bare icon, so the break is found without hovering. -->
+        <button
+          type="button"
+          class="shell__break mono"
+          :class="{ 'shell__break--on': nailGame.open }"
+          :aria-pressed="nailGame.open"
+          @click="nailGame.show()"
+        >{{ t('nailGame.open') }}</button>
         <!-- «Надіслати відгук» (docs/specs/2026-11-13-feedback-form.md): always on screen, so a
              bug can be reported from the screen it happened on. -->
         <KIconButton :title="t('feedback.open')" :active="feedback.open" @click="feedback.show()"><KIcon name="feedback" /></KIconButton>
@@ -577,7 +584,7 @@
     <KConfirmDialog />
     <!-- «Надіслати відгук»: the header icon and Налаштування → «Загальне» open it. -->
     <FeedbackDialog />
-    <!-- «Гвіздки»: the header's hammer opens it. -->
+    <!-- «Кімната відпочинку»: the header's button of that name opens it. -->
     <NailGameOverlay />
 
     <!-- TRACKER MERGE PROMPTS — global on purpose: a shadow task reaches `merged` wherever
@@ -2312,6 +2319,37 @@ const pullHint = computed(() => {
 }
 .shell__voice-time { color: var(--k-muted); }
 .shell__voice-icon { --k-icon-size: var(--k-icon-sm); }
+
+// «Кімната відпочинку»: a text button in the quiet cluster's 28px frame, so the row stays one
+// line; it lights the accent while the game is open, as KIconButton's `active` does.
+.shell__break {
+  display: inline-flex;
+  align-items: center;
+  height: 28px;
+  padding: 0 10px;
+  border: 1px solid var(--k-line);
+  border-radius: var(--k-r);
+  background: transparent;
+  color: var(--k-muted);
+  font-size: 12px;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: border-color 0.12s, color 0.12s;
+
+  &:hover {
+    border-color: var(--k-text);
+    color: var(--k-text);
+  }
+
+  &:focus-visible {
+    outline: 1px solid var(--k-accent);
+    outline-offset: 1px;
+  }
+}
+.shell__break--on {
+  border-color: var(--k-accent);
+  color: var(--k-accent);
+}
 
 // The sign-out pill: danger-framed so it reads as a blocker next to the quiet icon cluster,
 // at the icon buttons' 28px height so the row stays one line.
