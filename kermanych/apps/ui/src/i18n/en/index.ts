@@ -1472,8 +1472,8 @@ export const en: MessageSchema = {
     rateLimited: 'Too much feedback in one hour. Try again later.',
   },
   nailGame: {
-    open: 'Break: «Nails»',
-    title: 'Nails',
+    open: 'Break room',
+    title: 'Break room',
     blurb: 'A minute off. Nails pop up right over Kermanych and the cursor becomes a hammer: drive in as many as you can in 60 seconds.',
     ruleStraight: 'A straight nail: 2 hits, 1 point.',
     ruleBent: 'A bent one: 3 hits, 2 points.',

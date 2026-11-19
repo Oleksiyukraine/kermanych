@@ -776,9 +776,9 @@ for the author, `select` for `service_role` only), its rate-limit trigger and th
 adds, and no older client reads it, but push it before shipping a client that has the form:
 until then «Надіслати» fails with the database's «table not found».
 
-`20261118090000_nail_game.sql` adds «Гвіздки»: the table `nail_game_scores` (insert-only for the
+`20261118090000_nail_game.sql` adds «Кімната відпочинку» (the nail game): the table `nail_game_scores` (insert-only for the
 player), its guard trigger and the function `nail_game_leaderboard` (see [Break game
-(«Гвіздки»)](#break-game-гвіздки)). It only adds, and no older client reads it, but push it
+(«Кімната відпочинку»)](#break-game-кімната-відпочинку)). It only adds, and no older client reads it, but push it
 before shipping a client that has the game: until then its leaderboard and every save fail with
 `PGRST202 Could not find the function`.
 
@@ -1135,10 +1135,11 @@ order by f.created_at desc;
 A `before insert` trigger allows 10 reports per user per hour; the eleventh is refused with
 `feedback_rate_limited`, which the form shows as «Забагато відгуків за годину».
 
-## Break game («Гвіздки»)
+## Break game («Кімната відпочинку»)
 
 Specs: `docs/specs/2026-11-18-nail-hammer-minigame.md`, `docs/specs/2026-11-19-nail-game-ai-opponents.md`.
-A one-minute break: the hammer icon in the header, left of «Надіслати відгук», opens it. Nails
+A one-minute break, formerly «Гвіздки»: the «Кімната відпочинку» button in the header, left of
+«Надіслати відгук», opens it. Nails
 with eyes pop up right over the app and the cursor becomes a hammer; the player drives in as many
 as they can in 60 seconds (after a 3-2-1 countdown). A straight nail takes 2 hits and scores 1, a
 bent one takes 3 hits and scores 2. A swing counts within 18 px around the nail's sprite, the

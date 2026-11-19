@@ -1,7 +1,7 @@
 <template>
   <!-- «Гвіздки» (docs/specs/2026-11-18-nail-hammer-minigame.md, decision 2): a full-window layer
        over the app, so the Kermanych screen is the «desktop» the nails pop out of. Mounted once in
-       MainLayout; the header's hammer opens it through stores/nail-game.ts. AI opponents share
+       MainLayout; the header's «Кімната відпочинку» button opens it through stores/nail-game.ts. AI opponents share
        the board (docs/specs/2026-11-19-nail-game-ai-opponents.md). -->
   <Teleport to="body">
     <div
