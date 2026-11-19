@@ -151,7 +151,11 @@ export type ApiErrorCode =
   // voice/local-stt.service.ts — local dictation (docs/specs/2026-11-14-local-voice-dictation.md):
   | "stt_model_missing" // the recognition model is not (fully) downloaded (params: none)
   | "stt_audio_invalid" // the phrase is not a 16 kHz mono 16-bit WAV within the size cap, or its language is unknown (params: none)
-  | "stt_engine_failed"; // the local engine could not load or failed on the phrase (params: { reason })
+  | "stt_engine_failed" // the local engine could not load or failed on the phrase (params: { reason })
+  // http/nail-game.controller.ts — «Гвіздки» with AI opponents (docs/specs/2026-11-19-nail-game-ai-opponents.md):
+  | "nail_game_opponents_invalid" // not 1…max distinct model ids (params: { max })
+  | "nail_game_model_unknown" // a model this machine's omp does not list (params: { model })
+  | "nail_game_board_invalid"; // the board snapshot is malformed (params: none)
 
 // Runtime mirrors of the unions above. MUST list every member of their type exactly once;
 // the exhaustiveness test in test/i18n-codes.spec.ts fails on a drift or a duplicate.
@@ -262,6 +266,9 @@ export const API_ERROR_CODES = [
   "stt_model_missing",
   "stt_audio_invalid",
   "stt_engine_failed",
+  "nail_game_opponents_invalid",
+  "nail_game_model_unknown",
+  "nail_game_board_invalid",
 ] as const satisfies readonly ApiErrorCode[];
 
 // Compile-time exhaustiveness (checked by `tsc` at build; test/ is not compiled). The

@@ -1,8 +1,10 @@
 // «Гвіздки», the one-minute break game (docs/specs/2026-11-18-nail-hammer-minigame.md): whether
-// the overlay is open, the leaderboard per scope, and saving a finished round. The round itself
+// the overlay is open, the leaderboard per scope, saving a finished round, and the AI opponents
+// picked for the next round (docs/specs/2026-11-19-nail-game-ai-opponents.md). The round itself
 // lives in the overlay (lib/nail-game.ts holds its rules).
 import { defineStore } from 'pinia';
-import { computed, ref } from 'vue';
+import { computed, ref, watch } from 'vue';
+import { NAIL_GAME_MAX_OPPONENTS } from '@kermanych/core';
 import {
   NailGameTooSoonError,
   nailGameLeaderboard,
@@ -22,6 +24,16 @@ export type NailGameResult = { score: number; record: boolean; place: number | n
 const ALL = 'all';
 /** How many players a leaderboard shows; the player's own row may follow them. */
 export const NAIL_GAME_BOARD_LIMIT = 10;
+const OPPONENTS_KEY = 'kermanych.nail-game.opponents';
+
+function readOpponents(): string[] {
+  try {
+    const raw: unknown = JSON.parse(localStorage.getItem(OPPONENTS_KEY) ?? '[]');
+    return Array.isArray(raw) ? raw.filter((m): m is string => typeof m === 'string').slice(0, NAIL_GAME_MAX_OPPONENTS) : [];
+  } catch {
+    return [];
+  }
+}
 
 export const useNailGame = defineStore('nail-game', () => {
   const auth = useAuth();
@@ -49,6 +61,29 @@ export const useNailGame = defineStore('nail-game', () => {
   /** The player's best score on the whole leaderboard; null before their first round. */
   const myBest = computed(() => ownRow(boards.value[ALL])?.bestScore ?? null);
 
+  // The opponents for the next round: model ids from this machine's catalog, remembered on this
+  // device. None is a solo round, one a duel, two or three an arena.
+  const opponents = ref<string[]>(readOpponents());
+  watch(opponents, (v) => {
+    try {
+      localStorage.setItem(OPPONENTS_KEY, JSON.stringify(v));
+    } catch {
+      // Refused storage: the choice lasts for this window only.
+    }
+  });
+  function setOpponents(ids: readonly string[]): void {
+    opponents.value = [...new Set(ids)].slice(0, NAIL_GAME_MAX_OPPONENTS);
+  }
+  // The catalog the picker offers is the orchestrator's (GET /models, fetched once per window).
+  // `catalogLoaded` keeps «not loaded» apart from «this machine lists no models».
+  const catalogLoaded = ref(false);
+  async function loadCatalog(): Promise<void> {
+    await orch.loadModels();
+    catalogLoaded.value = true;
+    // A model the catalog no longer lists cannot be played against.
+    if (orch.models.length) setOpponents(opponents.value.filter((id) => orch.models.some((m) => m.id === id)));
+  }
+
   // A reply is stored under the key it was asked for, so a late one for the other scope never
   // shows in this one.
   async function fetchBoard(key: string): Promise<NailGameLeaderRow[]> {
@@ -73,6 +108,7 @@ export const useNailGame = defineStore('nail-game', () => {
   function show(): void {
     open.value = true;
     void loadBoard();
+    void loadCatalog();
     // The personal best («Новий рекорд!») is read from the whole leaderboard.
     if (scopeKey.value !== ALL && boards.value[ALL] === undefined) void loadBoard(ALL);
   }
@@ -125,6 +161,9 @@ export const useNailGame = defineStore('nail-game', () => {
     board,
     boardError,
     myBest,
+    opponents,
+    setOpponents,
+    catalogLoaded,
     show,
     hide,
     setScope,

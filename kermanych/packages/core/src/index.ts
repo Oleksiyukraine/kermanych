@@ -120,6 +120,17 @@ export {
   type ReleaseNotesAuthorsReply,
   type ReleaseAuthor,
 } from "./release-notes";
+export {
+  NAIL_GAME_AI_MAX_STRIKES,
+  NAIL_GAME_AI_STRIKE_MS,
+  NAIL_GAME_BOARD_MAX_NAILS,
+  NAIL_GAME_HIT_BONUS_MS,
+  NAIL_GAME_MAX_OPPONENTS,
+  type NailGameBoard,
+  type NailGameBoardNail,
+  type NailGameMove,
+  type NailGameMoveAsk,
+} from "./nail-game";
 export { THINKING_LEVELS, isThinkingLevel, type ThinkingLevel } from "./thinking";
 export {
   NATIVE_HARNESSES,

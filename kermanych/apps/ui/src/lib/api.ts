@@ -35,6 +35,8 @@ import type {
   FileContent,
   DocLinkEmbedCheck,
   ModelOption,
+  NailGameBoard,
+  NailGameMove,
   ApiErrorCode,
   SttModelStatus,
   ApiErrorParams,
@@ -893,6 +895,14 @@ export const api = {
   // The local omp catalog for this machine — GET /models. Empty when omp is unreadable, and
   // the pickers degrade to «за замовчуванням» on their own.
   models: (): Promise<ModelOption[]> => get<ModelOption[]>('/models'),
+
+  // «Гвіздки»'s AI opponents (docs/specs/2026-11-19-nail-game-ai-opponents.md): a fresh omp
+  // child per opponent model for the round, one move per call, and the children stopped after.
+  // Every move is a real call to that model on the operator's own plan.
+  nailGameWarm: (models: string[]): Promise<{ ok: true }> => post<{ ok: true }>('/nail-game/ai/warm', { models }),
+  nailGameMove: (model: string, board: NailGameBoard): Promise<NailGameMove> =>
+    post<NailGameMove>('/nail-game/ai/move', { model, board }),
+  nailGameRelease: (models: string[]): Promise<{ ok: true }> => post<{ ok: true }>('/nail-game/ai/release', { models }),
 
   // Change a running (or dormant) session's model and/or effort. `provider` rides along so
   // omp's set_model can address the model; the api answers with the updated session.

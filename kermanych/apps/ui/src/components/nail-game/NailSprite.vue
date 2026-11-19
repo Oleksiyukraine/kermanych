@@ -1,7 +1,9 @@
 <template>
   <!-- One nail of «Гвіздки» (docs/specs/2026-11-18-nail-hammer-minigame.md, decision 2), drawn
        into the engine's NAIL_W × NAIL_H box. It sinks a step per hit, a bent one straightens as
-       it goes, and the eyes follow the hammer. -->
+       it goes, and the eyes follow the hammer. A driven nail stays on the board flush with the
+       ground, ringed in the colour of the player who drove it in. Hits are the engine's
+       (nailAt), not the sprite's: the svg takes no pointer events. -->
   <svg
     class="nail"
     :class="{
@@ -10,10 +12,10 @@
       'nail--driven': nail.doneAt !== null,
       'nail--escaped': nail.escapedAt !== null,
     }"
+    :style="owner ? { '--nail-owner': owner } : undefined"
     :viewBox="`0 0 ${NAIL_W} ${NAIL_H}`"
     :width="NAIL_W"
     :height="NAIL_H"
-    :data-nail="nail.id"
     aria-hidden="true"
   >
     <defs>
@@ -23,6 +25,7 @@
       </linearGradient>
     </defs>
     <ellipse class="nail__hole" :cx="MID" :cy="GROUND" rx="13" ry="4" />
+    <ellipse v-if="nail.doneAt !== null && owner" class="nail__mark" :cx="MID" :cy="GROUND" rx="19" ry="7" />
     <g class="nail__body">
       <path class="nail__shaft" :d="shaft" />
       <g :transform="`rotate(${tilt} ${headX} ${headY})`">
@@ -54,14 +57,12 @@
       </g>
     </g>
     <text v-if="nail.doneAt !== null" class="nail__points" :x="MID" :y="headY - 14">+{{ nail.points }}</text>
-    <!-- The target: generous, the whole nail and a margin, so a swing at the head counts. -->
-    <rect class="nail__hit" x="4" :y="headY - HEAD_H" :width="NAIL_W - 8" :height="GROUND - headY + HEAD_H + 6" />
   </svg>
 </template>
 
 <script setup lang="ts">
 import { computed } from 'vue';
-import { NAIL_H, NAIL_W, type Nail } from '../../lib/nail-game';
+import { NAIL_GROUND, NAIL_H, NAIL_HEAD_H, NAIL_SHAFT, NAIL_W, type Nail } from '../../lib/nail-game';
 
 const props = defineProps<{
   nail: Nail;
@@ -69,13 +70,15 @@ const props = defineProps<{
   now: number;
   /** Where the hammer is, as a unit vector from the nail's head. */
   look: { x: number; y: number };
+  /** The colour of the player who drove it in; none in a solo round. */
+  owner?: string | undefined;
 }>();
 
 const MID = NAIL_W / 2;
-const GROUND = NAIL_H - 6;
-const SHAFT_MAX = 58;
+const GROUND = NAIL_GROUND;
+const SHAFT_MAX = NAIL_SHAFT;
 const HEAD_W = 34;
-const HEAD_H = 15;
+const HEAD_H = NAIL_HEAD_H;
 const STRUCK_MS = 130;
 
 // 0 standing tall … 1 driven flush.
@@ -156,26 +159,22 @@ const struck = computed(
 }
 
 .nail__points {
-  fill: var(--k-accent, #f5a524);
+  fill: var(--nail-owner, var(--k-accent, #f5a524));
   font: 700 16px/1 var(--k-font-mono, monospace);
   text-anchor: middle;
-  animation: nail-points 0.45s ease-out forwards;
+  animation: nail-points 0.6s ease-out forwards;
 }
 
-.nail__hit {
-  fill: transparent;
-  pointer-events: all;
-}
-
-.nail--driven,
-.nail--escaped {
-  .nail__hit {
-    pointer-events: none;
-  }
-}
-
+// Driven: it stays where it went in, a little dimmer than the nails still in play.
 .nail--driven .nail__body {
-  animation: nail-fade 0.45s ease-in forwards;
+  opacity: 0.8;
+}
+
+.nail__mark {
+  fill: none;
+  stroke: var(--nail-owner);
+  stroke-width: 2;
+  opacity: 0.85;
 }
 
 // An escaped nail ducks back into its hole.
@@ -193,15 +192,6 @@ const struck = computed(
 @keyframes nail-hide {
   to {
     transform: translateY(18px) scaleY(0.4);
-    opacity: 0;
-  }
-}
-
-@keyframes nail-fade {
-  60% {
-    opacity: 1;
-  }
-  to {
     opacity: 0;
   }
 }
