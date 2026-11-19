@@ -2698,7 +2698,11 @@ else sees them and nothing is written to the cloud apart from a run's hidden boa
   Deleting always asks.
 - **Where to see them.** «Центр сповіщень» has three tabs. «Сповіщення» is the feed: skill changes,
   reminders (with «Готово» and «Відкласти» 10 хв / 1 год), finished runs and runs that were
-  skipped or failed, with the reason. «Розклад» lists the tasks with their next firing and a pause
+  skipped or failed, with the reason. Clicking a slip opens its details over the console, the way
+  a «Розклад» row opens its task: the kind, the project, the status, when it fired and for which
+  time, and the text — the reminder, the run's answer or why it did not run — with «Відкрити
+  задачу», «Відкрити сесію» while the run's session is still on this machine, and «Обговорити в
+  ЦУК» for a run without a project. «Розклад» lists the tasks with their next firing and a pause
   switch; opening one shows its text, skills, run history, «Запустити зараз» and «Видалити». Like
   the notepad beside it, «Розклад» shows the workspace picked in the switcher: the tasks of its
   projects plus reminders and tasks without a project, which belong to no workspace. With no

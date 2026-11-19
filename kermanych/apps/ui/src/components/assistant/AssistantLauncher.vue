@@ -135,7 +135,7 @@
             </div>
             <!-- One notification opened from the column or its toast: over the curtain and the
                  stage, which keep their conversations and drafts underneath. A skill
-                 improvement, a scheduled run's full answer, a scheduled task, or a version of
+                 improvement, a schedule slip's details, a scheduled task, or a version of
                  the changelog — one at a time. -->
             <SkillImprovementView
               v-if="notifications.openId"

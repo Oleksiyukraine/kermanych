@@ -1,7 +1,10 @@
 <template>
-  <!-- The whole answer of an agent run without a project (docs/specs/2026-11-06-scheduled-tasks.md,
-       decision 9), over the console: the run has no session to open, so its text is shown here,
-       and «Обговорити в ЦУК» carries it into the ЦУК composer — the follow-up goes through ЦУК. -->
+  <!-- One schedule slip over the console (docs/specs/2026-11-06-scheduled-tasks.md, decision 6),
+       opened from the feed the way a «Розклад» row opens its task: what fired, when, for which
+       project, how it ended and the text — a reminder's, a run's answer or the reason it did not
+       run. A run without a project keeps its whole answer here (decision 9), and «Обговорити в
+       ЦУК» carries it into the ЦУК composer. The run's session and the task are links, not the
+       slip's click: a finished run's session is history, the slip is what the operator came for. -->
   <section class="ssv" :aria-labelledby="headingId">
     <header class="ssv__head">
       <button
@@ -13,33 +16,59 @@
         @click="emit('close')"
       >←</button>
       <h2 :id="headingId" class="ssv__title mono">{{ slip?.scheduleName ?? '' }}</h2>
-      <span v-if="slip?.late" class="ssv__state mono">{{ t('cuk.notifications.slip.late') }}</span>
+      <span v-if="badge" class="ssv__state mono">{{ badge }}</span>
     </header>
 
     <div class="ssv__body">
       <p v-if="!slip" class="ssv__note" role="note">{{ t('cuk.notifications.gone') }}</p>
       <template v-else>
         <p class="ssv__meta mono">{{ renderTime(t, relativeTime(slip.at, now)) }}</p>
-        <div class="k-log__markdown ssv__text" v-html="renderMarkdown(slip.body ?? slip.text)"></div>
+        <dl class="ssv__facts">
+          <dt>{{ t('cuk.card.type') }}</dt>
+          <dd>{{ t(slip.kind === 'reminder' ? 'cuk.schedule.kind.reminder' : 'cuk.schedule.kind.agent') }}</dd>
+          <template v-if="slip.kind === 'run'">
+            <dt>{{ t('cuk.card.project') }}</dt>
+            <dd>{{ project || t('cuk.card.noProject') }}</dd>
+            <template v-if="slip.status">
+              <dt>{{ t('cuk.notifications.slip.status') }}</dt>
+              <dd>{{ t(`cuk.schedule.status.${slip.status}`) }}</dd>
+            </template>
+          </template>
+          <dt>{{ t('cuk.card.when') }}</dt>
+          <dd>{{ formatFiring(slip.at, zone, locale) }}</dd>
+          <template v-if="slip.scheduledFor">
+            <dt>{{ t('cuk.notifications.slip.scheduledFor') }}</dt>
+            <dd>{{ formatFiring(slip.scheduledFor, zone, locale) }}</dd>
+          </template>
+        </dl>
+        <p v-if="failed" class="ssv__reason">{{ reasonText(t, slip.reason, slip.text) }}</p>
+        <div v-else class="k-log__markdown ssv__text" v-html="renderMarkdown(slip.body ?? slip.text)"></div>
       </template>
     </div>
 
-    <footer v-if="slip" class="ssv__controls">
-      <KBtn variant="primary" @click="discuss">{{ t('cuk.notifications.slip.discuss') }}</KBtn>
+    <footer v-if="slip && (task || session || slip.body)" class="ssv__controls">
+      <KBtn v-if="task" variant="ghost" @click="nc.openTask(task.id)">{{ t('cuk.notifications.slip.openTask') }}</KBtn>
+      <KBtn v-if="session" variant="ghost" @click="openSession(session)">{{ t('cuk.openSession') }}</KBtn>
+      <KBtn v-if="slip.body" variant="primary" @click="discuss">{{ t('cuk.notifications.slip.discuss') }}</KBtn>
     </footer>
   </section>
 </template>
 
 <script setup lang="ts">
-// Rendered by AssistantLauncher over the console while `notification-center.openSlipId` is set.
+// Rendered by AssistantLauncher over the console while `notification-center.openSlipId` is set;
+// opening it marks the slip seen (stores/notification-center.ts openSlip).
 import { computed, nextTick, onMounted, ref, useId } from 'vue';
 import { useI18n } from 'vue-i18n';
 import { useNotificationCenter } from 'stores/notification-center';
 import { useSchedules } from 'stores/schedules';
 import { useCukChat } from 'stores/cuk-chat';
+import { useProjects } from 'stores/projects';
+import { useOrchestrator } from 'stores/orchestrator';
 import { useNow } from '../../composables/useNow';
 import { relativeTime, renderTime } from '../../lib/time';
 import { renderMarkdown } from '../../lib/markdown';
+import { formatFiring, machineTimeZone, reasonText } from '../../lib/schedules';
+import { locale } from '../../lib/locale';
 import KBtn from 'components/kit/KBtn.vue';
 
 const props = defineProps<{ id: string }>();
@@ -49,13 +78,46 @@ const { t } = useI18n();
 const nc = useNotificationCenter();
 const schedules = useSchedules();
 const chat = useCukChat();
+const projects = useProjects();
+const local = useOrchestrator();
 const now = useNow(60_000);
 const headingId = useId();
 const backEl = ref<HTMLButtonElement | null>(null);
 
 const slip = computed(() => schedules.slips?.find((s) => s.id === props.id));
+// The task the slip came from, while it is still in the schedule.
+const task = computed(() => schedules.tasks?.find((x) => x.id === slip.value?.scheduleId));
+const zone = computed(() => task.value?.timeZone ?? machineTimeZone());
+const failed = computed(() => slip.value?.status === 'skipped' || slip.value?.status === 'failed');
+
+// How it ended when that is news: a run that did not happen, a missed reminder, a late catch-up.
+const badge = computed(() => {
+  const s = slip.value;
+  if (!s) return '';
+  if (failed.value && s.status) return t(`cuk.schedule.status.${s.status}`);
+  if (!s.late) return '';
+  return t(s.kind === 'reminder' ? 'cuk.notifications.slip.missed' : 'cuk.notifications.slip.late');
+});
+
+// Named from the cloud list first, then this machine's registry, as the feed names an improvement's.
+const project = computed(() => {
+  const id = slip.value?.projectId;
+  return id ? (projects.byId.get(id)?.name ?? local.projects.find((p) => p.id === id)?.name ?? '') : '';
+});
+
+// A run's session is linked only while this machine still has it (the operator may delete it),
+// as in the task's run history (ScheduleTaskView).
+const session = computed(() => {
+  const id = slip.value?.sessionId;
+  return id && local.sessions.some((s) => s.id === id) ? id : undefined;
+});
 
 onMounted(() => void nextTick(() => backEl.value?.focus()));
+
+function openSession(id: string): void {
+  emit('close');
+  void chat.openSession(id);
+}
 
 // The answer, headed by the task's name, lands in the draft; the operator writes the question.
 function discuss(): void {
@@ -149,6 +211,32 @@ function discuss(): void {
 .ssv__text {
   font-size: var(--k-fs-sm);
   line-height: 1.5;
+}
+
+// The task view's facts (ScheduleTaskView .stv__facts).
+.ssv__facts {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 2px var(--k-sp-3);
+  margin: 0;
+  font-size: var(--k-fs-sm);
+
+  dt {
+    color: var(--k-muted);
+  }
+
+  dd {
+    margin: 0;
+    overflow-wrap: anywhere;
+  }
+}
+
+// A run that did not happen says why, in the colour its slip does (ScheduleSlipCard .ssc--failed).
+.ssv__reason {
+  margin: 0;
+  font-size: var(--k-fs-sm);
+  line-height: 1.5;
+  color: var(--k-danger);
 }
 
 .ssv__controls {
