@@ -445,6 +445,26 @@
       <div class="kit__caption mono">{{ t('kit.gallery.cap.sessionMinion') }}</div>
     </section>
 
+    <!-- status line — both variants for every status, and a session on review with each phase
+         of «Петля після ПР» (docs/specs/2026-11-23-pr-feedback-loop.md, decision 15). The full
+         line as it sits under the session tabs; the compact one in the list card it belongs to. -->
+    <section class="kit__section">
+      <div class="kit__label">{{ t('kit.gallery.sec.statusLine') }}</div>
+      <div class="kit__status-lines">
+        <template v-for="x in statusLineSamples" :key="x.label">
+          <div class="kit__status-line-label mono">{{ x.label }}</div>
+          <div class="kit__status-line-full">
+            <KStatusLine :session="x.session" :loop="x.loop" :loading="x.loading" />
+          </div>
+          <KSessionCard
+            :branch="x.session.branch" :title="x.session.name" :time="t('kit.gallery.sessionCard.s1Time')"
+            :status="x.session.status" :session="x.session" :loop="x.loop"
+          />
+        </template>
+      </div>
+      <div class="kit__caption mono">{{ t('kit.gallery.cap.statusLine') }}</div>
+    </section>
+
     <!-- kanban -->
     <section class="kit__section">
       <div class="kit__label">{{ t('kit.gallery.sec.kanban') }}</div>
@@ -654,7 +674,8 @@ import { useI18n } from 'vue-i18n';
 import type {
   SessionStatus, Session, TranscriptEntry, RpcExtensionUIResponse, ThinkingLevel, Usage, ModelOption,
 } from '@kermanych/core';
-import { DICTATION_SEND_MS } from '@kermanych/core';
+import { DICTATION_SEND_MS, emptyPrLoopCi, type PrLoopState } from '@kermanych/core';
+import type { StatusLineLoading } from '../lib/status-line';
 import type { ComposerDictationState } from '../composables/useComposerDictation';
 import type { VoiceMode } from '../composables/useVoicePanel';
 import { EXPAND_ALL_NONE, nextExpandAll, type ExpandAllCommand } from '../lib/expand-all';
@@ -679,6 +700,7 @@ import KTable, { type KTableColumn } from 'components/kit/KTable.vue';
 import KTopNav from 'components/kit/KTopNav.vue';
 import KNavItem from 'components/kit/KNavItem.vue';
 import KSessionCard from 'components/kit/KSessionCard.vue';
+import KStatusLine from 'components/kit/KStatusLine.vue';
 import KKanbanColumn from 'components/kit/KKanbanColumn.vue';
 import KKanbanCard from 'components/kit/KKanbanCard.vue';
 import KSplitButton from 'components/kit/KSplitButton.vue';
@@ -789,6 +811,75 @@ function loadViewModeSample(): Promise<Blob> {
   return Promise.resolve(new Blob([viewModeSample], { type: 'text/markdown' }));
 }
 const thoughtOpen = ref(false);
+// The status line's samples: one session per status, then a session on review with each loop
+// phase. Times are relative to opening the page, so the durations read as they would live.
+const galleryNow = Date.now();
+const minutesAgo = (m: number): string => new Date(galleryNow - m * 60_000).toISOString();
+function lineSession(over: Partial<Session>): Session {
+  return {
+    id: `line-${over.status}`, projectId: 'kit', name: 'Пагінація списку', task: '', worktreePath: '', branch: 'feature/pagination',
+    worktree: true, baseBranch: 'main', kind: 'agent', status: 'done', createdAt: minutesAgo(60), lastActivityAt: minutesAgo(10),
+    ...over,
+  };
+}
+function lineLoop(over: Partial<PrLoopState> & { phase?: PrLoopState['loop']['phase'] }): PrLoopState {
+  const { phase = 'idle', ...rest } = over;
+  return {
+    sessionId: 'line-in_review',
+    pr: { number: 41, url: 'https://github.com/acme/web/pull/41', state: 'open' },
+    ci: { state: 'success', total: 4, done: 4, failed: [] },
+    review: { decision: 'none', pending: 0, untrusted: [] },
+    mergeable: 'clean',
+    loop: { mode: 'auto', round: 0, maxRounds: 3, phase },
+    checkedAt: minutesAgo(1),
+    ...rest,
+  };
+}
+const review = lineSession({ status: 'in_review', prOpened: true, prUrl: 'https://github.com/acme/web/pull/41' });
+const failedCi = {
+  state: 'failure' as const, total: 4, done: 4,
+  failed: [{ name: 'unit-tests', url: 'https://github.com/acme/web/actions/runs/1/job/2' }],
+};
+const statusLineSamples: { label: string; session: Session; loop?: PrLoopState; loading?: StatusLineLoading }[] = [
+  { label: 'queued', session: lineSession({ status: 'queued', slotWait: { position: 1, running: 2, limit: 2 }, lastActivityAt: minutesAgo(3) }) },
+  { label: 'thinking', session: lineSession({ status: 'thinking', lastEventAt: galleryNow - 12_000 }) },
+  { label: 'tool', session: lineSession({ status: 'tool', currentTool: 'bash: pnpm test', lastEventAt: galleryNow - 40_000 }) },
+  { label: 'tool · stall', session: lineSession({ status: 'tool', currentTool: 'bash: pnpm e2e', lastEventAt: galleryNow - 4 * 60_000 }) },
+  { label: 'waiting_input', session: lineSession({ status: 'waiting_input', lastActivityAt: minutesAgo(5) }) },
+  { label: 'error', session: lineSession({ status: 'error', error: 'omp exited with code 1' }) },
+  { label: 'error · sign-in', session: lineSession({ status: 'error', errorCode: 'omp_not_authenticated' }) },
+  { label: 'conflict', session: lineSession({ status: 'conflict' }) },
+  { label: 'stopped', session: lineSession({ status: 'stopped', lastActivityAt: minutesAgo(12) }) },
+  { label: 'done', session: lineSession({ status: 'done' }) },
+  { label: 'in_review', session: review },
+  { label: 'in_review · no_token', session: review, loop: lineLoop({ unavailable: 'no_token', ci: emptyPrLoopCi() }) },
+  { label: 'loop · idle', session: review, loop: lineLoop({ review: { decision: 'approved', pending: 0, untrusted: [] } }) },
+  {
+    label: 'loop · quiet', session: review,
+    loop: lineLoop({ phase: 'quiet', review: { decision: 'changes_requested', pending: 3, untrusted: [] }, loop: { mode: 'auto', round: 1, maxRounds: 3, phase: 'quiet', lastSentAt: minutesAgo(40) } }),
+  },
+  { label: 'loop · waiting_ci', session: review, loop: lineLoop({ phase: 'waiting_ci', ci: { state: 'pending', total: 4, done: 2, failed: [] }, review: { decision: 'none', pending: 1, untrusted: [] } }) },
+  {
+    label: 'loop · fixing', session: lineSession({ status: 'tool', currentTool: 'edit', lastEventAt: galleryNow - 5_000, prOpened: true, loopTurn: true }),
+    loop: lineLoop({ ci: failedCi, loop: { mode: 'auto', round: 2, maxRounds: 3, phase: 'fixing', lastSentAt: minutesAgo(2) } }),
+  },
+  {
+    label: 'loop · paused', session: review,
+    loop: lineLoop({ ci: { ...failedCi, stuckMin: 72 }, review: { decision: 'changes_requested', pending: 2, untrusted: [] }, loop: { mode: 'auto', round: 3, maxRounds: 3, phase: 'paused', lastSentAt: minutesAgo(25) } }),
+  },
+  {
+    label: 'loop · manual_ready', session: review,
+    loop: lineLoop({
+      ci: failedCi, mergeable: 'conflict',
+      review: { decision: 'none', pending: 1, untrusted: [{ key: 'conversation:7', author: 'drive-by', url: 'https://github.com/acme/web/pull/41#issuecomment-7' }] },
+      loop: { mode: 'manual', round: 0, maxRounds: 3, phase: 'manual_ready' },
+    }),
+    loading: { loopSend: true },
+  },
+  { label: 'loop · ended', session: review, loop: lineLoop({ phase: 'ended', pr: { number: 41, url: 'https://github.com/acme/web/pull/41', state: 'merged' } }) },
+  { label: 'merged', session: lineSession({ status: 'merged' }) },
+];
+
 // One row per harness mark, then the last row, which deliberately carries neither harness,
 // model nor usage: an agent whose turns were never counted drops the accounting line rather
 // than printing a zero.
@@ -1096,6 +1187,15 @@ const analyticsRhythm = Array.from({ length: 7 }, (_, d) =>
 .kit__sidebar { display: flex; flex-direction: column; gap: var(--k-sp-1); max-width: 240px; margin-top: var(--k-sp-4); background: var(--k-surface); border: 1px solid var(--k-line); border-radius: var(--k-r-lg); padding: var(--k-sp-2); }
 .kit__cards { display: flex; flex-direction: column; gap: var(--k-sp-2); max-width: 340px; }
 .kit__group { margin-top: var(--k-sp-4); }
+// The status line's samples: the case, the full line in a session pane's width, its list card.
+.kit__status-lines {
+  display: grid;
+  grid-template-columns: 150px minmax(0, 640px) 300px;
+  gap: var(--k-sp-3) var(--k-sp-4);
+  align-items: start;
+}
+.kit__status-line-label { font-size: var(--k-fs-xs); color: var(--k-faint); padding-top: var(--k-sp-3); }
+.kit__status-line-full { border: 1px solid var(--k-line); border-radius: var(--k-r); background: var(--k-surface); }
 .kit__kanban { display: flex; gap: var(--k-sp-3); align-items: flex-start; }
 .kit__kanban > * { flex: 1; max-width: 280px; }
 .kit__swatches { display: flex; flex-wrap: wrap; gap: var(--k-sp-3); }

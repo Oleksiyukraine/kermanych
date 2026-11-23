@@ -11,6 +11,7 @@ import type { FindingKind } from "./findings";
 import type { GitCloneState } from "./git-setup";
 import type { QaChecklist } from "./task-actions";
 import type { ScheduledTask, ScheduleRun, ScheduleSlip } from "./schedules";
+import type { PrLoopState } from "./pr-loop";
 
 // `in_review` is the PR hand-off state: the operator asked for a pull request, the agent
 // pushed it, and the work now waits on a HUMAN reviewer. It is settled (nothing moves on
@@ -143,6 +144,10 @@ export type Session = {
   // decision 5). Absent on sessions that opened their PR before it was stored and whose harness
   // file the history import could not date it from.
   prOpenedAt?: string;
+  // Live-only: the running (or the last settled) turn was started by «Петля після ПР»
+  // (docs/specs/2026-11-23-pr-feedback-loop.md, decision 10), so its settle at `in_review` is not
+  // the operator's turn. Cleared by the operator's next message.
+  loopTurn?: boolean;
   todoPhases?: TodoPhase[]; contextPercent?: number; lastEventAt?: number;
   // Lifetime accounting: every assistant turn this session ran, summed. Persisted by the
   // api, so a dormant or finished agent still states what it spent. Absent means "never
@@ -325,7 +330,10 @@ export type ServerEvent =
   | { type: "schedule_run_update"; run: ScheduleRun }
   // A project-wizard clone job (docs/specs/2026-11-18-first-run-and-project-wizard.md): every
   // progress step and the final phase. `POST /api/git/clone` answers with the first state.
-  | { type: "git_clone"; state: GitCloneState };
+  | { type: "git_clone"; state: GitCloneState }
+  // «Петля після ПР» (docs/specs/2026-11-23-pr-feedback-loop.md): a watched session's loop state
+  // changed; `state: null` = it is not watched any more (session gone, retired, PR lost).
+  | { type: "pr_loop_update"; sessionId: string; state: PrLoopState | null };
 
 // How much of omp's subagent activity a session subscribes to. "progress" streams lifecycle
 // + coalesced progress (enough for the agent map); "events" adds every subagent tool/message

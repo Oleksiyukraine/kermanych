@@ -6,8 +6,19 @@ import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { mkdirSync } from "node:fs";
 import { Subject } from "rxjs";
-import { isThinkingLevel, isNativeHarness, isAgentLanguage, isSkillImprovementLevel, DEFAULT_SKILL_IMPROVEMENT_LEVEL, isFindingKind, isPlatform, parseFindingTarget, docsPolicy, combineReportWrites, readMinionResult, isMinionPauseCode, clampMinionCap, MINION_CAP_DEFAULT, isDevicePlatform, ACTIVE_STATUSES, validateScheduleSpec, SCHEDULE_RUNS_KEEP, SCHEDULE_SLIPS_KEEP, ACTIVITY_SPAN_KINDS, analyticsSessionClass } from "@kermanych/core";
-import type { AgentFinding, DeviceChoice, DocsPolicy, FindingReport, FindingTarget, MinionPause, MinionResult, NativeSettings, Platform, Project, ResourceDecision, Session, SessionDevice, SessionStatus, ThinkingLevel, Usage, AgentLanguage, SkillImprovementLevel, TaskReportsWrite, TesterSettings, ScheduledTask, ScheduleRun, ScheduleRunReason, ScheduleRunStatus, ScheduleRunTrigger, ScheduleSlip, ActivitySpanKind, ActivitySpanRow, AnalyticsFindingRow, AnalyticsImportState, AnalyticsInput, AnalyticsSessionClass, AnalyticsSessionRow, UsageHourRow } from "@kermanych/core";
+import { isThinkingLevel, isNativeHarness, isAgentLanguage, isSkillImprovementLevel, DEFAULT_SKILL_IMPROVEMENT_LEVEL, isFindingKind, isPlatform, parseFindingTarget, docsPolicy, combineReportWrites, readMinionResult, isMinionPauseCode, clampMinionCap, MINION_CAP_DEFAULT, isDevicePlatform, ACTIVE_STATUSES, validateScheduleSpec, SCHEDULE_RUNS_KEEP, SCHEDULE_SLIPS_KEEP, ACTIVITY_SPAN_KINDS, analyticsSessionClass, normalizePrLoopSettings, PR_LOOP_DEFAULTS } from "@kermanych/core";
+import type { AgentFinding, DeviceChoice, DocsPolicy, FindingReport, FindingTarget, MinionPause, MinionResult, NativeSettings, Platform, Project, ResourceDecision, Session, SessionDevice, SessionStatus, ThinkingLevel, Usage, AgentLanguage, SkillImprovementLevel, TaskReportsWrite, TesterSettings, ScheduledTask, ScheduleRun, ScheduleRunReason, ScheduleRunStatus, ScheduleRunTrigger, ScheduleSlip, ActivitySpanKind, ActivitySpanRow, AnalyticsFindingRow, AnalyticsImportState, AnalyticsInput, AnalyticsSessionClass, AnalyticsSessionRow, UsageHourRow, PrLoopSettings } from "@kermanych/core";
+
+// A watched session's loop bookkeeping (docs/specs/2026-11-23-pr-feedback-loop.md).
+export type PrLoopRow = {
+  sessionId: string;
+  prNumber?: number;
+  headSha?: string;
+  ciReportedSha?: string;
+  round: number;
+  lastSentAt?: string;
+  baselined: boolean;
+};
 
 // «Аналітика» (docs/specs/2026-11-07-developer-analytics.md): one UTC hour of one session's spend
 // on one model, as a writer hands it over — the registry stamps the session's project and class.
@@ -826,6 +837,17 @@ export class RegistryService {
       `CREATE TABLE IF NOT EXISTS tester_accounts (id TEXT PRIMARY KEY, project_id TEXT NOT NULL, name TEXT NOT NULL, login TEXT NOT NULL, password TEXT NOT NULL, note TEXT NOT NULL DEFAULT '', position INTEGER NOT NULL)`,
     );
     this.db.exec(`CREATE INDEX IF NOT EXISTS tester_accounts_project_idx ON tester_accounts (project_id)`);
+    // «Петля після ПР» (docs/specs/2026-11-23-pr-feedback-loop.md), machine-local and never synced
+    // (decisions 2 and 11). `pr_loop_projects`: the mode and the round limit per project, a missing
+    // row reads as PR_LOOP_DEFAULTS. `pr_loop`: one row per watched session — the PR it watches,
+    // the head whose CI failure was last handed over, the automatic rounds since the operator last
+    // spoke, and whether the first sight of the PR was recorded (the baseline). `pr_loop_seen`: the
+    // comment keys (core commentKey) already handed over or baselined.
+    this.db.exec(`CREATE TABLE IF NOT EXISTS pr_loop_projects (project_id TEXT PRIMARY KEY, mode TEXT NOT NULL, max_rounds INTEGER NOT NULL)`);
+    this.db.exec(
+      `CREATE TABLE IF NOT EXISTS pr_loop (session_id TEXT PRIMARY KEY, pr_number INTEGER, head_sha TEXT, ci_reported_sha TEXT, round INTEGER NOT NULL DEFAULT 0, last_sent_at TEXT, baselined INTEGER NOT NULL DEFAULT 0)`,
+    );
+    this.db.exec(`CREATE TABLE IF NOT EXISTS pr_loop_seen (session_id TEXT NOT NULL, comment_key TEXT NOT NULL, PRIMARY KEY (session_id, comment_key))`);
     // Scheduled tasks (docs/specs/2026-11-06-scheduled-tasks.md, decision 1): personal and
     // machine-local, never synced. `spec` is the JSON ScheduleSpec, `skills` a JSON name list.
     // A run is claimed by its insert: UNIQUE (schedule_id, scheduled_for) is what makes an
@@ -1190,12 +1212,15 @@ export class RegistryService {
 
   removeProject(id: string): void {
     this.db.prepare(`DELETE FROM session_findings WHERE session_id IN (SELECT id FROM sessions WHERE project_id = ?)`).run(id);
+    this.db.prepare(`DELETE FROM pr_loop WHERE session_id IN (SELECT id FROM sessions WHERE project_id = ?)`).run(id);
+    this.db.prepare(`DELETE FROM pr_loop_seen WHERE session_id IN (SELECT id FROM sessions WHERE project_id = ?)`).run(id);
     // The «Аналітика» ledger goes with a removed project (decision 5), unlike a deleted session.
     this.db.prepare(`DELETE FROM usage_hours WHERE project_id = ?`).run(id);
     this.db.prepare(`DELETE FROM activity_spans WHERE project_id = ?`).run(id);
     this.db.prepare(`DELETE FROM sessions WHERE project_id = ?`).run(id);
     this.db.prepare(`DELETE FROM minion_projects WHERE project_id = ?`).run(id);
     this.db.prepare(`DELETE FROM tester_settings WHERE project_id = ?`).run(id);
+    this.db.prepare(`DELETE FROM pr_loop_projects WHERE project_id = ?`).run(id);
     this.db.prepare(`DELETE FROM tester_accounts WHERE project_id = ?`).run(id);
     this.db.prepare(`DELETE FROM projects WHERE id = ?`).run(id);
   }
@@ -1382,6 +1407,7 @@ export class RegistryService {
   // (docs/specs/2026-11-07-developer-analytics.md, decision 5).
   removeSession(id: string): void {
     this.db.prepare(`DELETE FROM session_findings WHERE session_id = ?`).run(id);
+    this.deletePrLoop(id);
     this.db.prepare(`DELETE FROM sessions WHERE id = ?`).run(id);
   }
 
@@ -1837,6 +1863,69 @@ export class RegistryService {
   setMinionProject(projectId: string, active: boolean): void {
     if (active) this.db.prepare(`INSERT OR IGNORE INTO minion_projects (project_id, activated_at) VALUES (?,?)`).run(projectId, new Date().toISOString());
     else this.db.prepare(`DELETE FROM minion_projects WHERE project_id = ?`).run(projectId);
+  }
+
+  // ── «Петля після ПР» (docs/specs/2026-11-23-pr-feedback-loop.md) ─────────────────────────────
+
+  // No row reads as the defaults.
+  getPrLoopSettings(projectId: string): PrLoopSettings {
+    const row = this.db.prepare(`SELECT mode, max_rounds FROM pr_loop_projects WHERE project_id = ?`).get(projectId) as
+      | { mode: string; max_rounds: number }
+      | undefined;
+    return (row && normalizePrLoopSettings({ mode: row.mode, maxRounds: row.max_rounds })) || { ...PR_LOOP_DEFAULTS };
+  }
+
+  setPrLoopSettings(projectId: string, s: PrLoopSettings): void {
+    this.db.prepare(`INSERT OR REPLACE INTO pr_loop_projects (project_id, mode, max_rounds) VALUES (?,?,?)`).run(projectId, s.mode, s.maxRounds);
+  }
+
+  getPrLoop(sessionId: string): PrLoopRow | undefined {
+    const r = this.db
+      .prepare(`SELECT pr_number, head_sha, ci_reported_sha, round, last_sent_at, baselined FROM pr_loop WHERE session_id = ?`)
+      .get(sessionId) as
+      | { pr_number: number | null; head_sha: string | null; ci_reported_sha: string | null; round: number; last_sent_at: string | null; baselined: number }
+      | undefined;
+    if (!r) return undefined;
+    return {
+      sessionId,
+      ...(r.pr_number !== null ? { prNumber: r.pr_number } : {}),
+      ...(r.head_sha ? { headSha: r.head_sha } : {}),
+      ...(r.ci_reported_sha ? { ciReportedSha: r.ci_reported_sha } : {}),
+      round: r.round,
+      ...(r.last_sent_at ? { lastSentAt: r.last_sent_at } : {}),
+      baselined: r.baselined === 1,
+    };
+  }
+
+  // Writes the whole row; fields left out are stored empty.
+  setPrLoop(row: PrLoopRow): void {
+    this.db
+      .prepare(`INSERT OR REPLACE INTO pr_loop (session_id, pr_number, head_sha, ci_reported_sha, round, last_sent_at, baselined) VALUES (?,?,?,?,?,?,?)`)
+      .run(row.sessionId, row.prNumber ?? null, row.headSha ?? null, row.ciReportedSha ?? null, row.round, row.lastSentAt ?? null, row.baselined ? 1 : 0);
+  }
+
+  // The round counter back to 0 (an operator message, a manual pass, «Продовжити петлю»); a
+  // session without a row has nothing to reset.
+  resetPrLoopRound(sessionId: string): void {
+    this.db.prepare(`UPDATE pr_loop SET round = 0 WHERE session_id = ?`).run(sessionId);
+  }
+
+  listPrLoopSeen(sessionId: string): Set<string> {
+    const rows = this.db.prepare(`SELECT comment_key FROM pr_loop_seen WHERE session_id = ?`).all(sessionId) as { comment_key: string }[];
+    return new Set(rows.map((r) => r.comment_key));
+  }
+
+  addPrLoopSeen(sessionId: string, keys: Iterable<string>): void {
+    const insert = this.db.prepare(`INSERT OR IGNORE INTO pr_loop_seen (session_id, comment_key) VALUES (?,?)`);
+    this.db.transaction(() => {
+      for (const k of keys) insert.run(sessionId, k);
+    })();
+  }
+
+  // Forget a session's loop: its row and its seen comments (a new PR number starts over).
+  deletePrLoop(sessionId: string): void {
+    this.db.prepare(`DELETE FROM pr_loop WHERE session_id = ?`).run(sessionId);
+    this.db.prepare(`DELETE FROM pr_loop_seen WHERE session_id = ?`).run(sessionId);
   }
 
   // ── The mobile device preview (local only, decisions 4 and 6) ────────────────

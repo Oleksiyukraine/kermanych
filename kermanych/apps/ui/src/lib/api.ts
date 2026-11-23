@@ -58,6 +58,8 @@ import type {
   MachineResources,
   ResourcesUpdate,
   MinionState,
+  PrLoopSettings,
+  PrLoopState,
   NativeSettings,
   PrCheck,
   QaRunScope,
@@ -777,6 +779,26 @@ export const api = {
 
   setMinionProject: (projectId: string, active: boolean): Promise<MinionState> =>
     put<MinionState>(`/minion/projects/${projectId}`, { active }),
+
+  // «Петля після ПР» (docs/specs/2026-11-23-pr-feedback-loop.md): the latest state of every PR
+  // this machine watches; `pr_loop_update` carries each change after it.
+  prLoop: (): Promise<PrLoopState[]> => get<PrLoopState[]>('/pr-loop'),
+
+  // Hand the PR's feedback to the agent now, by hand: the unreported CI failure, the trusted
+  // comments, and the untrusted comments whose `keys` are listed. Resets the round counter.
+  prLoopSend: (id: string, keys?: string[]): Promise<{ sent: true }> =>
+    post<{ sent: true }>(`/sessions/${id}/pr-loop/send`, keys ? { keys } : {}),
+
+  // «Продовжити петлю»: resets the round counter and re-evaluates the session at once.
+  prLoopResume: (id: string): Promise<PrLoopState> =>
+    post<PrLoopState>(`/sessions/${id}/pr-loop/resume`, {}),
+
+  // The loop's mode and round limit for a project, on this machine only (decision 2).
+  prLoopSettings: (projectId: string): Promise<PrLoopSettings> =>
+    get<PrLoopSettings>(`/projects/${projectId}/pr-loop-settings`),
+
+  setPrLoopSettings: (projectId: string, patch: Partial<PrLoopSettings>): Promise<PrLoopSettings> =>
+    put<PrLoopSettings>(`/projects/${projectId}/pr-loop-settings`, patch),
 
   // How native TUIs launch on this machine — local-only, applied at a session's next start.
   nativeSettings: (): Promise<NativeSettings> => get<NativeSettings>('/native/settings'),

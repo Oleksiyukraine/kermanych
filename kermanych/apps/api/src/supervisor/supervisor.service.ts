@@ -145,7 +145,7 @@ import { BranchNameService, type BranchContext } from "./branch-name.service";
 import { noAskOverlay } from "../minion/ask-overlay";
 import { scheduledRunPrompt } from "../schedules/schedule-prompt";
 import { EnvFileService } from "../env/env-file.service";
-import { GithubClient, GithubHttpError, parseGithubPrUrl, parseGithubRemote, type GithubPull } from "../github/github-client";
+import { GithubClient, githubFailure, parseGithubPrUrl, parseGithubRemote, type GithubPull } from "../github/github-client";
 import { PreviewService } from "../preview/preview.service";
 import { PREVIEW_CONFIG_SKILL, previewConfigPrompt } from "../preview/preview-prompt";
 import { activeTesterOf } from "../tester/tester-tools";
@@ -161,19 +161,6 @@ const TESTER_REFUSALS: Record<TesterRefusal, string> = {
   platform: "this project's platform has neither a browser nor a device to test on",
   "no-preview": `set up the live preview first: ${PREVIEW_CONFIG_PATH} is missing in the session directory`,
 };
-
-// A failed merged-PR check, in the words the UI shows (docs/specs/2026-10-26-pr-merged-close-prompt.md,
-// decision 6). A spent rate limit is a 403 too, so it is read first. `fetch` rejects with a
-// TypeError when the network is down and with a TimeoutError/AbortError when the signal fires.
-function prCheckFailure(err: unknown): PrCheck {
-  if (err instanceof GithubHttpError) {
-    if (err.rateLimited) return { state: "rate_limited" };
-    return { state: [401, 403, 404].includes(err.status) ? "no_access" : "error" };
-  }
-  const name = (err as { name?: unknown } | null)?.name;
-  if (err instanceof TypeError || name === "TimeoutError" || name === "AbortError") return { state: "offline" };
-  return { state: "error" };
-}
 
 // A session's omp conversation: the `<stamp>_<id>.jsonl` file, and beside it the folder of the
 // same name that holds its subagents' conversations. omp keeps one folder per working
@@ -341,6 +328,13 @@ export type ScheduleRunEnd = {
   byOperator?: boolean;
 };
 
+// Where a session's pull request lives on GitHub (githubPrSource). `remote` reads `origin`.
+export type GithubPrSource = {
+  token: string;
+  stored: { owner: string; repo: string; number: number } | null;
+  remote: () => Promise<{ owner: string; repo: string } | null>;
+};
+
 // The transcript badge for a library skill: where the text the agent read comes from. A
 // library row names its owner scope, and one that replaces a Kermanych default says so too —
 // that is the row to delete to get the default back, and without the scope the operator has
@@ -425,6 +419,14 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
   private scheduleRuns = new Map<string, ScheduledRun>();
   private scheduleEnds = new Subject<ScheduleRunEnd>();
   readonly scheduleRunEnd$: Observable<ScheduleRunEnd> = this.scheduleEnds.asObservable();
+  // «Петля після ПР» (docs/specs/2026-11-23-pr-feedback-loop.md, decisions 8 and 10). `loopTurns`:
+  // the sessions whose running or last settled turn the loop started — `Session.loopTurn` on the
+  // merged row, managed and native alike; live-only. `operatorPrompt$`: the id of every session the
+  // operator sent a message, which resets the loop's round counter. The supervisor never knows
+  // PrLoopService; it sends through sendLoopFeedback and reads what it needs off public methods.
+  private loopTurns = new Set<string>();
+  private operatorPrompts = new Subject<string>();
+  readonly operatorPrompt$: Observable<string> = this.operatorPrompts.asObservable();
 
   // A finished session's omp child stays resident so a follow-up resumes instantly — but a
   // live `omp --mode rpc` process is by far the largest thing this service keeps alive (a big
@@ -692,6 +694,7 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
       const l: Partial<Session> = this.map.get(s.id)?.live ?? {};
       merged = { ...s, ...l, status: l.status ?? s.status };
     }
+    if (this.loopTurns.has(s.id)) merged.loopTurn = true;
     // A session waiting for a slot reads `queued` (decision 5: no status of its own) and says
     // where it stands; the field is simply absent once it starts.
     return this.waiting.has(s.id) ? { ...merged, status: "queued", slotWait: this.slotWait(s.id) } : merged;
@@ -2638,10 +2641,43 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     // `/minion` hands the session to «Посіпака» instead of taking it back: it must not attend the
     // run first. A voice transcript is never a command (deliverNow).
     const cmd = opts.voice ? null : parseCommand(text);
-    if (cmd?.name === "minion") return this.handToMinion(id, text, cmd.args);
-    // The operator took over a «Посіпака» run: it works again, with no clock from here on.
-    this.attendMinionRun(id);
-    await this.deliver(id, text, mode, images, true, undefined, opts);
+    if (cmd?.name === "minion") await this.handToMinion(id, text, cmd.args);
+    else {
+      // The operator took over a «Посіпака» run: it works again, with no clock from here on.
+      this.attendMinionRun(id);
+      await this.deliver(id, text, mode, images, true, undefined, opts);
+    }
+    // The operator's turn from here: not the loop's, and the loop's rounds count from zero again.
+    if (this.loopTurns.delete(id)) this.pushUpdate(id);
+    this.operatorPrompts.next(id);
+  }
+
+  // «Петля після ПР»'s round (docs/specs/2026-11-23-pr-feedback-loop.md): delivered like any of
+  // Kermanych's own prompts — a managed child through sendAsKermanych (it may park for a slot), a
+  // native harness through NativeSessionService.send, which throws `native_busy` unless idle.
+  // `loopTurn` marks the turn as the loop's before it starts, so its settle at `in_review` rides
+  // with the flag (no «your turn» notification); a manual pass by the operator is not one.
+  async sendLoopFeedback(id: string, text: string, opts: { loopTurn: boolean }): Promise<void> {
+    if (!this.registry.listSessions().some((x) => x.id === id)) throw new Error("session not found");
+    const had = this.loopTurns.has(id);
+    if (opts.loopTurn) this.loopTurns.add(id);
+    else this.loopTurns.delete(id);
+    try {
+      // deliver, not sendAsKermanych: that one ends a loop turn (any other prompt of Kermanych's —
+      // «Закоміти», a docs turn, a watchdog notice — is not the loop's).
+      await this.deliver(id, text, "prompt", undefined, false);
+    } catch (err) {
+      if (had) this.loopTurns.add(id);
+      else this.loopTurns.delete(id);
+      throw err;
+    }
+    this.pushUpdate(id);
+  }
+
+  // Every session as the UI sees it (live status, slot wait, loopTurn) — the read PrLoopService
+  // polls by.
+  mergedSessions(): Session[] {
+    return this.registry.listSessions().map((s) => this.merge(s));
   }
 
   // `/minion` (docs/specs/2026-11-09-minion-takeover.md): the operator hands a session to
@@ -2714,6 +2750,9 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
   // this feature exists to remove.
   // `replay`: see deliver.
   private async sendAsKermanych(id: string, text: string, mode: "prompt" | "follow_up" | "steer", replay?: () => Promise<unknown>): Promise<boolean> {
+    // A turn Kermanych starts on its own (or on an operator's button) is not the PR loop's: its
+    // settle notifies as usual (docs/specs/2026-11-23-pr-feedback-loop.md, decision 10).
+    if (this.loopTurns.delete(id)) this.pushUpdate(id);
     return this.deliver(id, text, mode, undefined, false, replay);
   }
 
@@ -3048,7 +3087,7 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
   // The base the PR prompt names — the session's own, else the project's default — when git
   // takes it as a branch name: it goes into the agent's commands and into the api's own fetch.
   // "" means no base sync and no check.
-  private syncBase(s: Session, g: Project): string {
+  syncBase(s: Session, g: Project): string {
     const base = (s.baseBranch || g.defaultBranch || "").trim();
     return isGitBranchName(base) ? base : "";
   }
@@ -3942,8 +3981,9 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     )
       return { state: "unsupported" };
     const dir = s.worktreePath || g.localRepoPath;
-    const gh = new GithubClient(await this.gitToken(g.localRepoPath));
-    const stored = s.prUrl ? parseGithubPrUrl(s.prUrl) : null;
+    const src = await this.githubPrSource(s, g.localRepoPath);
+    const gh = new GithubClient(src.token);
+    const stored = src.stored;
     const report = (p: GithubPull, state: PrCheckState): PrCheck => ({ state, url: p.html_url, number: p.number });
     const merged = async (p: GithubPull): Promise<PrCheck> => ({ ...report(p, "merged"), leftover: await this.prLeftover(dir, s.branch, p.head.sha) });
     try {
@@ -3952,9 +3992,7 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
         storedPull = await gh.pull(stored.owner, stored.repo, stored.number);
         if (storedPull.merged_at) return await merged(storedPull);
       }
-      // The branch lookup reads owner/repo from `origin`; a stored GitHub URL names them too
-      // when the remote is not a GitHub one.
-      const remote = parseGithubRemote(await this.worktree.originUrl(g.localRepoPath)) ?? stored;
+      const remote = await src.remote();
       if (!remote || !s.branch) return storedPull ? report(storedPull, storedPull.state) : { state: "unsupported" };
       let closed: GithubPull[];
       try {
@@ -3964,20 +4002,34 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
         if (storedPull) return report(storedPull, storedPull.state);
         throw err;
       }
-      // Only a PR into the session's base (when one is known), opened since the session — an
-      // old PR from a reused branch name is somebody else's history. Newest first.
-      const base = s.baseBranch || g.defaultBranch || "";
-      const since = Date.parse(s.createdAt);
-      const ours = closed
-        .filter((p) => (!base || p.base.ref === base) && Date.parse(p.created_at) >= since)
-        .sort((a, b) => Date.parse(b.merged_at ?? b.created_at) - Date.parse(a.merged_at ?? a.created_at));
+      const ours = this.sessionPulls(s, g, closed).sort(
+        (a, b) => Date.parse(b.merged_at ?? b.created_at) - Date.parse(a.merged_at ?? a.created_at),
+      );
       const replacement = ours.find((p) => p.merged_at);
       if (replacement) return await merged(replacement);
       if (storedPull) return report(storedPull, storedPull.state);
       return ours[0] ? report(ours[0], "closed") : { state: "not_found" };
     } catch (err) {
-      return prCheckFailure(err);
+      return { state: githubFailure(err) };
     }
+  }
+
+  // The GitHub side of a session's pull request, shared by the merged-PR check and «Петля після
+  // ПР» (docs/specs/2026-11-23-pr-feedback-loop.md, decision 11): the bound repo's `GIT_TOKEN`
+  // ("" without one), the stored GitHub PR URL, and the owner/repo a branch lookup reads — from
+  // `origin`, read only when asked, else from the stored URL when the remote is not a GitHub one.
+  async githubPrSource(s: Session, repoPath: string): Promise<GithubPrSource> {
+    const token = await this.gitToken(repoPath);
+    const stored = s.prUrl ? parseGithubPrUrl(s.prUrl) : null;
+    return { token, stored, remote: async () => parseGithubRemote(await this.worktree.originUrl(repoPath)) ?? stored };
+  }
+
+  // The session's own PRs of a branch listing: into its base (when one is known), opened since
+  // the session — an old PR from a reused branch name is somebody else's history.
+  sessionPulls(s: Session, g: Project, pulls: GithubPull[]): GithubPull[] {
+    const base = s.baseBranch || g.defaultBranch || "";
+    const since = Date.parse(s.createdAt);
+    return pulls.filter((p) => (!base || p.base.ref === base) && Date.parse(p.created_at) >= since);
   }
 
   // «Закрити задачу»: the server re-checks the merge itself, so the UI cannot use this route to

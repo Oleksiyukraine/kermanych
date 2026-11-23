@@ -611,6 +611,7 @@ import { useBoard } from 'stores/board';
 import { useProjectDocs } from 'stores/project-docs';
 import { useSeen } from 'stores/seen';
 import { useMinion } from 'stores/minion';
+import { usePrLoop } from 'stores/pr-loop';
 import { IS_PREVIEW } from '../lib/preview';
 import { api } from '../lib/api';
 import { pullSummary } from '../lib/git-pull';
@@ -712,6 +713,9 @@ const nailGame = useNailGame();
 // the projects it is activated for on this machine.
 const minion = useMinion();
 const minionProjects = computed(() => new Set(minion.state?.projects ?? []));
+// Same reason as «Посіпака» above: «Петля після ПР» announces a pause, a PR ready to merge and
+// the rest from any screen, so its store listens from the shell's start.
+usePrLoop();
 const route = useRoute();
 const router = useRouter();
 const { t, te } = useI18n();
