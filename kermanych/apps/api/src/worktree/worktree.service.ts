@@ -46,18 +46,48 @@ const DOC_MIME: Record<string, string> = {
 
 // `opts` is for the few calls that talk to a remote: `env` to refuse credential prompts,
 // `timeoutMs` so an unreachable host cannot pin a request open (git is killed, `ok` false).
+//
+// The deadline must take down git's transport too, not git alone. ssh is git's own child and
+// inherits its stdout/stderr, so killing only git (what spawn's `timeout` does) leaves ssh
+// holding those pipes — 'close' never fires, the call never settles, and serialRemote queues
+// every later fetch of the repo behind it for good (a launch spinning forever after the
+// machine slept mid-fetch). So a bounded call runs in its own process group and the deadline
+// kills the whole group, then settles without waiting for the pipes. Windows has no process
+// groups to kill this way; there it falls back to killing git and still settles.
 function git(
   cwd: string,
   args: string[],
   opts: { env?: NodeJS.ProcessEnv; timeoutMs?: number } = {},
 ): Promise<{ ok: boolean; out: string }> {
   const { promise, resolve } = Promise.withResolvers<{ ok: boolean; out: string }>();
-  const p = spawn("git", ["-C", cwd, ...args], { env: opts.env, timeout: opts.timeoutMs });
+  const group = opts.timeoutMs !== undefined && process.platform !== "win32";
+  const p = spawn("git", ["-C", cwd, ...args], { env: opts.env, detached: group });
   const chunks: Buffer[] = [];
+  const output = () => Buffer.concat(chunks).toString("utf8");
   p.stdout.on("data", (b: Buffer) => chunks.push(b));
   p.stderr.on("data", (b: Buffer) => chunks.push(b));
-  p.on("error", (e) => resolve({ ok: false, out: String(e) }));
-  p.on("close", (code) => resolve({ ok: code === 0, out: Buffer.concat(chunks).toString("utf8") }));
+  const timer =
+    opts.timeoutMs === undefined
+      ? undefined
+      : setTimeout(() => {
+          try {
+            if (group && p.pid !== undefined) process.kill(-p.pid, "SIGKILL");
+            else p.kill("SIGKILL");
+          } catch {
+            // Already gone: nothing left to kill.
+          }
+          p.stdout.destroy();
+          p.stderr.destroy();
+          resolve({ ok: false, out: `${output()}\ngit ${args[0] ?? ""} timed out after ${opts.timeoutMs} ms` });
+        }, opts.timeoutMs);
+  p.on("error", (e) => {
+    clearTimeout(timer);
+    resolve({ ok: false, out: String(e) });
+  });
+  p.on("close", (code) => {
+    clearTimeout(timer);
+    resolve({ ok: code === 0, out: output() });
+  });
   return promise;
 }
 
@@ -587,3 +617,6 @@ export class WorktreeService {
     return { ref: (await this.isAncestor(repoDir, local, remote)) ? remote : base, stale };
   }
 }
+
+// The remote-call helper, for the regression test of its deadline.
+export { git as runGit };
