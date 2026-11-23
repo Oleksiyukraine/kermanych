@@ -99,36 +99,45 @@ This change gives a run four kinds of memory. The operator picked all four
 - `packages/core/src/schedules.ts`:
   - `ScheduleRun` gets `notes?` and `reaction?`; `ScheduledTask` gets `promptChangedAt` and
     `notesClearedAt?`; `ScheduleRunReaction = "taken" | "rejected"`.
-  - `currentNotes(task, runs)`: the one rule for «which notes go to the next run», shared by the
-    api and the UI.
-  - `splitRunNotes(answer)` returns `{ answer, notes }`, with `RUN_NOTES_MAX = 4000`.
-  - A validator for the reaction.
+  - `currentNotesRun(task, runs)`: the one rule for «which notes go to the next run», shared by
+    the api and the UI; `beforePromptChange(task, run)` for the mark.
+  - `splitRunNotes(answer)` returns `{ answer, notes }`, with `RUN_NOTES_HEADING` and
+    `RUN_NOTES_MAX = 4000`. Any heading level and a trailing colon are accepted; the last
+    heading wins.
+  - `isScheduleRunReaction`; the refusal code `schedule_run_no_result` (`i18n-codes.ts`) for a
+    reaction on a run that is not `done`.
 - `apps/api/src/registry/registry.service.ts`:
   - New columns `schedule_runs.notes`, `schedule_runs.reaction`, `schedules.prompt_changed_at`
     (backfilled from `created_at`) and `schedules.notes_cleared_at`, added the same way as the
     other `ALTER TABLE … ADD COLUMN` guards.
-  - `setScheduleRunReaction`, `clearScheduleNotes`, and `listScheduleFindings(scheduleId, limit)`
-    (`session_findings` ⨝ `sessions.schedule_id`).
+  - `listScheduleFindings(scheduleId, limit)` (`session_findings` of the sessions with that
+    `schedule_id`). The reaction and the clearing go through `updateScheduleRun` / `putSchedule`.
 - `apps/api/src/schedules/schedule-prompt.ts`:
   - A rule about the notes section.
-  - `earlierResultsBlock` up to `SCHEDULE_RUNS_KEEP`, with reaction marks and the
-    «before the task was last changed» mark.
-  - `previousNotesBlock` and `earlierFindingsBlock`.
-  - `scheduledRunPrompt` takes the new blocks in the order: rules, skills, earlier results,
+  - `earlierResultsBlock` up to `SCHEDULE_RUNS_KEEP` (`EARLIER_RESULTS_MAX` is gone), with
+    reaction marks and the «before the task was last changed» mark.
+  - `previousNotesBlock`, `earlierFindingsBlock` (`EARLIER_FINDINGS_MAX = 50`) and
+    `runMemoryBlock`, which joins the three for both callers.
+  - `scheduledRunPrompt` takes `memoryBlock`. The order is: rules, skills, earlier results,
     notes, findings, task.
+- `apps/api/src/findings/findings-tools.ts`: `findingLine(f)`, the one line format that
+  `list_findings` and the findings block share.
 - `apps/api/src/schedules/schedule.service.ts`:
   - `splitRunNotes` on both run ends (`onProjectRunEnd` and `oneShot`): notes go to the run;
     `summary` and the slip's `body` come from the answer without them.
   - `update` sets `promptChangedAt` when the prompt text changes.
-  - `react(runId, reaction)` and `clearNotes(id)` publish `schedule_run_update` /
-    `schedules_update`.
+  - `react(scheduleId, runId, reaction)` (only a `done` run of that task) and `clearNotes(id)`
+    publish `schedule_run_update` / `schedules_update`.
 - `apps/api/src/supervisor/supervisor.service.ts` (`openingPrompt`): passes the new blocks.
 - `apps/api/src/http/schedules.controller.ts`: `PUT :id/runs/:runId/reaction`
   `{ reaction: "taken" | "rejected" | null }` and `POST :id/notes/clear`.
-- `apps/ui/src/lib/api.ts`, `apps/ui/src/stores/schedules.ts`: the two calls. The slip view loads
-  the task's runs through the same store action the task view uses.
-- `apps/ui/src/components/assistant/ScheduleSlipView.vue` and `ScheduleTaskView.vue`: the
-  reaction toggles and the notes block with «Очистити нотатки».
+- `apps/ui/src/lib/api.ts`, `apps/ui/src/stores/schedules.ts`: `reactScheduleRun` /
+  `clearScheduleNotes` and the store's `react` / `clearNotes`. The slip view loads the task's
+  runs through the same store action the task view uses.
+- `apps/ui/src/components/assistant/ScheduleRunReaction.vue`: the two toggles
+  (`useOptimisticValue`), used by `ScheduleSlipView.vue` (a «Реакція» row in the facts) and
+  `ScheduleTaskView.vue` (each `done` run of an agent task). `ScheduleTaskView.vue` also gets the
+  notes block (`<details>`) with «Очистити нотатки» behind `confirmAction`.
 - `apps/ui/src/i18n/{uk,en}/index.ts`: the strings.
 - Docs: `README.md` («Розклад»), `docs/specs/2026-11-06-scheduled-tasks.md` («Unattended»), and a
   note in `docs/specs/2026-11-23-schedule-earlier-results.md` that decision 2 (10 runs) is
@@ -147,15 +156,18 @@ This change gives a run four kinds of memory. The operator picked all four
     does not set it;
   - a project run sees the findings of an earlier run of the same task and not those of another
     task.
-- `packages/core` vitest: `splitRunNotes` (no section, an empty section, over the cap) and
-  `currentNotes`.
-- `apps/ui` vitest: the store's reaction with an optimistic rollback on error.
-- `tsc --noEmit` in api, core and ui.
-- Live preview: a task with seeded runs.
-  - Setting, changing and removing a reaction in the slip shows the same state in the history,
-    and the other way round.
-  - The notes block, and «Очистити нотатки» with its confirmation.
-  - Screenshots go into `docs/design/2026-11-23-scheduled-task-run-memory/screens/`.
+- `packages/core` vitest: `splitRunNotes` (the last heading, its level and colon, no section, an
+  empty section, a mention inside a line, over the cap) and `currentNotesRun`.
+- `apps/ui`: no new test. The rollback on a refused reaction is `useOptimisticValue`'s, already
+  covered by `test/async-action.spec.ts`. `test/schedules.spec.ts` and
+  `test/notification-center.spec.ts` pass with the new task fields.
+- `tsc --noEmit` in api and core, `vue-tsc --noEmit` in ui.
+- Live preview, a task with seeded runs (`slip-implemented@1280.png`, `task-implemented@1280.png`):
+  - «Взято в роботу» set in the slip shows as pressed in the history and is stored on the run.
+  - «Не цікаво» in the history and pressing «Взято» again to take it back are stored the same
+    way.
+  - The notes block opens from its summary. «Очистити нотатки» asks, then sets
+    `notes_cleared_at`, and the block goes.
 - Not verified unless a model is available in the preview: a real run against a model, i.e.
   whether the model follows the notes and the reactions. The tests prove only what it is told.
 
