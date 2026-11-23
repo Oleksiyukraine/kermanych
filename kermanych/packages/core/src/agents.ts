@@ -202,8 +202,8 @@ const TESTER = [
 // `-c` flags make `gh` its credential helper for that one command (the empty one clears any stored
 // helper first), without `gh auth setup-git` rewriting the operator's global git config. Over SSH
 // the key authenticates git and the token is not used there, but `gh` still needs it.
-const GIT_WITH_TOKEN = "GH_TOKEN=\"$TOKEN\" git -c credential.helper= -c 'credential.helper=!gh auth git-credential'";
-const GIT_TOKEN_HOWTO =
+export const GIT_WITH_TOKEN = "GH_TOKEN=\"$TOKEN\" git -c credential.helper= -c 'credential.helper=!gh auth git-credential'";
+export const GIT_TOKEN_HOWTO =
   "git does not read `GH_TOKEN` by itself: those two `-c` flags make `gh` git's credential helper for that " +
   "one command — do not run `gh auth setup-git`, it rewrites the global git config. If `git remote get-url " +
   "origin` is not an `https://` URL (`git@…`, `ssh://…` or an SSH host alias), git authenticates with the " +

@@ -22,6 +22,8 @@ import { createWorkspaceRisk, listRiskEvents, listWorkspaceRisks } from "../src/
 import { deleteAiSkill, listAiSkills, upsertAiSkill } from "../src/skills";
 import { deleteAiTrigger, listAiTriggers, setAiTriggerSkills, upsertAiTrigger } from "../src/triggers";
 import { listMembers } from "../src/workspaces";
+import { PRESENCE_MIN_GAP_MS, joinLoungeLobby, joinLoungeRoom, loungeRoomTopic, type LoungeMember, type LoungeWindow } from "../src/lounge";
+import { setTimeout as sleep } from "node:timers/promises";
 import { NailGameTooSoonError, nailGameLeaderboard, submitNailGameScore } from "../src/nail-game";
 import { FEEDBACK_IMAGE_BUCKET, FeedbackRateLimitedError, sendFeedback } from "../src/feedback";
 import {
@@ -1545,5 +1547,127 @@ describe.skipIf(!URL || !ANON || !SERVICE)("supabase RLS and triggers", () => {
       const anonBoard = await anon.rpc("nail_game_leaderboard", { p_workspace: null, p_limit: 10 });
       expect(anonBoard.error?.code).toBe("42501");
     });
+  });
+
+  // docs/specs/2026-11-23-lounge-multiplayer.md, decision 1: private channels, workspace members only.
+  describe("lounge realtime", () => {
+    const me = (u: TestUser, clientId: string) => ({ clientId, userId: u.id, name: u.email, avatarUrl: null });
+    const until = async (ok: () => boolean, ms = 8000) => {
+      const end = Date.now() + ms;
+      while (!ok()) {
+        if (Date.now() > end) throw new Error("timed out");
+        await sleep(50);
+      }
+    };
+    // Its own workspace: earlier tests move `member` in and out of the fixture's.
+    async function loungeWorkspace(): Promise<string> {
+      const ws = await owner.client.from("workspaces").insert({ name: "lounge-ws", owner_id: owner.id }).select().single();
+      if (ws.error) throw ws.error;
+      const seated = await owner.client.rpc("invite_workspace_member", { p_workspace_id: ws.data.id, p_email: member.email });
+      if (seated.error) throw seated.error;
+      return ws.data.id as string;
+    }
+
+    it("a member sees who is in the lobby and the room they host; an outsider cannot join", async () => {
+      const ws = await loungeWorkspace();
+      const states: Record<string, string[]> = { owner: [], member: [], outsider: [] };
+      let seen: LoungeWindow[] = [];
+      const host = joinLoungeLobby(owner.client, ws, me(owner, "owner-w"), {
+        onPresence: () => undefined,
+        onState: (s) => states.owner!.push(s),
+      });
+      host.present({ id: "room-1", game: "nails", players: 1, playing: false });
+      const guest = joinLoungeLobby(member.client, ws, me(member, "member-w"), {
+        onPresence: (p) => (seen = p),
+        onState: (s) => states.member!.push(s),
+      });
+      const stranger = joinLoungeLobby(outsider.client, ws, me(outsider, "outsider-w"), {
+        onPresence: () => undefined,
+        onState: (s) => states.outsider!.push(s),
+      });
+      try {
+        await until(() => seen.some((w) => w.clientId === "owner-w" && w.room?.id === "room-1"));
+        expect(seen.find((w) => w.clientId === "owner-w")?.userId).toBe(owner.id);
+        // The server answers a refused join after ~5 s, then realtime-js retries it.
+        await until(() => states.outsider!.includes("CHANNEL_ERROR"), 15_000);
+        expect(states.outsider).not.toContain("SUBSCRIBED");
+      } finally {
+        host.leave();
+        guest.leave();
+        stranger.leave();
+      }
+    }, 20_000);
+
+    // Realtime closes a channel whose client tracks presence more than 5 times in 30 s. A host whose
+    // room fills up quickly changes its lobby line that often; the channel must survive it.
+    it("a burst of presence changes keeps the lobby channel open and ends on the latest state", async () => {
+      const ws = await loungeWorkspace();
+      const hostStates: string[] = [];
+      let seen: LoungeWindow[] = [];
+      const host = joinLoungeLobby(owner.client, ws, me(owner, "owner-w"), {
+        onPresence: () => undefined,
+        onState: (s) => hostStates.push(s),
+      });
+      const guest = joinLoungeLobby(member.client, ws, me(member, "member-w"), { onPresence: (p) => (seen = p) });
+      try {
+        await until(() => hostStates.includes("SUBSCRIBED"));
+        for (let players = 1; players <= 8; players += 1) {
+          host.present({ id: "room-1", game: "nails", players, playing: false });
+          await sleep(100);
+        }
+        await until(() => seen.find((w) => w.clientId === "owner-w")?.room?.players === 8, PRESENCE_MIN_GAP_MS + 5000);
+        expect(hostStates).not.toContain("CLOSED");
+      } finally {
+        host.leave();
+        guest.leave();
+      }
+    }, 30_000);
+
+    it("a room's broadcast reaches its members only, not a public channel of the same name", async () => {
+      const ws = await loungeWorkspace();
+      const heard: Record<string, unknown>[] = [];
+      const roster: LoungeMember[][] = [];
+      const hostRoom = joinLoungeRoom(owner.client, ws, "r-1", { ...me(owner, "owner-w"), host: true, joinedAt: 1 }, {
+        onPresence: (p) => roster.push(p),
+        onMessage: () => undefined,
+      });
+      const guestRoom = joinLoungeRoom(member.client, ws, "r-1", { ...me(member, "member-w"), host: false, joinedAt: 2 }, {
+        onPresence: () => undefined,
+        onMessage: (event, payload) => heard.push({ event, ...payload }),
+      });
+      // Anyone with the publishable key can open a PUBLIC channel under the same topic.
+      const anon = createClient(URL ?? "", ANON ?? "", { auth: { autoRefreshToken: false, persistSession: false } });
+      const overheard: unknown[] = [];
+      let anonReady = false;
+      const spy = anon
+        .channel(loungeRoomTopic(ws, "r-1"))
+        .on("broadcast", { event: "*" }, (m) => overheard.push(m))
+        .subscribe((s) => (anonReady ||= s === "SUBSCRIBED"));
+      try {
+        await until(() => anonReady && (roster.at(-1)?.length ?? 0) === 2);
+        expect(roster.at(-1)!.map((m) => [m.clientId, m.host]).sort()).toEqual([["member-w", false], ["owner-w", true]]);
+        hostRoom.send("nails", { t: "ping", n: 1 });
+        await until(() => heard.length === 1);
+        expect(heard[0]).toEqual({ event: "nails", t: "ping", n: 1 });
+        await sleep(800);
+        expect(overheard).toEqual([]);
+      } finally {
+        hostRoom.leave();
+        guestRoom.leave();
+        void anon.removeChannel(spy);
+      }
+    });
+
+    it("a private topic outside the lounge's shape grants nothing", async () => {
+      const states: string[] = [];
+      const channel = member.client.channel("lounge:not-a-workspace", { config: { private: true } });
+      channel.subscribe((s) => states.push(s));
+      try {
+        await until(() => states.includes("CHANNEL_ERROR"), 15_000);
+        expect(states).not.toContain("SUBSCRIBED");
+      } finally {
+        void member.client.removeChannel(channel);
+      }
+    }, 20_000);
   });
 });

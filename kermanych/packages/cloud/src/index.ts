@@ -122,6 +122,8 @@ export {
   submitNailGameScore,
   nailGameLeaderboard,
 } from "./nail-game";
+export type { LoungeChannelState, LoungeIdentity, LoungeRoomInfo, LoungeWindow, LoungeMember, LoungeLobby, LoungeRoom } from "./lounge";
+export { loungeTopic, loungeRoomTopic, joinLoungeLobby, joinLoungeRoom } from "./lounge";
 
 export type { CloudProjectPatch, CloudProjectInsert } from "./projects";
 export {

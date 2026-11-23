@@ -139,7 +139,8 @@ function toggleFind(): void {
   if (findOpen.value) closeFind();
   else void openFind();
 }
-defineExpose({ toggleFind, findOpen });
+// `focus` puts the keyboard in the terminal: the status line's «Відповісти» on a native session.
+defineExpose({ toggleFind, findOpen, focus: () => term?.focus() });
 
 // ⌘F / Ctrl+F from the shell's keyboard: stopped here, so the session browser beside the Лог
 // does not open its own find bar as well. By key code, so a Ukrainian layout works too.

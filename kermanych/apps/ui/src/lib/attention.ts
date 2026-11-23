@@ -106,11 +106,16 @@ export function yourTurnCount(a: Attention): number {
 // `error`, `conflict`, `done` or `in_review` from another status. The Dock bounces on it, and the
 // pop-up fires on it. Not tied to «unread»: a result that lands in the agent open on screen is
 // read at once, yet the operator may be in another app — and macOS bounces only then anyway.
+// A turn «Петля після ПР» started (`loopTurn`) settling at `done` / `in_review` is not the
+// operator's turn: the loop announces what needs them on its own (stores/pr-loop.ts,
+// docs/specs/2026-11-23-pr-feedback-loop.md, decision 10). A question, a failure or a conflict
+// in that turn still is.
 export function isYourTurnEvent(
   prev: SessionStatus | undefined,
   s: Session,
   parent: (id: string) => Session | undefined,
 ): boolean {
+  if (s.loopTurn && (s.status === 'in_review' || s.status === 'done')) return false;
   return shouldNotify(prev, s.status) && isTracked(s, parent);
 }
 

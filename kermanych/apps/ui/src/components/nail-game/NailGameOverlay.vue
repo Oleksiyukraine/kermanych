@@ -16,16 +16,23 @@
       @pointermove="onMove"
       @pointerdown="onDown"
     >
-      <!-- Driven nails stay on the board to the end and behind the result; the ones still
-           standing at 0:00 leave with the round. -->
-      <template v-if="round && (phase === 'playing' || phase === 'over')">
+      <!-- The board. A solo round's is the window itself; a room's is ROOM_FIELD, the same on
+           every colleague's window, scaled to fit and centred
+           (docs/specs/2026-11-23-lounge-multiplayer.md, decision 3). Driven nails stay on it to
+           the end and behind the result; the ones still standing at 0:00 leave with the round. -->
+      <div
+        v-if="round && (phase === 'playing' || phase === 'over')"
+        class="ng__stage"
+        :class="{ 'ng__stage--room': mode !== 'solo' }"
+        :style="stageStyle"
+      >
         <NailSprite
           v-for="n in driven"
           :key="n.id"
           :nail="n"
           :now="0"
           :look="STILL"
-          :owner="rivals.length ? colorOf(n.by ?? 0) : undefined"
+          :owner="multi ? colorOf(n.by ?? 0) : undefined"
           :style="{ left: `${n.x}px`, top: `${n.y}px` }"
         />
         <template v-if="phase === 'playing'">
@@ -46,16 +53,32 @@
             :color="colorOf(s.who)"
             :label="nameOf(s.model)"
           />
+          <!-- Colleagues' hammers show where their last blow landed (decision 4). -->
+          <NailHammer
+            v-for="[who, h] in hands"
+            :key="`hand-${who}`"
+            :x="h.x"
+            :y="h.y"
+            :down="performanceNow() - h.at < HAND_DOWN_MS"
+            :color="colorOf(who)"
+            :label="names[who]"
+          />
         </template>
-      </template>
+      </div>
 
       <header class="ng__hud mono" @pointerdown.stop>
         <span class="ng__stat" :class="{ 'ng__stat--hurry': phase === 'playing' && timeLeft <= 10_000 }">
           <span class="ng__label">{{ t('nailGame.time') }}</span>
           <b>{{ clock }}</b>
         </span>
-        <template v-if="rivals.length">
-          <span v-for="p in standings" :key="p.who" class="ng__stat" :title="p.error ?? undefined">
+        <template v-if="multi">
+          <span
+            v-for="p in standings"
+            :key="p.who"
+            class="ng__stat"
+            :class="{ 'ng__stat--left': p.left }"
+            :title="p.error ?? (p.left ? t('nailGame.lounge.left') : undefined)"
+          >
             <i class="ng__dot" :style="{ background: p.color }" />
             <span class="ng__name">{{ p.short }}</span>
             <b>{{ p.score }}</b>
@@ -80,6 +103,9 @@
       </header>
 
       <div v-if="phase === 'countdown'" class="ng__count mono" aria-live="assertive">{{ countdownLabel }}</div>
+      <div v-if="phase === 'playing' && hostAway" class="ng__banner" role="status">
+        {{ hostAway === 'paused' ? t('nailGame.lounge.hostPaused') : t('nailGame.lounge.hostSilent') }}
+      </div>
 
       <section v-if="phase === 'intro'" class="ng__panel" @pointerdown.stop>
         <h2 class="ng__title">{{ t('nailGame.title') }}</h2>
@@ -115,7 +141,13 @@
           <KBtn variant="ghost" @click="leave">{{ t('nailGame.close') }}</KBtn>
         </div>
         <p class="ng__note">{{ t('nailGame.leaveHint') }}</p>
+        <p v-if="roomNotice" class="ng__error" role="status">{{ roomNotice }}</p>
+        <LoungeLobby />
         <NailLeaderboard />
+      </section>
+
+      <section v-if="phase === 'room' && lounge.room" class="ng__panel" @pointerdown.stop>
+        <LoungeRoomPanel :room="lounge.room" :notice="roomNotice" @start="startRoom" @leave="leaveRoom" />
       </section>
 
       <section v-if="phase === 'over' && final" class="ng__panel" @pointerdown.stop>
@@ -134,12 +166,13 @@
                     · {{ t('nailGame.aiLine', { moves: p.moves, lag: p.lag, cost: p.cost }) }}
                   </template>
                   <template v-if="p.failures">· {{ t('nailGame.aiFailures', { count: p.failures }) }}</template>
+                  <template v-if="p.left">· {{ t('nailGame.lounge.left') }}</template>
                 </span>
               </span>
               <b class="ng__pscore mono">{{ p.score }}</b>
             </li>
           </ol>
-          <p class="ng__note">{{ t('nailGame.vsNotSaved') }}</p>
+          <p class="ng__note">{{ mode === 'solo' ? t('nailGame.vsNotSaved') : t('nailGame.lounge.notSaved') }}</p>
         </template>
         <template v-else>
           <div class="ng__final">
@@ -162,11 +195,25 @@
           </p>
         </template>
         <p v-if="warmError" class="ng__error" role="alert">{{ t('nailGame.rivalsFailed', { error: warmError }) }}</p>
-        <div class="ng__actions">
+        <div v-if="mode === 'solo'" class="ng__actions">
           <KBtn ref="againBtn" variant="primary" :loading="warming.busy.value" @click="start">{{ t('nailGame.again') }}</KBtn>
           <KBtn variant="ghost" :disabled="warming.busy.value" @click="toIntro">{{ t('nailGame.changeRivals') }}</KBtn>
           <KBtn variant="ghost" @click="leave">{{ t('nailGame.close') }}</KBtn>
         </div>
+        <template v-else>
+          <p v-if="mode === 'guest'" class="ng__note">{{ t('nailGame.lounge.waitAgain') }}</p>
+          <div class="ng__actions">
+            <KBtn
+              v-if="mode === 'host'"
+              ref="againBtn"
+              variant="primary"
+              :disabled="(lounge.room?.members?.length ?? 0) < 2"
+              @click="startRoom"
+            >{{ t('nailGame.again') }}</KBtn>
+            <KBtn variant="ghost" @click="leaveRoom">{{ t('nailGame.lounge.leaveRoom') }}</KBtn>
+            <KBtn variant="ghost" @click="leave">{{ t('nailGame.close') }}</KBtn>
+          </div>
+        </template>
         <NailLeaderboard v-if="final.length === 1" />
       </section>
 
@@ -186,8 +233,11 @@ import KSpinner from 'components/kit/KSpinner.vue';
 import NailSprite from './NailSprite.vue';
 import NailHammer from './NailHammer.vue';
 import NailLeaderboard from './NailLeaderboard.vue';
+import LoungeLobby from './LoungeLobby.vue';
+import LoungeRoomPanel from './LoungeRoomPanel.vue';
 import { useAsyncAction, errorText } from '../../composables/useAsyncAction';
 import { useNailGame, type NailGameResult } from '../../stores/nail-game';
+import { useLounge } from '../../stores/lounge';
 import { useOrchestrator } from '../../stores/orchestrator';
 import { api } from '../../lib/api';
 import { modelOptions } from '../../lib/models';
@@ -201,6 +251,7 @@ import {
   hitNail,
   isOver,
   isStanding,
+  ROUND_MS,
   nailAt,
   swingMiss,
   timeLeftMs,
@@ -209,8 +260,28 @@ import {
   type Round,
 } from '../../lib/nail-game';
 import { boardFor, createSeat, stepSeat, takePlan, type AiSeat } from '../../lib/nail-game-ai';
+import {
+  LOUNGE_MAX_PLAYERS,
+  ROOM_FIELD,
+  applyHost,
+  createHost,
+  createMirror,
+  hostOutgoing,
+  hostSilent,
+  hostSnapshot,
+  hostSwing,
+  readGuestMsg,
+  readHostMsg,
+  tickMirror,
+  type Host,
+  type Mirror,
+  type Seat,
+} from '../../lib/nail-game-net';
 
-type Phase = 'intro' | 'countdown' | 'playing' | 'over';
+/** `room`: waiting in a room with colleagues for its host to start. */
+type Phase = 'intro' | 'room' | 'countdown' | 'playing' | 'over';
+/** Alone (perhaps with AI), hosting a room's round, or a guest in one (decision 2). */
+type Mode = 'solo' | 'host' | 'guest';
 
 /** One line of the result: a player's tally, and for an AI its moves, lag and spend. */
 type Standing = {
@@ -225,6 +296,8 @@ type Standing = {
   lag?: number;
   cost?: string;
   failures?: number;
+  /** A colleague whose window left during the round. */
+  left?: boolean;
 };
 
 // The score bar's height: nails stay below it.
@@ -236,13 +309,17 @@ const AI_DOWN_AFTER_MS = 70;
 // A move that failed is not asked again for this long, so a broken child is not hammered.
 const AI_RETRY_MS = 1000;
 const MUTED_KEY = 'kermanych.nail-game.muted';
-// The player, then up to three opponents. Hex for the opponents: the hammer grip is an svg fill.
-const COLORS = ['var(--k-accent)', '#4c9aff', '#36b37e', '#c084fc'];
+// The player (or a room's host), then the opponents or colleagues. Hex for the others: the
+// hammer grip is an svg fill.
+const COLORS = ['var(--k-accent)', '#4c9aff', '#36b37e', '#c084fc', '#f5a524', '#ff6b8a'];
+// A colleague's hammer stays down this long after their blow lands.
+const HAND_DOWN_MS = 110;
 const STILL = Object.freeze({ x: 0, y: 0 });
 
 const { t } = useI18n();
 const game = useNailGame();
 const orch = useOrchestrator();
+const lounge = useLounge();
 
 const root = ref<HTMLElement | null>(null);
 const startBtn = ref<InstanceType<typeof KBtn> | null>(null);
@@ -264,6 +341,22 @@ const rivals = ref<string[]>([]);
 let warmed: string[] = [];
 // Bumped whenever a round starts or ends: a move that answers for an older round is dropped.
 let generation = 0;
+
+// ── a room with colleagues (docs/specs/2026-11-23-lounge-multiplayer.md) ─────
+const mode = ref<Mode>('solo');
+const roomSeats = ref<Seat[]>([]);
+// This window's seat in the room's round: 0 for the host.
+const meWho = ref(0);
+let host: Host | null = null;
+let mirror: Mirror | null = null;
+const roomNotice = ref<string | null>(null);
+// A guest's view of the host: paused (its window hidden), silent (nothing heard lately), or there.
+const hostAway = ref<'paused' | 'silent' | null>(null);
+const leftSeats = ref<number[]>([]);
+// Each colleague's last blow, in field px, and when it landed (performance.now()).
+const hands = shallowRef(new Map<number, { x: number; y: number; at: number }>());
+const performanceNow = () => performance.now();
+const viewport = ref({ w: window.innerWidth, h: window.innerHeight });
 
 const muted = ref(readMuted());
 watch(muted, (v) => {
@@ -305,16 +398,25 @@ const startLabel = computed(() => {
   return t('nailGame.startArena', { count: n + 1 });
 });
 
-// The score bar during a round with opponents: everyone's score, best first.
+// Everyone on the board, in seat order: the player and the AI opponents, or the room's seats.
+const names = computed(() =>
+  mode.value === 'solo'
+    ? [t('nailGame.you'), ...rivals.value.map(nameOf)]
+    : roomSeats.value.map((s, who) => (who === meWho.value ? t('nailGame.you') : s.name)),
+);
+const multi = computed(() => names.value.length > 1);
+
+// The score bar during a round with others: everyone's score, best first.
 const standings = computed(() => {
   const r = round.value;
-  return [t('nailGame.you'), ...rivals.value.map(nameOf)]
+  return names.value
     .map((short, who) => ({
       who,
       short,
       score: r?.players[who]?.score ?? 0,
       color: colorOf(who),
-      error: who ? (seats.value[who - 1]?.lastError ?? null) : null,
+      error: mode.value === 'solo' && who ? (seats.value[who - 1]?.lastError ?? null) : null,
+      left: leftSeats.value.includes(who),
     }))
     .sort((a, b) => b.score - a.score || a.who - b.who);
 });
@@ -323,8 +425,8 @@ const verdict = computed(() => {
   const rows = final.value ?? [];
   const top = rows[0]?.score ?? 0;
   const leaders = rows.filter((p) => p.score === top);
-  if (leaders.length > 1 && leaders.some((p) => p.who === 0)) return { won: false, text: t('nailGame.draw') };
-  if (leaders[0]?.who === 0) return { won: true, text: t('nailGame.youWon') };
+  if (leaders.length > 1 && leaders.some((p) => p.who === meWho.value)) return { won: false, text: t('nailGame.draw') };
+  if (leaders[0]?.who === meWho.value) return { won: true, text: t('nailGame.youWon') };
   return { won: false, text: t('nailGame.theyWon', { name: leaders.map((p) => p.name).join(', ') }) };
 });
 
@@ -338,6 +440,31 @@ function aiDown(s: AiSeat): boolean {
 
 function field(): Field {
   return { width: window.innerWidth, height: window.innerHeight, top: HUD_H + 12, pad: 24 };
+}
+
+// Where the board sits on screen: a room's fixed field scaled to fit the window and centred; a
+// solo round's field is the window (scale 1).
+const stage = computed(() => {
+  const { w, h } = viewport.value;
+  if (mode.value === 'solo') return { scale: 1, x: 0, y: 0, w, h };
+  const scale = Math.min(w / ROOM_FIELD.width, h / ROOM_FIELD.height);
+  return {
+    scale,
+    x: (w - ROOM_FIELD.width * scale) / 2,
+    y: (h - ROOM_FIELD.height * scale) / 2,
+    w: ROOM_FIELD.width,
+    h: ROOM_FIELD.height,
+  };
+});
+const stageStyle = computed(() => ({
+  width: `${stage.value.w}px`,
+  height: `${stage.value.h}px`,
+  transform: `translate(${stage.value.x}px, ${stage.value.y}px) scale(${stage.value.scale})`,
+}));
+// A point on screen in field px.
+function toField(x: number, y: number): { x: number; y: number } {
+  const s = stage.value;
+  return { x: (x - s.x) / s.scale, y: (y - s.y) / s.scale };
 }
 
 // The opponents' hammers wait along the bottom of the screen until their first move lands.
@@ -394,13 +521,32 @@ function frame(ts: number): void {
   if (phase.value === 'countdown') {
     countdownMs.value -= Math.min(dt, FRAME_CLAMP_MS);
     if (countdownMs.value <= 0) {
-      const f = field();
-      round.value = createRound(f, 1 + warmed.length);
-      seats.value = warmed.map((model, i) => createSeat(i + 1, model, seatStart(i, warmed.length)));
+      if (mode.value === 'guest') {
+        // The host's snapshots start with its round: nothing heard during the countdown is silence.
+        if (mirror) mirror.heardAt = ts;
+      } else if (mode.value === 'host') {
+        round.value = createRound({ ...ROOM_FIELD }, roomSeats.value.length);
+        host = createHost();
+      } else {
+        round.value = createRound(field(), 1 + warmed.length);
+        seats.value = warmed.map((model, i) => createSeat(i + 1, model, seatStart(i, warmed.length)));
+      }
       phase.value = 'playing';
     }
   } else if (phase.value === 'playing' && round.value) {
     const r = round.value;
+    if (mode.value === 'guest' && mirror) {
+      tickMirror(mirror, dt, ts);
+      hostAway.value = mirror.paused ? 'paused' : hostSilent(mirror, ts) ? 'silent' : null;
+      triggerRef(round);
+      // The host's «end», or the clock run out and the host gone quiet with its last word lost.
+      if (mirror.ended || (r.now >= ROUND_MS && hostSilent(mirror, ts))) {
+        finish(r);
+        return;
+      }
+      raf = requestAnimationFrame(frame);
+      return;
+    }
     advance(r, dt);
     const step = Math.min(dt, FRAME_CLAMP_MS);
     for (const s of seats.value) {
@@ -409,9 +555,11 @@ function frame(ts: number): void {
       if (points !== null) knock(points > 0 ? 'drive' : 'hit', 0.45);
       if (wantsMove(r, s)) ask(r, s);
     }
+    if (host) for (const msg of hostOutgoing(r, host, ts)) lounge.send(msg);
     triggerRef(round);
     triggerRef(seats);
     if (isOver(r)) {
+      if (host) lounge.send(hostSnapshot(r, host, ts, 'end'));
       finish(r);
       return;
     }
@@ -450,26 +598,129 @@ async function start(): Promise<void> {
   }
   warmed = models;
   rivals.value = models;
+  mode.value = 'solo';
+  resetBoard();
+  countdownMs.value = COUNTDOWN_MS;
+  phase.value = 'countdown';
+  raf = requestAnimationFrame(frame);
+}
+
+// A new round on the board: nothing left from the last one.
+function resetBoard(): void {
   round.value = null;
   seats.value = [];
   final.value = null;
   result.value = null;
   saveError.value = null;
+  host = null;
+  mirror = null;
+  hands.value = new Map();
+  leftSeats.value = [];
+  hostAway.value = null;
+  roomNotice.value = null;
+}
+
+// The host starts the room's round: everyone present is seated, the host first, then by when
+// they came, up to LOUNGE_MAX_PLAYERS; the rest wait for the next round (decision 6).
+function startRoom(): void {
+  const members = lounge.room?.isHost ? (lounge.room.members ?? []) : [];
+  if (members.length < 2) return;
+  stopLoop();
+  generation += 1;
+  release();
+  const seated: Seat[] = members
+    .slice(0, LOUNGE_MAX_PLAYERS)
+    .map(({ clientId, userId, name, avatarUrl }) => ({ clientId, userId, name, avatarUrl }));
+  lounge.send({ t: 'start', seats: seated });
+  lounge.setPlaying(true);
+  warmed = [];
+  rivals.value = [];
+  mode.value = 'host';
+  roomSeats.value = seated;
+  meWho.value = 0;
+  resetBoard();
   countdownMs.value = COUNTDOWN_MS;
   phase.value = 'countdown';
   raf = requestAnimationFrame(frame);
+}
+
+// A guest hears the host's «start»: the same countdown, then the host's board as it comes in.
+function beginGuest(seated: Seat[]): void {
+  const who = seated.findIndex((s) => s.clientId === lounge.clientId);
+  if (who < 1) {
+    roomNotice.value = t('nailGame.lounge.benched');
+    return;
+  }
+  stopLoop();
+  mode.value = 'guest';
+  roomSeats.value = seated;
+  meWho.value = who;
+  resetBoard();
+  mirror = createMirror(seated.length, performance.now());
+  round.value = mirror.round;
+  countdownMs.value = COUNTDOWN_MS;
+  phase.value = 'countdown';
+  raf = requestAnimationFrame(frame);
+}
+
+// A room's message: guests' blows for the host; the round itself for a guest.
+function onRoomMessage(raw: Record<string, unknown>): void {
+  const now = performance.now();
+  if (lounge.room?.isHost) {
+    const r = round.value;
+    const g = host && r && phase.value === 'playing' ? readGuestMsg(raw, roomSeats.value.length) : null;
+    if (!g || !host || !r) return;
+    const res = hostSwing(r, host, g);
+    showHand(g.who, g.x, g.y, now);
+    knock(res.points > 0 ? 'drive' : res.hit ? 'hit' : 'miss', 0.45);
+    triggerRef(round);
+    return;
+  }
+  const msg = readHostMsg(raw);
+  if (!msg) return;
+  if (msg.t === 'start') return beginGuest(msg.seats);
+  if (msg.t === 'cancel') return endRoom(t('nailGame.lounge.hostLeft'));
+  if (mode.value !== 'guest' || !mirror) return;
+  for (const s of applyHost(mirror, msg, now)) {
+    if (s.who === meWho.value) continue;
+    showHand(s.who, s.x, s.y, now);
+    knock(s.drove ? 'drive' : s.hit ? 'hit' : 'miss', 0.45);
+  }
+  leftSeats.value = [...mirror.left];
+  triggerRef(round);
+}
+
+function showHand(who: number, x: number, y: number, at: number): void {
+  hands.value.set(who, { x, y, at });
+  triggerRef(hands);
+}
+
+// The room is over for this window (the host left, or this window did): back to the lobby.
+function endRoom(notice: string | null): void {
+  stopLoop();
+  lounge.leaveRoom();
+  mode.value = 'solo';
+  roomSeats.value = [];
+  meWho.value = 0;
+  toIntro();
+  roomNotice.value = notice;
+}
+
+function leaveRoom(): void {
+  endRoom(null);
 }
 
 function finish(r: Round): void {
   stopLoop();
   generation += 1;
   const rows: Standing[] = r.players.map((p, who) => {
-    const s = seats.value[who - 1];
+    const s = mode.value === 'solo' ? seats.value[who - 1] : undefined;
     return {
       who,
       place: 0,
-      name: s ? nameOf(s.model) : t('nailGame.you'),
+      name: names.value[who] ?? '',
       color: colorOf(who),
+      left: leftSeats.value.includes(who),
       score: p.score,
       driven: p.driven,
       accuracy: Math.round(accuracy(p) * 100),
@@ -488,25 +739,27 @@ function finish(r: Round): void {
   final.value = rows;
   phase.value = 'over';
   release();
-  // Only a solo round goes on the leaderboard: opponents take nails, so a score against them
-  // is not comparable with one played alone.
-  if (rows.length === 1) void save();
+  if (mode.value === 'host') lounge.setPlaying(false);
+  // Only a solo round goes on the leaderboard: opponents and colleagues take nails, so a score
+  // against them is not comparable with one played alone.
+  if (mode.value === 'solo' && rows.length === 1) void save();
   void nextTick(() => againBtn.value?.$el?.focus?.());
 }
 
-// Back to the start screen to pick other opponents; the finished round leaves the board.
+// Back to the start screen (or the room's, in a room); the finished round leaves the board.
 function toIntro(): void {
-  round.value = null;
-  seats.value = [];
+  resetBoard();
   rivals.value = [];
-  phase.value = 'intro';
+  if (!lounge.room) mode.value = 'solo';
+  phase.value = lounge.room ? 'room' : 'intro';
 }
 
-// A round left before the end is not saved (decision 2).
+// A round left before the end is not saved (decision 2); leaving the game leaves its room.
 function leave(): void {
   stopLoop();
   generation += 1;
   release();
+  if (lounge.room) endRoom(null);
   toIntro();
   game.hide();
 }
@@ -542,8 +795,18 @@ function onDown(e: PointerEvent): void {
   swingTimer = setTimeout(() => (swinging.value = false), SWING_MS);
   const r = round.value;
   if (phase.value !== 'playing' || !r) return;
-  const n = nailAt(r, e.clientX, e.clientY);
-  if (!n) {
+  const at = toField(e.clientX, e.clientY);
+  const n = nailAt(r, at.x, at.y);
+  if (mode.value === 'guest') {
+    // The host judges the blow; the knock is this window's own guess, so it sounds at once.
+    lounge.send({ t: 'swing', who: meWho.value, nailId: n?.id ?? null, x: at.x, y: at.y });
+    knock(!n ? 'miss' : n.hits + 1 >= n.needed ? 'drive' : 'hit');
+    return;
+  }
+  if (mode.value === 'host' && host) {
+    const res = hostSwing(r, host, { who: 0, nailId: n?.id ?? null, x: at.x, y: at.y });
+    knock(res.points > 0 ? 'drive' : res.hit ? 'hit' : 'miss');
+  } else if (!n) {
     swingMiss(r);
     knock('miss');
   } else {
@@ -554,8 +817,9 @@ function onDown(e: PointerEvent): void {
 
 // The pupils look at the player's hammer: a unit vector from the nail's middle.
 function lookFrom(n: Nail): { x: number; y: number } {
-  const dx = pointer.value.x - (n.x + NAIL_W / 2);
-  const dy = pointer.value.y - (n.y + 40);
+  const p = toField(pointer.value.x, pointer.value.y);
+  const dx = p.x - (n.x + NAIL_W / 2);
+  const dy = p.y - (n.y + 40);
   const d = Math.hypot(dx, dy);
   return d < 1 ? STILL : { x: dx / d, y: dy / d };
 }
@@ -570,7 +834,17 @@ function onKey(e: KeyboardEvent): void {
 }
 
 function onResize(): void {
-  if (round.value) round.value.field = field();
+  viewport.value = { w: window.innerWidth, h: window.innerHeight };
+  if (round.value && mode.value === 'solo') round.value.field = field();
+}
+
+// The host's window hidden pauses its round (the frame loop stops) — and so the room's, at once
+// rather than when the guests notice the silence (decision 6).
+function onVisibility(): void {
+  const r = round.value;
+  if (mode.value !== 'host' || !host || !r || phase.value !== 'playing') return;
+  host.paused = document.hidden;
+  lounge.send(hostSnapshot(r, host, performance.now()));
 }
 
 // ── sound (decision 3): a synthesised knock, no files ───────────────────────
@@ -610,11 +884,13 @@ watch(
       stopLoop();
       window.removeEventListener('keydown', onKey, true);
       window.removeEventListener('resize', onResize);
+      document.removeEventListener('visibilitychange', onVisibility);
       return;
     }
     toIntro();
     window.addEventListener('keydown', onKey, true);
     window.addEventListener('resize', onResize);
+    document.addEventListener('visibilitychange', onVisibility);
     await nextTick();
     startBtn.value?.$el?.focus?.();
   },
@@ -622,13 +898,56 @@ watch(
   { immediate: true },
 );
 
+// Into a room from the lobby: its waiting screen.
+watch(
+  () => lounge.room?.id,
+  (id, before) => {
+    if (id && id !== before && phase.value === 'intro') {
+      roomNotice.value = null;
+      phase.value = 'room';
+    }
+  },
+);
+
+// The host left, or the server closed this window's channel: the room is over for it.
+watch(
+  () => lounge.room?.hostGone,
+  (gone) => {
+    if (gone) endRoom(t('nailGame.lounge.hostLeft'));
+  },
+);
+watch(
+  () => lounge.room?.lost,
+  (lost) => {
+    if (lost) endRoom(t('nailGame.lounge.lost'));
+  },
+);
+
+// A guest's window left during the round: their score stays, marked (decision 6).
+watch(
+  () => lounge.room?.members,
+  (members) => {
+    if (mode.value !== 'host' || !host || !members) return;
+    const here = new Set(members.map((m) => m.clientId));
+    roomSeats.value.forEach((s, who) => {
+      if (who > 0 && !here.has(s.clientId)) host!.left.add(who);
+    });
+    leftSeats.value = [...host.left];
+  },
+);
+
+const offRoom = lounge.onGame(onRoomMessage);
+
 onBeforeUnmount(() => {
   stopLoop();
   generation += 1;
   release();
+  offRoom();
+  if (lounge.room) lounge.leaveRoom();
   clearTimeout(swingTimer);
   window.removeEventListener('keydown', onKey, true);
   window.removeEventListener('resize', onResize);
+  document.removeEventListener('visibilitychange', onVisibility);
   void audio?.close();
 });
 </script>
@@ -647,6 +966,7 @@ onBeforeUnmount(() => {
 }
 
 .ng--intro,
+.ng--room,
 .ng--over {
   background: rgba(8, 10, 14, 0.55);
   backdrop-filter: blur(2px);
@@ -693,6 +1013,10 @@ onBeforeUnmount(() => {
 
 .ng__stat--hurry b {
   color: var(--k-accent);
+}
+
+.ng__stat--left {
+  opacity: 0.45;
 }
 
 .ng__label {
@@ -756,6 +1080,34 @@ onBeforeUnmount(() => {
   font-weight: 700;
   color: var(--k-text);
   text-shadow: 0 6px 30px rgba(0, 0, 0, 0.5);
+  pointer-events: none;
+}
+
+// The board: the nails and the hammers are placed in field px inside it.
+.ng__stage {
+  position: absolute;
+  top: 0;
+  left: 0;
+  transform-origin: 0 0;
+}
+
+// A room's board is smaller than the window on most screens: its edge shows where nails can be.
+.ng__stage--room {
+  border: 1px dashed color-mix(in srgb, var(--k-line-strong) 70%, transparent);
+  border-radius: var(--k-r-lg);
+}
+
+.ng__banner {
+  position: absolute;
+  top: 72px;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 8px 14px;
+  background: color-mix(in srgb, var(--k-surface) 92%, transparent);
+  border: 1px solid var(--k-accent);
+  border-radius: var(--k-r);
+  color: var(--k-text);
+  font-size: 13px;
   pointer-events: none;
 }
 

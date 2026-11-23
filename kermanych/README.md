@@ -270,7 +270,8 @@ on its first step opens the old short form instead (name, git remote, platform):
 the cloud that this machine does not connect.
 
 1. **Доступ до git.** `GIT_TOKEN`, with a link to create a fine-grained GitHub token (Contents
-   and Pull requests read/write, Metadata read). «Використати токен з проєкту X» copies the
+   and Pull requests read/write, Metadata read; for the PR feedback loop also Checks, Commit
+   statuses and Actions read). «Використати токен з проєкту X» copies the
    token of another project connected on this machine. «Перевірити» asks GitHub whose token it
    is. «Пропустити» goes on without one: cloning a public repository or picking an existing
    folder works, but the agents cannot push or open pull requests until a token is set.
@@ -782,6 +783,13 @@ player), its guard trigger and the function `nail_game_leaderboard` (see [Break 
 before shipping a client that has the game: until then its leaderboard and every save fail with
 `PGRST202 Could not find the function`.
 
+`20261123090000_lounge_realtime.sql` lets «Кімната відпочинку» play with colleagues: the
+function `lounge_topic_workspace(text)` and two policies on `realtime.messages` that open the
+private Realtime topics `lounge:<workspace>` and `lounge:<workspace>:room:<id>` to that
+workspace's members only (see [Break game («Кімната відпочинку»)](#break-game-кімната-відпочинку)).
+It only adds, and nothing older uses private channels. Push it before shipping a client that has
+the lobby: until then «Колеги онлайн» says it cannot connect, and solo and AI rounds still work.
+
 ### Running against a local stack or your own project
 
 Everything below is for pointing Kermanych somewhere OTHER than the team's
@@ -1137,7 +1145,8 @@ A `before insert` trigger allows 10 reports per user per hour; the eleventh is r
 
 ## Break game («Кімната відпочинку»)
 
-Specs: `docs/specs/2026-11-18-nail-hammer-minigame.md`, `docs/specs/2026-11-19-nail-game-ai-opponents.md`.
+Specs: `docs/specs/2026-11-18-nail-hammer-minigame.md`, `docs/specs/2026-11-19-nail-game-ai-opponents.md`,
+`docs/specs/2026-11-23-lounge-multiplayer.md`.
 A one-minute break, formerly «Гвіздки»: the «Кімната відпочинку» button in the header, left of
 «Надіслати відгук», opens it. Nails
 with eyes pop up right over the app and the cursor becomes a hammer; the player drives in as many
@@ -1162,6 +1171,27 @@ in; a driven nail is ringed in that player's colour. A round costs each model ~3
 the operator's own plan; the result screen shows each opponent's moves, round trip and spend.
 The choice is remembered on this device (`kermanych.nail-game.opponents`). The seat logic lives
 in `apps/ui/src/lib/nail-game-ai.ts`, the prompt in `apps/api/src/nail-game/nail-game-prompt.ts`.
+
+**Playing with colleagues.** «Колеги онлайн» on the start screen lists who of the workspace
+selected in the sidebar has the game open, and the rooms they host. «Створити кімнату» opens a
+room; colleagues press «Приєднатися» while it waits, up to 6 players. The host presses «Почати
+раунд», and everyone in the room gets the same countdown and one board. A room's board is
+1280 × 720 on every screen, scaled to fit the window. The host's window runs the round and
+judges every blow in the order it arrives. A guest's window sends its blows and shows the
+host's board: a batch of changes every 50 ms and the whole board every 500 ms. Colleagues'
+hammers show where their blows land. The round pauses while the host's window is hidden. If
+the host leaves, the round is cancelled for everyone. A guest who leaves keeps their score,
+marked «вийшов». The header button shows a dot while a colleague's room waits for players.
+Rounds with colleagues are not saved.
+
+Everything goes through the team's Supabase Realtime, on private channels that only the
+workspace's members can join (`supabase/migrations/20261123090000_lounge_realtime.sql`). No
+table is written, and the local api is not involved. A preview has no team cloud, so the lobby
+works in the app only. Realtime closes a channel whose window tracks presence more than 5
+times in 30 s, so a window updates its lobby line at most once every 6 s
+(`PRESENCE_MIN_GAP_MS`). Pings ride broadcast instead of presence. The transport lives in
+`packages/cloud/src/lounge.ts`, the round protocol in `apps/ui/src/lib/nail-game-net.ts`, and
+the lobby and room state in `apps/ui/src/stores/lounge.ts`.
 
 Only a solo round is saved. A finished solo round with a score above 0 is one row in
 `public.nail_game_scores` (the player is the signed-in account). Nobody reads the table directly. The leaderboard is
@@ -1893,7 +1923,7 @@ developer's machine. The direction is always task → session.
    which drive the card through «в роботі» mid-turn. «Закоміти» has the agent commit and push
    that follow-up work onto the same branch, updating the open PR.
 
-   **Merged PR.** Kermanych does not watch a PR on GitHub. When you select a session in
+   **Merged PR.** The merge itself is not watched in the background. When you select a session in
    «Агенти» that opened a PR and is not running a turn, it asks GitHub about that PR: the URL
    the agent replied with, or, for a session from before the URL was kept or when that PR was
    not merged, the closed PRs of the session's branch on `origin` (targeting its base, opened
@@ -1906,6 +1936,38 @@ developer's machine. The direction is always task → session.
    in «Завершені». The popup warns when uncommitted changes or commits made after the PR's
    last push would stay only on the branch. «Не зараз» closes it until you select the session
    again. (Spec: `docs/specs/2026-10-26-pr-merged-close-prompt.md`.)
+
+   **PR feedback loop.** While a session's GitHub PR is open, the local API polls it every
+   2 minutes (conditional requests, so an unchanged PR does not spend the GitHub API limit): the
+   CI of the PR's head commit (check runs and commit statuses) and its review comments. It needs
+   the project's `GIT_TOKEN`; without one the loop says so and does nothing. A round is one
+   message to the agent with the failed checks and every new comment: it goes once every check
+   of the head has finished (a check running over 60 minutes counts as hung and holds nothing),
+   no new comment came for 5 minutes, and the session is not running a turn. The agent fixes,
+   pushes to the same branch, reads CI logs itself with `gh`, and replies on GitHub in each
+   comment's thread, marking its replies with `<!-- kermanych -->` so the loop never feeds them
+   back; it does not resolve threads. Only comments from people with write access (`OWNER`,
+   `MEMBER`, `COLLABORATOR`) and GitHub App bots reach the agent; others are shown with
+   «Передати» for you to pass by hand. Comments and CI results already there when the loop first
+   sees a PR are not sent. After 3 rounds in a row without you the loop pauses and notifies you;
+   writing to the session, passing feedback by hand or «Продовжити петлю» resets the count.
+   Settings → project → «Git» → «Петля після ПР» sets, on this machine only, the mode («авто»,
+   the default, or «вручну», where nothing is sent until you press «Передати агенту») and the
+   round limit (1–10). A loop round does not notify you when it settles on «На ревʼю»; you are
+   notified when the loop pauses, the PR is ready to merge (CI green, approved, no conflicts),
+   manual mode has something to pass, or CI hangs. A merged or closed PR ends the loop; the
+   merge prompt above is unchanged. GitHub only. (Spec:
+   `docs/specs/2026-11-23-pr-feedback-loop.md`.)
+
+   **Status line.** Under the session's tabs in «Агенти», on every tab, one line says what the
+   session is doing — queued for a slot, thinking, running a tool, waiting for your answer,
+   error, conflict, stopped, done, on review, finished — with how long, and the action the
+   status calls for (run now, restart a stalled turn, answer, sign in, resolve, continue). On
+   review with a loop it expands into a collapsible summary: CI, review (decision, new comments,
+   comments held back), conflicts, and the loop (mode, round, what it waits for). The session
+   cards in the list carry a compact version of the same line. The older status displays (the
+   dot, the header's status word, the live lane over the composer, the error and stall banners)
+   are still there until the status line replaces them.
 6. **Reports flow back** — after every turn and on «Завершити» the local API also writes onto
    the card what the session's «Документація» and «Сесія» tabs show: the documentation it read
    and the documentation it created or changed (repository paths with +/− counts), and the
