@@ -2687,7 +2687,9 @@ else sees them and nothing is written to the cloud apart from a run's hidden boa
     ЦУК» puts it into the console.
 - **A scheduled agent only analyses.** It reads, runs tests and the preview and reports; it never
   commits or opens a pull request, cannot ask you anything, and stops at «Посіпака»'s time cap.
-  The first line of its answer is the slip's summary; ideas and bugs arrive as findings.
+  The first line of its answer is the slip's summary; ideas and bugs arrive as findings. Each run
+  starts in a fresh context but is told what the task's earlier runs concluded — the summaries of
+  the latest 10 finished runs, with their dates — so it does not offer the same result again.
 - **Schedules:** once (a date and time, or «через N хв»), daily, weekdays, chosen days of the
   week, a day of the month (the 31st means the month's last day), every N hours — always a wall
   clock in your time zone. Editing a schedule never fires a past time, and a one-off time that has

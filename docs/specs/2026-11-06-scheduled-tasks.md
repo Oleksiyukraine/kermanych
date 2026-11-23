@@ -169,7 +169,10 @@ The operator wants tasks on a schedule, the way Hermes Agent has them
 - **Unattended.** Every agent run gets the no-ask overlay and «Посіпака»'s time cap. Its opening
   prompt says: a scheduled task «<назва>», nobody will answer, analysis only (decision 2), the
   first line of the final answer is a one-line summary, ideas and bugs go through
-  `report_finding`. Deep analysis and design are never used for a run.
+  `report_finding`. Deep analysis and design are never used for a run. Before the task it lists
+  what the earlier runs concluded — the summaries of the latest 10 `done` runs, newest first,
+  each with its occurrence in the task's zone — and asks for something new rather than the same
+  result again (`docs/specs/2026-11-23-schedule-earlier-results.md`).
 - **The model.** A project run takes the project's defaults (model, effort), as a launched agent
   from ЦУК does; ЦУК sets another model only when the operator names one. A one-shot run uses
   the user's backend default.
