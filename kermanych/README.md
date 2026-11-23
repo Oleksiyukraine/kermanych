@@ -783,6 +783,13 @@ player), its guard trigger and the function `nail_game_leaderboard` (see [Break 
 before shipping a client that has the game: until then its leaderboard and every save fail with
 `PGRST202 Could not find the function`.
 
+`20261123090000_lounge_realtime.sql` lets «Кімната відпочинку» play with colleagues: the
+function `lounge_topic_workspace(text)` and two policies on `realtime.messages` that open the
+private Realtime topics `lounge:<workspace>` and `lounge:<workspace>:room:<id>` to that
+workspace's members only (see [Break game («Кімната відпочинку»)](#break-game-кімната-відпочинку)).
+It only adds, and nothing older uses private channels. Push it before shipping a client that has
+the lobby: until then «Колеги онлайн» says it cannot connect, and solo and AI rounds still work.
+
 ### Running against a local stack or your own project
 
 Everything below is for pointing Kermanych somewhere OTHER than the team's
@@ -1138,7 +1145,8 @@ A `before insert` trigger allows 10 reports per user per hour; the eleventh is r
 
 ## Break game («Кімната відпочинку»)
 
-Specs: `docs/specs/2026-11-18-nail-hammer-minigame.md`, `docs/specs/2026-11-19-nail-game-ai-opponents.md`.
+Specs: `docs/specs/2026-11-18-nail-hammer-minigame.md`, `docs/specs/2026-11-19-nail-game-ai-opponents.md`,
+`docs/specs/2026-11-23-lounge-multiplayer.md`.
 A one-minute break, formerly «Гвіздки»: the «Кімната відпочинку» button in the header, left of
 «Надіслати відгук», opens it. Nails
 with eyes pop up right over the app and the cursor becomes a hammer; the player drives in as many
@@ -1163,6 +1171,27 @@ in; a driven nail is ringed in that player's colour. A round costs each model ~3
 the operator's own plan; the result screen shows each opponent's moves, round trip and spend.
 The choice is remembered on this device (`kermanych.nail-game.opponents`). The seat logic lives
 in `apps/ui/src/lib/nail-game-ai.ts`, the prompt in `apps/api/src/nail-game/nail-game-prompt.ts`.
+
+**Playing with colleagues.** «Колеги онлайн» on the start screen lists who of the workspace
+selected in the sidebar has the game open, and the rooms they host. «Створити кімнату» opens a
+room; colleagues press «Приєднатися» while it waits, up to 6 players. The host presses «Почати
+раунд», and everyone in the room gets the same countdown and one board. A room's board is
+1280 × 720 on every screen, scaled to fit the window. The host's window runs the round and
+judges every blow in the order it arrives. A guest's window sends its blows and shows the
+host's board: a batch of changes every 50 ms and the whole board every 500 ms. Colleagues'
+hammers show where their blows land. The round pauses while the host's window is hidden. If
+the host leaves, the round is cancelled for everyone. A guest who leaves keeps their score,
+marked «вийшов». The header button shows a dot while a colleague's room waits for players.
+Rounds with colleagues are not saved.
+
+Everything goes through the team's Supabase Realtime, on private channels that only the
+workspace's members can join (`supabase/migrations/20261123090000_lounge_realtime.sql`). No
+table is written, and the local api is not involved. A preview has no team cloud, so the lobby
+works in the app only. Realtime closes a channel whose window tracks presence more than 5
+times in 30 s, so a window updates its lobby line at most once every 6 s
+(`PRESENCE_MIN_GAP_MS`). Pings ride broadcast instead of presence. The transport lives in
+`packages/cloud/src/lounge.ts`, the round protocol in `apps/ui/src/lib/nail-game-net.ts`, and
+the lobby and room state in `apps/ui/src/stores/lounge.ts`.
 
 Only a solo round is saved. A finished solo round with a score above 0 is one row in
 `public.nail_game_scores` (the player is the signed-in account). Nobody reads the table directly. The leaderboard is
