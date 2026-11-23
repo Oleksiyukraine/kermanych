@@ -1,17 +1,21 @@
 import { describe, expect, test } from "vitest";
 import {
   catchUpWindowMs,
+  currentNotesRun,
   describeSchedule,
   dueOccurrence,
   formatZonedWall,
   latestOccurrence,
   nextOccurrences,
   resolveWhen,
+  RUN_NOTES_MAX,
+  splitRunNotes,
   validateScheduleDraft,
   validateSchedulePatch,
   validateScheduleSpec,
   validateScheduleWhen,
   zonedInstant,
+  type ScheduleRun,
   type ScheduleSpec,
 } from "../src/schedules";
 
@@ -289,5 +293,37 @@ describe("validators", () => {
     expect(validateSchedulePatch({ projectId: "p1" }, "reminder")).toMatchObject(refused("schedule_agent_only"));
     expect(validateSchedulePatch({ projectId: null, model: null, enabled: false }, "agent")).toEqual({ projectId: null, model: null, enabled: false });
     expect(validateSchedulePatch({ schedule: { type: "weekdays", time: "8:00" } }, "reminder")).toEqual({ schedule: { type: "weekdays", time: "08:00" } });
+  });
+});
+
+describe("run memory — the notes section", () => {
+  test("splits at the last notes heading, whatever its level or a trailing colon", () => {
+    expect(splitRunNotes("Підсумок\n\nТіло\n\n## Notes for the next run\n\nкурсор abc")).toEqual({ answer: "Підсумок\n\nТіло", notes: "курсор abc" });
+    expect(splitRunNotes("A\n### notes for the next run:\nперші\n## Notes for the next run\nостанні")).toEqual({ answer: "A\n### notes for the next run:\nперші", notes: "останні" });
+  });
+
+  test("an answer without the section, or with an empty one, leaves no notes", () => {
+    expect(splitRunNotes("Лише відповідь")).toEqual({ answer: "Лише відповідь" });
+    expect(splitRunNotes("Відповідь\n\n## Notes for the next run\n\n  ")).toEqual({ answer: "Відповідь" });
+    // Mentioned inside a line is not the heading.
+    expect(splitRunNotes("See ## Notes for the next run below")).toEqual({ answer: "See ## Notes for the next run below" });
+  });
+
+  test("notes over the cap are cut and say so", () => {
+    const { notes } = splitRunNotes(`x\n## Notes for the next run\n${"n".repeat(RUN_NOTES_MAX + 10)}`);
+    expect(notes).toBe(`${"n".repeat(RUN_NOTES_MAX)}\n[…cut at ${RUN_NOTES_MAX} characters]`);
+  });
+
+  test("the next run gets the newest done run's notes, unless cleared after it started", () => {
+    const run = (id: string, startedAt: string, over: Partial<ScheduleRun> = {}): ScheduleRun => ({ id, scheduleId: "s", trigger: "schedule", status: "done", startedAt, ...over });
+    const runs = [
+      run("running", "2026-11-09T08:00:00Z", { status: "running" }),
+      run("failed", "2026-11-08T08:00:00Z", { status: "failed", notes: "never written" }),
+      run("none", "2026-11-07T08:00:00Z"),
+      run("kept", "2026-11-06T08:00:00Z", { notes: "курсор" }),
+    ];
+    expect(currentNotesRun({}, runs)?.id).toBe("kept");
+    expect(currentNotesRun({ notesClearedAt: "2026-11-06T07:00:00Z" }, runs)?.id).toBe("kept");
+    expect(currentNotesRun({ notesClearedAt: "2026-11-06T09:00:00Z" }, runs)).toBeUndefined();
   });
 });

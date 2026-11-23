@@ -2750,8 +2750,16 @@ else sees them and nothing is written to the cloud apart from a run's hidden boa
 - **A scheduled agent only analyses.** It reads, runs tests and the preview and reports; it never
   commits or opens a pull request, cannot ask you anything, and stops at «Посіпака»'s time cap.
   The first line of its answer is the slip's summary; ideas and bugs arrive as findings. Each run
-  starts in a fresh context but is told what the task's earlier runs concluded — the summaries of
-  the latest 10 finished runs, with their dates — so it does not offer the same result again.
+  starts in a fresh context but carries the task's memory
+  (`docs/specs/2026-11-23-scheduled-task-run-memory.md`), so it neither repeats itself nor starts
+  from zero:
+  - the summaries of every kept finished run (up to 50), with their dates, your reaction and a
+    «before the task was last changed» mark for results that answered an older wording;
+  - the notes the previous run left: a run ends its answer with «## Notes for the next run» (what it
+    checked, up to where, what is next), which Kermanych cuts out of the answer and hands to the
+    next run only;
+  - with a project, the findings earlier runs of the task already reported, so they are not filed
+    again.
 - **Schedules:** once (a date and time, or «через N хв»), daily, weekdays, chosen days of the
   week, a day of the month (the 31st means the month's last day), every N hours — always a wall
   clock in your time zone. Editing a schedule never fires a past time, and a one-off time that has
@@ -2766,8 +2774,12 @@ else sees them and nothing is written to the cloud apart from a run's hidden boa
   a «Розклад» row opens its task: the kind, the project, the status, when it fired and for which
   time, and the text — the reminder, the run's answer or why it did not run — with «Відкрити
   задачу», «Відкрити сесію» while the run's session is still on this machine, and «Обговорити в
-  ЦУК» for a run without a project. «Розклад» lists the tasks with their next firing and a pause
-  switch; opening one shows its text, skills, run history, «Запустити зараз» and «Видалити». Like
+  ЦУК» for a run without a project. A finished agent run takes your reaction in its slip and in the
+  task's run history: «Взято в роботу» (the next runs may build on it) or «Не цікаво» (they drop
+  it); press it again to take it back. «Розклад» lists the tasks with their next firing and a pause
+  switch; opening one shows its text, skills, «Нотатки для наступного запуску» with «Очистити
+  нотатки» (the next run starts without them; the history keeps them), the run history,
+  «Запустити зараз» and «Видалити». Like
   the notepad beside it, «Розклад» shows the workspace picked in the switcher: the tasks of its
   projects plus reminders and tasks without a project, which belong to no workspace. With no
   workspace picked, it shows every task.

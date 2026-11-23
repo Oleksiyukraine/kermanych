@@ -143,7 +143,7 @@ import { MachineResourcesService } from "../machine/machine-resources.service";
 import { WatchdogService } from "../machine/watchdog.service";
 import { BranchNameService, type BranchContext } from "./branch-name.service";
 import { noAskOverlay } from "../minion/ask-overlay";
-import { earlierResultsBlock, scheduledRunPrompt } from "../schedules/schedule-prompt";
+import { EARLIER_FINDINGS_MAX, runMemoryBlock, scheduledRunPrompt } from "../schedules/schedule-prompt";
 import { EnvFileService } from "../env/env-file.service";
 import { GithubClient, githubFailure, parseGithubPrUrl, parseGithubRemote, type GithubPull } from "../github/github-client";
 import { PreviewService } from "../preview/preview.service";
@@ -1843,8 +1843,9 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
   // workspace or user skill of that name wins, and a team that switched it off gets the line alone.
   private async openingPrompt(session: Session, firstPrompt: string, cwd: string): Promise<string> {
     // A scheduled run (docs/specs/2026-11-06-scheduled-tasks.md, «Unattended»): the run's rules,
-    // the task's skills — resolved here, in the worktree, so a repository skill wins — what its
-    // earlier runs concluded, and the task's prompt, which is the card's description. No
+    // the task's skills — resolved here, in the worktree, so a repository skill wins — its memory
+    // (docs/specs/2026-11-23-scheduled-task-run-memory.md: earlier results, the previous run's
+    // notes, earlier findings), and the task's prompt, which is the card's description. No
     // «ШІ-команда» role around it: the operator's prompt is the whole assignment.
     if (session.schedule && this.scheduleRuns.has(session.id) && firstPrompt.trim()) {
       const schedule = this.registry.getSchedule(session.schedule.id);
@@ -1856,8 +1857,10 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
         } catch (err) {
           console.warn(`[supervisor] no skills for scheduled run ${session.id}: ${(err as Error).message}`);
         }
-      const earlierBlock = schedule ? earlierResultsBlock(this.registry.listScheduleRuns(schedule.id), schedule.timeZone) : "";
-      return scheduledRunPrompt({ name: session.schedule.name, prompt: firstPrompt, skillsBlock: block, earlierBlock, project: true });
+      const memoryBlock = schedule
+        ? runMemoryBlock(schedule, this.registry.listScheduleRuns(schedule.id), this.registry.listScheduleFindings(schedule.id, EARLIER_FINDINGS_MAX))
+        : "";
+      return scheduledRunPrompt({ name: session.schedule.name, prompt: firstPrompt, skillsBlock: block, memoryBlock, project: true });
     }
     if (session.minion && firstPrompt.trim()) {
       const kind = session.findingKind;

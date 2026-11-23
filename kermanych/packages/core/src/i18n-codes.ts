@@ -392,6 +392,7 @@ export type ManagementRejectionCode =
   | "schedule_project_unknown" // apps/api schedules — a projectId not in the local registry (params: { value })
   | "schedule_skill_unknown" // apps/api schedules — skill names that resolve nowhere (params: { value } — comma-joined names)
   | "schedule_at_past" // apps/api schedules — a «once» whose date and time has already passed, on create, reschedule or resume (params: { value })
+  | "schedule_run_no_result" // apps/api schedules — a reaction on a run that did not finish with a result (params: none)
   // parseManagementReply — the block never parsed as JSON:
   | "block_unreadable"; // the fenced block was not readable JSON (params: { message })
 
@@ -473,6 +474,7 @@ export const MANAGEMENT_REJECTION_CODES = [
   "schedule_project_unknown",
   "schedule_skill_unknown",
   "schedule_at_past",
+  "schedule_run_no_result",
   "block_unreadable",
 ] as const satisfies readonly ManagementRejectionCode[];
 

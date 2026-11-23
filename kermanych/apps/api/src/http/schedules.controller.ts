@@ -1,11 +1,14 @@
 // apps/api/src/http/schedules.controller.ts
 // «Задачі за розкладом» over REST (docs/specs/2026-11-06-scheduled-tasks.md): the list and its
-// edits, «Запустити зараз», the run history, and the local slips of «Центр сповіщень» (decision
-// 6). Auto-guarded by the global SupabaseAuthGuard like every route; the tasks themselves are
-// this machine's (decision 1). A refusal is a 400 whose body is core's rejection as
-// `{ message, code, params }`, so the UI localizes it like any other.
-import { BadRequestException, Body, Controller, Delete, Get, HttpCode, NotFoundException, Param, Patch, Post } from "@nestjs/common";
+// edits, «Запустити зараз», the run history, the run memory the operator steers
+// (docs/specs/2026-11-23-scheduled-task-run-memory.md: a reaction on a run, clearing the notes),
+// and the local slips of «Центр сповіщень» (decision 6). Auto-guarded by the global
+// SupabaseAuthGuard like every route; the tasks themselves are this machine's (decision 1). A
+// refusal is a 400 whose body is core's rejection as `{ message, code, params }`, so the UI
+// localizes it like any other.
+import { BadRequestException, Body, Controller, Delete, Get, HttpCode, NotFoundException, Param, Patch, Post, Put } from "@nestjs/common";
 import {
+  isScheduleRunReaction,
   validateScheduleDraft,
   validateSchedulePatch,
   type ManagementRejection,
@@ -114,6 +117,27 @@ export class SchedulesController {
   runs(@Param("id") id: string): { runs: ScheduleRun[] } {
     try {
       return { runs: this.schedules.runs(id) };
+    } catch (err) {
+      relay(err);
+    }
+  }
+
+  @Put(":id/runs/:runId/reaction")
+  react(@Param("id") id: string, @Param("runId") runId: string, @Body() b: { reaction?: unknown }): { run: ScheduleRun } {
+    const reaction = b?.reaction;
+    if (reaction !== null && !isScheduleRunReaction(reaction)) throw new BadRequestException("reaction must be taken, rejected or null");
+    try {
+      return { run: this.schedules.react(id, runId, reaction) };
+    } catch (err) {
+      relay(err);
+    }
+  }
+
+  @Post(":id/notes/clear")
+  @HttpCode(200)
+  clearNotes(@Param("id") id: string): ScheduledTask {
+    try {
+      return this.schedules.clearNotes(id);
     } catch (err) {
       relay(err);
     }

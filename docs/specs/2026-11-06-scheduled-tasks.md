@@ -168,11 +168,14 @@ The operator wants tasks on a schedule, the way Hermes Agent has them
 - **The first tick** runs 5 s after start, so a run never launches before the api listens.
 - **Unattended.** Every agent run gets the no-ask overlay and «Посіпака»'s time cap. Its opening
   prompt says: a scheduled task «<назва>», nobody will answer, analysis only (decision 2), the
-  first line of the final answer is a one-line summary, ideas and bugs go through
-  `report_finding`. Deep analysis and design are never used for a run. Before the task it lists
-  what the earlier runs concluded — the summaries of the latest 10 `done` runs, newest first,
-  each with its occurrence in the task's zone — and asks for something new rather than the same
-  result again (`docs/specs/2026-11-23-schedule-earlier-results.md`).
+  first line of the final answer is a one-line summary, the answer ends with «## Notes for the next
+  run», ideas and bugs go through `report_finding`. Deep analysis and design are never used for a
+  run. Before the task it carries the task's memory
+  (`docs/specs/2026-11-23-scheduled-task-run-memory.md`, which replaces the 10-run window of
+  `docs/specs/2026-11-23-schedule-earlier-results.md`): the summaries of every kept `done` run,
+  newest first, with the operator's reaction and a mark for those before the last prompt change;
+  the previous run's notes unless the operator cleared them; and, for a project run, the findings
+  earlier runs of the task reported.
 - **The model.** A project run takes the project's defaults (model, effort), as a launched agent
   from ЦУК does; ЦУК sets another model only when the operator names one. A one-shot run uses
   the user's backend default.

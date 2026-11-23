@@ -4520,6 +4520,7 @@ export const uk = {
     schedule_project_unknown: 'невідомий проєкт: {value}',
     schedule_skill_unknown: 'невідомі навички: {value}',
     schedule_at_past: 'час {value} уже минув',
+    schedule_run_no_result: 'у цього запуску немає результату',
   },
   cuk: {
     title: 'ЦУК · Центр управління Керманича',
@@ -4712,6 +4713,17 @@ export const uk = {
         noRuns: 'Ще не запускалась.',
         manual: 'вручну',
         delete: 'Видалити',
+      },
+      reaction: {
+        label: 'Реакція',
+        taken: 'Взято в роботу',
+        rejected: 'Не цікаво',
+      },
+      notes: {
+        title: 'Нотатки для наступного запуску',
+        from: 'Залишив запуск {when}',
+        older: 'до останньої зміни задачі',
+        clear: 'Очистити нотатки',
       },
     },
     card: {
@@ -5506,6 +5518,11 @@ export const uk = {
     deleteSchedule: {
       title: 'Видалити задачу за розкладом?',
       message: 'Задачу «{name}» буде видалено разом з історією її запусків.',
+    },
+    clearScheduleNotes: {
+      title: 'Очистити нотатки?',
+      message: 'Наступний запуск задачі «{name}» почне без нотаток попередніх запусків. В історії вони лишаться.',
+      confirm: 'Очистити',
     },
     newChat: {
       title: 'Почати новий чат?',

@@ -29,12 +29,14 @@ import {
   MINION_TIME_CAP_MS,
   nextOccurrences,
   SCHEDULE_TICK_MS,
+  splitRunNotes,
   type ManagementRejection,
   type ScheduleDraft,
   type ScheduleDue,
   type ScheduledTask,
   type SchedulePatch,
   type ScheduleRun,
+  type ScheduleRunReaction,
   type ScheduleRunReason,
   type ScheduleRunStatus,
   type ScheduleSlip,
@@ -51,7 +53,7 @@ import { CodedError } from "../management/coded-error";
 import { noAskOverlay } from "../minion/ask-overlay";
 import { holdAwake } from "../minion/keep-awake";
 import { scheduleTray } from "./schedule-tray";
-import { earlierResultsBlock, firstLine, ONE_SHOT_TOOLS, scheduledRunPrompt } from "./schedule-prompt";
+import { firstLine, ONE_SHOT_TOOLS, runMemoryBlock, scheduledRunPrompt } from "./schedule-prompt";
 
 // The first tick waits for the api to listen: a project run launched before that gets no
 // `kermanych` MCP server, and so no `report_finding` (MinionService waits a whole poll for the
@@ -82,7 +84,7 @@ export class ScheduleRefusal extends Error {
 }
 
 export class ScheduleNotFound extends Error {
-  constructor(what: "schedule" | "slip") {
+  constructor(what: "schedule" | "slip" | "run") {
     super(`${what} not found`);
     this.name = "ScheduleNotFound";
   }
@@ -221,6 +223,7 @@ export class ScheduleService implements OnModuleInit, OnModuleDestroy {
       armedAt: now,
       createdAt: now,
       updatedAt: now,
+      promptChangedAt: now,
     };
     this.registry.putSchedule(row);
     this.changed();
@@ -258,6 +261,8 @@ export class ScheduleService implements OnModuleInit, OnModuleDestroy {
       updatedAt: now,
     };
     if (armed) next.armedAt = now;
+    // Only a new wording dates the earlier results (run memory, decision 4).
+    if (patch.prompt !== undefined && patch.prompt !== cur.prompt) next.promptChangedAt = now;
     this.registry.putSchedule(next);
     this.changed();
     return this.viewOf(id);
@@ -295,6 +300,27 @@ export class ScheduleService implements OnModuleInit, OnModuleDestroy {
 
   markSeen(ids?: readonly string[]): void {
     this.registry.markScheduleSlipsSeen(ids);
+  }
+
+  // «Взято в роботу» / «Не цікаво» on a run's result, `null` takes it back (run memory, decision
+  // 2). Only a `done` run has a result to judge.
+  react(scheduleId: string, runId: string, reaction: ScheduleRunReaction | null): ScheduleRun {
+    const run = this.registry.getScheduleRun(runId);
+    if (!run || run.scheduleId !== scheduleId) throw new ScheduleNotFound("run");
+    if (run.status !== "done") throw new ScheduleRefusal({ text: "у цього запуску немає результату", code: "schedule_run_no_result" });
+    const next = this.registry.updateScheduleRun(runId, { reaction: reaction ?? undefined })!;
+    this.supervisor.publish({ type: "schedule_run_update", run: next });
+    return next;
+  }
+
+  // «Очистити нотатки» (run memory, decision 6): the notes of every run so far stop reaching the
+  // next run; the runs keep them in their history.
+  clearNotes(id: string): ScheduledTask {
+    const cur = this.registry.getSchedule(id);
+    if (!cur) throw new ScheduleNotFound("schedule");
+    this.registry.putSchedule({ ...cur, notesClearedAt: new Date().toISOString() });
+    this.changed();
+    return this.viewOf(id);
   }
 
   // «Відкласти»: the slip hides until then and the tick fires it again; the schedule stays.
@@ -471,8 +497,9 @@ export class ScheduleService implements OnModuleInit, OnModuleDestroy {
       const projectId = this.registry.listSessions().find((s) => s.id === e.sessionId)?.projectId ?? t.projectId;
       const extra = { sessionId: e.sessionId, ...(projectId ? { projectId } : {}) };
       if (e.outcome === "done") {
-        const summary = firstLine(e.answer ?? "");
-        if (this.finish(run, { status: "done", summary, sessionId: e.sessionId }))
+        const { answer, notes } = splitRunNotes(e.answer ?? "");
+        const summary = firstLine(answer);
+        if (this.finish(run, { status: "done", summary, sessionId: e.sessionId, ...(notes ? { notes } : {}) }))
           this.slip(t, { ...run, status: "done" }, { text: summary || `«${t.name}» виконано`, late, ...extra });
       } else {
         const reason: ScheduleRunReason = e.outcome === "timeout" ? "timeout" : "run_failed";
@@ -486,8 +513,9 @@ export class ScheduleService implements OnModuleInit, OnModuleDestroy {
   // ── A run without a project (decision 9) ───────────────────────────────────────────────────
 
   // One child in the task's own folder with read-only file tools, web search and page reading,
-  // no ask tool, the user's backend default or the pinned model. The whole answer is the slip's
-  // body; its first line is the summary. The child goes with the run: the next one starts clean.
+  // no ask tool, the user's backend default or the pinned model. The whole answer but its notes
+  // is the slip's body; its first line is the summary. The child goes with the run: the next one
+  // starts clean.
   private async oneShot(t: ScheduleRow, run: ScheduleRun, late: boolean): Promise<void> {
     if (this.destroyed) return;
     const startedAt = Date.now();
@@ -505,11 +533,12 @@ export class ScheduleService implements OnModuleInit, OnModuleDestroy {
       const live = await this.pool.child(key, () => ({
         opts: { cwd, tools: [...ONE_SHOT_TOOLS], ...(t.model ? { model: t.model } : {}), ...(noAsk ? { configPaths: [noAsk] } : {}) },
       }));
-      const earlierBlock = earlierResultsBlock(this.registry.listScheduleRuns(t.id), t.timeZone);
-      const { events, notices } = await this.pool.drive(key, live, scheduledRunPrompt({ name: t.name, prompt: t.prompt, skillsBlock: block, earlierBlock, project: false }), []);
-      const body = readTurn(events, notices, startedAt).raw.trim();
+      const memoryBlock = runMemoryBlock(t, this.registry.listScheduleRuns(t.id), []);
+      const { events, notices } = await this.pool.drive(key, live, scheduledRunPrompt({ name: t.name, prompt: t.prompt, skillsBlock: block, memoryBlock, project: false }), []);
+      const { answer, notes } = splitRunNotes(readTurn(events, notices, startedAt).raw);
+      const body = answer.trim();
       const summary = firstLine(body);
-      if (this.finish(run, { status: "done", summary }))
+      if (this.finish(run, { status: "done", summary, ...(notes ? { notes } : {}) }))
         this.slip(t, { ...run, status: "done" }, { text: summary || `«${t.name}» виконано`, late, ...(body ? { body } : {}) });
     } catch (err) {
       const timeout = err instanceof CodedError && err.code === "assistant_no_reply_timeout";
@@ -527,7 +556,7 @@ export class ScheduleService implements OnModuleInit, OnModuleDestroy {
   }
 
   // `false` when the run's row is gone — its task was deleted meanwhile — and nothing is announced.
-  private finish(run: ScheduleRun, patch: { status: ScheduleRunStatus; reason?: ScheduleRunReason; detail?: string; summary?: string; sessionId?: string }): boolean {
+  private finish(run: ScheduleRun, patch: { status: ScheduleRunStatus; reason?: ScheduleRunReason; detail?: string; summary?: string; notes?: string; sessionId?: string }): boolean {
     const done = this.registry.updateScheduleRun(run.id, { ...patch, endedAt: new Date().toISOString() });
     if (done) this.runChanged(done);
     return done !== undefined;

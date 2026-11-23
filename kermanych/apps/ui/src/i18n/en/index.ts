@@ -4496,6 +4496,7 @@ export const en: MessageSchema = {
     schedule_project_unknown: 'unknown project: {value}',
     schedule_skill_unknown: 'unknown skills: {value}',
     schedule_at_past: 'the time {value} has already passed',
+    schedule_run_no_result: 'this run has no result',
   },
   cuk: {
     title: 'ЦУК · Kermanych Control Center',
@@ -4687,6 +4688,17 @@ export const en: MessageSchema = {
         noRuns: 'Has not run yet.',
         manual: 'manual',
         delete: 'Delete',
+      },
+      reaction: {
+        label: 'Reaction',
+        taken: 'Taken into work',
+        rejected: 'Not interested',
+      },
+      notes: {
+        title: 'Notes for the next run',
+        from: 'Left by the run of {when}',
+        older: 'before the task last changed',
+        clear: 'Clear the notes',
       },
     },
     card: {
@@ -5480,6 +5492,11 @@ export const en: MessageSchema = {
     deleteSchedule: {
       title: 'Delete the scheduled task?',
       message: 'The task «{name}» is deleted with its run history.',
+    },
+    clearScheduleNotes: {
+      title: 'Clear the notes?',
+      message: 'The next run of «{name}» starts without the notes of earlier runs. They stay in the history.',
+      confirm: 'Clear',
     },
     newChat: {
       title: 'Start a new chat?',

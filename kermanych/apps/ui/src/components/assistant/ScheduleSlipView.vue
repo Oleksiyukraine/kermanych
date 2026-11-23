@@ -3,8 +3,10 @@
        opened from the feed the way a «Розклад» row opens its task: what fired, when, for which
        project, how it ended and the text — a reminder's, a run's answer or the reason it did not
        run. A run without a project keeps its whole answer here (decision 9), and «Обговорити в
-       ЦУК» carries it into the ЦУК composer. The run's session and the task are links, not the
-       slip's click: a finished run's session is history, the slip is what the operator came for. -->
+       ЦУК» carries it into the ЦУК composer. A run with a result takes the operator's reaction
+       (docs/specs/2026-11-23-scheduled-task-run-memory.md, decision 5). The run's session and the
+       task are links, not the slip's click: a finished run's session is history, the slip is what
+       the operator came for. -->
   <section class="ssv" :aria-labelledby="headingId">
     <header class="ssv__head">
       <button
@@ -40,6 +42,13 @@
             <dt>{{ t('cuk.notifications.slip.scheduledFor') }}</dt>
             <dd>{{ formatFiring(slip.scheduledFor, zone, locale) }}</dd>
           </template>
+          <template v-if="reactable && (run || runPhase !== 'ready')">
+            <dt>{{ t('cuk.schedule.reaction.label') }}</dt>
+            <dd>
+              <ScheduleRunReaction v-if="run" :run="run" />
+              <KSkeleton v-else-if="runPhase === 'skeleton'" width="220px" />
+            </dd>
+          </template>
         </dl>
         <p v-if="failed" class="ssv__reason">{{ reasonText(t, slip.reason, slip.text) }}</p>
         <div v-else class="k-log__markdown ssv__text" v-html="renderMarkdown(slip.body ?? slip.text)"></div>
@@ -65,11 +74,15 @@ import { useCukChat } from 'stores/cuk-chat';
 import { useProjects } from 'stores/projects';
 import { useOrchestrator } from 'stores/orchestrator';
 import { useNow } from '../../composables/useNow';
+import { useAsyncAction } from '../../composables/useAsyncAction';
+import { useLoadPhase } from '../../composables/useLoadPhase';
 import { relativeTime, renderTime } from '../../lib/time';
 import { renderMarkdown } from '../../lib/markdown';
 import { formatFiring, machineTimeZone, reasonText } from '../../lib/schedules';
 import { locale } from '../../lib/locale';
 import KBtn from 'components/kit/KBtn.vue';
+import KSkeleton from 'components/kit/KSkeleton.vue';
+import ScheduleRunReaction from './ScheduleRunReaction.vue';
 
 const props = defineProps<{ id: string }>();
 const emit = defineEmits<{ close: [] }>();
@@ -112,7 +125,21 @@ const session = computed(() => {
   return id && local.sessions.some((s) => s.id === id) ? id : undefined;
 });
 
-onMounted(() => void nextTick(() => backEl.value?.focus()));
+// The run behind a slip with a result, from the task's history (read here when no view has yet):
+// the reaction is the run's, so the slip and the history show one record. A task that is gone,
+// or a run the history no longer keeps, takes no reaction.
+const reactable = computed(() => slip.value?.kind === 'run' && slip.value.status === 'done' && !!slip.value.runId && !!task.value);
+const taskRuns = computed(() => (slip.value ? schedules.runs[slip.value.scheduleId] : undefined));
+const run = computed(() => taskRuns.value?.find((r) => r.id === slip.value?.runId));
+const loadRuns = useAsyncAction(async () => {
+  if (slip.value) await schedules.loadRuns(slip.value.scheduleId);
+});
+const runPhase = useLoadPhase(() => reactable.value && !taskRuns.value && loadRuns.busy.value);
+
+onMounted(() => {
+  if (reactable.value && !taskRuns.value) void loadRuns.run();
+  void nextTick(() => backEl.value?.focus());
+});
 
 function openSession(id: string): void {
   emit('close');

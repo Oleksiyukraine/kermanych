@@ -30,6 +30,8 @@ the first one. A run must know what earlier runs of its task already delivered.
    («Пропоную фічу «…»: …»), which is what a repeat must be checked against; whole answers of a
    daily task would swamp the prompt. Failed, skipped and running runs have no result and are left
    out.
+   - Superseded: `docs/specs/2026-11-23-scheduled-task-run-memory.md` (decision 4) widens the
+     window to every kept `done` run (up to 50) and drops `EARLIER_RESULTS_MAX`.
 3. **Both kinds of run get it** — a project run and a run without a project — through the one
    builder, `earlierResultsBlock`.
 
