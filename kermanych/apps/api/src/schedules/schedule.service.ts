@@ -51,7 +51,7 @@ import { CodedError } from "../management/coded-error";
 import { noAskOverlay } from "../minion/ask-overlay";
 import { holdAwake } from "../minion/keep-awake";
 import { scheduleTray } from "./schedule-tray";
-import { firstLine, ONE_SHOT_TOOLS, scheduledRunPrompt } from "./schedule-prompt";
+import { earlierResultsBlock, firstLine, ONE_SHOT_TOOLS, scheduledRunPrompt } from "./schedule-prompt";
 
 // The first tick waits for the api to listen: a project run launched before that gets no
 // `kermanych` MCP server, and so no `report_finding` (MinionService waits a whole poll for the
@@ -505,7 +505,8 @@ export class ScheduleService implements OnModuleInit, OnModuleDestroy {
       const live = await this.pool.child(key, () => ({
         opts: { cwd, tools: [...ONE_SHOT_TOOLS], ...(t.model ? { model: t.model } : {}), ...(noAsk ? { configPaths: [noAsk] } : {}) },
       }));
-      const { events, notices } = await this.pool.drive(key, live, scheduledRunPrompt({ name: t.name, prompt: t.prompt, skillsBlock: block, project: false }), []);
+      const earlierBlock = earlierResultsBlock(this.registry.listScheduleRuns(t.id), t.timeZone);
+      const { events, notices } = await this.pool.drive(key, live, scheduledRunPrompt({ name: t.name, prompt: t.prompt, skillsBlock: block, earlierBlock, project: false }), []);
       const body = readTurn(events, notices, startedAt).raw.trim();
       const summary = firstLine(body);
       if (this.finish(run, { status: "done", summary }))

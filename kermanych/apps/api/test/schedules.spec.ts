@@ -607,6 +607,36 @@ describe("a project run", () => {
     expect(registry.getScheduleRun(run.id)).toMatchObject({ status: "failed", reason: "timeout", trigger: "manual" });
     await vi.waitFor(() => expect(worktree.removeWorktree).toHaveBeenCalled());
   });
+
+  it("tells the next run what the earlier runs concluded, and not what failed", async () => {
+    const { svc, registry, bindProject } = make();
+    bindProject("p1");
+    at("2026-11-06T18:00:00Z");
+    const task = await svc.create(agentDraft({ skills: [] }));
+    const childOf = async (runId: string): Promise<FakeChild> => {
+      await vi.waitFor(() => expect(registry.getScheduleRun(runId)?.sessionId).toBeDefined());
+      const session = registry.listSessions().find((s) => s.id === registry.getScheduleRun(runId)!.sessionId)!;
+      // The latest spawn there: a retired run's worktree path may be reused by the next run.
+      return spawns.findLast((s) => s.opts.cwd === session.worktreePath)!.child;
+    };
+
+    const first = await svc.runNow(task.id);
+    const firstChild = await childOf(first.id);
+    expect(firstChild.prompts[0]).not.toContain("## Earlier runs of this task");
+    answer(firstChild, "Пропоную фічу «Петля після ПР»\n\nПодробиці нижче.");
+    expect(registry.getScheduleRun(first.id)).toMatchObject({ status: "done" });
+
+    signedIn = false;
+    const failed = await svc.runNow(task.id);
+    await vi.waitFor(() => expect(registry.getScheduleRun(failed.id)).toMatchObject({ status: "failed" }));
+    signedIn = true;
+
+    at("2026-11-07T09:30:00Z");
+    const second = await svc.runNow(task.id);
+    const prompt = (await childOf(second.id)).prompts[0]!;
+    const block = prompt.slice(prompt.indexOf("## Earlier runs of this task"), prompt.indexOf("## The task"));
+    expect(block).toMatch(/^## Earlier runs of this task\n\n.+\n\n- 2026-11-06 18:00 — Пропоную фічу «Петля після ПР»\n\n$/);
+  });
 });
 
 describe("a run without a project", () => {
