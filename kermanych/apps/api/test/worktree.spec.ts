@@ -4,7 +4,7 @@ import { execFileSync } from "node:child_process";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { WorktreeService } from "../src/worktree/worktree.service";
+import { WorktreeService, runGit } from "../src/worktree/worktree.service";
 
 const git = (cwd: string, ...args: string[]): string =>
   execFileSync("git", args, { cwd, encoding: "utf8" });
@@ -163,3 +163,20 @@ test("incoming counts upstream commits the branch lacks, seen only once fetched"
 test("incoming is 0 for a branch with no upstream", async () => {
   expect(await wt.incoming(repo, true)).toBe(0);
 });
+
+// A remote's transport (ssh for a real remote, here an `ext::` script) is git's own child and
+// inherits its stderr. A deadline that kills git alone leaves the transport holding that pipe:
+// the call never settled, and every later remote call of the repo queued behind it for good.
+test("a remote call past its deadline settles and takes its transport down with it", async () => {
+  const pidFile = join(repo, "transport.pid");
+  const transport = join(repo, "slow-transport.sh");
+  writeFileSync(transport, `#!/bin/sh\necho $$ > ${pidFile}\nexec sleep 30\n`, { mode: 0o755 });
+  const started = Date.now();
+  const r = await runGit(repo, ["-c", "protocol.ext.allow=always", "fetch", `ext::${transport}`], { timeoutMs: 3_000 });
+  expect(r.ok).toBe(false);
+  // Well past the deadline, far short of the transport's 30 s: the call did not wait for it.
+  expect(Date.now() - started).toBeLessThan(10_000);
+  const pid = Number(readFileSync(pidFile, "utf8").trim());
+  await new Promise((done) => setTimeout(done, 100));
+  expect(() => process.kill(pid, 0)).toThrow();
+}, 20_000);
