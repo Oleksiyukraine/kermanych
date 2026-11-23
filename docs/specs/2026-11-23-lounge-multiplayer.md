@@ -5,11 +5,12 @@
 - **Builds on:** `docs/specs/2026-11-18-nail-hammer-minigame.md`,
   `docs/specs/2026-11-19-nail-game-ai-opponents.md`
 - **Scope:** `supabase/migrations` (Realtime authorization policies), `packages/cloud`
-  (`lounge.ts`), `apps/ui` (a net protocol module, the engine's fixed field, the store, the
-  overlay, the header button, i18n `uk` / `en`), `kermanych/README.md`.
+  (`lounge.ts`), `apps/ui` (a net protocol module, a store, two components, the overlay, the
+  header button, i18n `uk` / `en`), `kermanych/README.md`.
 - **Status:** asked by the operator on 2026-11-19: «зробити можливість грати в ігри в кімнаті
   відпочинку онлайн з колегами». The proposal below was accepted on 2026-11-23 («Ніби ок»), with
-  the recommended answer on every open point.
+  the recommended answer on every open point; the operator pushes the migration to the team's
+  project once the code is ready. Implemented on 2026-11-23.
 
 ## Goal
 
@@ -40,6 +41,12 @@ together on one board, each from their own machine.
   `"<tenant>-private:<topic>"` in `supabase/realtime` `lib/realtime/tenants.ex`), so the project's
   «Allow public access» setting can stay on — turning it off would break the board's public
   `postgres_changes` channels.
+- **Measured while building it** (local stack): Realtime closes a private channel whose client
+  sends more than 5 presence messages (a track or an untrack) in 30 s —
+  `ClientPresenceRateLimitReached`, the default `client_presence_rate_limit` of
+  `max_calls: 5, window_ms: 30_000` in `presence_handler.ex`. A first build that re-tracked each
+  guest's ping every 3 s lost its room 15 s in. A refused private join answers `CHANNEL_ERROR`
+  after ~5 s, and realtime-js retries it.
 
 ## Decisions
 
@@ -60,12 +67,13 @@ together on one board, each from their own machine.
 2. **The host's window is the judge.** Whoever creates the room runs the `Round`, as a solo round
    does today.
    - A guest's swing is tested locally against its mirror (`nailAt`) and sent as
-     `strike {nailId}` or `miss`. The host applies them in the order they arrive: a strike on a
-     nail that is gone or already driven counts as a miss. So the first blow to reach the host
-     wins a contested nail.
-   - The host broadcasts what changed (`spawn`, `hit`, `drive`, `escape`) in one batch every
-     50 ms, only when something did, and a full snapshot every 500 ms; a guest that lost a batch
-     or rejoined converges on the next snapshot.
+     `swing {who, nailId | null, x, y}`. The host applies them in the order they arrive: a strike
+     on a nail that is gone or already driven counts as a miss. So the first blow to reach the
+     host wins a contested nail.
+   - The host broadcasts what changed — every nail whose state moved (spawned, hit, driven,
+     escaped) and the blows struck — in one batch every 50 ms, only when something did, and a full
+     snapshot every 500 ms; a guest that lost a batch converges on the next snapshot. Every
+     message carries a sequence number, and an older one is dropped.
    - A guest's hammer swings and knocks at once; the nail sinks when the host's batch arrives
      (~110 ms on the measured link).
 3. **A fixed field for multiplayer.** A room's board is 1280 × 720 logical px, scaled to fit each
@@ -74,9 +82,13 @@ together on one board, each from their own machine.
    with their name tag, as the AI's hammer does. Pointer positions are not streamed.
 5. **Lobby.** The start screen gets «Колеги онлайн» for the workspace in the sidebar's scope:
    who has the lounge open, «Створити кімнату», and «Приєднатися» on each waiting room with its
-   host and player count. Each player in a room shows their ping. With no workspace selected it
-   says to pick one. The header's «Кімната відпочинку» button carries a dot while a room in that
-   workspace waits for players. No other notifications.
+   host and player count. Each guest in a room shows their ping to the host: a guest pings every
+   3 s and broadcasts the round trip (`ping` / `pong` / `rtt`), not presence (see the measured
+   limit above). A window's lobby line changes at most once every 6 s
+   (`PRESENCE_MIN_GAP_MS`), the latest state winning. With no workspace selected it says to pick
+   one; in a preview, which has no team cloud, it says the lobby works in the app only. The
+   header's «Кімната відпочинку» button carries a dot while a room in that workspace waits for
+   players. No other notifications.
 6. **Room rules.**
    - At most 6 players, the host included (`LOUNGE_MAX_PLAYERS`).
    - Players join only while the room waits; the host presses «Почати» and everyone gets the
@@ -85,61 +97,88 @@ together on one board, each from their own machine.
      players (and makes a check with one account possible).
    - A guest who leaves keeps their score on the board, marked «вийшов».
    - The host's window hidden: the round pauses for everyone with a banner, and resumes with it.
-   - The host leaves: the round is cancelled for everyone («Хост вийшов — раунд скасовано»). No
-     host migration in this version.
+   - The host leaves: the round is cancelled for everyone («Хост вийшов, тож раунд
+     скасовано»). No host migration in this version. A room whose channel the server closes ends
+     for that window with «Зв’язок із кімнатою обірвався».
 7. **No AI opponents in a room.** The picker is hidden there. Rejected for now: the host's AI on
    the host's plan.
 8. **Not on the leaderboard.** A room's host could forge the result, and a score shared with
    colleagues is not comparable with a solo one; the result screen says so, as it does for AI
    rounds. Within a workspace, a member can also forge broadcasts (a fake `strike`, a fake
    host); nothing is stored, so that is accepted.
-9. **«Ігри», not only «Гвіздки».** Every lobby room and message carries `game: 'nails'`, so the
-   next game uses the same lobby and channels. No game registry is built ahead of a second game.
+9. **«Ігри», not only «Гвіздки».** A lobby room carries `game: 'nails'`, and the round's messages
+   ride the broadcast event `nails`, so the next game uses the same lobby and channels with its
+   own event. No game registry is built ahead of a second game.
 
 ## Changes
 
 - **migration `20261123090000_lounge_realtime.sql`:** `public.lounge_topic_workspace(text)` →
   `uuid` (null when the topic is not `lounge:<uuid>` or `lounge:<uuid>:room:<id>`); `select` and
-  `insert` policies on `realtime.messages` for `authenticated`. Only adds; nothing older reads it.
-- **cloud, `lounge.ts`:** `joinLobby(client, workspaceId, me, handlers)` (presence of windows and
-  waiting rooms; `track(room | null)`, `leave()`), `joinRoom(client, workspaceId, roomId, me,
-  handlers)` (`send`, presence, `leave()`), both `private: true`, presence keyed per window,
-  channel state reported like `subscribeTasks`.
+  `insert` policies on `realtime.messages` for `authenticated`. Only adds; nothing older uses
+  private channels.
+- **cloud, `lounge.ts`:** `joinLoungeLobby(client, workspaceId, me, handlers)` (`present(room |
+  null | undefined)`, `leave()`), `joinLoungeRoom(client, workspaceId, roomId, me, handlers)`
+  (`send`, `leave()`), both `private: true`, presence keyed per window and paced by
+  `PRESENCE_MIN_GAP_MS`; `loungeTopic`, `loungeRoomTopic`; types `LoungeIdentity`,
+  `LoungeWindow`, `LoungeRoomInfo`, `LoungeMember`, `LoungeChannelState`.
 - **ui:**
-  - `lib/nail-game-net.ts` (new, pure): the message types, the host's intake of guests' strikes,
-    the event batches and snapshots, the guest's mirror (`applyBatch`, `applySnapshot`).
-  - `lib/nail-game.ts`: the room's fixed field; nothing else in the rules changes.
-  - `stores/lounge.ts` (new): the lobby and the current room for the selected workspace.
-  - `NailGameOverlay.vue`: the lobby block, the room's waiting screen, host / guest play, the
-    scaled board, pause and cancel banners, the result without the leaderboard; `MainLayout.vue`:
-    the header dot.
+  - `lib/nail-game-net.ts` (new, pure): `ROOM_FIELD`, `LOUNGE_MAX_PLAYERS`, the message types,
+    `createHost` / `hostSwing` / `hostOutgoing` / `hostSnapshot`, `readGuestMsg` /
+    `readHostMsg`, the guest's mirror (`createMirror`, `applyHost`, `tickMirror`,
+    `hostSilent`). `lib/nail-game.ts` is unchanged: a room passes `ROOM_FIELD` to `createRound`.
+  - `stores/lounge.ts` (new): the lobby and the current room for the selected workspace, the
+    pings, the host's lobby line.
+  - `components/nail-game/LoungeLobby.vue`, `LoungeRoomPanel.vue` (new); `NailGameOverlay.vue`:
+    the lobby block, the room's waiting screen, host / guest play, the scaled board, the
+    colleagues' hammers, the pause banner, the result without the leaderboard;
+    `MainLayout.vue`: the header dot.
   - i18n `nailGame.lounge.*` in `uk` / `en`.
 - **README:** «Break game («Кімната відпочинку»)» gets «Playing with colleagues»; the migration
   is listed under «Applying a migration to the team's project».
 
-## Verification plan
+## Verification
 
-- `@kermanych/ui` (`vitest run --maxWorkers=4`): `test/nail-game-net.spec.ts` — a guest's mirror
-  equals the host's round after a stream of batches, and after a lost batch once the next snapshot
-  lands; a strike on a driven nail counts as a miss; points go to the finishing blow across
-  players; a host pause stops the guest's clock; a leaving guest keeps their score.
-  `vue-tsc --noEmit`, `test/i18n-completeness.spec.ts`.
-- `@kermanych/cloud` against a local stack (`supabase start`, the three `SUPABASE_TEST_*`
-  variables): a member joins the lobby and a room, sees presence and receives broadcasts; a
-  non-member's private join fails; a malformed topic grants nothing; a public channel with the
-  same topic receives nothing.
-- **A scripted room** on the local stack: a host and two guests (the real `nail-game-net` and
-  `lounge.ts`) play one round; the guests' mirrors end equal to the host's tally. The script
-  counts the messages sent per second.
-- **Live, on screen:** needs the migration pushed to the team's project and a second window
-  (the operator's own browser on the preview URL, any account in the same workspace).
-- **Assumption to measure:** the project's Realtime message quota. Estimate for 6 players: the
-  host ≤ 22 messages/s, each guest ≤ ~5 swings/s, ≈ 47 sends/s, each delivered to 6 windows. The
-  scripted room gives the real count; it is compared with the plan's limit in the Supabase
-  dashboard before shipping.
+Run on 2026-11-23:
+
+- `@kermanych/ui`: 1112 tests pass (`vitest run --maxWorkers=4`). `test/nail-game-net.spec.ts`
+  (6, new): a guest's mirror equals the host's board after every batch of a whole contested
+  round and ends on the same tally; a lost batch is mended by the next snapshot within 500 ms; a
+  blow on a nail someone else drove in first is a miss and the points go to the finishing blow; a
+  paused or silent host stops the guest's clock and an older message is dropped; a guest who
+  left keeps their score; the host applies only a well-formed blow from a guest seat.
+  `vue-tsc --noEmit` is clean; `test/i18n-completeness.spec.ts` passes.
+- `@kermanych/cloud` against a local stack (`supabase start`, the migration applied, the three
+  `SUPABASE_TEST_*` variables): `test/rls.spec.ts` 79 pass, «lounge realtime» (4, new) — a
+  member sees the lobby and the room its host announces, an outsider's join gets
+  `CHANNEL_ERROR`; a room's broadcast reaches its member while an anonymous public channel of
+  the same topic hears nothing; a private topic outside the lounge's shape is refused; a burst
+  of 8 presence changes keeps the lobby channel open and ends on the latest state. The last one
+  fails with `PRESENCE_MIN_GAP_MS = 0`.
+- **A scripted room** on the local stack (a throwaway vitest, the real `lounge.ts` and
+  `nail-game-net.ts`, three signed-in users): 61 s, both guests' mirrors ended with the host's
+  tally; 1439 sends, 23.6 per second on average and 27 at most for 3 players (each guest
+  swinging 5 times a second); a guest's clock ran 3 ms behind the host's at p50, 8 ms at p95.
+- **On screen** (the ui dev server and a standalone api against the local stack, signed in as
+  one user, a scripted colleague as the other): the header button showed the dot for her waiting
+  room; «Колеги онлайн» listed her and «Кімната: Марта Колега · гравців: 1 з 6 · чекає на
+  гравців»; «Приєднатися» opened the room's screen with her as host. As host, «Ваша кімната»
+  showed her ping (2 ms), «Почати раунд» started the countdown on both sides; her hammer with
+  its name tag struck on the scaled board and her nails were ringed in her colour; the result
+  ranked «Марта Колега 77» over «Ви 25» with «Раунд із колегами не потрапляє до лідерів», the
+  same tally her window ended with. As guest, the board followed hers to the end (28 : 16 on
+  both sides). When she left, the lounge went back to the start screen with «Хост вийшов, тож
+  раунд скасовано» and the dot went out. The first attempt found the presence limit above.
+- Not verified:
+  - against the team's project: the migration is not pushed yet (the operator pushes it);
+  - the pause banner when the host's window is hidden, and a guest leaving mid-round on screen
+    (both covered by the protocol tests only);
+  - more than 3 players, and the 6-player cap and «Кімната заповнена» on screen;
+  - the project's Realtime message quota: measured 23.6 sends/s for 3 players; 6 players should
+    reach ~47/s, to compare with the plan's limit in the Supabase dashboard;
+  - the desktop build, the light theme and the `en` texts on screen.
 
 ## Documentation impact
 
 `kermanych/README.md`: «Break game («Кімната відпочинку»)» — playing with colleagues (who can,
-the lobby, the host's role, pause / cancel, not saved); the migration note under «Applying a
-migration to the team's project».
+the lobby, the host's role, pause / cancel, not saved, the presence limit); the migration note
+under «Applying a migration to the team's project».

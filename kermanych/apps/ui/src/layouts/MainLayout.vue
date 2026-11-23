@@ -203,14 +203,17 @@
           @click="ompCheck.recheck()"
         ><span aria-hidden="true">⚠</span> {{ t('common.nav.aiLoginRequired') }}</button>
         <!-- «Кімната відпочинку», a one-minute break game (docs/specs/2026-11-18-nail-hammer-minigame.md):
-             a labelled button rather than a bare icon, so the break is found without hovering. -->
+             a labelled button rather than a bare icon, so the break is found without hovering. The
+             dot: a colleague's room waits for players (docs/specs/2026-11-23-lounge-multiplayer.md,
+             decision 5). -->
         <button
           type="button"
           class="shell__break mono"
           :class="{ 'shell__break--on': nailGame.open }"
           :aria-pressed="nailGame.open"
+          :title="lounge.waiting ? t('nailGame.lounge.waitingDot') : undefined"
           @click="nailGame.show()"
-        >{{ t('nailGame.open') }}</button>
+        >{{ t('nailGame.open') }}<i v-if="lounge.waiting" class="shell__break-dot" :aria-label="t('nailGame.lounge.waitingDot')" /></button>
         <!-- «Надіслати відгук» (docs/specs/2026-11-13-feedback-form.md): always on screen, so a
              bug can be reported from the screen it happened on. -->
         <KIconButton :title="t('feedback.open')" :active="feedback.open" @click="feedback.show()"><KIcon name="feedback" /></KIconButton>
@@ -669,6 +672,7 @@ import FeedbackDialog from 'components/feedback/FeedbackDialog.vue';
 import { useFeedback } from 'stores/feedback';
 import NailGameOverlay from 'components/nail-game/NailGameOverlay.vue';
 import { useNailGame } from 'stores/nail-game';
+import { useLounge } from 'stores/lounge';
 
 // The Kermanych app shell (design-system section 07): project rail, brand header, page
 // container, fleet status bar. Two stores back it — `store` (useOrchestrator) owns the LOCAL
@@ -706,6 +710,8 @@ const projectDocs = useProjectDocs();
 const onb = useOnboarding();
 const feedback = useFeedback();
 const nailGame = useNailGame();
+// Its lobby is joined with the shell, so the dot shows while the game is closed.
+const lounge = useLounge();
 // Created with the shell, before the socket connects: it listens for the first `snapshot` to
 // read «Посіпака»'s state, and for every `minion_update` after it (a pause is announced from any
 // screen, so the store cannot wait for the map or «ШІ-команда» to be opened). The sidebar marks
@@ -2349,6 +2355,14 @@ const pullHint = computed(() => {
 .shell__break--on {
   border-color: var(--k-accent);
   color: var(--k-accent);
+}
+
+.shell__break-dot {
+  width: 7px;
+  height: 7px;
+  margin-left: 6px;
+  border-radius: 50%;
+  background: var(--k-accent);
 }
 
 // The sign-out pill: danger-framed so it reads as a blocker next to the quiet icon cluster,
