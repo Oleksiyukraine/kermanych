@@ -75,9 +75,11 @@ import { AnalyticsService } from "./analytics/analytics.service";
 import { StartupGcService } from "./gc/startup-gc.service";
 import { GitSetupService } from "./git/git-setup.service";
 import { GitController } from "./http/git.controller";
+import { PrLoopController } from "./http/pr-loop.controller";
+import { PrLoopService } from "./pr-loop/pr-loop.service";
 
 @Module({
-  controllers: [AuthController, ProjectsController, SessionsController, FsController, UsageController, CloudController, SkillsController, SkillImportController, McpController, ManagementController, ManagementMcpController, CukController, ModelsController, JiraController, LinearController, PlaneController, SlackController, AccountController, DocsController, NativeController, BrowserMcpController, MachineController, MinionController, TesterController, VoiceController, DeviceController, SchedulesController, AnalyticsController, GitController, NailGameController],
+  controllers: [AuthController, ProjectsController, SessionsController, FsController, UsageController, CloudController, SkillsController, SkillImportController, McpController, ManagementController, ManagementMcpController, CukController, ModelsController, JiraController, LinearController, PlaneController, SlackController, AccountController, DocsController, NativeController, BrowserMcpController, MachineController, MinionController, TesterController, VoiceController, DeviceController, SchedulesController, AnalyticsController, GitController, NailGameController, PrLoopController],
   providers: [
     RegistryService, WorktreeService, SupervisorService, PreviewService, EnvFileService, EventsGateway, McpService,
     UsageService,
@@ -189,6 +191,10 @@ import { GitController } from "./http/git.controller";
     // (launchScheduled, scheduleRunEnd$), a run without a project on its own chat pool. The
     // supervisor never knows it; its events ride the supervisor's `events$` to the socket.
     ScheduleService,
+    // «Петля після ПР» (docs/specs/2026-11-23-pr-feedback-loop.md): the poll of the watched
+    // sessions' pull requests and the rounds it hands to their agents (supervisor.sendLoopFeedback,
+    // operatorPrompt$). The supervisor never knows it; its `pr_loop_update` rides `events$`.
+    PrLoopService,
     // «Аналітика» (docs/specs/2026-11-07-developer-analytics.md): the activity spans off the
     // supervisor's `events$` and the one-time history import through NativeSessionService's file
     // resolver and parsers. A pure subscriber like CloudSyncService; nothing depends back.

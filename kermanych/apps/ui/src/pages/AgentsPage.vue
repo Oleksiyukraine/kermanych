@@ -173,6 +173,8 @@
               :draft="store.selectedSessionId !== item.session.id && hasDraft(sessionDraftKey(item.session.id))"
               :findings="item.session.openFindings ?? 0"
               :pending="isSessionPending(item.session.id) || deleteAction.busyFor(item.session.id)"
+              :session="item.session"
+              :loop="prLoop.states[item.session.id]"
               :remove-title="t('agents.board.removeStranded', { name: item.session.name })"
               @click="onRowClick(item.session)"
               @remove="onDeleteStranded(item.session)"
@@ -466,6 +468,24 @@
             </template>
           </template>
         </KTabs>
+        <!-- The status line, full (docs/specs/2026-11-23-pr-feedback-loop.md, decision 13): under
+             the tab row, the width of the pane, on every tab. Its buttons run the same actions as
+             the header's, the banners' and the composer's. -->
+        <KStatusLine
+          :session="selectedSession"
+          :loop="prLoop.states[selectedSession.id]"
+          :loading="lineLoading"
+          :blocked="selectedBlocked"
+          @run-now="onRunNow(selectedSession)"
+          @restart="onRestart"
+          @answer="onLineAnswer"
+          @resume="onLineResume"
+          @sign-in="ompCheck.recheck()"
+          @resolve="onLineResolve"
+          @loop-resume="onLoopResume"
+          @loop-send="onLoopSend"
+          @pass="onLoopPass"
+        />
         <!-- Лог, and — with «Поруч із логом» on (stores/browser.ts `split`) — the session browser
              beside it, behind its own seam. The browser half is mounted only while this tab is
              open, for the same parking reason as the Браузер tab below. -->
@@ -1476,6 +1496,10 @@ import QaRunButton from 'components/agents/QaRunButton.vue';
 import QaVerdict from 'components/agents/QaVerdict.vue';
 import KSpinner from 'components/kit/KSpinner.vue';
 import { runningTesterOf } from '../lib/tester';
+import KStatusLine from 'components/kit/KStatusLine.vue';
+import type { StatusLineLoading } from '../lib/status-line';
+import { usePrLoop } from 'stores/pr-loop';
+import { useOmpCheck } from 'stores/omp-check';
 import { useSessionBrowser } from 'stores/browser';
 import { useSendPicks } from '../composables/useSendPicks';
 import { historyLoadFor } from '../lib/open-session-history';
@@ -1498,6 +1522,8 @@ import { useOnboarding } from 'stores/onboarding';
 // in scope — one project, or every project of a workspace — plus the full panel for the
 // selected session and the new-agent launcher. All mutations go through the Pinia store.
 const store = useOrchestrator();
+const prLoop = usePrLoop();
+const ompCheck = useOmpCheck();
 const { t } = useI18n();
 // Sessions waiting for the server to report an action's result (stopped, deleted, forked…).
 const pending = usePending();
@@ -3709,6 +3735,71 @@ const runNowAction = useAsyncAction((s: Session) => store.runSessionNow(s.id));
 async function onRunNow(s: Session): Promise<void> {
   await runNowAction.run(s);
 }
+
+// ── The status line (components/kit/KStatusLine.vue) ─────────────────────────────────────
+// Every button runs an action this page already has: «Запустити зараз» and «Перезапустити»
+// are the header's and the stall banner's; «Відновити» / «Продовжити» wake the session as the
+// composer's ↻ does (a native one as its idle pane's «Відновити»); «Розвʼязати» is the finish
+// sheet's; «Увійти» re-checks the sign-in as the top bar's pill does. Only the loop's own are new.
+async function onLineResume(): Promise<void> {
+  const s = selectedSession.value;
+  if (!s) return;
+  if (s.native) await onResumeNative(s);
+  else await onRefreshChat();
+}
+
+// «Відповісти»: the answer goes where the Лог takes it — the decision block when the agent asked
+// through one, else the composer; a native session's answer is typed into its terminal.
+function onLineAnswer(): void {
+  const s = selectedSession.value;
+  if (!s) return;
+  detailTab.value = 'log';
+  void nextTick(() => {
+    const host = panelRef.value?.dictationHost;
+    if (s.native) logTermRef.value?.focus();
+    else (host?.request() ? host.blockField() : host?.field())?.focus();
+  });
+}
+
+// The agent resolves the conflict in the background; the line spins until the status moves.
+const resolveAction = useAsyncAction(async (s: Session) => {
+  await pendingWhile(s.id, () => findSession(s.id)?.status !== 'conflict', () => store.resolveConflict(s.id));
+});
+async function onLineResolve(): Promise<void> {
+  const s = selectedSession.value;
+  if (s && !sessionBlocked(s)) await resolveAction.run(s);
+}
+
+// «Петля після ПР»: «Продовжити петлю», «Передати агенту», and «Передати» on one comment from an
+// author without access (keyed, so one row's spinner leaves the others alone).
+const loopResumeAction = useAsyncAction((s: Session) => prLoop.resume(s.id));
+const loopSendAction = useAsyncAction((s: Session) => prLoop.send(s.id));
+const loopPassAction = useKeyedAction((key: string, s: Session) => prLoop.send(s.id, [key]));
+async function onLoopResume(): Promise<void> {
+  const s = selectedSession.value;
+  if (s) await loopResumeAction.run(s);
+}
+async function onLoopSend(): Promise<void> {
+  const s = selectedSession.value;
+  if (s) await loopSendAction.run(s);
+}
+async function onLoopPass(key: string): Promise<void> {
+  const s = selectedSession.value;
+  if (s) await loopPassAction.run(key, s);
+}
+
+const lineLoading = computed<StatusLineLoading>(() => {
+  const s = selectedSession.value;
+  return {
+    runNow: runNowAction.busy.value,
+    restart: restartAction.busy.value || selectedPending.value,
+    resume: resumeNativeAction.busy.value || (!!s && refreshingId.value === s.id),
+    resolve: resolveAction.busy.value,
+    loopResume: loopResumeAction.busy.value,
+    loopSend: loopSendAction.busy.value,
+    pass: (s ? prLoop.states[s.id]?.review.untrusted ?? [] : []).filter((c) => loopPassAction.busyFor(c.key)).map((c) => c.key),
+  };
+});
 
 // Physical delete (archive teardown + removal): stops the omp process, removes the
 // worktree/branch and the registry row, cascading to child branches. Works on any

@@ -71,6 +71,9 @@
           <KIcon name="coins" />
         </span>
       </div>
+      <!-- The status line, compact (docs/specs/2026-11-23-pr-feedback-loop.md, decision 14): only
+           for a session card, never a backlog card — it needs the session itself. -->
+      <KStatusLine v-if="session" variant="compact" :session="session" :loop="loop" />
     </button>
 
     <!-- Remove — revealed on hover, and a SIBLING of the card rather than a child: the card
@@ -92,7 +95,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue';
 import { useI18n } from 'vue-i18n';
-import type { SessionStatus, Usage } from '@kermanych/core';
+import type { PrLoopState, Session, SessionStatus, Usage } from '@kermanych/core';
 import KStatusDot from './KStatusDot.vue';
 import KHarnessMark from './KHarnessMark.vue';
 import KAnalysisMark from './KAnalysisMark.vue';
@@ -102,6 +105,7 @@ import KDecisionMark from './KDecisionMark.vue';
 import KNotNeededMark from './KNotNeededMark.vue';
 import KSpinner from './KSpinner.vue';
 import KIcon from './KIcon.vue';
+import KStatusLine from './KStatusLine.vue';
 import { tokens, usageTokens, usd } from '../../lib/format';
 import type { LaunchMode } from '../../lib/native-session';
 
@@ -188,6 +192,10 @@ const props = withDefaults(
     draft?: boolean;
     findings?: number;
     pending?: boolean | undefined;
+    // The session behind the card, for its compact status line (KStatusLine); a backlog card has none.
+    session?: Session | undefined;
+    // The session's «Петля після ПР» state (stores/pr-loop.ts), for that line.
+    loop?: PrLoopState | null | undefined;
   }>(),
   { selected: false, fork: false, forkContinues: false, removable: false, browsing: false, draft: false, findings: 0, pending: false },
 );

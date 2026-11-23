@@ -150,6 +150,17 @@ describe('isYourTurnEvent', () => {
     const fork = session({ id: 'f', status: 'done', kind: 'discussion', parentSessionId: 'p' });
     expect(isYourTurnEvent('thinking', fork, (id) => (id === 'p' ? merged : undefined))).toBe(false);
   });
+
+  it('ignores a settle of a turn the PR loop started, but not a question, failure or conflict in it', () => {
+    for (const status of ['in_review', 'done'] as const) {
+      expect(isYourTurnEvent('tool', session({ id: 'a', status, loopTurn: true }), noParent)).toBe(false);
+      // The operator's own turn notifies as before.
+      expect(isYourTurnEvent('tool', session({ id: 'a', status }), noParent)).toBe(true);
+    }
+    for (const status of ['waiting_input', 'error', 'conflict'] as const) {
+      expect(isYourTurnEvent('tool', session({ id: 'a', status, loopTurn: true }), noParent)).toBe(true);
+    }
+  });
 });
 
 describe('attentionOutside', () => {

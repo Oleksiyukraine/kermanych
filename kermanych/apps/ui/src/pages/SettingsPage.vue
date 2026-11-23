@@ -268,6 +268,34 @@
               <template #env><span class="mono">.env</span></template>
             </i18n-t>
           </div>
+
+          <div class="set__rule"></div>
+
+          <!-- «Петля після ПР» (docs/specs/2026-11-23-pr-feedback-loop.md, decision 2): machine-local
+               like «Посіпака» — spend and provider limits are this machine's — so it is read from
+               the local api, never the cloud, and each pick saves on change. -->
+          <div class="set__group">
+            <span class="set__label">{{ t('prLoop.settings.label') }} <span class="set__local">· {{ t('prLoop.settings.local') }}</span></span>
+            <KSkeleton v-if="prLoopPhase === 'skeleton'" variant="lines" :rows="2" />
+            <p v-else-if="prLoopError" class="set__note" role="alert">{{ prLoopError }}</p>
+            <template v-else-if="prLoopPhase === 'ready'">
+              <KSelect
+                :label="t('prLoop.settings.mode')"
+                :model-value="prLoopModePick.value"
+                :options="PR_LOOP_MODE_OPTIONS"
+                :loading="prLoopModePick.pending"
+                @update:model-value="prLoopModePick.set"
+              />
+              <KSelect
+                :label="t('prLoop.settings.rounds')"
+                :model-value="prLoopRoundsPick.value"
+                :options="PR_LOOP_ROUND_OPTIONS"
+                :loading="prLoopRoundsPick.pending"
+                @update:model-value="prLoopRoundsPick.set"
+              />
+            </template>
+            <p class="set__note">{{ t('prLoop.settings.note') }}</p>
+          </div>
           <p v-if="cloudLocked" class="set__note">{{ noCloudRowHint }}</p>
         </div>
 
@@ -1038,7 +1066,7 @@ import { computed, effectScope, onBeforeUnmount, onMounted, reactive, ref, watch
 import { onBeforeRouteLeave, useRoute, useRouter } from 'vue-router';
 import { useI18n } from 'vue-i18n';
 import { confirmAction } from '../lib/confirm';
-import type { EnvFileView, ThinkingLevel, AgentLanguage, DocsPolicyKey, DocsRule, MachineResources, NativeSettings, Platform, SkillImprovementLevel } from '@kermanych/core';
+import type { EnvFileView, ThinkingLevel, AgentLanguage, DocsPolicyKey, DocsRule, MachineResources, NativeSettings, Platform, PrLoopSettings, SkillImprovementLevel } from '@kermanych/core';
 import {
   AGENT_LANGUAGES,
   AGENT_LANGUAGE_LABELS,
@@ -1047,13 +1075,18 @@ import {
   DOCS_LAYOUT,
   DOCS_RULES,
   SKILL_IMPROVEMENT_LEVELS,
+  PR_LOOP_DEFAULTS,
+  PR_LOOP_MAX_ROUNDS_MAX,
+  PR_LOOP_MAX_ROUNDS_MIN,
   VOICE_IDS,
   isAgentProvider,
   isSkillImprovementLevel,
+  isPrLoopMode,
 } from '@kermanych/core';
 import type { AssignableRole, WorkspaceMember, WorkspaceRole } from '@kermanych/cloud';
 import type { KTheme } from '@kermanych/tokens';
 import { useOrchestrator } from 'stores/orchestrator';
+import { usePrLoop } from 'stores/pr-loop';
 import { useProjects } from 'stores/projects';
 import { modelOptions, effortOptions } from '../lib/models';
 import { EFFORT_OPTIONS } from '../lib/effort';
@@ -1951,6 +1984,57 @@ watch(
   { immediate: true },
 );
 
+// «Петля після ПР» per project, on this machine only: read on entering «Git». Held with the
+// project it was read for, so a project switch shows the skeleton at once and a late reply for
+// the previous project is dropped.
+const prLoopStore = usePrLoop();
+const prLoopSettings = ref<{ projectId: string; value: PrLoopSettings } | null>(null);
+const prLoopError = ref('');
+const prLoopPhase = useLoadPhase(() => prLoopSettings.value?.projectId !== projectId.value && !prLoopError.value);
+const PR_LOOP_MODE_OPTIONS = computed<readonly KSelectOption[]>(() => [
+  { value: 'auto', label: t('prLoop.settings.modeAuto') },
+  { value: 'manual', label: t('prLoop.settings.modeManual') },
+]);
+const PR_LOOP_ROUND_OPTIONS: readonly KSelectOption[] = Array.from(
+  { length: PR_LOOP_MAX_ROUNDS_MAX - PR_LOOP_MAX_ROUNDS_MIN + 1 },
+  (_, i) => String(PR_LOOP_MAX_ROUNDS_MIN + i),
+).map((n) => ({ value: n, label: n }));
+async function savePrLoop(patch: Partial<PrLoopSettings>): Promise<void> {
+  const id = projectId.value;
+  if (!id) return;
+  const value = await prLoopStore.saveSettings(id, patch);
+  if (projectId.value === id) prLoopSettings.value = { projectId: id, value };
+}
+const prLoopModePick = reactive(
+  useOptimisticValue<string>(
+    () => prLoopSettings.value?.value.mode ?? PR_LOOP_DEFAULTS.mode,
+    async (next) => {
+      if (isPrLoopMode(next)) await savePrLoop({ mode: next });
+    },
+  ),
+);
+const prLoopRoundsPick = reactive(
+  useOptimisticValue<string>(
+    () => String(prLoopSettings.value?.value.maxRounds ?? PR_LOOP_DEFAULTS.maxRounds),
+    (next) => savePrLoop({ maxRounds: Number(next) }),
+  ),
+);
+watch(
+  [() => section.value.key, projectId],
+  async ([key, id]) => {
+    if (key !== 'project-git' || !id) return;
+    prLoopError.value = '';
+    if (prLoopSettings.value?.projectId !== id) prLoopSettings.value = null;
+    try {
+      const value = await prLoopStore.settings(id);
+      if (projectId.value === id) prLoopSettings.value = { projectId: id, value };
+    } catch (e) {
+      if (projectId.value === id) prLoopError.value = errorText(e);
+    }
+  },
+  { immediate: true },
+);
+
 // Endonym labels come from core so the picker reads the same in every app locale. The list is
 // the frozen AGENT_LANGUAGES tuple; there is no '' row, so a pick always sets a real language.
 const LANGUAGE_OPTIONS = computed<readonly KSelectOption[]>(() =>
@@ -2545,6 +2629,12 @@ const badges = computed<Record<string, number | undefined>>(() => ({
   font-family: var(--k-font-ui);
   font-size: var(--k-fs-base);
   color: var(--k-text);
+}
+
+// «лише на цій машині» beside a label: a setting the local api keeps, never synced.
+.set__local {
+  font-size: var(--k-fs-sm);
+  color: var(--k-muted);
 }
 
 .set__note {

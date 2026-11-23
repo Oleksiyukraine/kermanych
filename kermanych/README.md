@@ -270,7 +270,8 @@ on its first step opens the old short form instead (name, git remote, platform):
 the cloud that this machine does not connect.
 
 1. **Доступ до git.** `GIT_TOKEN`, with a link to create a fine-grained GitHub token (Contents
-   and Pull requests read/write, Metadata read). «Використати токен з проєкту X» copies the
+   and Pull requests read/write, Metadata read; for the PR feedback loop also Checks, Commit
+   statuses and Actions read). «Використати токен з проєкту X» copies the
    token of another project connected on this machine. «Перевірити» asks GitHub whose token it
    is. «Пропустити» goes on without one: cloning a public repository or picking an existing
    folder works, but the agents cannot push or open pull requests until a token is set.
@@ -1893,7 +1894,7 @@ developer's machine. The direction is always task → session.
    which drive the card through «в роботі» mid-turn. «Закоміти» has the agent commit and push
    that follow-up work onto the same branch, updating the open PR.
 
-   **Merged PR.** Kermanych does not watch a PR on GitHub. When you select a session in
+   **Merged PR.** The merge itself is not watched in the background. When you select a session in
    «Агенти» that opened a PR and is not running a turn, it asks GitHub about that PR: the URL
    the agent replied with, or, for a session from before the URL was kept or when that PR was
    not merged, the closed PRs of the session's branch on `origin` (targeting its base, opened
@@ -1906,6 +1907,38 @@ developer's machine. The direction is always task → session.
    in «Завершені». The popup warns when uncommitted changes or commits made after the PR's
    last push would stay only on the branch. «Не зараз» closes it until you select the session
    again. (Spec: `docs/specs/2026-10-26-pr-merged-close-prompt.md`.)
+
+   **PR feedback loop.** While a session's GitHub PR is open, the local API polls it every
+   2 minutes (conditional requests, so an unchanged PR does not spend the GitHub API limit): the
+   CI of the PR's head commit (check runs and commit statuses) and its review comments. It needs
+   the project's `GIT_TOKEN`; without one the loop says so and does nothing. A round is one
+   message to the agent with the failed checks and every new comment: it goes once every check
+   of the head has finished (a check running over 60 minutes counts as hung and holds nothing),
+   no new comment came for 5 minutes, and the session is not running a turn. The agent fixes,
+   pushes to the same branch, reads CI logs itself with `gh`, and replies on GitHub in each
+   comment's thread, marking its replies with `<!-- kermanych -->` so the loop never feeds them
+   back; it does not resolve threads. Only comments from people with write access (`OWNER`,
+   `MEMBER`, `COLLABORATOR`) and GitHub App bots reach the agent; others are shown with
+   «Передати» for you to pass by hand. Comments and CI results already there when the loop first
+   sees a PR are not sent. After 3 rounds in a row without you the loop pauses and notifies you;
+   writing to the session, passing feedback by hand or «Продовжити петлю» resets the count.
+   Settings → project → «Git» → «Петля після ПР» sets, on this machine only, the mode («авто»,
+   the default, or «вручну», where nothing is sent until you press «Передати агенту») and the
+   round limit (1–10). A loop round does not notify you when it settles on «На ревʼю»; you are
+   notified when the loop pauses, the PR is ready to merge (CI green, approved, no conflicts),
+   manual mode has something to pass, or CI hangs. A merged or closed PR ends the loop; the
+   merge prompt above is unchanged. GitHub only. (Spec:
+   `docs/specs/2026-11-23-pr-feedback-loop.md`.)
+
+   **Status line.** Under the session's tabs in «Агенти», on every tab, one line says what the
+   session is doing — queued for a slot, thinking, running a tool, waiting for your answer,
+   error, conflict, stopped, done, on review, finished — with how long, and the action the
+   status calls for (run now, restart a stalled turn, answer, sign in, resolve, continue). On
+   review with a loop it expands into a collapsible summary: CI, review (decision, new comments,
+   comments held back), conflicts, and the loop (mode, round, what it waits for). The session
+   cards in the list carry a compact version of the same line. The older status displays (the
+   dot, the header's status word, the live lane over the composer, the error and stall banners)
+   are still there until the status line replaces them.
 6. **Reports flow back** — after every turn and on «Завершити» the local API also writes onto
    the card what the session's «Документація» and «Сесія» tabs show: the documentation it read
    and the documentation it created or changed (repository paths with +/− counts), and the

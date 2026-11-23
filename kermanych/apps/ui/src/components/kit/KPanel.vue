@@ -263,6 +263,7 @@ import { followAfterScroll } from '../../lib/log-follow';
 import { slotWaitLabel } from '../../lib/slot-wait';
 import type { OutgoingMessage } from '../../lib/outgoing';
 import { needsSignIn } from '../../lib/session-auth';
+import { STALL_MS, silentMs as sessionSilentMs } from '../../lib/status-line';
 import KVoiceBar from './KVoiceBar.vue';
 import type { VoiceBarState } from '../../lib/voice';
 import { sessionDraftKey, useDraft } from '../../lib/drafts';
@@ -658,13 +659,10 @@ const liveActivity = computed(() => {
 });
 
 // Stall detection: a running turn that has emitted no omp event for a while is likely
-// wedged (e.g. a provider request hung with no internal timeout). lastEventAt is bumped on
-// every omp event but NOT on user sends, so it isolates real agent progress from nudges.
+// wedged (e.g. a provider request hung with no internal timeout). The threshold and the
+// silence are shared with the status line's «Перезапустити» (lib/status-line.ts).
 const now = useNow(5000);
-const STALL_MS = 60_000;
-const silentMs = computed(() =>
-  running.value && props.session.lastEventAt ? Math.max(0, now.value - props.session.lastEventAt) : 0,
-);
+const silentMs = computed(() => sessionSilentMs(props.session, now.value));
 const stalled = computed(() => silentMs.value >= STALL_MS);
 // NOT the shared `dur()`, and deliberately so: this label only renders once `stalled` is
 // true, so a sub-second value is unreachable and a floor marker would be dead code, and it
