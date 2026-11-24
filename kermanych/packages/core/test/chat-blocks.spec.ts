@@ -117,3 +117,18 @@ test("summary counts calls, distinct touched files and cost, and never lists tur
   expect(b.items.every((i) => i.kind !== "entry" || i.entry.kind !== "turn")).toBe(true);
   expect(b.summary).toEqual({ ms: 6_000, calls: 4, files: 2, thinkMs: 0, cost: 0.25 });
 });
+
+test("a burst of «Tool commands» notices is one row; anything between them starts a new one", () => {
+  const mount = (id: string, names: string): TranscriptEntry =>
+    ({ kind: "notice", id, at: 2, level: "info", text: names, code: "tool_commands_added", params: { names, count: 1 } });
+  const blocks = buildChatBlocks([
+    user("u1", 0, "x"),
+    mount("n1", "mcp__a_x"),
+    mount("n2", "mcp__b_y"),
+    { kind: "notice", id: "n3", at: 3, level: "info", text: "інше" },
+    mount("n4", "mcp__c_z"),
+  ]);
+  const items = blocks[0]!.items;
+  expect(items.map((i) => i.kind)).toEqual(["commands", "entry", "commands"]);
+  expect(items[0]).toMatchObject({ kind: "commands", notices: [{ id: "n1" }, { id: "n2" }] });
+});

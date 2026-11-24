@@ -84,6 +84,26 @@ test("notice frames become notice entries instead of vanishing", () => {
   expect(entries[0]).toMatchObject({ kind: "notice", level: "info", text: "context is getting full" });
 });
 
+// omp 19.1's mount line, both halves at once: one coded entry per direction, distinct ids,
+// so the UI can fold each name list behind a one-line summary.
+test("a «Tool commands» notice splits into coded added/removed entries", () => {
+  const { entries } = reduceRpcEvents(
+    [{ type: "notice", level: "info", message: "Tool commands: added mcp__docs_search, mcp__docs_get; removed mcp__old_query" }],
+    { now: at },
+  );
+  expect(entries).toMatchObject([
+    { kind: "notice", level: "info", code: "tool_commands_added", params: { names: "mcp__docs_search, mcp__docs_get", count: 2 } },
+    { kind: "notice", level: "info", code: "tool_commands_removed", params: { names: "mcp__old_query", count: 1 } },
+  ]);
+  expect(entries[0]!.id).not.toBe(entries[1]!.id);
+});
+
+test("a «Tool commands» line omp words differently stays a plain notice", () => {
+  const { entries } = reduceRpcEvents([{ type: "notice", message: "Tool commands: reloaded" }], { now: at });
+  expect(entries).toMatchObject([{ kind: "notice", text: "Tool commands: reloaded" }]);
+  expect(entries[0]).not.toHaveProperty("code");
+});
+
 // How the live service actually drives the reducer: one event per call, with the caller
 // owning the buffers and the start-time map.
 test("start and end frames arriving in separate calls keep the call-time target and the wall time", () => {

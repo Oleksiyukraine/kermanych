@@ -35,6 +35,10 @@
       <div v-if="open" class="k-log__reason-body k-log__markdown" @click="onMarkdownClick" v-html="renderedThinking" />
     </div>
 
+    <!-- tool-commands notice — a lone one (AgentMap renders entries one by one); in the chat
+         `buildChatBlocks` coalesces a burst of them and KRequestBlock renders the row itself -->
+    <KToolCommandsRow v-else-if="commandNotice" :notices="[commandNotice]" :expand-all="expandAll" />
+
     <!-- notice — muted by default; warn and error lift into the accent -->
     <div v-else-if="entry.kind === 'notice'" class="k-log__notice" :class="`k-log__notice--${entry.level}`">
       {{ noticeText }}
@@ -49,6 +53,7 @@ import type { TranscriptEntry } from '@kermanych/core';
 import { useOrchestrator } from 'stores/orchestrator';
 import { localizeNotice } from '../../lib/i18n-coded';
 import { logLinkTarget } from '../../lib/log-links';
+import KToolCommandsRow from './KToolCommandsRow.vue';
 import { renderMarkdown } from '../../lib/markdown';
 import type { ExpandAllCommand } from '../../lib/expand-all';
 import { dur, renderTime } from '../../lib/time';
@@ -66,6 +71,11 @@ const { t, te } = useI18n();
 const noticeText = computed(() =>
   props.entry.kind === 'notice' ? localizeNotice({ t, te }, props.entry) : '',
 );
+
+const commandNotice = computed(() => {
+  const e = props.entry;
+  return e.kind === 'notice' && (e.code === 'tool_commands_added' || e.code === 'tool_commands_removed') ? e : null;
+});
 
 // assistant_text renders as Markdown (headings, lists, code, links). Output is a
 // controlled tag set (html:false), safe for v-html.

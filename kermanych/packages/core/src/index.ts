@@ -383,6 +383,7 @@ export {
   type BlockSummary,
   type ChatBlock,
   type GroupStat,
+  type NoticeEntry,
 } from "./chat-blocks";
 export {
   MANAGEMENT_SECTIONS,
