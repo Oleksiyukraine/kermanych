@@ -1,9 +1,10 @@
 <template>
-  <div class="k-select" :class="{ 'k-select--open': open }">
+  <div class="k-select" :class="{ 'k-select--open': open, 'k-select--inline': inline }">
     <!-- `for` on the button, not a wrapping <label>: a <button> is a labelable element, so
          the association survives the popup moving to <body>, and clicking the caption still
-         opens the list the way clicking a <select>'s label used to. -->
-    <label v-if="label" :id="labelId" :for="triggerId" class="k-select__label">{{ label }}</label>
+         opens the list the way clicking a <select>'s label used to. The inline variant has no
+         room for a caption: its `label` names the control through `aria-label` instead. -->
+    <label v-if="label && !inline" :id="labelId" :for="triggerId" class="k-select__label">{{ label }}</label>
 
     <!-- SEARCHABLE — the trigger is a real text input, so «Модель» can be found by typing
          instead of scrolled through 26 rows. The input stays HERE, inside the component's
@@ -72,7 +73,8 @@
       :aria-expanded="open"
       :aria-controls="listId"
       :aria-activedescendant="activeId"
-      :aria-labelledby="label ? `${labelId} ${triggerId}` : undefined"
+      :aria-labelledby="label && !inline ? `${labelId} ${triggerId}` : undefined"
+      :aria-label="inline ? label : undefined"
       :disabled="off"
       :aria-busy="loading || undefined"
       @click="toggle"
@@ -86,8 +88,10 @@
              measured and never painted, so the control keeps one width for its whole life.
              Pages that cannot afford the widest option pin a measure and get an ellipsis.
              The searchable variant above reserves the same width, for the same reason — and
-             so that filtering a list down to one row cannot resize the field. -->
-        <span class="k-select__sizer" aria-hidden="true">
+             so that filtering a list down to one row cannot resize the field. The inline
+             variant hugs its value instead: it sits inside a host field that absorbs the
+             change, and a token padded to the widest option reads as a gap before its text. -->
+        <span v-if="!inline" class="k-select__sizer" aria-hidden="true">
           <span v-for="(opt, i) in items" :key="i">{{ opt.label }}</span>
         </span>
       </span>
@@ -107,7 +111,8 @@
         :class="{ 'k-select__pop--placed': placed }"
         role="listbox"
         :aria-multiselectable="multiple || undefined"
-        :aria-labelledby="label ? labelId : undefined"
+        :aria-labelledby="label && !inline ? labelId : undefined"
+        :aria-label="inline ? label : undefined"
       >
         <div
           v-for="(opt, i) in visible"
@@ -193,6 +198,11 @@ const props = defineProps<{
   multiple?: boolean;
   values?: readonly string[];
   summary?: string;
+  // A token for the inside of another field, not a field of its own: no frame, no surface, no
+  // caption — `label` becomes the control's accessible name — and sized to the value it holds.
+  // The launcher's «Гілка» box puts the branch prefix here, in front of the slug input, so the
+  // prefix is picked where it is read. Button form only; `searchable` keeps its framed shell.
+  inline?: boolean;
 }>();
 
 const emit = defineEmits<{ 'update:modelValue': [value: string]; 'update:values': [value: string[]] }>();
@@ -731,6 +741,44 @@ onBeforeUnmount(close);
 .k-select__input--open .k-select__caret {
   transform: rotate(180deg);
   opacity: 1;
+}
+
+// ── Inline variant ──────────────────────────────────────────────────────────
+//
+// A token inside a host field (the launcher's «Гілка» box): the host owns the frame, the
+// surface and the focus ring of the whole row, so this trigger is a tinted chip in the accent
+// — the one part of the row that opens a list, told apart from the text around it without a
+// second frame nested in the first. The open and keyboard states outline the chip only.
+.k-select--inline {
+  flex: none;
+}
+
+.k-select--inline .k-select__input {
+  gap: 7px;
+  padding: 3px 7px 3px 8px;
+  font-weight: inherit;
+  color: var(--k-accent);
+  background: color-mix(in srgb, var(--k-accent) 13%, transparent);
+  border-color: transparent;
+  border-radius: var(--k-r-sm);
+  transition: background-color 0.12s, border-color 0.12s, color 0.12s;
+
+  &:hover:not(:disabled),
+  &.k-select__input--open {
+    background: color-mix(in srgb, var(--k-accent) 22%, transparent);
+    border-color: transparent;
+    box-shadow: none;
+  }
+
+  &:focus-visible {
+    border-color: var(--k-accent);
+    box-shadow: none;
+  }
+
+  .k-select__caret {
+    width: 7px;
+    height: 4px;
+  }
 }
 
 // ── The list ────────────────────────────────────────────────────────────────

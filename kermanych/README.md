@@ -1876,8 +1876,9 @@ developer's machine. The direction is always task → session.
    the project's `.worktrees/<branch>`, copies the project's `carryFiles` (`.env` by
    default) into it, and spawns one `omp --mode rpc` child. From here on the session is an
    ordinary local session: it appears on the Агенти board and you drive it there. The branch
-   is named `<prefix>/<slug>`: the prefix is the card's (`feature` by default). The slug is the
-   card's own when its «Гілка» field in the launcher was filled in, run through `slugify`
+   is named `<prefix>/<slug>`: the prefix is the card's (`feature` by default), picked in the
+   launcher from the ▾ chip at the start of the «Гілка» field. The slug is the
+   card's own when the rest of that field was filled in, run through `slugify`
    (lowercase, Latin, `a-z0-9` joined with `-`, at most 40 characters; the launcher's
    hint shows the result when it differs from what was typed), and no model is asked. Left
    blank, the slug is a short English summary of the card's title and description written by

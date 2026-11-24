@@ -499,7 +499,7 @@ export const uk = {
       estimatePlaceholder: 'не оцінено',
       estimateHint: 'необовʼязково; «Аналітика» порівняє її з часом до PR',
       estimateInvalid: 'оцінка — це кількість годин більше нуля, наприклад 1,5',
-      typeLabel: 'Тип',
+      typeLabel: 'Тип гілки',
       worktreeLabel: 'Ізолювати у worktree',
       worktreeDesc: 'Окрема тека, окремий чекаут. Агент не чіпає твій робочий стан.',
       hiddenLabel: 'Приховати з дошки',
