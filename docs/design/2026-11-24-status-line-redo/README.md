@@ -16,14 +16,15 @@ Spec: `docs/specs/2026-11-25-status-line-pipeline.md`.
 
 ## Screens
 
-- Variants — dev-only route `/#/__design/status-line/variants?state=<state>`, files
-  `kermanych/apps/ui/src/pages/design/status-line/` (page + `fixtures.ts`). Deleted after
-  implementation.
+- Variants — the dev-only prototype route `/#/__design/status-line/variants` (page + fixtures under
+  `kermanych/apps/ui/src/pages/design/status-line/`) was deleted once the pipeline shipped; the
+  screenshots below are what is left of it. The implementation: `components/kit/KStatusLine.vue`.
 
 ## States
 
 `working`, `waiting`, `review`, `failed`, `ready` — `screens/variants-<state>@1280.png`. Today's
-screen: `screens/current-in-review@1440.png`.
+screen before the change: `screens/current-in-review@1440.png`. The shipped pipeline:
+`screens/implemented-working@1440.png`, `screens/implemented-narrow@1000.png`.
 
 ## Decisions
 
@@ -39,5 +40,4 @@ See the spec, decisions 2–5.
 
 ## Kit gaps
 
-- A popover anchored to an element (the CI / Ревʼю details) — check the kit for an existing one
-  before adding.
+None — the CI / Ревʼю popover is placed by the existing `composables/useAnchoredMenu.ts`.

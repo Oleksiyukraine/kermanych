@@ -269,7 +269,8 @@
           </div>
 
           <div class="agents__detail-controls">
-            <span class="agents__detail-status mono">{{ harnessLabel }} · {{ statusWord(selectedSession) }}</span>
+            <!-- The harness only: the status is the line under the tabs (KStatusLine). -->
+            <span class="agents__detail-status mono">{{ harnessLabel }}</span>
             <!-- Waiting for an agent slot: one way past the limit for this session only. -->
             <KBtn
               v-if="selectedSession.slotWait"
@@ -468,9 +469,9 @@
             </template>
           </template>
         </KTabs>
-        <!-- The status line, full (docs/specs/2026-11-23-pr-feedback-loop.md, decision 13): under
-             the tab row, the width of the pane, on every tab. Its buttons run the same actions as
-             the header's, the banners' and the composer's. -->
+        <!-- The status line, full (docs/specs/2026-11-25-status-line-pipeline.md): the task's stage
+             pipeline under the tab row, the width of the pane, on every tab — the one place this
+             pane states the status. Its buttons run the same actions as the header's and the composer's. -->
         <KStatusLine
           :session="selectedSession"
           :loop="prLoop.states[selectedSession.id]"
@@ -523,6 +524,7 @@
               ref="panelRef"
               class="agents__panel"
               :bare="true"
+              :status-line="true"
               :session="selectedSession"
               :refreshing="refreshingId === selectedSession.id"
               :models="store.models"
@@ -3763,8 +3765,8 @@ async function onRunNow(s: Session): Promise<void> {
 }
 
 // ── The status line (components/kit/KStatusLine.vue) ─────────────────────────────────────
-// Every button runs an action this page already has: «Запустити зараз» and «Перезапустити»
-// are the header's and the stall banner's; «Відновити» / «Продовжити» wake the session as the
+// Every button runs an action this page already has: «Запустити зараз» is the header's,
+// «Перезапустити» the stall restart KPanel offers elsewhere; «Відновити» / «Продовжити» wake the session as the
 // composer's ↻ does (a native one as its idle pane's «Відновити»); «Розвʼязати» is the finish
 // sheet's; «Увійти» re-checks the sign-in as the top bar's pill does. Only the loop's own are new.
 async function onLineResume(): Promise<void> {

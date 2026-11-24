@@ -46,7 +46,7 @@ Settled with the operator one question at a time on a prototype
    | `waiting_input` | work stage ● `чекає відповіді · 5 хв` | Відповісти |
    | `error` | work stage ✗ `помилка` (full reason in the tooltip) | Відновити / Увійти |
    | `stopped` | work stage ○ `зупинено · 12 хв тому` | Продовжити |
-   | `done` (no PR) | Агент ✓ → **ПР** ○ `можна створювати` | — |
+   | `done` (no PR) | Агент ✓ → **ПР** ● `можна створювати` | — |
    | `conflict` | no PR: Агент ✗; PR open: Злиття ✗ — `конфлікт з <base>` | Розвʼязати |
    | `in_review` | ПР ✓ `#41` → CI → Ревʼю → Злиття from `PrLoopState` (below) | Продовжити петлю / Передати агенту |
    | `merged` | every stage ✓ | — |
@@ -58,30 +58,37 @@ Settled with the operator one question at a time on a prototype
      зміни`; none ● `чекає ревʼю`; the loop's turn running: spinner `агент виправляє · коло N`;
      paused ✗ `петля на паузі`.
    - **Злиття** — ready to merge ● `можна зливати`; `mergeable` conflict ✗ `конфлікт з <base>`;
-     PR closed unmerged ✗ `ПР закрито`; merged ✓.
+     PR closed unmerged ✗ `ПР закрито`; merged ✓ (and Ревʼю ✓ with it).
    - **No loop data** (non-GitHub, no `GIT_TOKEN`, not polled yet): CI and Ревʼю grey `немає даних`,
      the reason in the tooltip.
 
-   Sessions of `kind` other than `agent` (chat, discussion, review) have no branch and no PR: no
-   pipeline; their card keeps the single `● статус` row.
+   Sessions of `kind` other than `agent` (chat, discussion, review) have no branch and no PR: the
+   full line shows only their work stage; their card keeps the single `● статус` row.
 3. **One place per status: the older displays go.**
-   - `KStatusRow` over the composer is deleted.
+   - `KStatusRow` over the composer is gone from «Агенти».
    - The list card's two status rows (`● думає` and the compact line) become one row: the
      pipeline as small dots and the current stage's name and note.
    - The session header shows only the harness (`omp`), not `omp · <status>`.
-   - KPanel's stall banner is deleted: the pipeline shows the silence in red with «Перезапустити».
+   - KPanel's stall banner is gone from «Агенти»: the pipeline shows the silence in red with
+     «Перезапустити».
+   - «Синергія», «Дослідження» and the «Менеджмент» assistant host KPanel without a status line,
+     so they keep `KStatusRow` and the stall banner (KPanel's `statusLine` prop switches both off
+     for a host that shows the line). Found during implementation: deleting them outright would
+     leave those sessions with no live status and no stall restart.
    - Kept: KPanel's error banner (the full error text where it happened in the log) and the log's
      `Думаю…` typing indicator.
    Rejected: dropping the error banner too; dropping only the compact row and `KStatusRow`.
 4. **Details in a popover.** A click on **CI** or **Ревʼю** opens a popover under the stage with
    that stage's rows from the old merge-box: failed checks with links; comments held back
-   («не передано: автор без доступу») each with «Передати»; the loop's mode, round, last send,
-   «Передати агенту» and «Продовжити петлю». Other stages carry a tooltip with the full text.
+   («не передано: автор без доступу») each with «Передати»; the loop's mode, round, last send
+   and phase. «Передати агенту» and «Продовжити петлю» sit on the right of the pipeline, with
+   the other actions. Other stages carry a tooltip with the full text.
    Rejected: a collapsible row under the pipeline (4–5 rows tall on review); tooltips only (loses
    the per-comment «Передати» of the earlier decision 3).
 5. **Narrow pane: stages collapse to their node.** The current stage and any failed one keep the
-   name and note; the others shrink to the circle, name in the tooltip. The pipeline is always one
-   line. Rejected: horizontal scroll; wrapping onto two lines.
+   name and note; the others shrink to the circle, name in the tooltip. When the buttons do not
+   fit beside the pipeline (two loop actions in a narrow pane), they drop to a second row under
+   it. Rejected: horizontal scroll; wrapping the pipeline itself.
 6. **Defaults the operator accepted:**
    - `KStatusLine` is rewritten into the pipeline (full under the tab row, compact dots in the
      card); no second component.
@@ -98,21 +105,33 @@ Settled with the operator one question at a time on a prototype
   unit-tested; `statusLineCollapsed` removed.
 - `apps/ui/src/components/kit/KSessionCard.vue` — one status row: the compact pipeline for agent
   sessions, `● статус` for the rest.
-- `apps/ui/src/components/kit/KPanel.vue` — `KStatusRow` and the stall banner removed;
-  `KStatusRow.vue` deleted.
-- `apps/ui/src/pages/AgentsPage.vue` — header shows the harness only; wiring of the popover
-  actions.
-- i18n `uk` / `en`: stage names and notes; unused `statusLine.*` / `kit.statusRow.*` keys removed.
+- `apps/ui/src/components/kit/KPanel.vue` — `statusLine` prop: no `KStatusRow`, no stall banner.
+- `apps/ui/src/pages/AgentsPage.vue` — header shows the harness only; KPanel gets `statusLine`.
+- `apps/ui/src/pages/KitGalleryPage.vue` — caption of the status-line samples.
+- i18n `uk` / `en`: `statusLine.stage.*`, `statusLine.note.*`; the old `statusLine.*` sentences,
+  `statusLine.compact.*` and the merge-box-only `prLoop.*` keys (`ended`, `ready`, `row.ci` /
+  `row.review` / `row.conflicts`, `mergeable`, `compact`) removed.
+- `apps/ui/test/status-line.spec.ts` — `pipelineOf` per row of decision 2.
 - `kermanych/README.md` — the «Status line» paragraph rewritten.
-- The prototype route `/__design/status-line/variants` and `pages/design/status-line/` are
-  deleted once the implementation is done.
+- The prototype route `/__design/status-line/variants` and `pages/design/status-line/` deleted.
 
 ## Verification
 
-Planned: unit tests for `pipelineOf` (every row of decision 2, the second review round, no loop
-data, non-agent kinds); `vue-tsc` and the UI tests; the live preview at 1280 and at a narrow pane
-for `working`, `waiting`, `error`, `in_review` with a loop, and the card list. Results are written
-here after they run.
+- `pnpm typecheck` (vue-tsc) in `apps/ui`: clean.
+- `vitest run --maxWorkers=4` in `apps/ui`: 109 files, 1133 tests passed, including
+  `test/status-line.spec.ts` (12): queued, working and stalled, waiting / error / stopped, done
+  without a PR, conflict before and after the PR, review with CI running and comments, failed CI
+  with a paused loop, ready to merge, the second review round staying on «Ревʼю», no loop data,
+  merged, non-agent kinds.
+- Live preview (seeded): «Агенти» at 1440 and at 1000 px — one status row per agent card, the
+  header reads `omp` only, no live row over the composer, the pipeline under the tabs; at 1000 px
+  the non-current stages shrink to nodes
+  (`docs/design/2026-11-24-status-line-redo/screens/implemented-*.png`). Kit gallery: every status
+  and loop phase in both variants at a ~400 px column; two loop buttons drop under the pipeline;
+  the «Ревʼю» popover opens with the review decision and the loop row and closes on Esc.
+- Not verified: a real GitHub PR polled by the loop (the preview has no loop states outside the
+  gallery fixtures); the light, matrix and hermes themes; the per-comment «Передати» click
+  against the api.
 
 ## Documentation impact
 

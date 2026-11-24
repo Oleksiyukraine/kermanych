@@ -447,9 +447,9 @@
       <div class="kit__caption mono">{{ t('kit.gallery.cap.sessionMinion') }}</div>
     </section>
 
-    <!-- status line — both variants for every status, and a session on review with each phase
-         of «Петля після ПР» (docs/specs/2026-11-23-pr-feedback-loop.md, decision 15). The full
-         line as it sits under the session tabs; the compact one in the list card it belongs to. -->
+    <!-- status line — the stage pipeline in both variants for every status, and a session on
+         review with each phase of «Петля після ПР» (docs/specs/2026-11-25-status-line-pipeline.md).
+         The full line as it sits under the session tabs; the compact one in the list card it belongs to. -->
     <section class="kit__section">
       <div class="kit__label">{{ t('kit.gallery.sec.statusLine') }}</div>
       <div class="kit__status-lines">

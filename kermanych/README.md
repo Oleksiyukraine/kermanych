@@ -1960,15 +1960,22 @@ developer's machine. The direction is always task → session.
    merge prompt above is unchanged. GitHub only. (Spec:
    `docs/specs/2026-11-23-pr-feedback-loop.md`.)
 
-   **Status line.** Under the session's tabs in «Агенти», on every tab, one line says what the
-   session is doing — queued for a slot, thinking, running a tool, waiting for your answer,
-   error, conflict, stopped, done, on review, finished — with how long, and the action the
-   status calls for (run now, restart a stalled turn, answer, sign in, resolve, continue). On
-   review with a loop it expands into a collapsible summary: CI, review (decision, new comments,
-   comments held back), conflicts, and the loop (mode, round, what it waits for). The session
-   cards in the list carry a compact version of the same line. The older status displays (the
-   dot, the header's status word, the live lane over the composer, the error and stall banners)
-   are still there until the status line replaces them.
+   **Status line.** Under the session's tabs in «Агенти», on every tab, the task's stages run
+   left to right like a GitLab pipeline: `Задача → Агент → ПР → CI → Ревʼю → Злиття`. Each
+   stage is done ✓, running (a spinner), waiting ●, failed ✗ or not reached ○, with a short note
+   (`bash: pnpm test · тиша 12 с`, `#41`, `1 з 4 впала`, `2 коментарі`); on the right sits the
+   action the status calls for (run now, restart a stalled turn, answer, sign in, resume,
+   resolve, continue the loop, pass to the agent). Once the PR is open, work on review feedback
+   shows on «Ревʼю» (`агент виправляє · коло 2`), never back on «Агент». CI and «Ревʼю» come
+   from the PR feedback loop; without it they read «немає даних», the reason in the tooltip.
+   With the loop, a click on CI or «Ревʼю» opens their details: the failed checks with links,
+   the review decision, comments held back with «Передати» on each, and the loop's mode and
+   round. A narrow pane keeps the words only on the current stage and on a failed one. An
+   agent's card in the list shows the same pipeline as dots with the current stage named.
+   Chats, discussions and reviews have no PR: their line has the one work stage, and their card
+   keeps the status dot and word. The line is the only status in the session pane: the header
+   names only the harness, and the live row over the composer and the stall banner in the log
+   are gone there (the error banner stays). (Spec: `docs/specs/2026-11-25-status-line-pipeline.md`.)
 6. **Reports flow back** — after every turn and on «Завершити» the local API also writes onto
    the card what the session's «Документація» and «Сесія» tabs show: the documentation it read
    and the documentation it created or changed (repository paths with +/− counts), and the

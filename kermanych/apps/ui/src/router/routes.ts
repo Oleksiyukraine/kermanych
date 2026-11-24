@@ -109,17 +109,6 @@ const routes: RouteRecordRaw[] = [
     ],
   },
 
-  // PROTOTYPE, dev only: docs/design/2026-11-24-status-line-redo. Deleted after implementation.
-  ...(import.meta.env.DEV
-    ? [
-        {
-          path: '/__design/status-line/variants',
-          component: () => import('pages/design/status-line/StatusLineVariantsPage.vue'),
-          meta: { public: true },
-        },
-      ]
-    : []),
-
   // Always leave this as the last one.
   {
     path: '/:catchAll(.*)*',

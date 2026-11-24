@@ -1,129 +1,163 @@
 <template>
-  <!-- COMPACT: one quiet line in the «Агенти» list card, under the «● status» row. No actions:
-       the card is itself a button, and the full line is one click away. -->
-  <div
-    v-if="variant === 'compact'"
-    v-tip.overflow="compactText"
-    class="k-sl k-sl--compact mono"
-    :class="`k-sl--${tone}`"
-  >
-    <span class="k-sl__glyph" aria-hidden="true">{{ glyph }}</span>
-    <span class="k-sl__text">{{ compactText }}</span>
+  <!-- COMPACT: the status row of an agent's card in the «Агенти» list — the pipeline as dots and
+       the current stage named. No actions: the card is itself a button. -->
+  <div v-if="variant === 'compact'" v-tip.overflow="compactText" class="k-sl k-sl--compact">
+    <span class="k-sl__dots" aria-hidden="true">
+      <span v-for="s in pipeline.stages" :key="s.key" class="k-sl__dot" :class="`k-sl--${s.state}`" />
+    </span>
+    <span class="k-sl__compact-text mono" :class="`k-sl--${currentStage.state}`">{{ compactText }}</span>
   </div>
 
   <!-- FULL: under the session tab row, the width of the pane, on every tab. -->
-  <div v-else class="k-sl k-sl--full" :class="`k-sl--${tone}`" role="status">
-    <div class="k-sl__head">
-      <span class="k-sl__glyph" aria-hidden="true">{{ glyph }}</span>
-      <span class="k-sl__text">
-        <span class="k-sl__title">{{ title }}</span>
-        <template v-if="prNumber !== undefined">
-          · <a v-if="prUrl" class="k-sl__link" :href="prUrl" target="_blank" rel="noopener" v-tip="t('statusLine.openPr')">#{{ prNumber }}</a>
-          <span v-else>#{{ prNumber }}</span>
-        </template>
-        <span v-for="(d, i) in details" :key="i" class="k-sl__detail"> · {{ d }}</span>
-        <span v-if="mergeBox && collapsed && loopSummary" class="k-sl__detail"> · {{ loopSummary }}</span>
-        <span v-if="ready" class="k-sl__ready"> · {{ t('prLoop.ready') }}</span>
-      </span>
-
-      <span class="k-sl__actions">
-        <KBtn v-if="session.status === 'queued' && session.slotWait" variant="secondary" :loading="busy.runNow" :disabled="blocked" @click="emit('runNow')">{{ t('statusLine.action.runNow') }}</KBtn>
-        <KBtn v-if="stalled" variant="secondary" :loading="busy.restart" :disabled="blocked" @click="emit('restart')">{{ t('statusLine.action.restart') }}</KBtn>
-        <KBtn v-if="session.status === 'waiting_input'" variant="secondary" @click="emit('answer')">{{ t('statusLine.action.answer') }}</KBtn>
-        <template v-if="session.status === 'error'">
-          <KBtn v-if="signIn" variant="secondary" @click="emit('signIn')">{{ t('statusLine.action.signIn') }}</KBtn>
-          <KBtn v-else variant="secondary" :loading="busy.resume" :disabled="blocked" @click="emit('resume')">{{ t('statusLine.action.resume') }}</KBtn>
-        </template>
-        <KBtn v-if="session.status === 'conflict'" variant="secondary" :loading="busy.resolve" :disabled="blocked" @click="emit('resolve')">{{ t('statusLine.action.resolve') }}</KBtn>
-        <KBtn v-if="session.status === 'stopped' && !session.archived" variant="secondary" :loading="busy.resume" :disabled="blocked" @click="emit('resume')">{{ t('statusLine.action.continue') }}</KBtn>
+  <div v-else class="k-sl k-sl--full" role="status" :aria-label="t('statusLine.label')">
+    <ol class="k-sl__pipe">
+      <li
+        v-for="(s, i) in pipeline.stages"
+        :key="s.key"
+        class="k-sl__stage"
+        :class="[`k-sl--${s.state}`, { 'k-sl__stage--key': s.key === pipeline.current || s.state === 'failed' }]"
+      >
+        <span v-if="i" class="k-sl__link" :class="{ 'k-sl__link--on': s.state !== 'todo' && s.state !== 'unknown' }" aria-hidden="true" />
         <button
-          v-if="mergeBox"
+          v-if="detailed(s.key)"
+          :ref="(el) => setAnchor(s.key, el)"
           type="button"
-          class="k-sl__toggle"
-          :aria-expanded="!collapsed"
-          v-tip="collapsed ? t('statusLine.expand') : t('statusLine.collapse')"
-          :aria-label="collapsed ? t('statusLine.expand') : t('statusLine.collapse')"
-          @click="collapsed = !collapsed"
-        >{{ collapsed ? '▸' : '▾' }}</button>
-      </span>
-    </div>
-
-    <!-- The merge-box (decision 15): CI, review, conflicts and the loop itself, one row each. -->
-    <dl v-if="mergeBox && !collapsed && loop" class="k-sl__box">
-      <dt class="k-sl__label mono">{{ t('prLoop.row.ci') }}</dt>
-      <dd class="k-sl__row">
-        <span :class="`k-sl__ci--${loop.ci.state}`">{{ ciText }}</span>
-        <template v-if="loop.ci.failed.length">
-          (<template v-for="(f, i) in loop.ci.failed" :key="f.name"><template v-if="i">, </template><a v-if="f.url" class="k-sl__link" :href="f.url" target="_blank" rel="noopener">{{ f.name }}</a><span v-else>{{ f.name }}</span></template>)
-        </template>
-        <span v-if="loop.ci.stuckMin !== undefined" class="k-sl__warn"> · {{ t('prLoop.ci.stuck', { min: loop.ci.stuckMin }) }}</span>
-      </dd>
-
-      <dt class="k-sl__label mono">{{ t('prLoop.row.review') }}</dt>
-      <dd class="k-sl__row">
-        <span>{{ t(`prLoop.review.${loop.review.decision}`) }}</span>
-        <span v-if="loop.review.pending"> · {{ t('prLoop.review.pending', { n: loop.review.pending }, loop.review.pending) }}</span>
-        <ul v-if="loop.review.untrusted.length" class="k-sl__untrusted">
-          <li v-for="c in loop.review.untrusted" :key="c.key" class="k-sl__untrusted-item">
-            <a class="k-sl__link" :href="c.url" target="_blank" rel="noopener">@{{ c.author }}</a>
-            <span class="k-sl__muted"> · {{ t('prLoop.review.untrusted') }}</span>
-            <KBtn
-              variant="ghost"
-              :loading="busy.pass?.includes(c.key)"
-              :disabled="busySession"
-              v-tip="busySession ? t('prLoop.busy') : ''"
-              @click="emit('pass', c.key)"
-            >{{ t('prLoop.review.pass') }}</KBtn>
-          </li>
-        </ul>
-      </dd>
-
-      <dt class="k-sl__label mono">{{ t('prLoop.row.conflicts') }}</dt>
-      <dd class="k-sl__row" :class="{ 'k-sl__warn': loop.mergeable === 'conflict' }">{{ mergeableText }}</dd>
-
-      <dt class="k-sl__label mono">{{ t('prLoop.row.loop') }}</dt>
-      <dd class="k-sl__row">
-        <span>{{ loopText }}</span>
-        <span class="k-sl__row-actions">
-          <KBtn v-if="loop.loop.phase === 'paused'" variant="secondary" :loading="busy.loopResume" @click="emit('loopResume')">{{ t('prLoop.action.resume') }}</KBtn>
-          <KBtn
-            v-if="canSend"
-            variant="secondary"
-            :loading="busy.loopSend"
-            :disabled="busySession"
-            v-tip="busySession ? t('prLoop.busy') : ''"
-            @click="emit('loopSend')"
-          >{{ t('prLoop.action.send') }}</KBtn>
+          class="k-sl__body k-sl__body--btn"
+          aria-haspopup="dialog"
+          :aria-expanded="menu.open.value && openStage === s.key"
+          :aria-label="t('statusLine.details', { stage: t(`statusLine.stage.${s.key}`) })"
+          v-tip="tipOf(s)"
+          @click="toggleStage(s.key)"
+        >
+          <span class="k-sl__node"><KSpinner v-if="s.state === 'running'" :size="11" /><template v-else>{{ NODE[s.state] }}</template></span>
+          <span class="k-sl__name">{{ t(`statusLine.stage.${s.key}`) }}</span>
+          <span v-if="s.note.length" class="k-sl__note mono">{{ render(s.note) }}</span>
+        </button>
+        <a
+          v-else-if="s.key === 'pr' && prUrl && s.state === 'done'"
+          class="k-sl__body k-sl__body--link"
+          :href="prUrl"
+          target="_blank"
+          rel="noopener"
+          v-tip="t('statusLine.openPr')"
+        >
+          <span class="k-sl__node">{{ NODE[s.state] }}</span>
+          <span class="k-sl__name">{{ t(`statusLine.stage.${s.key}`) }}</span>
+          <span v-if="s.note.length" class="k-sl__note mono">{{ render(s.note) }}</span>
+        </a>
+        <span v-else class="k-sl__body" v-tip="tipOf(s)">
+          <span class="k-sl__node"><KSpinner v-if="s.state === 'running'" :size="11" /><template v-else>{{ NODE[s.state] }}</template></span>
+          <span class="k-sl__name">{{ t(`statusLine.stage.${s.key}`) }}</span>
+          <span v-if="s.note.length" class="k-sl__note mono">{{ render(s.note) }}</span>
         </span>
-      </dd>
-    </dl>
+      </li>
+    </ol>
+
+    <span class="k-sl__actions">
+      <KBtn v-if="session.status === 'queued' && session.slotWait" variant="secondary" :loading="busy.runNow" :disabled="blocked" @click="emit('runNow')">{{ t('statusLine.action.runNow') }}</KBtn>
+      <KBtn v-if="stalled" variant="secondary" :loading="busy.restart" :disabled="blocked" @click="emit('restart')">{{ t('statusLine.action.restart') }}</KBtn>
+      <KBtn v-if="session.status === 'waiting_input'" variant="secondary" @click="emit('answer')">{{ t('statusLine.action.answer') }}</KBtn>
+      <template v-if="session.status === 'error'">
+        <KBtn v-if="signIn" variant="secondary" @click="emit('signIn')">{{ t('statusLine.action.signIn') }}</KBtn>
+        <KBtn v-else variant="secondary" :loading="busy.resume" :disabled="blocked" @click="emit('resume')">{{ t('statusLine.action.resume') }}</KBtn>
+      </template>
+      <KBtn v-if="session.status === 'conflict'" variant="secondary" :loading="busy.resolve" :disabled="blocked" @click="emit('resolve')">{{ t('statusLine.action.resolve') }}</KBtn>
+      <KBtn v-if="session.status === 'stopped' && !session.archived" variant="secondary" :loading="busy.resume" :disabled="blocked" @click="emit('resume')">{{ t('statusLine.action.continue') }}</KBtn>
+      <template v-if="watching">
+        <KBtn v-if="loop!.loop.phase === 'paused'" variant="secondary" :loading="busy.loopResume" @click="emit('loopResume')">{{ t('prLoop.action.resume') }}</KBtn>
+        <KBtn
+          v-if="canSend"
+          variant="secondary"
+          :loading="busy.loopSend"
+          :disabled="busySession"
+          v-tip="busySession ? t('prLoop.busy') : ''"
+          @click="emit('loopSend')"
+        >{{ t('prLoop.action.send') }}</KBtn>
+      </template>
+    </span>
+
+    <!-- The details of CI and Ревʼю (decision 4): what the merge-box rows used to say, with the
+         per-comment «Передати». Under <body>, placed by useAnchoredMenu. -->
+    <Teleport to="body">
+      <div
+        v-if="menu.open.value && openStage && loop"
+        ref="menuEl"
+        class="k-sl__pop"
+        role="dialog"
+        :aria-label="t('statusLine.details', { stage: t(`statusLine.stage.${openStage}`) })"
+      >
+        <p class="k-sl__pop-title mono">{{ t(`statusLine.stage.${openStage}`) }}</p>
+
+        <template v-if="openStage === 'ci'">
+          <p class="k-sl__pop-row" :class="`k-sl__ci--${loop.ci.state}`">{{ ciText }}</p>
+          <ul v-if="loop.ci.failed.length" class="k-sl__pop-list">
+            <li v-for="f in loop.ci.failed" :key="f.name">
+              <a v-if="f.url" class="k-sl__pop-link" :href="f.url" target="_blank" rel="noopener">{{ f.name }}</a>
+              <span v-else>{{ f.name }}</span>
+            </li>
+          </ul>
+          <p v-if="loop.ci.stuckMin !== undefined" class="k-sl__pop-row k-sl__warn">{{ t('prLoop.ci.stuck', { min: loop.ci.stuckMin }) }}</p>
+        </template>
+
+        <template v-else>
+          <p class="k-sl__pop-row">
+            {{ t(`prLoop.review.${loop.review.decision}`) }}<template v-if="loop.review.pending"> · {{ t('prLoop.review.pending', { n: loop.review.pending }, loop.review.pending) }}</template>
+          </p>
+          <ul v-if="loop.review.untrusted.length" class="k-sl__pop-list">
+            <li v-for="c in loop.review.untrusted" :key="c.key" class="k-sl__pop-item">
+              <a class="k-sl__pop-link" :href="c.url" target="_blank" rel="noopener">@{{ c.author }}</a>
+              <span class="k-sl__muted">{{ t('prLoop.review.untrusted') }}</span>
+              <KBtn
+                variant="ghost"
+                :loading="busy.pass?.includes(c.key)"
+                :disabled="busySession"
+                v-tip="busySession ? t('prLoop.busy') : ''"
+                @click="emit('pass', c.key)"
+              >{{ t('prLoop.review.pass') }}</KBtn>
+            </li>
+          </ul>
+          <p class="k-sl__pop-label mono">{{ t('prLoop.row.loop') }}</p>
+          <p class="k-sl__pop-row">{{ loopText }}</p>
+        </template>
+      </div>
+    </Teleport>
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue';
+import { computed, ref, watch, type ComponentPublicInstance } from 'vue';
 import { useI18n } from 'vue-i18n';
-import { isReadyToMerge, type PrLoopState, type Session } from '@kermanych/core';
+import type { PrLoopState, Session } from '@kermanych/core';
 // Directly from core's status module, like lib/attention.ts (see the note there).
 import { ACTIVE_STATUSES } from '@kermanych/core/status';
 import KBtn from './KBtn.vue';
+import KSpinner from './KSpinner.vue';
 import { useNow } from '../../composables/useNow';
-import { dur, relativeTime, renderTime } from '../../lib/time';
+import { useAnchoredMenu } from '../../composables/useAnchoredMenu';
+import { relativeTime, renderTime, type TimeLabel } from '../../lib/time';
 import { needsSignIn } from '../../lib/session-auth';
-import { prNumberFromUrl, silentMs, STALL_MS, statusLineCollapsed, type StatusLineLoading } from '../../lib/status-line';
+import {
+  pipelineOf,
+  silentMs,
+  STALL_MS,
+  type NotePart,
+  type Stage,
+  type StageKey,
+  type StageState,
+  type StatusLineLoading,
+} from '../../lib/status-line';
 
-// The session status line (docs/specs/2026-11-23-pr-feedback-loop.md, decisions 12–15): one
-// sentence per status, «like GitHub / GitLab», with the action the status asks for. Two variants:
-// `full` sits under the session tab row and carries the actions; `compact` is a row of the
-// «Агенти» list card. For a session on review whose PR «Петля після ПР» watches (`loop`), the
-// full line expands into a merge-box — CI, review, conflicts, the loop — that folds to its
-// summary; the fold is remembered on this device (lib/status-line.ts).
+// The session status line as a stage pipeline, «like GitLab»
+// (docs/specs/2026-11-25-status-line-pipeline.md): `Задача → Агент → ПР → CI → Ревʼю → Злиття`,
+// each stage ✓ / spinner / ● / ✗ / ○ with a short note; which stage and what state is
+// lib/status-line.ts `pipelineOf`. Two variants: `full` sits under the session tab row with the
+// action the status asks for; `compact` is the status row of an agent's card. A narrow pane
+// keeps the current and failed stages spelled out and shrinks the rest to their node (a
+// container query, no measuring). CI and Ревʼю open a popover with the «Петля після ПР» details.
 //
-// Presentational like the rest of the kit: every button emits, and the page wires it to the SAME
-// action today's buttons and banners run (AgentsPage). The page passes what is in flight through
-// `loading` (each button's spinner) and `blocked` (another action on this session is still
-// settling — stores/pending). Existing status displays (KStatusDot, the header's «harness ·
-// status», KStatusRow, KPanel's banners) are untouched (decision 12).
+// Presentational like the rest of the kit: every button emits, and the page wires it to the
+// action the rest of the page runs (AgentsPage). `loading` drives each button's spinner;
+// `blocked` — another action on this session is still settling (stores/pending).
 const props = withDefaults(
   defineProps<{
     session: Session;
@@ -144,8 +178,7 @@ const emit = defineEmits<{
   answer: [];
   /** `error` «Відновити», `stopped` «Продовжити»: wake the session. */
   resume: [];
-  /** A provider sign-in error: «Увійти» — the page re-checks the sign-in, as the top bar's
-   *  «Потрібен вхід» pill does; the title names the command that signs in. */
+  /** A provider sign-in error: «Увійти» — the page re-checks the sign-in. */
   signIn: [];
   /** `conflict`: «Розвʼязати». */
   resolve: [];
@@ -160,133 +193,79 @@ const emit = defineEmits<{
 const { t } = useI18n();
 // The full line shows a silence in seconds; a list card only minutes.
 const now = useNow(props.variant === 'full' ? 1000 : 15_000);
-const collapsed = statusLineCollapsed;
 
-const status = computed(() => props.session.status);
-const signIn = computed(() => status.value === 'error' && needsSignIn(props.session.errorCode));
-const silence = computed(() => silentMs(props.session, now.value));
-const stalled = computed(() => silence.value >= STALL_MS);
-const busySession = computed(() => ACTIVE_STATUSES.includes(status.value));
+// `todo` is the empty ring itself; a glyph inside it would read as ◎.
+const NODE: Record<StageState, string> = { done: '✓', running: '', waiting: '●', failed: '✗', todo: '', unknown: '–' };
+
+const pipeline = computed(() => pipelineOf(props.session, props.loop, now.value));
+const currentStage = computed(() => pipeline.value.stages.find((s) => s.key === pipeline.value.current) ?? pipeline.value.stages[0]!);
+
+const signIn = computed(() => props.session.status === 'error' && needsSignIn(props.session.errorCode));
+const stalled = computed(() => silentMs(props.session, now.value) >= STALL_MS);
+const busySession = computed(() => ACTIVE_STATUSES.includes(props.session.status));
 const busy = computed<StatusLineLoading>(() => props.loading ?? {});
 
-// The loop state worth showing: one for an open PR the loop can read. An unavailable state only
-// names why; an ended one only says so.
-const loop = computed(() => (status.value === 'in_review' ? props.loop ?? null : null));
-const watching = computed(() => !!loop.value && !loop.value.unavailable);
-const mergeBox = computed(() => watching.value && loop.value!.loop.phase !== 'ended');
-const ready = computed(() => watching.value && isReadyToMerge(loop.value!));
-
+// The loop state worth acting on: an open PR the loop can read.
+const loop = computed(() => (props.session.prOpened || props.session.status === 'in_review' ? props.loop ?? null : null));
+const watching = computed(() => !!loop.value && !loop.value.unavailable && loop.value.loop.phase !== 'ended');
 const prUrl = computed(() => loop.value?.pr?.url ?? props.session.prUrl);
-const prNumber = computed(() =>
-  status.value === 'in_review' ? (loop.value?.pr?.number ?? prNumberFromUrl(props.session.prUrl)) : undefined,
-);
 
-// Durations: the Session carries no «since» per status, so `lastActivityAt` — the last time the
-// session moved (its status included) — stands in for when it entered `queued` / `waiting_input`
-// and for when it stopped or finished.
-const sinceActivity = computed(() => renderTime(t, dur(Math.max(0, now.value - Date.parse(props.session.lastActivityAt)))));
-const agoActivity = computed(() => renderTime(t, relativeTime(props.session.lastActivityAt, now.value)));
-const silenceText = computed(() => t('statusLine.silence', { value: renderTime(t, dur(silence.value)) }));
-
-type Tone = 'running' | 'waiting' | 'error' | 'done' | 'cold';
-const tone = computed<Tone>(() => {
-  switch (status.value) {
-    case 'queued':
-    case 'thinking':
-    case 'tool':
-      return 'running';
-    case 'waiting_input':
-    case 'conflict':
-      return 'waiting';
-    case 'error':
-      return 'error';
-    case 'done':
-    case 'merged':
-      return 'done';
-    case 'in_review':
-      return loop.value?.ci.state === 'failure' || loop.value?.loop.phase === 'paused' ? 'error' : ready.value ? 'done' : 'cold';
-    default:
-      return 'cold';
-  }
+// «Передати агенту»: manual mode with something to pass, or a loop paused on its limit (the
+// manual pass works past it). The api refuses a pass with nothing in it and says so.
+const canSend = computed(() => {
+  const l = loop.value!.loop;
+  return l.mode === 'manual' || l.phase === 'paused' || l.phase === 'manual_ready';
 });
 
-const GLYPH: Record<Session['status'], string> = {
-  backlog: '○',
-  // Not ⏳: a colour emoji breaks the line's monochrome glyph set and does not render everywhere.
-  queued: '◌',
-  thinking: '◆',
-  tool: '◆',
-  waiting_input: '●',
-  error: '✗',
-  conflict: '⚠',
-  stopped: '○',
-  done: '✓',
-  in_review: '◇',
-  merged: '✓',
-};
-const glyph = computed(() => GLYPH[status.value]);
+/** A note's parts, `·`-joined. A param that is itself a time label is rendered first. */
+function render(parts: readonly NotePart[]): string {
+  return parts
+    .map((p) => {
+      if ('text' in p) return p.text;
+      const params = Object.fromEntries(
+        Object.entries(p.params ?? {}).map(([name, v]) => [name, v && typeof v === 'object' && 'key' in v ? renderTime(t, v as TimeLabel) : v]),
+      );
+      const n = p.n ?? (typeof params.n === 'number' ? params.n : undefined);
+      return n === undefined ? t(p.key, params) : t(p.key, params, n);
+    })
+    .join(' · ');
+}
 
-// ── Full ───────────────────────────────────────────────────────────────────
-const title = computed(() => {
-  const s = props.session;
-  switch (s.status) {
-    case 'queued':
-      return s.slotWait ? t('statusLine.queued') : t('statusLine.starting');
-    case 'thinking':
-      return t('statusLine.thinking');
-    case 'tool':
-      return s.currentTool ?? t('statusLine.tool');
-    case 'waiting_input':
-      return t('statusLine.waiting');
-    case 'error':
-      return signIn.value
-        ? t('statusLine.signIn', { reason: t(`notices.${s.errorCode}`) })
-        : s.error ? t('statusLine.error', { reason: s.error }) : t('statusLine.errorPlain');
-    case 'conflict':
-      return s.baseBranch ? t('statusLine.conflict', { base: s.baseBranch }) : t('statusLine.conflictPlain');
-    case 'stopped':
-      return t('statusLine.stopped');
-    case 'done':
-      return t('statusLine.done');
-    case 'in_review':
-      return t('statusLine.review');
-    case 'merged':
-      return s.branch ? t('statusLine.merged', { branch: s.branch }) : t('statusLine.mergedPlain');
-    case 'backlog':
-      return t('statusLine.backlog');
-    default:
-      return s.status;
-  }
+/** The stage's tooltip: its name, its note in full (a narrow pane hides it) and the reason. */
+function tipOf(s: Stage): string {
+  return [t(`statusLine.stage.${s.key}`), render(s.note), s.tip ? render(s.tip) : ''].filter(Boolean).join(' · ');
+}
+
+const compactText = computed(() => {
+  const s = currentStage.value;
+  const name = t(`statusLine.stage.${s.key}`);
+  return s.note.length ? `${name} · ${render(s.note)}` : name;
 });
 
-// What follows the title, `·`-joined.
-const details = computed<string[]>(() => {
-  const s = props.session;
-  switch (s.status) {
-    case 'queued': {
-      const w = s.slotWait;
-      const out = w ? [t('statusLine.slots', { running: w.running, limit: w.limit })] : [];
-      if (w && w.position > 1) out.push(t('statusLine.position', { position: w.position }));
-      out.push(sinceActivity.value);
-      return out;
-    }
-    case 'thinking':
-    case 'tool':
-      return s.lastEventAt ? [silenceText.value] : [];
-    case 'waiting_input':
-      return [sinceActivity.value];
-    case 'stopped':
-    case 'done':
-      return [agoActivity.value];
-    case 'in_review': {
-      const l = loop.value;
-      if (l?.unavailable) return [t(`prLoop.unavailable.${l.unavailable}`)];
-      if (l?.loop.phase === 'ended') return [t(`prLoop.ended.${l.pr?.state === 'merged' ? 'merged' : 'closed'}`)];
-      return [];
-    }
-    default:
-      return [];
+// ── CI / Ревʼю details ──────────────────────────────────────────────────────
+const detailed = (key: StageKey): boolean => watching.value && (key === 'ci' || key === 'review');
+const anchors = new Map<StageKey, HTMLElement>();
+function setAnchor(key: StageKey, el: Element | ComponentPublicInstance | null): void {
+  if (el instanceof HTMLElement) anchors.set(key, el);
+  else anchors.delete(key);
+}
+const anchorEl = ref<HTMLElement | null>(null);
+const menuEl = ref<HTMLElement | null>(null);
+const menu = useAnchoredMenu(anchorEl, menuEl);
+const openStage = ref<StageKey | null>(null);
+function toggleStage(key: StageKey): void {
+  if (menu.open.value && openStage.value === key) {
+    menu.close();
+    return;
   }
+  menu.close();
+  openStage.value = key;
+  anchorEl.value = anchors.get(key) ?? null;
+  void menu.show();
+}
+// The loop went away (PR merged, session left review): nothing left to show.
+watch(watching, (w) => {
+  if (!w) menu.close();
 });
 
 const ciText = computed(() => {
@@ -303,13 +282,6 @@ const ciText = computed(() => {
   }
 });
 
-const mergeableText = computed(() => {
-  const m = loop.value!.mergeable;
-  if (m !== 'conflict') return t(`prLoop.mergeable.${m}`);
-  const base = props.session.baseBranch;
-  return base ? t('prLoop.mergeable.conflict', { base }) : t('prLoop.mergeable.conflictPlain');
-});
-
 const loopText = computed(() => {
   const l = loop.value!.loop;
   const parts = [t(`prLoop.mode.${l.mode}`)];
@@ -318,81 +290,21 @@ const loopText = computed(() => {
   parts.push(l.phase === 'paused' ? t('prLoop.phase.paused', { n: l.maxRounds }, l.maxRounds) : t(`prLoop.phase.${l.phase}`));
   return parts.join(' · ');
 });
-
-// «Передати агенту»: manual mode with something to pass, or a loop paused on its limit (the
-// manual pass works past it). The api refuses a pass with nothing in it and says so.
-const canSend = computed(() => {
-  const l = loop.value!;
-  return l.loop.mode === 'manual' || l.loop.phase === 'paused' || l.loop.phase === 'manual_ready';
-});
-
-// ── Compact (and the folded merge-box's summary) ────────────────────────────
-const loopSummary = computed(() => {
-  const l = loop.value;
-  if (!l || l.unavailable) return '';
-  const parts: string[] = [];
-  const ci = l.ci;
-  // A failure is the actionable fact; a hung check only when nothing failed.
-  if (ci.state === 'failure') parts.push(`CI ✗ ${ci.failed.length}/${ci.total}`);
-  else if (ci.stuckMin !== undefined) parts.push(t('prLoop.compact.stuck'));
-  else if (ci.state === 'pending') parts.push(`CI ● ${ci.done}/${ci.total}`);
-  else if (ci.state === 'success') parts.push(`CI ✓ ${ci.total}/${ci.total}`);
-  const comments = l.review.pending + l.review.untrusted.length;
-  if (comments) parts.push(t('prLoop.compact.comments', { n: comments }, comments));
-  if (l.loop.phase === 'paused') parts.push(t('prLoop.compact.paused'));
-  else if (l.loop.mode === 'manual') parts.push(t('prLoop.compact.manual'));
-  else if (l.loop.round > 0) parts.push(t('prLoop.compact.round', { round: l.loop.round, max: l.loop.maxRounds }));
-  if (isReadyToMerge(l)) parts.push(t('prLoop.compact.ready'));
-  return parts.join(' · ');
-});
-
-const compactText = computed(() => {
-  const s = props.session;
-  switch (s.status) {
-    case 'queued':
-      return `${t('statusLine.compact.queued')} · ${sinceActivity.value}`;
-    case 'tool':
-      // `bash: pnpm test` reads `bash` in a card.
-      return s.currentTool ? s.currentTool.split(/[:\s]/)[0]! : t('statusLine.compact.tool');
-    case 'waiting_input':
-      return `${t('statusLine.compact.waiting')} · ${sinceActivity.value}`;
-    case 'error':
-      return signIn.value ? t('statusLine.compact.signIn') : t('statusLine.compact.error');
-    case 'in_review':
-      return mergeBox.value && loopSummary.value ? loopSummary.value : t('statusLine.compact.review');
-    case 'thinking':
-      return t('statusLine.compact.thinking');
-    case 'conflict':
-      return t('statusLine.compact.conflict');
-    case 'stopped':
-      return t('statusLine.compact.stopped');
-    case 'done':
-      return t('statusLine.compact.done');
-    case 'merged':
-      return t('statusLine.compact.merged');
-    default:
-      return t('statusLine.compact.backlog');
-  }
-});
 </script>
 
 <style scoped lang="scss">
 .k-sl {
-  --k-sl-tone: var(--k-muted);
+  --k-sl-tone: var(--k-faint);
   min-width: 0;
   color: var(--k-muted);
 }
 
+.k-sl--done { --k-sl-tone: var(--k-success); }
 .k-sl--running { --k-sl-tone: var(--k-accent); }
 .k-sl--waiting { --k-sl-tone: var(--k-warning); }
-.k-sl--error { --k-sl-tone: var(--k-danger); }
-.k-sl--done { --k-sl-tone: var(--k-success); }
-.k-sl--cold { --k-sl-tone: var(--k-faint); }
-
-.k-sl__glyph {
-  flex: none;
-  color: var(--k-sl-tone);
-}
+.k-sl--failed { --k-sl-tone: var(--k-danger); }
+.k-sl--todo,
+.k-sl--unknown { --k-sl-tone: var(--k-faint); }
 
 // ── Compact ──────────────────────────────────────────────────────────────────
 // One line that never wraps: the card keeps its height; the whole line is the tooltip.
@@ -400,124 +312,261 @@ const compactText = computed(() => {
   display: flex;
   align-items: center;
   gap: var(--k-sp-2);
-  font-size: var(--k-fs-xs);
+  min-width: 0;
   white-space: nowrap;
   overflow: hidden;
+}
 
-  .k-sl__glyph { width: 7px; text-align: center; }
-  .k-sl__text { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.k-sl__dots {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+}
+
+.k-sl__dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--k-sl-tone);
+
+  &.k-sl--todo,
+  &.k-sl--unknown {
+    background: transparent;
+    border: 1px solid var(--k-line-strong);
+  }
+
+  // The stage that runs pulses, as KStatusDot does.
+  &.k-sl--running { animation: k-sl-pulse 1.1s ease-in-out infinite; }
+}
+
+.k-sl__compact-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: var(--k-fs-xs);
+  color: var(--k-sl-tone);
+
+  &.k-sl--done,
+  &.k-sl--todo,
+  &.k-sl--unknown { color: var(--k-muted); }
 }
 
 // ── Full ─────────────────────────────────────────────────────────────────────
 .k-sl--full {
   flex: none;
   display: flex;
-  flex-direction: column;
-  gap: var(--k-sp-2);
+  // The buttons drop under the pipeline when both cannot share the row (a narrow pane with
+  // two loop actions): the pipeline never runs under them.
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--k-sp-2) var(--k-sp-3);
   padding: var(--k-sp-2) var(--k-sp-3);
   border-bottom: 1px solid var(--k-line);
   font-size: var(--k-fs-sm);
+  container-type: inline-size;
 }
 
-.k-sl__head {
+.k-sl__pipe {
+  flex: 1 1 auto;
+  // Every node, two links and a few words of the current stage.
+  min-width: min(100%, 280px);
+  overflow: hidden;
+  display: flex;
+  align-items: flex-start;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.k-sl__stage {
+  flex: 0 1 auto;
+  min-width: 0;
+  display: flex;
+  align-items: flex-start;
+}
+
+.k-sl__link {
+  // A `width`, not a flex-basis: an empty span's max-content is 0, so a basis would be left out
+  // of the stage's intrinsic width and then taken from the words.
+  flex: 0 1 auto;
+  width: 32px;
+  min-width: 8px;
+  height: 1.5px;
+  margin: 10px 6px 0;
+  background: var(--k-line-strong);
+
+  &--on { background: var(--k-success); }
+}
+
+.k-sl__body {
+  min-width: 0;
+  display: grid;
+  // `auto`, not minmax(0, …): the stage keeps its natural width while there is room, and the
+  // words (overflow hidden, so their automatic minimum is 0) ellipsize when there is not.
+  grid-template-columns: 20px auto;
+  grid-template-rows: 20px auto;
+  column-gap: 6px;
+  align-items: center;
+  padding: 1px 4px 1px 1px;
+  border: 0;
+  border-radius: var(--k-r-sm);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  text-decoration: none;
+}
+
+.k-sl__body--btn,
+.k-sl__body--link {
+  cursor: pointer;
+
+  &:hover { background: var(--k-surface2); }
+  &:focus-visible { outline: 1px solid var(--k-accent); outline-offset: 1px; }
+}
+
+.k-sl__node {
+  grid-row: 1;
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  box-sizing: border-box;
+  border: 1.5px solid var(--k-sl-tone);
+  border-radius: 50%;
+  color: var(--k-sl-tone);
+  font-size: 10px;
+  line-height: 1;
+}
+
+.k-sl--done .k-sl__node,
+.k-sl--failed .k-sl__node {
+  background: var(--k-sl-tone);
+  color: var(--k-on-accent);
+}
+
+.k-sl__name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--k-text);
+  font-weight: var(--k-fw-medium);
+}
+
+.k-sl--todo .k-sl__name,
+.k-sl--unknown .k-sl__name { color: var(--k-faint); font-weight: var(--k-fw-regular); }
+
+.k-sl__note {
+  grid-column: 2;
+  max-width: 260px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--k-fs-xs);
+  color: var(--k-sl-tone);
+}
+
+.k-sl--done .k-sl__note { color: var(--k-muted); }
+
+// Narrow pane (decision 5): only the current and failed stages keep their words.
+@container (max-width: 760px) {
+  // The shrunk stages keep their node whole; the words of the key ones take what is left.
+  .k-sl__stage:not(.k-sl__stage--key) {
+    flex: none;
+
+    .k-sl__name,
+    .k-sl__note { display: none; }
+    .k-sl__body { column-gap: 0; padding-right: 1px; }
+  }
+
+  .k-sl__link { width: 16px; min-width: 6px; margin-inline: 3px; }
+}
+
+// Very narrow (a button beside the pipeline in a ~400px pane): the links go hairline-short so
+// the current stage keeps a readable name.
+@container (max-width: 480px) {
+  .k-sl__link { width: 4px; min-width: 4px; margin-inline: 1px; }
+}
+
+.k-sl__actions {
+  flex: none;
+  margin-left: auto;
   display: flex;
   align-items: center;
   gap: var(--k-sp-2);
-  min-width: 0;
-  min-height: 28px;
+
+  &:empty { display: none; }
 }
 
-.k-sl__text {
-  flex: 1 1 auto;
-  min-width: 0;
-  overflow-wrap: anywhere;
+// ── The CI / Ревʼю popover ───────────────────────────────────────────────────
+.k-sl__pop {
+  position: fixed;
+  z-index: 6500;
+  width: 320px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--k-sp-2);
+  padding: var(--k-sp-3);
+  background: var(--k-surface);
+  border: var(--k-rule-thin) solid var(--k-line-strong);
+  border-radius: var(--k-r-lg);
+  box-shadow: var(--k-shadow-toast);
+  font-size: var(--k-fs-sm);
+  color: var(--k-text);
 }
 
-.k-sl__title { color: var(--k-text); }
-.k-sl__ready { color: var(--k-success); }
-.k-sl__warn { color: var(--k-warning); }
-.k-sl__muted { color: var(--k-faint); }
+.k-sl__pop-title,
+.k-sl__pop-label {
+  margin: 0;
+  font-size: var(--k-fs-xs);
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--k-accent);
+}
 
-.k-sl__link {
+.k-sl__pop-label { color: var(--k-faint); }
+.k-sl__pop-row { margin: 0; }
+
+.k-sl__pop-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--k-sp-1);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.k-sl__pop-item {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0 var(--k-sp-2);
+}
+
+.k-sl__pop-link {
   color: inherit;
   text-decoration: underline;
   text-decoration-color: var(--k-line-strong);
   text-underline-offset: 2px;
 
-  &:hover { color: var(--k-text); text-decoration-color: currentColor; }
+  &:hover { text-decoration-color: currentColor; }
 }
 
-.k-sl__actions,
-.k-sl__row-actions {
-  flex: none;
-  display: flex;
-  align-items: center;
-  gap: var(--k-sp-2);
-}
-
-// In the merge-box the value column is narrow on a narrow pane: the buttons wrap under the text
-// rather than run out of the box.
-.k-sl__row-actions {
-  flex: 0 1 auto;
-  flex-wrap: wrap;
-  margin-left: auto;
-}
-
-.k-sl__toggle {
-  width: 24px;
-  height: 24px;
-  padding: 0;
-  border: none;
-  border-radius: var(--k-r-sm);
-  background: transparent;
-  color: var(--k-muted);
-  cursor: pointer;
-
-  &:hover { color: var(--k-text); background: var(--k-surface2); }
-  &:focus-visible { outline: 1px solid var(--k-accent); outline-offset: 1px; }
-}
-
-.k-sl__box {
-  display: grid;
-  grid-template-columns: max-content 1fr;
-  gap: var(--k-sp-1) var(--k-sp-4);
-  margin: 0;
-  padding-left: calc(var(--k-sp-2) + 1ch);
-}
-
-.k-sl__label {
-  font-size: var(--k-fs-xs);
-  color: var(--k-faint);
-  line-height: 28px;
-}
-
-.k-sl__row {
-  min-width: 0;
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 0 0.35em;
-  min-height: 28px;
-  margin: 0;
-}
-
+.k-sl__muted { color: var(--k-faint); }
+.k-sl__warn { color: var(--k-warning); }
 .k-sl__ci--failure { color: var(--k-danger); }
 .k-sl__ci--success { color: var(--k-success); }
 .k-sl__ci--pending { color: var(--k-accent); }
 
-.k-sl__untrusted {
-  flex-basis: 100%;
-  list-style: none;
-  margin: 0;
-  padding: 0;
+@keyframes k-sl-pulse {
+  0%, 100% { opacity: 0.45; }
+  50% { opacity: 1; }
 }
 
-.k-sl__untrusted-item {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 0 0.35em;
-
-  .k-sl__link { white-space: nowrap; }
+@media (prefers-reduced-motion: reduce) {
+  .k-sl__dot.k-sl--running { animation: none; }
 }
 </style>
