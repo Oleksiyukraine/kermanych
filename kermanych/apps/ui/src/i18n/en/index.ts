@@ -3521,8 +3521,12 @@ export const en: MessageSchema = {
       tokens: '{count} tok',
       thoughtWith: 'thought {parts}',
       thought: 'thought',
-      commandsAdded: 'mounted {count} command | mounted {count} commands',
-      commandsRemoved: 'unmounted {count} command | unmounted {count} commands',
+    },
+    toolCommands: {
+      added: 'mounted',
+      removed: 'unmounted',
+      addedCount: 'mounted {count} command | mounted {count} commands',
+      removedCount: 'unmounted {count} command | unmounted {count} commands',
     },
     toolRow: {
       noDetails: 'No details.',

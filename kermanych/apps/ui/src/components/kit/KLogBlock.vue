@@ -35,28 +35,9 @@
       <div v-if="open" class="k-log__reason-body k-log__markdown" @click="onMarkdownClick" v-html="renderedThinking" />
     </div>
 
-    <!-- tool-commands notice — omp mounted/unmounted tools as commands: a muted one-line
-         summary with the shared name prefix; expand to read every name. A single command
-         has nothing to fold, so its name sits in the tag and there is no disclosure. -->
-    <div v-else-if="commands?.single" class="k-log__commands k-log__commands--single">
-      <span>{{ commands.summary }}</span>
-      <span class="k-log__commands-prefix">{{ commands.single }}</span>
-    </div>
-    <div v-else-if="commands" class="k-log__commands">
-      <button
-        type="button"
-        class="k-log__commands-toggle"
-        :aria-expanded="open"
-        @click="open = !open"
-      >
-        <span class="k-log__reason-caret" aria-hidden="true">{{ open ? '▾' : '▸' }}</span>
-        <span>{{ commands.summary }}</span>
-        <span v-if="commands.prefix" class="k-log__commands-prefix">{{ commands.prefix }}</span>
-      </button>
-      <ul v-if="open" class="k-log__commands-list">
-        <li v-for="name in commands.items" :key="name" class="k-log__commands-item">{{ name }}</li>
-      </ul>
-    </div>
+    <!-- tool-commands notice — a lone one (AgentMap renders entries one by one); in the chat
+         `buildChatBlocks` coalesces a burst of them and KRequestBlock renders the row itself -->
+    <KToolCommandsRow v-else-if="commandNotice" :notices="[commandNotice]" :expand-all="expandAll" />
 
     <!-- notice — muted by default; warn and error lift into the accent -->
     <div v-else-if="entry.kind === 'notice'" class="k-log__notice" :class="`k-log__notice--${entry.level}`">
@@ -72,7 +53,7 @@ import type { TranscriptEntry } from '@kermanych/core';
 import { useOrchestrator } from 'stores/orchestrator';
 import { localizeNotice } from '../../lib/i18n-coded';
 import { logLinkTarget } from '../../lib/log-links';
-import { toolCommandGroup } from '../../lib/tool-commands';
+import KToolCommandsRow from './KToolCommandsRow.vue';
 import { renderMarkdown } from '../../lib/markdown';
 import type { ExpandAllCommand } from '../../lib/expand-all';
 import { dur, renderTime } from '../../lib/time';
@@ -91,18 +72,9 @@ const noticeText = computed(() =>
   props.entry.kind === 'notice' ? localizeNotice({ t, te }, props.entry) : '',
 );
 
-// omp's «Tool commands» notice lists every mounted tool by its full name — a dozen
-// `mcp__supabase_v1_…` names would bury the conversation, so it folds to a count plus
-// the names' shared prefix, and the list opens on demand.
-const commands = computed(() => {
+const commandNotice = computed(() => {
   const e = props.entry;
-  if (e.kind !== 'notice') return null;
-  if (e.code !== 'tool_commands_added' && e.code !== 'tool_commands_removed') return null;
-  const group = toolCommandGroup(String(e.params?.names ?? ''));
-  if (!group.items.length) return null;
-  const n = group.items.length;
-  const key = e.code === 'tool_commands_added' ? 'kit.logBlock.commandsAdded' : 'kit.logBlock.commandsRemoved';
-  return { ...group, single: n === 1 ? group.items[0]! : '', summary: t(key, { count: n }, n) };
+  return e.kind === 'notice' && (e.code === 'tool_commands_added' || e.code === 'tool_commands_removed') ? e : null;
 });
 
 // assistant_text renders as Markdown (headings, lists, code, links). Output is a
@@ -207,55 +179,6 @@ const chip = computed(() => {
   font-size: 12.5px;
   color: var(--k-muted);
   white-space: pre-wrap;
-}
-
-// tool-commands notice — the reasoning chip's disclosure, upright: it is a system row,
-// not the model's voice. The shared prefix reads as a mono tag; the list wraps as chips.
-.k-log__commands { font-family: var(--k-font-ui); }
-.k-log__commands-toggle {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 0;
-  background: transparent;
-  border: none;
-  font-family: var(--k-font-ui);
-  font-size: 13px;
-  color: var(--k-muted);
-  cursor: pointer;
-}
-.k-log__commands-toggle:hover { color: var(--k-text); }
-.k-log__commands--single {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 13px;
-  color: var(--k-muted);
-}
-.k-log__commands-toggle:focus-visible { outline: 1px solid var(--k-accent); outline-offset: 2px; }
-.k-log__commands-prefix {
-  font-family: var(--k-font-mono);
-  font-size: 12px;
-  padding: 0 6px;
-  border: 1px solid var(--k-line);
-  border-radius: var(--k-r-sm);
-}
-.k-log__commands-list {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px 6px;
-  margin: 6px 0 0;
-  padding: 0 0 0 14px;
-  list-style: none;
-  border-left: 1px solid var(--k-line);
-}
-.k-log__commands-item {
-  font-family: var(--k-font-mono);
-  font-size: 12px;
-  color: var(--k-muted);
-  padding: 0 6px;
-  background: var(--k-surface);
-  border-radius: var(--k-r-sm);
 }
 
 // Three levels off a four-colour palette: info stays muted, warn lifts to full text

@@ -3544,8 +3544,12 @@ export const uk = {
       tokens: '{count} ток',
       thoughtWith: 'думав {parts}',
       thought: 'думав',
-      commandsAdded: 'підключено {count} команду | підключено {count} команди | підключено {count} команд',
-      commandsRemoved: 'відключено {count} команду | відключено {count} команди | відключено {count} команд',
+    },
+    toolCommands: {
+      added: 'підключено',
+      removed: 'відключено',
+      addedCount: 'підключено {count} команду | підключено {count} команди | підключено {count} команд',
+      removedCount: 'відключено {count} команду | відключено {count} команди | відключено {count} команд',
     },
     toolRow: {
       noDetails: 'Деталей немає.',
