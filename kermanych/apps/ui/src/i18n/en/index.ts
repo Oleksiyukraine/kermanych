@@ -491,7 +491,7 @@ export const en: MessageSchema = {
       estimatePlaceholder: 'not estimated',
       estimateHint: 'optional; «Analytics» compares it with the time to PR',
       estimateInvalid: 'an estimate is a number of hours above zero, e.g. 1.5',
-      typeLabel: 'Type',
+      typeLabel: 'Branch type',
       worktreeLabel: 'Isolate in a worktree',
       worktreeDesc: 'A separate folder, a separate checkout. The agent won’t touch your working state.',
       hiddenLabel: 'Hide from the board',
