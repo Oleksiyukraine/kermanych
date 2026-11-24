@@ -404,6 +404,22 @@
       >
         <span class="shell__foot-folder-path mono">{{ contextLabel }}</span>
       </button>
+      <!-- «Пульт» (docs/specs/2026-11-24-mobile-remote-control.md, decision 7): while it is on,
+           an always visible reminder that this computer is reachable from a phone; a click opens
+           its section. Tinted when it is on but not reachable (blocked / error). -->
+      <button
+        v-if="remoteControl.state?.enabled"
+        type="button"
+        class="shell__foot-btn shell__foot-remote"
+        :class="{
+          'shell__foot-remote--warn': remoteControl.state.phase === 'blocked',
+          'shell__foot-remote--bad': remoteControl.state.phase === 'error',
+        }"
+        v-tip="remoteTip"
+        @click="goSettings('app-remote')"
+      ><KSpinner v-if="remoteControl.state.phase === 'starting'" :size="10" />{{
+        t('settings.remote.foot.label', { n: remoteControl.state.devices.length }, remoteControl.state.devices.length)
+      }}</button>
       <!-- File-manager dock, right: shows the selected session's files past the page. -->
       <button
         type="button"
@@ -614,6 +630,7 @@ import { useBoard } from 'stores/board';
 import { useProjectDocs } from 'stores/project-docs';
 import { useSeen } from 'stores/seen';
 import { useMinion } from 'stores/minion';
+import { useRemote } from 'stores/remote';
 import { usePrLoop } from 'stores/pr-loop';
 import { IS_PREVIEW } from '../lib/preview';
 import { api } from '../lib/api';
@@ -719,6 +736,17 @@ const lounge = useLounge();
 // the projects it is activated for on this machine.
 const minion = useMinion();
 const minionProjects = computed(() => new Set(minion.state?.projects ?? []));
+// «Пульт» the same way: created with the shell so the first `snapshot` reads its state and the
+// bottom bar can show «Пульт · N телефонів» on any screen (docs/specs/2026-11-24-mobile-remote-control.md,
+// decision 7). Not `remote`: that name is a git remote further down.
+const remoteControl = useRemote();
+// The mark's tooltip: where «Пульт» stands, and the address while it is reachable.
+const remoteTip = computed(() => {
+  const s = remoteControl.state;
+  if (!s) return '';
+  const text = t(`settings.remote.phase.${s.phase}`);
+  return s.phase === 'on' && s.url ? `${text} · ${s.url}` : text;
+});
 // Same reason as «Посіпака» above: «Петля після ПР» announces a pause, a PR ready to merge and
 // the rest from any screen, so its store listens from the shell's start.
 usePrLoop();
@@ -2699,6 +2727,20 @@ const pullHint = computed(() => {
   text-overflow: ellipsis;
   white-space: nowrap;
   color: var(--k-faint);
+}
+
+// «Пульт · N телефонів»: a mono read-out like the rest of the bar, tinted while it is on but
+// cannot be reached.
+.shell__foot-remote {
+  flex: none;
+  gap: 6px;
+  white-space: nowrap;
+}
+.shell__foot-remote--warn {
+  color: var(--k-warning);
+}
+.shell__foot-remote--bad {
+  color: var(--k-danger);
 }
 
 // ── File-manager dock (VS Code / Zed style) ─────────────────────────────────

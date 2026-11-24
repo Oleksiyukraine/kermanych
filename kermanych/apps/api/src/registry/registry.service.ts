@@ -7,7 +7,7 @@ import { dirname, join } from "node:path";
 import { mkdirSync } from "node:fs";
 import { Subject } from "rxjs";
 import { isThinkingLevel, isNativeHarness, isAgentLanguage, isSkillImprovementLevel, DEFAULT_SKILL_IMPROVEMENT_LEVEL, isFindingKind, isPlatform, parseFindingTarget, docsPolicy, combineReportWrites, readMinionResult, isMinionPauseCode, clampMinionCap, MINION_CAP_DEFAULT, isDevicePlatform, ACTIVE_STATUSES, validateScheduleSpec, SCHEDULE_RUNS_KEEP, SCHEDULE_SLIPS_KEEP, ACTIVITY_SPAN_KINDS, analyticsSessionClass, normalizePrLoopSettings, PR_LOOP_DEFAULTS } from "@kermanych/core";
-import type { AgentFinding, DeviceChoice, DocsPolicy, FindingReport, FindingTarget, MinionPause, MinionResult, NativeSettings, Platform, Project, ResourceDecision, Session, SessionDevice, SessionStatus, ThinkingLevel, Usage, AgentLanguage, SkillImprovementLevel, TaskReportsWrite, TesterSettings, ScheduledTask, ScheduleRun, ScheduleRunReason, ScheduleRunStatus, ScheduleRunTrigger, ScheduleSlip, ActivitySpanKind, ActivitySpanRow, AnalyticsFindingRow, AnalyticsImportState, AnalyticsInput, AnalyticsSessionClass, AnalyticsSessionRow, UsageHourRow, PrLoopSettings } from "@kermanych/core";
+import type { AgentFinding, DeviceChoice, DocsPolicy, FindingReport, FindingTarget, MinionPause, MinionResult, NativeSettings, Platform, Project, ResourceDecision, Session, SessionDevice, SessionStatus, ThinkingLevel, Usage, AgentLanguage, SkillImprovementLevel, TaskReportsWrite, TesterSettings, ScheduledTask, ScheduleRun, ScheduleRunReason, ScheduleRunStatus, ScheduleRunTrigger, ScheduleSlip, ActivitySpanKind, ActivitySpanRow, AnalyticsFindingRow, AnalyticsImportState, AnalyticsInput, AnalyticsSessionClass, AnalyticsSessionRow, UsageHourRow, PrLoopSettings, RemotePushSubscription } from "@kermanych/core";
 
 // A watched session's loop bookkeeping (docs/specs/2026-11-23-pr-feedback-loop.md).
 export type PrLoopRow = {
@@ -91,6 +91,34 @@ export type MachineResourcesRow = { fingerprint: string; decision: ResourceDecis
 // «Посіпака» on this machine, as stored: the cap, the pause (absent while it works) and the
 // consecutive failures (docs/specs/2026-10-23-minion-auto-run.md, decisions 8-9).
 export type MinionSettingsRow = { cap: number; pause?: MinionPause; failures: number };
+
+// «Пульт» on this machine (docs/specs/2026-11-24-mobile-remote-control.md), as stored: whether the
+// operator turned it on (decision 6, off by default), the tailnet HTTPS port `tailscale serve`
+// was given once (kept for good, so a paired phone's URL does not move), and the Web Push VAPID
+// key pair, generated once (spec → Notifications and presence).
+export type RemoteSettingsRow = { enabled: boolean; httpsPort?: number; vapidPublic?: string; vapidPrivate?: string };
+
+// One paired phone (decision 5). Only the SHA-256 of its key is kept, never the key; `push` is the
+// phone's Web Push subscription once it accepted notifications.
+export type RemoteDeviceRow = { id: string; name: string; keyHash: string; createdAt: string; lastSeenAt: string; push?: RemotePushSubscription };
+
+type RemoteDeviceDbRow = { id: string; name: string; key_hash: string; created_at: string; last_seen_at: string; push_subscription: string | null };
+const REMOTE_DEVICE_COLUMNS = "id, name, key_hash, created_at, last_seen_at, push_subscription";
+
+// A subscription column another version (or a hand edit) left unreadable reads as none: the phone
+// subscribes again on its next visit, and a broken row must not take the device list down.
+function readRemoteDeviceRow(r: RemoteDeviceDbRow): RemoteDeviceRow {
+  let push: RemotePushSubscription | undefined;
+  if (r.push_subscription) {
+    try {
+      const v = JSON.parse(r.push_subscription) as RemotePushSubscription;
+      if (typeof v?.endpoint === "string" && typeof v.keys?.p256dh === "string" && typeof v.keys?.auth === "string") push = v;
+    } catch {
+      /* unreadable → no subscription */
+    }
+  }
+  return { id: r.id, name: r.name, keyHash: r.key_hash, createdAt: r.created_at, lastSeenAt: r.last_seen_at, ...(push ? { push } : {}) };
+}
 
 // A queued cloud status push. One row per task — the outbox is a latest-wins mailbox, not a
 // log: if a session goes thinking → tool → thinking while offline, only the newest status is
@@ -890,6 +918,18 @@ export class RegistryService {
       `CREATE TABLE IF NOT EXISTS analytics_meta (id INTEGER PRIMARY KEY CHECK (id = 1), ledger_started_at TEXT NOT NULL, import_state TEXT NOT NULL DEFAULT 'pending', import_done INTEGER NOT NULL DEFAULT 0, import_total INTEGER NOT NULL DEFAULT 0, import_ms INTEGER, import_files INTEGER, import_bytes INTEGER)`,
     );
     this.db.prepare(`INSERT OR IGNORE INTO analytics_meta (id, ledger_started_at) VALUES (1, ?)`).run(new Date().toISOString());
+    // «Пульт» (docs/specs/2026-11-24-mobile-remote-control.md), machine-local and never synced: a
+    // phone pairs with THIS computer. `remote_settings` is single-row like minion_settings (the
+    // switch, the tailnet HTTPS port, the VAPID keys). `remote_devices` holds the paired phones;
+    // `key_hash` is the SHA-256 of the device key (decision 5), UNIQUE because a request is
+    // looked up by it, and `push_subscription` the JSON RemotePushSubscription, NULL until the
+    // phone accepts notifications.
+    this.db.exec(
+      `CREATE TABLE IF NOT EXISTS remote_settings (id INTEGER PRIMARY KEY CHECK (id = 1), enabled INTEGER NOT NULL DEFAULT 0, https_port INTEGER, vapid_public TEXT, vapid_private TEXT)`,
+    );
+    this.db.exec(
+      `CREATE TABLE IF NOT EXISTS remote_devices (id TEXT PRIMARY KEY, name TEXT NOT NULL, key_hash TEXT NOT NULL UNIQUE, created_at TEXT NOT NULL, last_seen_at TEXT NOT NULL, push_subscription TEXT)`,
+    );
   }
 
   // Managed claude-code sessions are gone (docs/specs/2026-11-05-remove-managed-claude-code.md,
@@ -1863,6 +1903,67 @@ export class RegistryService {
   setMinionProject(projectId: string, active: boolean): void {
     if (active) this.db.prepare(`INSERT OR IGNORE INTO minion_projects (project_id, activated_at) VALUES (?,?)`).run(projectId, new Date().toISOString());
     else this.db.prepare(`DELETE FROM minion_projects WHERE project_id = ?`).run(projectId);
+  }
+
+  // ── «Пульт» (docs/specs/2026-11-24-mobile-remote-control.md) ─────────────────────────────────
+
+  // No row yet reads as the default: off (decision 6), no port chosen, no keys.
+  getRemoteSettings(): RemoteSettingsRow {
+    const row = this.db.prepare(`SELECT enabled, https_port, vapid_public, vapid_private FROM remote_settings WHERE id = 1`).get() as
+      | { enabled: number; https_port: number | null; vapid_public: string | null; vapid_private: string | null }
+      | undefined;
+    return {
+      enabled: row?.enabled === 1,
+      ...(row?.https_port ? { httpsPort: row.https_port } : {}),
+      ...(row?.vapid_public && row.vapid_private ? { vapidPublic: row.vapid_public, vapidPrivate: row.vapid_private } : {}),
+    };
+  }
+
+  setRemoteSettings(row: RemoteSettingsRow): void {
+    this.db
+      .prepare(`INSERT OR REPLACE INTO remote_settings (id, enabled, https_port, vapid_public, vapid_private) VALUES (1,?,?,?,?)`)
+      .run(row.enabled ? 1 : 0, row.httpsPort ?? null, row.vapidPublic ?? null, row.vapidPrivate ?? null);
+  }
+
+  // Oldest pairing first: the order the desktop's «Підключені телефони» lists them in.
+  listRemoteDevices(): RemoteDeviceRow[] {
+    const rows = this.db.prepare(`SELECT ${REMOTE_DEVICE_COLUMNS} FROM remote_devices ORDER BY created_at, id`).all() as RemoteDeviceDbRow[];
+    return rows.map(readRemoteDeviceRow);
+  }
+
+  addRemoteDevice(name: string, keyHash: string, now: string = new Date().toISOString()): RemoteDeviceRow {
+    const id = randomUUID();
+    this.db
+      .prepare(`INSERT INTO remote_devices (id, name, key_hash, created_at, last_seen_at, push_subscription) VALUES (?,?,?,?,?,NULL)`)
+      .run(id, name, keyHash, now, now);
+    return { id, name, keyHash, createdAt: now, lastSeenAt: now };
+  }
+
+  findRemoteDeviceByHash(keyHash: string): RemoteDeviceRow | undefined {
+    const row = this.db.prepare(`SELECT ${REMOTE_DEVICE_COLUMNS} FROM remote_devices WHERE key_hash = ?`).get(keyHash) as RemoteDeviceDbRow | undefined;
+    return row ? readRemoteDeviceRow(row) : undefined;
+  }
+
+  touchRemoteDevice(id: string, at: string): void {
+    this.db.prepare(`UPDATE remote_devices SET last_seen_at = ? WHERE id = ?`).run(at, id);
+  }
+
+  // `undefined` clears it: the phone unsubscribed, or the push service answered 404/410.
+  setRemoteDevicePush(id: string, push: RemotePushSubscription | undefined): void {
+    this.db.prepare(`UPDATE remote_devices SET push_subscription = ? WHERE id = ?`).run(push ? JSON.stringify(push) : null, id);
+  }
+
+  // Whether a row was there to remove.
+  removeRemoteDevice(id: string): boolean {
+    return this.db.prepare(`DELETE FROM remote_devices WHERE id = ?`).run(id).changes > 0;
+  }
+
+  // The sweep of decision 5: every device last seen before `before` goes. Returns their ids, so
+  // the caller can close what those devices still hold open.
+  pruneRemoteDevices(before: string): string[] {
+    const rows = this.db.prepare(`SELECT id FROM remote_devices WHERE last_seen_at < ?`).all(before) as { id: string }[];
+    if (rows.length) this.db.prepare(`DELETE FROM remote_devices WHERE last_seen_at < ?`).run(before);
+    return rows.map((r) => r.id);
   }
 
   // ── «Петля після ПР» (docs/specs/2026-11-23-pr-feedback-loop.md) ─────────────────────────────

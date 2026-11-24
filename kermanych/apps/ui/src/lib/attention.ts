@@ -3,12 +3,13 @@
 // One rule for the project rows and the workspace rows above them, so a folded workspace
 // and the projects it hides can never disagree. The Dock icon's number and bounce
 // (docs/specs/2026-11-01-dock-attention.md) read the same rule.
-import type { Session, SessionStatus } from '@kermanych/core';
+import { isTracked, type Session, type SessionStatus } from '@kermanych/core';
 // Import from core's status module directly (not the barrel): @kermanych/core is a CJS
 // workspace dep whose named exports vite/rollup only sees once its dist is commonjs-
 // transformed (see quasar.config commonjsOptions.include); status.js has a direct export.
 import { shouldNotify } from '@kermanych/core/status';
-import { bucketOf } from './buckets';
+// `isTracked` (which sessions are work the operator tracks) is core's (packages/core/src/buckets.ts):
+// the phone of «Пульт» lists exactly the sessions these marks count.
 
 // How many of the project's sessions sit in each state that deserves a mark.
 //   input   — blocked on an interactive question to the operator (`waiting_input`)
@@ -65,15 +66,6 @@ export function isUnseen(lastActivityAt: string, seenAt: string | undefined, bas
   const moved = Date.parse(lastActivityAt);
   const seen = Math.max(Date.parse(baseline), seenAt ? Date.parse(seenAt) : -Infinity);
   return moved > seen;
-}
-
-// Whether a session is work the operator tracks. Chats are the operator's own conversations,
-// not work to track, and anything `bucketOf` files as completed or as a backlog card is out:
-// archived and merged work (with the forks that hang off it) needs nothing.
-export function isTracked(s: Session, parent: (id: string) => Session | undefined): boolean {
-  if (s.kind === 'chat') return false;
-  const bucket = bucketOf(s, parent);
-  return bucket !== 'completed' && bucket !== 'tasks';
 }
 
 // Per project, in one pass, over the tracked sessions. `stopped` gets no mark — the operator

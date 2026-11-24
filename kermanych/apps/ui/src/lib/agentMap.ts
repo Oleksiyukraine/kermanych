@@ -4,8 +4,8 @@
 // The decisions (what is on the map, what starts folded, where each node sits) live here as
 // pure functions, because apps/ui has no component tests (see lib/scope.ts:1-3); AgentMap.vue
 // only hands the result to Vue Flow.
-import { ACTIVE_STATUSES, type Session, type SubagentNode } from '@kermanych/core';
-import { bucketOf, readBucket, type Bucket } from './buckets';
+import { ACTIVE_STATUSES, bucketOf, type Bucket, type Session, type SubagentNode } from '@kermanych/core';
+import { readBucket } from './buckets';
 import { byNewestLaunch } from './agents-board';
 
 // The chips above the map: the «Агенти» tabs minus «Задачі» — a backlog card has no agent

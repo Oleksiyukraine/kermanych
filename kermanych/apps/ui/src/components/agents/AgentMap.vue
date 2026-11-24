@@ -186,7 +186,7 @@ import { useOrchestrator } from 'stores/orchestrator';
 import { useProjects } from 'stores/projects';
 import { useMinion } from 'stores/minion';
 import { api } from '../../lib/api';
-import { bucketOf } from '../../lib/buckets';
+import { bucketOf } from '@kermanych/core';
 import { EXPAND_ALL_NONE } from '../../lib/expand-all';
 import { tokens, usageTokens, usd } from '../../lib/format';
 import { sessionLaunchMode } from '../../lib/native-session';

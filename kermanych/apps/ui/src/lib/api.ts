@@ -58,6 +58,8 @@ import type {
   MachineResources,
   ResourcesUpdate,
   MinionState,
+  RemotePairing,
+  RemoteState,
   PrLoopSettings,
   PrLoopState,
   NativeSettings,
@@ -779,6 +781,27 @@ export const api = {
 
   setMinionProject: (projectId: string, active: boolean): Promise<MinionState> =>
     put<MinionState>(`/minion/projects/${projectId}`, { active }),
+
+  // «Пульт» (docs/specs/2026-11-24-mobile-remote-control.md, decision 7): the phone remote of
+  // this machine. Local-only like «Посіпака»: the switch, the Tailscale checks and the paired
+  // phones live in this machine's api. Every write but pairing answers with the whole state, as
+  // `remote_update` does.
+  remote: (): Promise<RemoteState> => get<RemoteState>('/remote'),
+
+  // On answers in phase `starting`; `tailscale serve` finishes in the background (remote_update).
+  setRemote: (enabled: boolean): Promise<RemoteState> => put<RemoteState>('/remote', { enabled }),
+
+  // Re-runs the Tailscale checks (and serve, while on) after the operator fixed something.
+  recheckRemote: (): Promise<RemoteState> => post<RemoteState>('/remote/recheck', {}),
+
+  // Linux: `pkexec tailscale set --operator=$USER` — the system password dialog appears.
+  remoteOperator: (): Promise<RemoteState> => post<RemoteState>('/remote/operator', {}),
+
+  // A fresh one-time code and its QR; replaces any earlier unused pairing.
+  remotePairing: (): Promise<RemotePairing> => post<RemotePairing>('/remote/pairing', {}),
+
+  // DELETE with an answer: the refreshed state, so the list drops the row without a second read.
+  removeRemoteDevice: (id: string): Promise<RemoteState> => delJson<RemoteState>(`/remote/devices/${id}`),
 
   // «Петля після ПР» (docs/specs/2026-11-23-pr-feedback-loop.md): the latest state of every PR
   // this machine watches; `pr_loop_update` carries each change after it.

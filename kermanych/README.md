@@ -1221,6 +1221,68 @@ edge to resize (the height and whether it is open are remembered).
   the same bearer token the REST API accepts (`auth: { token }`) — a socket there can run
   commands, so no other page on the machine may connect to it.
 
+## «Пульт» — agents from your phone
+
+Spec: `docs/specs/2026-11-24-mobile-remote-control.md`. Your phone watches and steers the agents
+running on this computer: the list of sessions with «потребує уваги» first, the live conversation,
+a message to an agent (photos from the camera too), an answer to an agent's question, «Зупинити».
+Nothing else — no diff, PR, preview, terminal or settings — is reachable from the phone.
+
+The phone opens a web page the computer serves; there is no app to install from a store. The
+connection goes through **[Tailscale](https://tailscale.com/download)**, a private encrypted
+network between your own devices, so it works from anywhere and nothing passes through the
+team's cloud. macOS and Linux computers, iPhone and Android phones.
+
+**Before you start**
+
+- Install Tailscale on the computer and on the phone and sign in to the **same** account on both.
+- In the Tailscale admin console → [DNS](https://login.tailscale.com/admin/dns), turn on
+  **MagicDNS** and **HTTPS Certificates** (once per tailnet).
+- Linux only: Tailscale lets only its operator change what it serves. «Надати дозвіл» in the
+  section runs `pkexec tailscale set --operator=$USER` (the system asks for your password once);
+  without `pkexec`, run `sudo tailscale set --operator=$USER` yourself.
+
+**Turning it on.** Налаштування → Застосунок → «Пульт» → «Увімкнути пульт». Kermanych checks the
+points above and says what is missing, then runs `tailscale serve` on its own HTTPS port of the
+tailnet (8443, or the next free one up to 8453 if another service of yours holds it; the port is
+kept for good, because the installed web app is bound to its address). Turning «Пульт» off, or
+quitting the app, removes that `serve` rule; anything else you serve through Tailscale is left
+alone. While «Пульт» is on, the bottom bar shows «Пульт · N телефонів» — a click opens the section.
+
+**Pairing a phone.** «Підключити телефон» shows a QR code and a 6-digit code, valid 10 minutes.
+
+- iPhone (iOS 16.4+): scan the QR with the camera, open the link in Safari, «Поділитися» → «На
+  початковий екран», open Kermanych from the icon and type the 6-digit code. iOS keeps the
+  home-screen app's storage apart from Safari, so the pairing happens in the installed app.
+- Android: scan the QR; Chrome pairs straight away. Adding it to the home screen is optional.
+
+Then «Увімкнути сповіщення» on the phone. A notification comes when an agent waits for your
+answer or stops with an error, and not while you are using the computer (it was used within the
+last 2 minutes and the screen is not locked; where the computer cannot tell, it notifies).
+Notifications carry only the project, the session name and what happened, never the conversation.
+
+**Native sessions** (`omp` / `claude` / `codex` in their own terminal) are listed and readable
+and can be stopped; a message is accepted while the agent is idle. Their questions are answered
+in the terminal on the computer — the phone says so, and still notifies.
+
+**Security.** Whoever holds a paired phone steers this computer's agents, and agents run commands.
+
+- Only a phone that scanned a code from this computer's screen gets a key; the computer stores
+  only its hash. Five wrong codes withdraw the pairing.
+- Requests from another Tailscale login than the computer's own (a colleague on a shared tailnet,
+  a user a device was shared with) are refused.
+- A phone unused for 30 days is disconnected by itself; «Відключити» in the section disconnects
+  one at once.
+- The phone talks to a separate local server (`127.0.0.1`, a random port behind `tailscale serve`)
+  that has only the actions above; the main local API stays unreachable from the network.
+
+While «Пульт» is on and an agent works or waits for an answer, the computer does not go to idle
+sleep (as during a «Посіпака» run). A closed laptop lid without an external display still sleeps;
+the phone then shows «Комп'ютер недоступний».
+
+The phone client is `apps/remote` (Vue + Vite); the api serves its `dist/`
+(`pnpm --filter @kermanych/remote build`, which the api's own build runs first).
+
 ## Native sessions
 
 A task can also run in the harness's **own** interface instead of Kermanych's wrapper. In
@@ -1750,6 +1812,8 @@ pnpm workspaces (`packages/*`, `apps/*`):
 - **`apps/api`** — the NestJS application: REST + WebSocket surface, session
   supervision, and the `omp` RPC bridge.
 - **`apps/ui`** — the Quasar/Vue 3 dashboard.
+- **`apps/remote`** — the «Пульт» phone client (Vue 3 + Vite, a web app the api serves
+  through `tailscale serve`).
 
 ## Design
 

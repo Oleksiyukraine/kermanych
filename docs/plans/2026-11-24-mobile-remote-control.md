@@ -66,7 +66,7 @@ of listed sessions only.
    against a local api.
 7. **Desktop ui** — `app-remote` settings section, bottom-bar mark, store, i18n, api client;
    Electron `presence` hook; packaging of the client. Check: ui typecheck + specs, live preview.
-8. **Docs** — README «Пульт», CHANGELOG.
+8. **Docs** — README «Пульт» and «Monorepo layout».
 
 ## Risks and order
 

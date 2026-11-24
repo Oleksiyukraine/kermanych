@@ -127,8 +127,9 @@ whitelisted handlers exist on it.
 
 ### Pairing and devices
 
-- «Підключити телефон» creates a one-time pairing code (32 random bytes, 5 minutes, one active at
-  a time) and shows a QR of `https://<host>.<tailnet>.ts.net:<port>/#pair=<code>` plus a 6-digit
+- «Підключити телефон» creates a one-time pairing code (32 random bytes, 10 minutes — time to add
+  the page to the home screen first — one active at a time) and shows a QR of
+  `https://<host>.<tailnet>.ts.net:<port>/#pair=<code>` plus a 6-digit
   short form of it for typing.
 - The phone trades the code for a device key (32 random bytes). The registry stores only its
   SHA-256: new table `remote_devices` (id, name, key_hash, created_at, last_seen_at,
@@ -227,7 +228,8 @@ Estimate `[INFERENCE]`, not measured: about three weeks for one developer.
 ## Documentation
 
 README: a new «Пульт» section (prerequisites per platform, turning on, pairing, what the phone can
-do, security notes). CHANGELOG entry.
+do, security notes) and `apps/remote` in «Monorepo layout». CHANGELOG.md is written at release time
+(`pnpm release:prepare`), not per feature.
 
 ## Out of scope
 

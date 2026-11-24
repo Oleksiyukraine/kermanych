@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, dialog, nativeImage, powerSaveBlocker, shell, systemPreferences } from 'electron';
+import { app, BrowserWindow, ipcMain, dialog, nativeImage, powerMonitor, powerSaveBlocker, shell, systemPreferences } from 'electron';
 import { execFile } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import { readFileSync } from 'node:fs';
@@ -107,13 +107,26 @@ function keepAwake(hold: boolean): void {
   }
 }
 
+// «Пульт» (docs/specs/2026-11-24-mobile-remote-control.md, decision 4): a push reaches the phone
+// only while the operator is away from this computer. The system's idle time and lock state say
+// so; the api asks whenever it is about to push. Equals REMOTE_PRESENCE_IDLE_S in
+// packages/core/src/remote.ts — main imports nothing but types from core, so the value is
+// restated here rather than pulled into the main bundle.
+const REMOTE_PRESENCE_IDLE_S = 120;
+function presence(): 'present' | 'away' | 'unknown' {
+  const s = powerMonitor.getSystemIdleState(REMOTE_PRESENCE_IDLE_S);
+  if (s === 'active') return 'present';
+  // 'unknown' (some Linux sessions, Wayland) is the api's to read as away (spec → Settled).
+  return s === 'unknown' ? 'unknown' : 'away';
+}
+
 async function startBackend(port: number): Promise<void> {
   try {
     // Reports that arrive while nest.close() runs after `before-quit` must not bring the icon back.
     const schedules = (s: ScheduleTrayState) => {
       if (!quitting) scheduleTray.update(s);
     };
-    const res = await bootstrap({ port, browser: browsers, keepAwake, uiKey, schedules });
+    const res = await bootstrap({ port, browser: browsers, keepAwake, uiKey, schedules, presence });
     nest = res.app;
     backend.resolve();
     void sweepPartitions(knownProjectIds(res.app));

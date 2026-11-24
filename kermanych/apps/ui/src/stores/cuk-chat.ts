@@ -50,7 +50,7 @@ import { StreamedAnswer, type AssistantTurnEntry } from '../lib/streamed-answer'
 import { handleOf } from '../lib/members';
 import { todoPlainText } from '../lib/home-todo';
 import { SETTINGS_CATEGORIES } from '../lib/settings';
-import { bucketOf } from '../lib/buckets';
+import { bucketOf } from '@kermanych/core';
 import { nextMode } from '../lib/message-mode';
 import { defaultLaunchMode, nativeRuntimeFor } from '../lib/native-session';
 import { taskInsertFromDraft } from '../lib/tasks-view';

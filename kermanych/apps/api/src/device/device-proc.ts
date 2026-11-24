@@ -22,6 +22,9 @@ export class ToolError extends Error {
     message: string,
     readonly code: number | null,
     readonly stderr: string,
+    // What the tool printed to stdout before it was killed for its timeout: a command that waits
+    // for the operator (`tailscale serve` asking to enable HTTPS in the tailnet) says why there.
+    readonly stdout = "",
   ) {
     super(message);
   }
@@ -54,7 +57,7 @@ export function run(cmd: string, args: string[], opts: RunOptions = {}): Promise
     const stdout = Buffer.concat(out);
     const stderr = Buffer.concat(err).toString("utf8");
     if (opts.signal?.aborted) return reject(abortError(opts.signal));
-    if (timedOut) return reject(new ToolError(`${commandLine(cmd, args)} did not finish in ${Math.round(opts.timeoutMs! / 1000)} s`, null, stderr));
+    if (timedOut) return reject(new ToolError(`${commandLine(cmd, args)} did not finish in ${Math.round(opts.timeoutMs! / 1000)} s`, null, stderr, stdout.toString("utf8")));
     if (code !== 0 && !opts.allowFail) {
       const said = lastLines(stderr || stdout.toString("utf8"), 3);
       return reject(new ToolError(`${commandLine(cmd, args)} failed (exit ${code})${said ? `: ${said}` : ""}`, code, stderr));

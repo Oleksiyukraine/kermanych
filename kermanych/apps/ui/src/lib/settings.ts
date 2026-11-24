@@ -55,6 +55,8 @@ export const SETTINGS_CATEGORIES: readonly SettingsCategory[] = [
   { key: 'workspace-danger', scope: 'workspace', danger: true },
   { key: 'app-general', scope: 'app' },
   { key: 'app-notifications', scope: 'app' },
+  // «Пульт» right after «Сповіщення» (docs/specs/2026-11-24-mobile-remote-control.md, decision 7).
+  { key: 'app-remote', scope: 'app' },
   { key: 'app-keymap', scope: 'app' },
   { key: 'app-runtime', scope: 'app' },
   { key: 'app-voice', scope: 'app' },
@@ -533,4 +535,18 @@ export function setEnvValue(rows: readonly EnvRow[], key: string, value: string)
   if (i < 0) return value ? [...rows, { key, value, required: false }] : [...rows];
   if (value || rows[i]!.required) return rows.map((r, j) => (j === i ? { ...r, value } : r));
   return rows.filter((_, j) => j !== i);
+}
+
+/**
+ * «Пульт» → «Підключити телефон» (docs/specs/2026-11-24-mobile-remote-control.md → Pairing and
+ * devices): what is left of a one-time code's life as `m:ss`, or `undefined` once it has run out
+ * (the dialog then offers «Новий код» instead of a code that the api would refuse). Seconds are
+ * rounded UP, so `0:00` never shows while the code still works, and an unreadable `expiresAt`
+ * counts as expired rather than as forever.
+ */
+export function remotePairingLeft(expiresAt: string, now: number): string | undefined {
+  const ms = Date.parse(expiresAt) - now;
+  if (!(ms > 0)) return undefined;
+  const s = Math.ceil(ms / 1000);
+  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
 }
