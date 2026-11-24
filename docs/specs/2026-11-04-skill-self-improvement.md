@@ -254,6 +254,10 @@ Researched in its docs ([skills](https://hermes-agent.nousresearch.com/docs/user
     `before_body` or `edits`.
   - A Realtime binding then keeps the list current. It covers the user's own INSERTs and
     UPDATEs and selects the same light columns.
+  - A failed read keeps the rows already shown and says why above them; a fetch that never
+    reached the cloud reads «немає зв’язку з хмарою». It reads again on its own — after 5
+    seconds, then twice as long each time up to a minute, and at once when the Realtime channel
+    rejoins — until it succeeds. «Спробувати ще» reads at once.
   - The full record is read when an entry is opened.
   - The binding is per user, not per workspace, because the personal layer is global, and so is
     the column.
