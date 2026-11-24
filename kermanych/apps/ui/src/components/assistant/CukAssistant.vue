@@ -163,13 +163,6 @@ const resetChat = useAsyncAction(() => chat.reset());
 const stopTurn = useAsyncAction(() => chat.stop());
 const undo = useKeyedAction((id: string) => chat.undo(id));
 
-// «Обговорити в ЦУК» from a scheduled run's answer: the text lands in the draft, not sent.
-watch(
-  () => chat.draftRequest,
-  (req) => {
-    if (req) composerEl.value?.setDraft(req.text);
-  },
-);
 async function newChat(): Promise<void> {
   if (resetChat.busy.value) return;
   if (chat.hasConversation) {

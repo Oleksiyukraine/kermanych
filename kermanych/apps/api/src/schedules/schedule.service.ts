@@ -329,6 +329,11 @@ export class ScheduleService implements OnModuleInit, OnModuleDestroy {
     this.registry.snoozeScheduleSlip(id, new Date(Date.now() + minutes * 60_000).toISOString());
   }
 
+  // «Видалити сповіщення»: the slip is gone for good; the schedule and the run stay.
+  deleteSlip(id: string): void {
+    if (!this.registry.deleteScheduleSlip(id)) throw new ScheduleNotFound("slip");
+  }
+
   // A project must be known here; every skill must resolve — in the project's checkout, so a
   // repository skill counts, or in the user's library for a task without a project.
   private async checkRefs(projectId: string | undefined, skills: readonly string[]): Promise<void> {

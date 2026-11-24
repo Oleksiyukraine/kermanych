@@ -2772,11 +2772,14 @@ else sees them and nothing is written to the cloud apart from a run's hidden boa
   reminders (with «Готово» and «Відкласти» 10 хв / 1 год), finished runs and runs that were
   skipped or failed, with the reason. Clicking a slip opens its details over the console, the way
   a «Розклад» row opens its task: the kind, the project, the status, when it fired and for which
-  time, and the text — the reminder, the run's answer or why it did not run — with «Відкрити
-  задачу», «Відкрити сесію» while the run's session is still on this machine, and «Обговорити в
-  ЦУК» for a run without a project. A finished agent run takes your reaction in its slip and in the
-  task's run history: «Взято в роботу» (the next runs may build on it) or «Не цікаво» (they drop
-  it); press it again to take it back. «Розклад» lists the tasks with their next firing and a pause
+  time, and the text — the reminder, the run's answer or why it did not run. Under it are two
+  buttons. «Видалити сповіщення» removes the slip for good (the run stays in the task's history).
+  «Створити задачу» closes ЦТ and opens «Нова задача» on «Агенти» in the slip's project (or the
+  selected one; with neither the button is off), its description the text under a line saying
+  which task and when; a card made from a finished run marks that run «Взято в роботу». A
+  finished agent run takes your reaction in its slip and in the task's run history: «Взято в
+  роботу» (the next runs may build on it) or «Не цікаво» (they drop it); press it again to take
+  it back. «Розклад» lists the tasks with their next firing and a pause
   switch; opening one shows its text, skills, «Нотатки для наступного запуску» with «Очистити
   нотатки» (the next run starts without them; the history keeps them), the run history,
   «Запустити зараз» and «Видалити». Like

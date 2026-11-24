@@ -2197,6 +2197,12 @@ export class RegistryService {
     return this.db.prepare(`UPDATE schedule_slips SET snoozed_until = ? WHERE id = ?`).run(until, id).changes === 1;
   }
 
+  // «Видалити сповіщення» (docs/specs/2026-11-24-notification-panel-actions.md, decision 6): the
+  // slip only; its run keeps its record in the task's history.
+  deleteScheduleSlip(id: string): boolean {
+    return this.db.prepare(`DELETE FROM schedule_slips WHERE id = ?`).run(id).changes === 1;
+  }
+
   refireScheduleSlip(id: string, at: string): ScheduleSlip | undefined {
     this.db.prepare(`UPDATE schedule_slips SET snoozed_until = NULL, at = ?, seen = 0 WHERE id = ?`).run(at, id);
     return this.getScheduleSlip(id);

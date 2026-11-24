@@ -213,6 +213,12 @@ export const useSchedules = defineStore('schedules', () => {
     if (slips.value) slips.value = slips.value.filter((s) => s.id !== id);
   }
 
+  // «Видалити сповіщення» (docs/specs/2026-11-24-notification-panel-actions.md, decision 6).
+  async function removeSlip(id: string): Promise<void> {
+    await api.deleteScheduleSlip(id);
+    if (slips.value) slips.value = slips.value.filter((s) => s.id !== id);
+  }
+
   return {
     tasks,
     slips,
@@ -232,5 +238,6 @@ export const useSchedules = defineStore('schedules', () => {
     clearNotes,
     markSlipsSeen,
     snooze,
+    removeSlip,
   };
 });
