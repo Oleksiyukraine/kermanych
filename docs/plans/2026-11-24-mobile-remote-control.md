@@ -52,21 +52,25 @@ of listed sessions only.
    Check: `pnpm --filter @kermanych/core build`. ✅
 2. **Bucket rule in core** — move `bucketOf` / `Bucket` / `isTracked` from `apps/ui/src/lib`
    into `packages/core/src/buckets.ts` so the api lists the same sessions as the sidebar; ui
-   importers switch to core. Check: ui `buckets.spec.ts` / `attention.spec.ts` pass.
+   importers switch to core. Check: ui `buckets.spec.ts` / `attention.spec.ts` pass. ✅
 3. **Registry** — `remote_settings` (single row: enabled, https_port, vapid keys) and
-   `remote_devices` in `apps/api/src/registry/registry.service.ts`. Check: registry spec.
+   `remote_devices` in `apps/api/src/registry/registry.service.ts`. Check: registry spec. ✅
 4. **Tailscale** — `apps/api/src/remote/tailscale.ts`: find the CLI (PATH, macOS bundle), status,
-   serve on/off on our port, operator via `pkexec`. Check: unit spec over a fake runner.
+   serve on/off on our port, operator via `pkexec`. Check: unit spec over a fake runner. ✅
 5. **Remote service and server** — `apps/api/src/remote/`: settings, pairing, device keys,
    whitelist routes, filtered socket, static client, identity check, keep-awake holder `remote`,
    Web Push with presence; `RemoteController` on the main api; module wiring; `bootstrap({ presence })`.
-   Check: unit specs (pairing, keys, lapse, whitelist, events filter, push rule, awake holder).
+   Check: unit specs (pairing, keys, lapse, whitelist, events filter, push rule, awake holder). ✅
 6. **Phone client** — `apps/remote` (Vue + Vite): pairing, list, session, composer with camera,
    answer, stop, manifest, service worker, push subscription, uk/en. Check: `vite build`, a run
-   against a local api.
+   against a local RemoteServer over fake sessions (pair, list, answer, message, stop). ✅
 7. **Desktop ui** — `app-remote` settings section, bottom-bar mark, store, i18n, api client;
-   Electron `presence` hook; packaging of the client. Check: ui typecheck + specs, live preview.
-8. **Docs** — README «Пульт» and «Monorepo layout».
+   Electron `presence` hook; packaging of the client. Check: ui typecheck + specs, live preview
+   (blocked phase and the bottom-bar mark). ✅ Not yet seen: the pairing dialog against a real
+   tailnet, and the packaged app serving the client from its asar.
+8. **Docs** — README «Пульт» and «Monorepo layout». ✅
+9. **Manual on a real tailnet** — the spec's Testing checklist on macOS + iPhone (Tailscale serve,
+   QR, home-screen install, push). Open.
 
 ## Risks and order
 
