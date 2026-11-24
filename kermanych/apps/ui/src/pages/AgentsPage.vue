@@ -3280,12 +3280,17 @@ async function loadLaunchBranches(preferred: string | undefined): Promise<void> 
   }
 }
 
+// What the opener of this launcher wants to hear once the popup has written a NEW card
+// (openTaskFromText's `onCreated`); every other opening clears it.
+let onCardCreated: (() => void) | undefined;
+
 // `deepAnalysis` seeds «Глибокий аналіз» for a NEW card; a card being edited keeps its own.
 function openLauncher(card?: Task, deepAnalysis = false): void {
   // Before loadLaunchBranches(), which reads it. A card being edited stays in its own
   // project; a new one lands in the selected project, and the «Нова задача» button is
   // disabled unless there is one.
   launchProjectId.value = card?.projectId ?? store.selectedProjectId;
+  onCardCreated = undefined;
   editingTaskId.value = card?.id ?? null;
   // The title and task text open on the target's draft, or on the card's own (blank for a new
   // card) when there is none — set through bind(), never assigned first (lib/drafts.ts).
@@ -3325,15 +3330,23 @@ function openLauncher(card?: Task, deepAnalysis = false): void {
 
 // Turn a transcript text selection into a new backlog task: prefill the launcher
 // with the selection as the task body and a name suggested from its first line,
-// defaulting to "save to backlog" so a finding is parked rather than run now.
-function openTaskFromText(text: string): void {
+// defaulting to "save to backlog" so a finding is parked rather than run now. A schedule slip's
+// «Створити задачу» comes here too (store.requestNewTask), with its own project, a title taken
+// from the answer rather than its header, and a hook for the card it writes.
+function openTaskFromText(
+  text: string,
+  projectId?: string,
+  title = taskNameFromText(text),
+  onCreated?: () => void,
+): void {
   // The finding belongs to the project the transcript came from, which under a workspace
   // scope is not necessarily the selected one.
-  launchProjectId.value = selectedSession.value?.projectId ?? store.selectedProjectId;
+  launchProjectId.value = projectId ?? selectedSession.value?.projectId ?? store.selectedProjectId;
+  onCardCreated = onCreated;
   editingTaskId.value = null;
   // A selection prefills the form: it is not the project's «Нова задача» draft and must not
   // overwrite one, so this form keeps no draft.
-  launcherDraft.bind(null, { title: taskNameFromText(text), description: text });
+  launcherDraft.bind(null, { title, description: text });
   // New task from a selection: same project default model as openLauncher's new-task branch.
   const textDefault = store.projects.find((p) => p.id === launchProjectId.value);
   draftModel.value = textDefault?.defaultModel ?? '';
@@ -3353,6 +3366,17 @@ function openTaskFromText(text: string): void {
   launcherOpen.value = true;
   void nextTick(() => nameField.value?.focus());
 }
+
+// «Створити задачу» in a schedule slip, from ЦТ: the request may be waiting when this page mounts.
+watch(
+  () => store.newTaskRequest,
+  (req) => {
+    if (!req) return;
+    store.newTaskRequest = undefined;
+    openTaskFromText(req.text, req.projectId, req.title, req.onCreated);
+  },
+  { immediate: true },
+);
 
 // Both buttons write a CLOUD card; «Запустити» then launches it on this machine. Creating
 // the card FIRST is what makes the task visible to the team with an assignee, and it also
@@ -3425,6 +3449,10 @@ async function submitLauncher(asTask: boolean): Promise<void> {
       // launcher is in edit mode for this card — its footer offers «Видалити», which is
       // honest, and a retry carries any edit made in between into the same card.
       editingTaskId.value = created.id;
+      // Once per card: a retried launch edits this card and is no new one.
+      const hook = onCardCreated;
+      onCardCreated = undefined;
+      hook?.();
     }
     // The card holds the text now. A retry after a failed launch edits that card, so further
     // edits are its draft.

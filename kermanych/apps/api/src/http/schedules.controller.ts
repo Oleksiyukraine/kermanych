@@ -80,6 +80,16 @@ export class SchedulesController {
     return { ok: true };
   }
 
+  @Delete("slips/:id")
+  removeSlip(@Param("id") id: string): { ok: true } {
+    try {
+      this.schedules.deleteSlip(id);
+    } catch (err) {
+      relay(err);
+    }
+    return { ok: true };
+  }
+
   @Patch(":id")
   async update(@Param("id") id: string, @Body() b: unknown): Promise<ScheduledTask> {
     const cur = this.registry.getSchedule(id);

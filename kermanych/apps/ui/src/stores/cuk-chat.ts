@@ -131,9 +131,6 @@ export const useCukChat = defineStore('cuk-chat', () => {
   const writing = ref(false);
   const resetting = ref(false);
   const hasConversation = computed(() => entries.value.length > 0);
-  // «Обговорити в ЦУК»: text another view hands to the composer's draft. `n` makes the same text
-  // handed twice a change CukAssistant sees.
-  const draftRequest = ref<{ text: string; n: number } | undefined>(undefined);
 
   // The store has no router of its own: Quasar builds one per app in a factory, and a store
   // setup has no injection context to reach it. The shell's launcher hands it over once.
@@ -453,13 +450,6 @@ export const useCukChat = defineStore('cuk-chat', () => {
     result('info', text);
   }
 
-  /** «Обговорити в ЦУК»: the text goes into the composer's draft, the window on ЦУК. */
-  function discuss(text: string): void {
-    draftRequest.value = { text, n: (draftRequest.value?.n ?? 0) + 1 };
-    overlay.panel = 'cuk';
-    overlay.show();
-  }
-
   // The actions that run at once (decision 4). Never throws.
   async function runNow(action: CukAction, list: Place[]): Promise<void> {
     if (action.kind === 'navigate') {
@@ -708,7 +698,6 @@ export const useCukChat = defineStore('cuk-chat', () => {
     writing,
     resetting,
     hasConversation,
-    draftRequest,
     bindRouter,
     send,
     stop,
@@ -716,7 +705,6 @@ export const useCukChat = defineStore('cuk-chat', () => {
     confirm,
     cancel,
     undo,
-    discuss,
     openSession,
   };
 });

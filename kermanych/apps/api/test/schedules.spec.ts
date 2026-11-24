@@ -862,6 +862,7 @@ describe("SchedulesController", () => {
     expect(() => ctl.remove("nope")).toThrow(NotFoundException);
     expect(() => ctl.runs("nope")).toThrow(NotFoundException);
     expect(() => ctl.snooze("nope", { minutes: 10 })).toThrow(NotFoundException);
+    expect(() => ctl.removeSlip("nope")).toThrow(NotFoundException);
   });
 
   it("deletes a task with its history", async () => {
@@ -874,5 +875,17 @@ describe("SchedulesController", () => {
     expect(ctl.remove(task.id)).toEqual({ ok: true });
     expect(ctl.list().tasks).toEqual([]);
     expect(registry.listScheduleRuns(task.id)).toEqual([]);
+  });
+
+  it("deletes a slip and keeps its run in the task's history", async () => {
+    const { ctl, svc } = make();
+    at("2026-11-06T18:00:00Z");
+    const task = await ctl.create(draft());
+    at("2026-11-06T19:00:05Z");
+    await svc.tick();
+    const [slip] = ctl.slips().slips as [ScheduleSlip];
+    expect(ctl.removeSlip(slip.id)).toEqual({ ok: true });
+    expect(ctl.slips().slips).toEqual([]);
+    expect(ctl.runs(task.id).runs).toHaveLength(1);
   });
 });

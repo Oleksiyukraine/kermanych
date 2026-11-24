@@ -891,6 +891,9 @@ export const api = {
   snoozeScheduleSlip: (id: string, minutes: 10 | 60): Promise<{ ok: true }> =>
     post<{ ok: true }>(`/schedules/slips/${encodeURIComponent(id)}/snooze`, { minutes }),
 
+  // «Видалити сповіщення»: the slip only; its run stays in the task's history.
+  deleteScheduleSlip: (id: string): Promise<void> => del(`/schedules/slips/${encodeURIComponent(id)}`),
+
   // «Аналітика» (docs/specs/2026-11-07-developer-analytics.md): personal and machine-local
   // (decision 1), aggregated in the api from this machine's ledger (decision 9). `projectIds`
   // absent = every project on this machine; `tz` sets the day boundaries and the heat map's
