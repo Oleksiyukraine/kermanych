@@ -20,6 +20,7 @@
     "@grpc/proto-loader": "^0.8.1",
     "@kermanych/cloud": "workspace:*",
     "@kermanych/core": "workspace:*",
+    "@kermanych/remote": "workspace:*",
     "@nestjs/common": "^10",
     "@nestjs/core": "^10",
     "@nestjs/platform-express": "^10",
@@ -32,12 +33,14 @@
     "js-yaml": "^4.3.1",
     "markdown-it": "^14.3.0",
     "node-pty": "1.1.0",
+    "qrcode": "^1.5.4",
     "reflect-metadata": "^0.2",
     "rxjs": "^7",
     "serve-sim": "0.1.49",
     "sherpa-onnx-node": "^2.0.1",
     "smol-toml": "^1.9.1",
-    "socket.io": "^4"
+    "socket.io": "^4",
+    "web-push": "^3.6.7"
   },
   "devDependencies": {
     "@nestjs/cli": "^10",
@@ -45,6 +48,8 @@
     "@types/js-yaml": "^4.0.9",
     "@types/markdown-it": "^14.1.2",
     "@types/node": "^22",
+    "@types/qrcode": "^1.5.5",
+    "@types/web-push": "^3.6.4",
     "socket.io-client": "^4.8.3",
     "tsx": "^4.23.10",
     "typescript": "^5.6",

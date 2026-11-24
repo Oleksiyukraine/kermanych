@@ -12,6 +12,7 @@ import type { GitCloneState } from "./git-setup";
 import type { QaChecklist } from "./task-actions";
 import type { ScheduledTask, ScheduleRun, ScheduleSlip } from "./schedules";
 import type { PrLoopState } from "./pr-loop";
+import type { RemoteState } from "./remote";
 
 // `in_review` is the PR hand-off state: the operator asked for a pull request, the agent
 // pushed it, and the work now waits on a HUMAN reviewer. It is settled (nothing moves on
@@ -333,7 +334,10 @@ export type ServerEvent =
   | { type: "git_clone"; state: GitCloneState }
   // «Петля після ПР» (docs/specs/2026-11-23-pr-feedback-loop.md): a watched session's loop state
   // changed; `state: null` = it is not watched any more (session gone, retired, PR lost).
-  | { type: "pr_loop_update"; sessionId: string; state: PrLoopState | null };
+  | { type: "pr_loop_update"; sessionId: string; state: PrLoopState | null }
+  // «Пульт» (docs/specs/2026-11-24-mobile-remote-control.md): its switch, Tailscale checks, serve
+  // phase or paired phones changed. The settings section and the bottom-bar mark redraw from it.
+  | { type: "remote_update"; state: RemoteState };
 
 // How much of omp's subagent activity a session subscribes to. "progress" streams lifecycle
 // + coalesced progress (enough for the agent map); "events" adds every subagent tool/message
