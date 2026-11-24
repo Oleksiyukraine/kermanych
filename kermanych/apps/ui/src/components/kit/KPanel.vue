@@ -155,7 +155,7 @@
 
       <!-- live activity — a pinned, pulsing heartbeat so a long turn (thinking or a
            minutes-long tool call) never looks dead -->
-      <div v-if="stalled" class="k-panel__stall" role="alert">
+      <div v-if="stalled && !statusLine" class="k-panel__stall" role="alert">
         <span class="k-panel__stall-msg">{{ t('kit.panel.stalled', { label: silentLabel }) }}</span>
         <button
           type="button"
@@ -171,10 +171,10 @@
     <!-- plan lane — present only while the agent keeps a todo list -->
     <KTodoLane v-if="session.todoPhases?.length" :phases="session.todoPhases" />
 
-    <!-- live lane — what the agent is doing right now; absent while idle. Everything
-         countable (model, effort, isolation, context, spend) is printed once, in the
-         composer's chip row below. -->
-    <KStatusRow :session="session" />
+    <!-- live lane — what the agent is doing right now; absent while idle, and absent where the
+         host's status line says it already. Everything countable (model, effort, isolation,
+         context, spend) is printed once, in the composer's chip row below. -->
+    <KStatusRow v-if="!statusLine" :session="session" />
 
     <!-- The voice conversation bound to this session (docs/specs/2026-11-02-voice-conversation.md). -->
     <KVoiceBar
@@ -289,6 +289,10 @@ const props = withDefaults(
     stopping?: boolean;
     // A stalled agent is being restarted — the stall banner's «Перезапустити».
     restarting?: boolean;
+    // The host page shows this session's status line (KStatusLine) itself, with the silence and
+    // «Перезапустити»: the panel drops its live row over the composer and its stall banner
+    // (docs/specs/2026-11-25-status-line-pipeline.md, decision 3).
+    statusLine?: boolean;
     // An answer to the decision block is being delivered — its buttons.
     answering?: boolean;
     // «≡ Підсумок» is being sent — ≡.
@@ -331,6 +335,7 @@ const props = withDefaults(
     branching: false,
     stopping: false,
     restarting: false,
+    statusLine: false,
     answering: false,
     summarizing: false,
     openingEditor: false,

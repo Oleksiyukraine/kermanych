@@ -54,7 +54,11 @@
       <!-- One row, one line, whatever the agent is doing: the status leads (the eye reads it
            first), how the agent works follows, and what it cost waits behind the coins. -->
       <div class="k-session-card__row">
-        <span class="k-session-card__status">
+        <!-- An agent's status is its stage pipeline (KStatusLine, compact;
+             docs/specs/2026-11-25-status-line-pipeline.md, decision 3); a chat, a discussion, a
+             review or a backlog card has no stages and keeps the dot and its word. -->
+        <KStatusLine v-if="session?.kind === 'agent'" class="k-session-card__status" variant="compact" :session="session" :loop="loop" />
+        <span v-else class="k-session-card__status">
           <KStatusDot :status="status" />
           <span v-if="statusLine" v-tip.overflow="statusTip" class="k-session-card__status-line">{{ statusLine }}</span>
         </span>
@@ -71,9 +75,6 @@
           <KIcon name="coins" />
         </span>
       </div>
-      <!-- The status line, compact (docs/specs/2026-11-23-pr-feedback-loop.md, decision 14): only
-           for a session card, never a backlog card — it needs the session itself. -->
-      <KStatusLine v-if="session" variant="compact" :session="session" :loop="loop" />
     </button>
 
     <!-- Remove — revealed on hover, and a SIBLING of the card rather than a child: the card

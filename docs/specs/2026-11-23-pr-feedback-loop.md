@@ -115,6 +115,9 @@ Settled with the operator one question at a time.
 
 ### Status line
 
+> **Superseded.** Decisions 12–15 are replaced by `docs/specs/2026-11-25-status-line-pipeline.md`:
+> the line became a stage pipeline and the older status displays were removed.
+
 12. **A new component owns the status line; existing status displays stay unchanged.**
     `KStatusDot`, the header «harness · status», `KStatusRow`, the error and stall banners are not
     removed or changed. Once the operator is satisfied with the status line, the duplicates are
