@@ -17,11 +17,19 @@ import {
   OPEN_FINDINGS_LIMIT,
   agentLanguageEnglishName,
   validateFindingReport,
+  type AgentFinding,
   type AgentLanguage,
 } from "@kermanych/core";
 import type { RegistryService } from "../registry/registry.service";
 
 type ToolResult = { content: { type: "text"; text: string }[]; isError?: boolean };
+
+/** One finding as an agent reads it: `[status → where] (kind) title`. */
+export function findingLine(f: AgentFinding): string {
+  const t = f.target;
+  const where = t?.kind === "jira" ? ` → Jira ${t.key}` : t?.kind === "plane" ? ` → Plane ${t.key}` : t?.kind === "board" ? " → board card" : "";
+  return `[${f.status}${where}] (${f.kind}) ${f.title}`;
+}
 
 /** The findings tools as `tools/list` hands them out, their fields asked for in `language`. */
 export function findingTools(language: AgentLanguage | undefined) {
@@ -92,11 +100,7 @@ export function callFindingTool(
   if (name === "list_findings") {
     const rows = registry.listFindings(sessionId);
     if (!rows.length) return { content: [{ type: "text", text: "No findings reported in this session yet." }] };
-    const lines = rows.map((f) => {
-      const t = f.target;
-      const where = t?.kind === "jira" ? ` → Jira ${t.key}` : t?.kind === "plane" ? ` → Plane ${t.key}` : t?.kind === "board" ? " → board card" : "";
-      return `- [${f.status}${where}] (${f.kind}) ${f.title}  id=${f.id}`;
-    });
+    const lines = rows.map((f) => `- ${findingLine(f)}  id=${f.id}`);
     return { content: [{ type: "text", text: lines.join("\n") }] };
   }
   const v = validateFindingReport(args);

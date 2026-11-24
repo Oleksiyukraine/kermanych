@@ -83,6 +83,9 @@ export type Toast = {
   action?: { label: string; run: () => void | Promise<void> };
 };
 
+/** The «Нова задача» popup, asked for from outside «Агенти» (`requestNewTask`). */
+export type NewTaskRequest = { projectId: string; title: string; text: string; onCreated?: () => void };
+
 // i18n keys for the attention-worthy statuses shouldNotify() fires on. Resolved through
 // globalTr at notification time (point-in-time copy), the same adapter the api client uses.
 const STATUS_LABEL_KEY: Partial<Record<Session['status'], string>> = {
@@ -188,6 +191,14 @@ export const useOrchestrator = defineStore('orchestrator', () => {
   function openSessionFile(sessionId: string, path: string): void {
     fileOpenRequest.value = { sessionId, path };
     if (!fileManagerVisible.value) toggleFileManager(fileManagerSide.value);
+  }
+  // «Нова задача» asked for from outside «Агенти» — «Створити задачу» in a schedule slip
+  // (docs/specs/2026-11-24-notification-panel-actions.md, decision 7): AgentsPage opens its
+  // launcher prefilled with the text in that project and clears the request; `onCreated` runs
+  // once the popup has written the card.
+  const newTaskRequest = ref<NewTaskRequest | undefined>();
+  function requestNewTask(req: NewTaskRequest): void {
+    newTaskRequest.value = req;
   }
 
   let socket: Socket | undefined;
@@ -858,6 +869,8 @@ export const useOrchestrator = defineStore('orchestrator', () => {
     pickFileSource,
     fileOpenRequest,
     openSessionFile,
+    newTaskRequest,
+    requestNewTask,
     connect,
     onServerEvent,
     selectProject,

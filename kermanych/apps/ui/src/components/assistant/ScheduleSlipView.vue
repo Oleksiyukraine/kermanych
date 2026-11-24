@@ -2,9 +2,10 @@
   <!-- One schedule slip over the console (docs/specs/2026-11-06-scheduled-tasks.md, decision 6),
        opened from the feed the way a «Розклад» row opens its task: what fired, when, for which
        project, how it ended and the text — a reminder's, a run's answer or the reason it did not
-       run. A run without a project keeps its whole answer here (decision 9), and «Обговорити в
-       ЦУК» carries it into the ЦУК composer. The run's session and the task are links, not the
-       slip's click: a finished run's session is history, the slip is what the operator came for. -->
+       run. A run with a result takes the operator's reaction
+       (docs/specs/2026-11-23-scheduled-task-run-memory.md, decision 5). The footer holds the two
+       things to do with a slip (docs/specs/2026-11-24-notification-panel-actions.md): delete it,
+       or turn what it says into a task. -->
   <section class="ssv" :aria-labelledby="headingId">
     <header class="ssv__head">
       <button
@@ -40,16 +41,27 @@
             <dt>{{ t('cuk.notifications.slip.scheduledFor') }}</dt>
             <dd>{{ formatFiring(slip.scheduledFor, zone, locale) }}</dd>
           </template>
+          <template v-if="reactable && (run || runPhase !== 'ready')">
+            <dt>{{ t('cuk.schedule.reaction.label') }}</dt>
+            <dd>
+              <ScheduleRunReaction v-if="run" :run="run" />
+              <KSkeleton v-else-if="runPhase === 'skeleton'" width="220px" />
+            </dd>
+          </template>
         </dl>
         <p v-if="failed" class="ssv__reason">{{ reasonText(t, slip.reason, slip.text) }}</p>
         <div v-else class="k-log__markdown ssv__text" v-html="renderMarkdown(slip.body ?? slip.text)"></div>
       </template>
     </div>
 
-    <footer v-if="slip && (task || session || slip.body)" class="ssv__controls">
-      <KBtn v-if="task" variant="ghost" @click="nc.openTask(task.id)">{{ t('cuk.notifications.slip.openTask') }}</KBtn>
-      <KBtn v-if="session" variant="ghost" @click="openSession(session)">{{ t('cuk.openSession') }}</KBtn>
-      <KBtn v-if="slip.body" variant="primary" @click="discuss">{{ t('cuk.notifications.slip.discuss') }}</KBtn>
+    <footer v-if="slip" class="ssv__controls">
+      <KBtn variant="ghost" :loading="remove.busy.value" @click="remove.run()">{{ t('cuk.notifications.slip.delete') }}</KBtn>
+      <KBtn
+        variant="primary"
+        :disabled="!taskProjectId || remove.busy.value"
+        :title="taskProjectId ? '' : t('cuk.notifications.slip.noProject')"
+        @click="createTask"
+      >{{ t('cuk.notifications.slip.createTask') }}</KBtn>
     </footer>
   </section>
 </template>
@@ -59,27 +71,34 @@
 // opening it marks the slip seen (stores/notification-center.ts openSlip).
 import { computed, nextTick, onMounted, ref, useId } from 'vue';
 import { useI18n } from 'vue-i18n';
+import { useRouter } from 'vue-router';
+import { taskNameFromText } from '@kermanych/core';
 import { useNotificationCenter } from 'stores/notification-center';
 import { useSchedules } from 'stores/schedules';
-import { useCukChat } from 'stores/cuk-chat';
 import { useProjects } from 'stores/projects';
 import { useOrchestrator } from 'stores/orchestrator';
+import { useAssistantOverlay } from 'stores/assistant-overlay';
 import { useNow } from '../../composables/useNow';
+import { errorText, useAsyncAction } from '../../composables/useAsyncAction';
+import { useLoadPhase } from '../../composables/useLoadPhase';
 import { relativeTime, renderTime } from '../../lib/time';
 import { renderMarkdown } from '../../lib/markdown';
 import { formatFiring, machineTimeZone, reasonText } from '../../lib/schedules';
 import { locale } from '../../lib/locale';
 import KBtn from 'components/kit/KBtn.vue';
+import KSkeleton from 'components/kit/KSkeleton.vue';
+import ScheduleRunReaction from './ScheduleRunReaction.vue';
 
 const props = defineProps<{ id: string }>();
 const emit = defineEmits<{ close: [] }>();
 
 const { t } = useI18n();
+const router = useRouter();
 const nc = useNotificationCenter();
 const schedules = useSchedules();
-const chat = useCukChat();
 const projects = useProjects();
 const local = useOrchestrator();
+const overlay = useAssistantOverlay();
 const now = useNow(60_000);
 const headingId = useId();
 const backEl = ref<HTMLButtonElement | null>(null);
@@ -105,26 +124,71 @@ const project = computed(() => {
   return id ? (projects.byId.get(id)?.name ?? local.projects.find((p) => p.id === id)?.name ?? '') : '';
 });
 
-// A run's session is linked only while this machine still has it (the operator may delete it),
-// as in the task's run history (ScheduleTaskView).
-const session = computed(() => {
-  const id = slip.value?.sessionId;
-  return id && local.sessions.some((s) => s.id === id) ? id : undefined;
+// The task's project: the slip's own, else the one picked at the top; none leaves «Створити
+// задачу» disabled (docs/specs/2026-11-24-notification-panel-actions.md, decision 3).
+const taskProjectId = computed(() => slip.value?.projectId ?? local.selectedProjectId);
+
+// The run behind a slip with a result, from the task's history (read here when no view has yet):
+// the reaction is the run's, so the slip and the history show one record. A task that is gone,
+// or a run the history no longer keeps, takes no reaction.
+const reactable = computed(() => slip.value?.kind === 'run' && slip.value.status === 'done' && !!slip.value.runId && !!task.value);
+const taskRuns = computed(() => (slip.value ? schedules.runs[slip.value.scheduleId] : undefined));
+const run = computed(() => taskRuns.value?.find((r) => r.id === slip.value?.runId));
+const loadRuns = useAsyncAction(async () => {
+  if (slip.value) await schedules.loadRuns(slip.value.scheduleId);
+});
+const runPhase = useLoadPhase(() => reactable.value && !taskRuns.value && loadRuns.busy.value);
+
+onMounted(() => {
+  if (reactable.value && !taskRuns.value) void loadRuns.run();
+  void nextTick(() => backEl.value?.focus());
 });
 
-onMounted(() => void nextTick(() => backEl.value?.focus()));
-
-function openSession(id: string): void {
+// «Видалити сповіщення»: gone for good, and the panel with it; the run stays in the task's history.
+const remove = useAsyncAction(async () => {
+  await schedules.removeSlip(props.id);
   emit('close');
-  void chat.openSession(id);
+});
+
+// What the panel shows, headed by where it came from (decision 4): the answer, the reason a run
+// did not happen, or the reminder's text. The title comes from the text, not from the header.
+function taskSeed(s: NonNullable<typeof slip.value>): { title: string; text: string } {
+  const content = failed.value ? reasonText(t, s.reason, s.text) : (s.body ?? s.text);
+  const params = { name: s.scheduleName, when: formatFiring(s.at, zone.value, locale.value) };
+  const head =
+    s.kind === 'reminder'
+      ? t('cuk.notifications.slip.taskHeadReminder', params)
+      : t(failed.value ? 'cuk.notifications.slip.taskHeadFailed' : 'cuk.notifications.slip.taskHeadRun', params);
+  return { title: taskNameFromText(content), text: `${head}\n\n${content}` };
 }
 
-// The answer, headed by the task's name, lands in the draft; the operator writes the question.
-function discuss(): void {
+// A card made from a run's result marks that run «Взято в роботу» (decision 5), so the next runs
+// do not repeat it. Runs after this view is gone, so the run is looked up then.
+function takeRun(scheduleId: string, runId: string): void {
+  const r = schedules.runs[scheduleId]?.find((x) => x.id === runId);
+  if (!r || r.reaction === 'taken') return;
+  schedules.react(r, 'taken').catch((e: unknown) => local.notify(t('cuk.notifications.slip.reactFailed', { error: errorText(e) }), 'error'));
+}
+
+// «Створити задачу»: ЦТ steps aside and «Агенти» opens «Нова задача» prefilled (decision 7). A
+// project outside the scope picked at the top becomes it, so the new card shows in the backlog.
+function createTask(): void {
   const s = slip.value;
-  if (!s) return;
+  const projectId = taskProjectId.value;
+  if (!s || !projectId) return;
+  const runId = reactable.value ? s.runId : undefined;
+  const inScope =
+    local.selectedProjectId === projectId ||
+    (!local.selectedProjectId && !!local.selectedWorkspaceId && local.projectWorkspace[projectId] === local.selectedWorkspaceId);
+  if (!inScope) local.selectProject(projectId);
+  local.requestNewTask({
+    projectId,
+    ...taskSeed(s),
+    ...(runId ? { onCreated: () => takeRun(s.scheduleId, runId) } : {}),
+  });
   nc.close();
-  chat.discuss(t('cuk.notifications.slip.discussDraft', { name: s.scheduleName, body: s.body ?? s.text }));
+  overlay.close();
+  void router.push({ name: 'agents' });
 }
 </script>
 

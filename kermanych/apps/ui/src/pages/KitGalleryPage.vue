@@ -194,6 +194,8 @@
       <div class="kit__label">{{ t('kit.gallery.sec.logBlocks') }}</div>
       <div class="kit__logblocks">
         <KLogBlock v-for="(e, i) in logSamples" :key="i" :entry="e" session-id="kit-demo" :expand-all="galleryExpandAll" />
+        <!-- omp's «Tool commands» burst, as KRequestBlock renders it once buildChatBlocks coalesced it -->
+        <KToolCommandsRow :notices="toolCommandNotices" :expand-all="galleryExpandAll" class="kit__tool-commands" />
       </div>
     </section>
 
@@ -689,6 +691,7 @@ import KToggle from 'components/kit/KToggle.vue';
 import KModal from 'components/kit/KModal.vue';
 import KPanel from 'components/kit/KPanel.vue';
 import KLogBlock from 'components/kit/KLogBlock.vue';
+import KToolCommandsRow from 'components/kit/KToolCommandsRow.vue';
 import KRailItem, { type RailProject } from 'components/kit/KRailItem.vue';
 import KWorkspaceRow from 'components/kit/KWorkspaceRow.vue';
 import { sumAttention, NO_ATTENTION, type Attention } from '../lib/attention';
@@ -1007,6 +1010,21 @@ const waitingLog: TranscriptEntry[] = [
   { kind: 'tool', id: '1', at: nowMs, tool: 'read', status: 'pending', target: 'src/session.ts' },
   { kind: 'assistant_text', id: '2', at: nowMs, text: t('kit.gallery.waitingLog.assistant2') },
 ];
+// omp's «Tool commands» notices as a session with three MCP servers produces them: two mounted
+// as they connect, one unmounted with a single tool. KToolCommandsRow folds the run into one row.
+const tcMount = (id: string, code: 'tool_commands_added' | 'tool_commands_removed', names: string[]): Extract<TranscriptEntry, { kind: 'notice' }> => ({
+  kind: 'notice', id, at: nowMs, level: 'info', code, text: names.join(', '), params: { names: names.join(', '), count: names.length },
+});
+const toolCommandNotices = [
+  tcMount('tc1', 'tool_commands_added', ['get_nestjs_manual', 'get_project_spec', 'search_nestjs_api', 'search_nestjs_manual', 'search_project_specs'].map((n) => `mcp__nestjs_docs_${n}`)),
+  tcMount('tc2', 'tool_commands_added', [
+    'execute_sql', 'generate_typescript_types', 'get_advisors', 'get_edge_function', 'get_notebook', 'get_project_url',
+    'get_publishable_keys', 'list_branches', 'list_edge_functions', 'list_extensions', 'list_migrations', 'list_notebooks',
+    'list_tables', 'query_logs', 'run_notebook', 'search_docs',
+  ].map((n) => `mcp__supabase_v1_${n}`)),
+  tcMount('tc3', 'tool_commands_removed', ['mcp__context7_query_docs']),
+];
+
 const logSamples: TranscriptEntry[] = [
   {
     kind: 'user_text', id: '0', at: nowMs,
@@ -1351,6 +1369,7 @@ const analyticsRhythm = Array.from({ length: 7 }, (_, d) =>
   background: var(--k-bg);
   border: 1px solid var(--k-line-strong);
 }
+.kit__tool-commands { margin-top: 10px; }
 
 .kit__rail {
   display: flex;

@@ -42,6 +42,7 @@
             <KToolRow v-for="m in item.members" :key="m.id" :entry="m" :session-id="sessionId" :expand-all="expandAll" />
           </div>
         </div>
+        <KToolCommandsRow v-else-if="item.kind === 'commands'" class="k-rb__cmds" :notices="item.notices" :expand-all="expandAll" />
         <KLogBlock
           v-else-if="!item.muted || expandAll.on"
           :entry="item.entry"
@@ -59,6 +60,7 @@ import { useI18n } from 'vue-i18n';
 import type { ChatBlock, GroupStat, ToolEntry } from '@kermanych/core';
 import KLogBlock from './KLogBlock.vue';
 import KToolRow from './KToolRow.vue';
+import KToolCommandsRow from './KToolCommandsRow.vue';
 import KIcon from './KIcon.vue';
 import type { ExpandAllCommand } from '../../lib/expand-all';
 import { dur, renderTime } from '../../lib/time';
@@ -226,4 +228,5 @@ const summary = computed(() => {
 .k-rb__gst { flex: none; font-size: 11.5px; color: var(--k-text); }
 .k-rb__gch { flex: none; width: 10px; text-align: right; font-size: var(--k-icon-xs); color: var(--k-line-strong); }
 .k-rb__members { padding-left: 17px; }
+.k-rb__cmds { margin: 10px 0; }
 </style>

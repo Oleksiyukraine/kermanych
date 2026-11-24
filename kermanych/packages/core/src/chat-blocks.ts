@@ -7,9 +7,19 @@ export type UserEntry = Extract<TranscriptEntry, { kind: "user_text" }>;
 // absent when the run cannot be summed — see `groupStat`.
 export type GroupStat = { count: number; unitKey?: string };
 
+export type NoticeEntry = Extract<TranscriptEntry, { kind: "notice" }>;
+
 export type ChatItem =
   | { kind: "entry"; entry: TranscriptEntry; muted: boolean }
-  | { kind: "group"; tool: string; members: ToolEntry[]; stat?: GroupStat };
+  | { kind: "group"; tool: string; members: ToolEntry[]; stat?: GroupStat }
+  | { kind: "commands"; notices: NoticeEntry[] };
+
+// omp's «Tool commands» notices (one per MCP server as it connects) arrive in a burst; a
+// run of them is one row, so a session with five servers does not open with five lines.
+const COMMAND_CODES = ["tool_commands_added", "tool_commands_removed"];
+function isCommandNotice(e: TranscriptEntry): e is NoticeEntry {
+  return e.kind === "notice" && e.code !== undefined && COMMAND_CODES.includes(e.code);
+}
 
 export type BlockSummary = { ms: number; calls: number; files: number; thinkMs: number; cost: number };
 export type ChatBlock = { id: string; request?: UserEntry; items: ChatItem[]; summary: BlockSummary };
@@ -93,6 +103,12 @@ export function buildChatBlocks(entries: TranscriptEntry[], opts?: { thinkMinMs?
         continue;
       }
       block.items.push({ kind: "entry", entry, muted: false });
+      continue;
+    }
+    if (isCommandNotice(entry)) {
+      const last = block.items.at(-1);
+      if (last?.kind === "commands") last.notices.push(entry);
+      else block.items.push({ kind: "commands", notices: [entry] });
       continue;
     }
     block.items.push({ kind: "entry", entry, muted: false });

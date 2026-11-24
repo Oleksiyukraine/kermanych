@@ -637,6 +637,157 @@ describe("a project run", () => {
     const block = prompt.slice(prompt.indexOf("## Earlier runs of this task"), prompt.indexOf("## The task"));
     expect(block).toMatch(/^## Earlier runs of this task\n\n.+\n\n- 2026-11-06 18:00 — Пропоную фічу «Петля після ПР»\n\n$/);
   });
+
+  it("tells the next run the findings earlier runs of the task reported, and not another task's", async () => {
+    const { svc, registry, bindProject } = make();
+    bindProject("p1");
+    at("2026-11-06T18:00:00Z");
+    const task = await svc.create(agentDraft({ skills: [] }));
+    const other = await svc.create(agentDraft({ skills: [], name: "Інша" }));
+    const sessionOf = async (runId: string) => {
+      await vi.waitFor(() => expect(registry.getScheduleRun(runId)?.sessionId).toBeDefined());
+      const session = registry.listSessions().find((s) => s.id === registry.getScheduleRun(runId)!.sessionId)!;
+      return { session, child: spawns.findLast((s) => s.opts.cwd === session.worktreePath)!.child };
+    };
+    const report = (title: string) => ({ kind: "bug" as const, title, context: "c", evidence: ["a.ts:1"], acceptanceCriteria: ["fixed"] });
+
+    const first = await sessionOf((await svc.runNow(task.id)).id);
+    registry.addFinding(first.session.id, report("Падає парсер дат"));
+    answer(first.child, "Знайшов одну проблему");
+    const foreign = await sessionOf((await svc.runNow(other.id)).id);
+    registry.addFinding(foreign.session.id, report("Чужа знахідка"));
+    answer(foreign.child, "Готово");
+
+    at("2026-11-07T09:30:00Z");
+    const prompt = (await sessionOf((await svc.runNow(task.id)).id)).child.prompts[0]!;
+    const block = prompt.slice(prompt.indexOf("## Findings earlier runs reported"), prompt.indexOf("## The task"));
+    expect(block).toMatch(/^## Findings earlier runs reported\n\n.+\n\n- \[open\] \(bug\) Падає парсер дат\n\n$/);
+  });
+});
+
+describe("memory between runs", () => {
+  // A run without a project: one child per run, in the task's folder.
+  async function nextRun(svc: ScheduleService, registry: RegistryService, taskId: string) {
+    const before = spawns.length;
+    const run = await svc.runNow(taskId);
+    await vi.waitFor(() => expect(spawns[before]?.child.prompts).toHaveLength(1));
+    const child = spawns[before]!.child;
+    return {
+      run,
+      prompt: child.prompts[0]!,
+      finish: async (text: string) => {
+        answer(child, text);
+        await vi.waitFor(() => expect(registry.getScheduleRun(run.id)?.status).toBe("done"));
+      },
+    };
+  }
+  const section = (prompt: string, heading: string) => {
+    const from = prompt.indexOf(heading);
+    return from < 0 ? "" : prompt.slice(from, prompt.indexOf("\n\n## ", from + heading.length));
+  };
+
+  it("cuts the notes out of the answer and hands them on past a failed run and a run that left none", async () => {
+    const { svc, registry, slips } = make();
+    at("2026-11-06T08:00:00Z");
+    const task = await svc.create(draft({ kind: "agent", name: "Новини", prompt: "Збери новини", skills: ["weekly-report"] }));
+
+    const first = await nextRun(svc, registry, task.id);
+    expect(first.prompt).toContain("## Notes for the next run");
+    expect(first.prompt).not.toContain("## Notes from the previous run");
+    await first.finish("TypeScript 6.1 вийшов\n\n- новина 1\n\n### Notes for the next run:\n\nПереглянуто до 6 листопада.");
+    expect(registry.getScheduleRun(first.run.id)).toMatchObject({ summary: "TypeScript 6.1 вийшов", notes: "Переглянуто до 6 листопада." });
+    expect(slips().at(-1)).toMatchObject({ text: "TypeScript 6.1 вийшов", body: "TypeScript 6.1 вийшов\n\n- новина 1" });
+
+    at("2026-11-07T08:00:00Z");
+    knownSkills = new Set();
+    const failed = await svc.runNow(task.id);
+    await vi.waitFor(() => expect(registry.getScheduleRun(failed.id)?.status).toBe("failed"));
+    knownSkills = new Set(["weekly-report"]);
+
+    at("2026-11-08T08:00:00Z");
+    const second = await nextRun(svc, registry, task.id);
+    expect(section(second.prompt, "## Notes from the previous run")).toBe(
+      "## Notes from the previous run\n\nWhat the run of 2026-11-06 08:00 left for this run.\n\nПереглянуто до 6 листопада.",
+    );
+    await second.finish("Нічого нового");
+
+    // A run that left no notes does not hide the last ones.
+    at("2026-11-09T08:00:00Z");
+    expect((await nextRun(svc, registry, task.id)).prompt).toContain("Переглянуто до 6 листопада.");
+  });
+
+  it("stops handing on notes the operator cleared, while the run keeps them", async () => {
+    const { svc, registry } = make();
+    at("2026-11-06T08:00:00Z");
+    const task = await svc.create(draft({ kind: "agent", name: "Новини", prompt: "Збери новини" }));
+    const first = await nextRun(svc, registry, task.id);
+    await first.finish("Зібрав\n\n## Notes for the next run\n\nкурсор: abc123");
+
+    at("2026-11-06T09:00:00Z");
+    expect(svc.clearNotes(task.id).notesClearedAt).toBe("2026-11-06T09:00:00.000Z");
+    at("2026-11-07T08:00:00Z");
+    const next = await nextRun(svc, registry, task.id);
+    expect(next.prompt).not.toContain("## Notes from the previous run");
+    expect(next.prompt).toContain("- 2026-11-06 08:00 — Зібрав");
+    expect(registry.getScheduleRun(first.run.id)?.notes).toBe("курсор: abc123");
+  });
+
+  it("marks earlier results with the operator's reaction and with a later change of the prompt only", async () => {
+    const { svc, registry, ctl } = make();
+    at("2026-11-06T08:00:00Z");
+    const task = await svc.create(draft({ kind: "agent", name: "Ідеї", prompt: "Запропонуй одну фічу" }));
+    const a = await nextRun(svc, registry, task.id);
+    await a.finish("Фіча «Петля після ПР»");
+    at("2026-11-07T08:00:00Z");
+    const b = await nextRun(svc, registry, task.id);
+    await b.finish("Фіча «Бюджет токенів»");
+
+    expect(ctl.react(task.id, a.run.id, { reaction: "taken" }).run.reaction).toBe("taken");
+    ctl.react(task.id, b.run.id, { reaction: "rejected" });
+
+    // A new schedule is not a new wording.
+    await svc.update(task.id, { schedule: { type: "daily", time: "10:00" } });
+    at("2026-11-08T08:00:00Z");
+    let prompt = (await nextRun(svc, registry, task.id)).prompt;
+    expect(section(prompt, "## Earlier runs of this task").split("\n\n").at(-1)).toBe(
+      "- 2026-11-07 08:00 — Фіча «Бюджет токенів» [rejected]\n- 2026-11-06 08:00 — Фіча «Петля після ПР» [taken into work]",
+    );
+    answer(spawns.at(-1)!.child, "Фіча «Нотатки»");
+    await vi.waitFor(() => expect(svc.list()[0]!.running).toBe(false));
+
+    ctl.react(task.id, a.run.id, { reaction: null });
+    at("2026-11-08T12:00:00Z");
+    await svc.update(task.id, { prompt: "Запропонуй одну фічу для UI" });
+    at("2026-11-09T08:00:00Z");
+    prompt = (await nextRun(svc, registry, task.id)).prompt;
+    expect(section(prompt, "## Earlier runs of this task").split("\n\n").at(-1)).toBe(
+      [
+        "- 2026-11-08 08:00 — Фіча «Нотатки» (before the task was last changed)",
+        "- 2026-11-07 08:00 — Фіча «Бюджет токенів» [rejected] (before the task was last changed)",
+        "- 2026-11-06 08:00 — Фіча «Петля після ПР» (before the task was last changed)",
+      ].join("\n"),
+    );
+  });
+
+  it("refuses a reaction on a run with no result, on another task's run, or of an unknown kind", async () => {
+    const { svc, registry, ctl } = make();
+    at("2026-11-06T08:00:00Z");
+    const task = await svc.create(draft({ kind: "agent", name: "Ідеї", prompt: "x", skills: ["weekly-report"] }));
+    const other = await svc.create(draft({ kind: "agent", name: "Інша", prompt: "y" }));
+    knownSkills = new Set();
+    const failed = await svc.runNow(task.id);
+    await vi.waitFor(() => expect(registry.getScheduleRun(failed.id)?.status).toBe("failed"));
+
+    expect(() => ctl.react(task.id, failed.id, { reaction: "taken" })).toThrow(BadRequestException);
+    try {
+      ctl.react(task.id, failed.id, { reaction: "taken" });
+    } catch (e) {
+      expect((e as BadRequestException).getResponse()).toMatchObject({ code: "schedule_run_no_result" });
+    }
+    expect(() => ctl.react(other.id, failed.id, { reaction: "taken" })).toThrow(NotFoundException);
+    expect(() => ctl.react(task.id, failed.id, { reaction: "liked" })).toThrow(BadRequestException);
+    expect(() => ctl.clearNotes("nope")).toThrow(NotFoundException);
+  });
 });
 
 describe("a run without a project", () => {
@@ -711,6 +862,7 @@ describe("SchedulesController", () => {
     expect(() => ctl.remove("nope")).toThrow(NotFoundException);
     expect(() => ctl.runs("nope")).toThrow(NotFoundException);
     expect(() => ctl.snooze("nope", { minutes: 10 })).toThrow(NotFoundException);
+    expect(() => ctl.removeSlip("nope")).toThrow(NotFoundException);
   });
 
   it("deletes a task with its history", async () => {
@@ -723,5 +875,17 @@ describe("SchedulesController", () => {
     expect(ctl.remove(task.id)).toEqual({ ok: true });
     expect(ctl.list().tasks).toEqual([]);
     expect(registry.listScheduleRuns(task.id)).toEqual([]);
+  });
+
+  it("deletes a slip and keeps its run in the task's history", async () => {
+    const { ctl, svc } = make();
+    at("2026-11-06T18:00:00Z");
+    const task = await ctl.create(draft());
+    at("2026-11-06T19:00:05Z");
+    await svc.tick();
+    const [slip] = ctl.slips().slips as [ScheduleSlip];
+    expect(ctl.removeSlip(slip.id)).toEqual({ ok: true });
+    expect(ctl.slips().slips).toEqual([]);
+    expect(ctl.runs(task.id).runs).toHaveLength(1);
   });
 });

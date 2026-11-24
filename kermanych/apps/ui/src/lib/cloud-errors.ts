@@ -89,3 +89,17 @@ export function memberErrorText(e: unknown): string {
   if (raw.includes('only the workspace owner can change roles')) return globalTr.t('errors.member_not_owner_roles');
   return raw;
 }
+
+/**
+ * A read that never reached the cloud: no network, the laptop just woke, the host is down. The
+ * cloud client turns the browser's fetch failure into the message `TypeError: Failed to fetch`
+ * (Chromium, so Electron), `NetworkError when attempting to fetch resource` (Firefox) or
+ * `Load failed` (Safari) — English and meaningless to the operator, so it gets one sentence of
+ * ours. Any other failure is the server's own words.
+ */
+const NETWORK_FAILURE = /Failed to fetch|NetworkError when attempting to fetch|Load failed/;
+
+export function cloudReadErrorText(e: unknown): string {
+  const raw = e instanceof Error ? e.message : String(e);
+  return NETWORK_FAILURE.test(raw) ? globalTr.t('errors.cloud_unreachable') : raw;
+}

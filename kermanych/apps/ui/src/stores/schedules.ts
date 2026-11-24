@@ -17,6 +17,7 @@ import {
   type ScheduleDraft,
   type SchedulePatch,
   type ScheduleRun,
+  type ScheduleRunReaction,
   type ScheduleSlip,
   type ScheduledTask,
 } from '@kermanych/core';
@@ -179,6 +180,20 @@ export const useSchedules = defineStore('schedules', () => {
     return list;
   }
 
+  // Run memory (docs/specs/2026-11-23-scheduled-task-run-memory.md, decisions 2 and 6). The
+  // reaction's control shows the pick itself (useOptimisticValue); the answer lands here at once,
+  // its `schedule_run_update` echo after.
+  async function react(run: ScheduleRun, reaction: ScheduleRunReaction | null): Promise<void> {
+    const { run: next } = await api.reactScheduleRun(run.scheduleId, run.id, reaction);
+    putRun(next);
+  }
+
+  async function clearNotes(id: string): Promise<ScheduledTask> {
+    const task = await api.clearScheduleNotes(id);
+    putTask(task);
+    return task;
+  }
+
   // Seen is a mark, flipped here at once; a refused write puts the slips back to new.
   async function markSlipsSeen(ids: readonly string[]): Promise<void> {
     const unseen = new Set(ids.filter((id) => slips.value?.some((s) => s.id === id && !s.seen)));
@@ -198,6 +213,12 @@ export const useSchedules = defineStore('schedules', () => {
     if (slips.value) slips.value = slips.value.filter((s) => s.id !== id);
   }
 
+  // «Видалити сповіщення» (docs/specs/2026-11-24-notification-panel-actions.md, decision 6).
+  async function removeSlip(id: string): Promise<void> {
+    await api.deleteScheduleSlip(id);
+    if (slips.value) slips.value = slips.value.filter((s) => s.id !== id);
+  }
+
   return {
     tasks,
     slips,
@@ -213,7 +234,10 @@ export const useSchedules = defineStore('schedules', () => {
     remove,
     runNow,
     loadRuns,
+    react,
+    clearNotes,
     markSlipsSeen,
     snooze,
+    removeSlip,
   };
 });

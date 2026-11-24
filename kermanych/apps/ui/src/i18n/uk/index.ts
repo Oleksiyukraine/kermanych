@@ -499,7 +499,7 @@ export const uk = {
       estimatePlaceholder: 'не оцінено',
       estimateHint: 'необовʼязково; «Аналітика» порівняє її з часом до PR',
       estimateInvalid: 'оцінка — це кількість годин більше нуля, наприклад 1,5',
-      typeLabel: 'Тип',
+      typeLabel: 'Тип гілки',
       worktreeLabel: 'Ізолювати у worktree',
       worktreeDesc: 'Окрема тека, окремий чекаут. Агент не чіпає твій робочий стан.',
       hiddenLabel: 'Приховати з дошки',
@@ -3617,6 +3617,12 @@ export const uk = {
       thoughtWith: 'думав {parts}',
       thought: 'думав',
     },
+    toolCommands: {
+      added: 'підключено',
+      removed: 'відключено',
+      addedCount: 'підключено {count} команду | підключено {count} команди | підключено {count} команд',
+      removedCount: 'відключено {count} команду | відключено {count} команди | відключено {count} команд',
+    },
     toolRow: {
       noDetails: 'Деталей немає.',
       statusPending: 'виконується',
@@ -4375,6 +4381,7 @@ export const uk = {
     member_bad_email: 'Це не схоже на імейл — запрошуємо за адресою, якою колега входить у Керманич',
     member_not_owner_invite: 'Хмара відмовила: запрошувати до воркспейсу може лише його власник',
     member_not_owner_roles: 'Хмара відмовила: змінювати ролі може лише власник воркспейсу',
+    cloud_unreachable: 'немає зв’язку з хмарою',
     workspace_has_projects: 'спершу перенесіть або видаліть проєкти цього воркспейсу',
     workspace_delete_not_owner: 'хмара відмовила: видалити воркспейс може лише власник',
     oauth_no_url: 'Supabase не повернув URL авторизації',
@@ -4453,6 +4460,10 @@ export const uk = {
   notices: {
     slot_wait: 'надіслано, чекає на слот · {running} з {limit} працюють',
     watchdog_killed: 'Команду {command} зупинено: на машині закінчилась пам’ять ({size})',
+    tool_commands_added:
+      'підключено команду інструмента: {names} | підключено команди інструментів: {names} | підключено команди інструментів: {names}',
+    tool_commands_removed:
+      'відключено команду інструмента: {names} | відключено команди інструментів: {names} | відключено команди інструментів: {names}',
     interactive_request_cancelled:
       'асистент спробував запитати через інтерактивне вікно ({method}) — запит скасовано, бо в цьому чаті немає де на нього відповісти',
     frames_lost: 'втрачено {count} кадр(ів) від omp — частина відповіді могла не дійти',
@@ -4592,6 +4603,7 @@ export const uk = {
     schedule_project_unknown: 'невідомий проєкт: {value}',
     schedule_skill_unknown: 'невідомі навички: {value}',
     schedule_at_past: 'час {value} уже минув',
+    schedule_run_no_result: 'у цього запуску немає результату',
   },
   cuk: {
     title: 'ЦУК · Центр управління Керманича',
@@ -4681,16 +4693,21 @@ export const uk = {
         missed: 'пропущено',
         late: 'із запізненням',
         due: 'за розкладом: {at}',
-        openTask: 'Відкрити задачу',
         status: 'Статус',
         scheduledFor: 'За розкладом',
-        discuss: 'Обговорити в ЦУК',
-        discussDraft: 'Результат задачі «{name}»:\n\n{body}\n\n',
+        // docs/specs/2026-11-24-notification-panel-actions.md
+        delete: 'Видалити сповіщення',
+        createTask: 'Створити задачу',
+        noProject: 'Виберіть проєкт у перемикачі вгорі',
+        taskHeadRun: 'Результат задачі за розкладом «{name}» ({when}):',
+        taskHeadFailed: 'Задачу за розкладом «{name}» не виконано ({when}):',
+        taskHeadReminder: 'Нагадування «{name}» ({when}):',
+        reactFailed: 'Задачу створено, але реакцію «Взято в роботу» не збережено: {error}',
         toastReminder: 'Нагадування: {text}',
         toastRun: '«{name}»: {text}',
         toastFailed: '«{name}» не виконано: {text}',
       },
-      loadFailed: 'Не вдалося прочитати сповіщення: {error}',
+      loadFailed: 'Не вдалося прочитати сповіщення: {error}. Повторна спроба — автоматично.',
       retry: 'Спробувати ще',
       toast: 'Я вдосконалив навичку «{skill}»: {summary}',
       view: 'Переглянути',
@@ -4784,6 +4801,17 @@ export const uk = {
         noRuns: 'Ще не запускалась.',
         manual: 'вручну',
         delete: 'Видалити',
+      },
+      reaction: {
+        label: 'Реакція',
+        taken: 'Взято в роботу',
+        rejected: 'Не цікаво',
+      },
+      notes: {
+        title: 'Нотатки для наступного запуску',
+        from: 'Залишив запуск {when}',
+        older: 'до останньої зміни задачі',
+        clear: 'Очистити нотатки',
       },
     },
     card: {
@@ -5578,6 +5606,11 @@ export const uk = {
     deleteSchedule: {
       title: 'Видалити задачу за розкладом?',
       message: 'Задачу «{name}» буде видалено разом з історією її запусків.',
+    },
+    clearScheduleNotes: {
+      title: 'Очистити нотатки?',
+      message: 'Наступний запуск задачі «{name}» почне без нотаток попередніх запусків. В історії вони лишаться.',
+      confirm: 'Очистити',
     },
     newChat: {
       title: 'Почати новий чат?',

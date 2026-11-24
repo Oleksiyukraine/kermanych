@@ -6,7 +6,7 @@ import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { mkdirSync } from "node:fs";
 import { Subject } from "rxjs";
-import { isThinkingLevel, isNativeHarness, isAgentLanguage, isSkillImprovementLevel, DEFAULT_SKILL_IMPROVEMENT_LEVEL, isFindingKind, isPlatform, parseFindingTarget, docsPolicy, combineReportWrites, readMinionResult, isMinionPauseCode, clampMinionCap, MINION_CAP_DEFAULT, isDevicePlatform, ACTIVE_STATUSES, validateScheduleSpec, SCHEDULE_RUNS_KEEP, SCHEDULE_SLIPS_KEEP, ACTIVITY_SPAN_KINDS, analyticsSessionClass, normalizePrLoopSettings, PR_LOOP_DEFAULTS } from "@kermanych/core";
+import { isThinkingLevel, isNativeHarness, isAgentLanguage, isSkillImprovementLevel, DEFAULT_SKILL_IMPROVEMENT_LEVEL, isFindingKind, isPlatform, parseFindingTarget, docsPolicy, combineReportWrites, readMinionResult, isMinionPauseCode, clampMinionCap, MINION_CAP_DEFAULT, isDevicePlatform, ACTIVE_STATUSES, validateScheduleSpec, isScheduleRunReaction, SCHEDULE_RUNS_KEEP, SCHEDULE_SLIPS_KEEP, ACTIVITY_SPAN_KINDS, analyticsSessionClass, normalizePrLoopSettings, PR_LOOP_DEFAULTS } from "@kermanych/core";
 import type { AgentFinding, DeviceChoice, DocsPolicy, FindingReport, FindingTarget, MinionPause, MinionResult, NativeSettings, Platform, Project, ResourceDecision, Session, SessionDevice, SessionStatus, ThinkingLevel, Usage, AgentLanguage, SkillImprovementLevel, TaskReportsWrite, TesterSettings, ScheduledTask, ScheduleRun, ScheduleRunReason, ScheduleRunStatus, ScheduleRunTrigger, ScheduleSlip, ActivitySpanKind, ActivitySpanRow, AnalyticsFindingRow, AnalyticsImportState, AnalyticsInput, AnalyticsSessionClass, AnalyticsSessionRow, UsageHourRow, PrLoopSettings, RemotePushSubscription } from "@kermanych/core";
 
 // A watched session's loop bookkeeping (docs/specs/2026-11-23-pr-feedback-loop.md).
@@ -223,6 +223,8 @@ type ScheduleDbRow = {
   armed_at: string;
   created_at: string;
   updated_at: string;
+  prompt_changed_at: string | null;
+  notes_cleared_at: string | null;
 };
 
 function readScheduleRow(r: ScheduleDbRow): ScheduleRow | undefined {
@@ -251,10 +253,15 @@ function readScheduleRow(r: ScheduleDbRow): ScheduleRow | undefined {
     armedAt: r.armed_at,
     createdAt: r.created_at,
     updatedAt: r.updated_at,
+    // A row from before the column reads as unchanged since its creation.
+    promptChangedAt: r.prompt_changed_at ?? r.created_at,
+    ...(r.notes_cleared_at ? { notesClearedAt: r.notes_cleared_at } : {}),
   };
 }
 
-const RUN_COLUMNS = "id, schedule_id, scheduled_for, run_trigger, status, reason, detail, started_at, ended_at, session_id, summary";
+const SCHEDULE_COLUMNS = "id, name, kind, prompt, project_id, skills, model, spec, time_zone, enabled, armed_at, created_at, updated_at, prompt_changed_at, notes_cleared_at";
+
+const RUN_COLUMNS = "id, schedule_id, scheduled_for, run_trigger, status, reason, detail, started_at, ended_at, session_id, summary, notes, reaction";
 type RunDbRow = {
   id: string;
   schedule_id: string;
@@ -267,6 +274,8 @@ type RunDbRow = {
   ended_at: string | null;
   session_id: string | null;
   summary: string | null;
+  notes: string | null;
+  reaction: string | null;
 };
 
 function readRunRow(r: RunDbRow): ScheduleRun {
@@ -282,6 +291,8 @@ function readRunRow(r: RunDbRow): ScheduleRun {
     ...(r.ended_at ? { endedAt: r.ended_at } : {}),
     ...(r.session_id ? { sessionId: r.session_id } : {}),
     ...(r.summary !== null ? { summary: r.summary } : {}),
+    ...(r.notes ? { notes: r.notes } : {}),
+    ...(isScheduleRunReaction(r.reaction) ? { reaction: r.reaction } : {}),
   };
 }
 
@@ -891,6 +902,22 @@ export class RegistryService {
     this.db.exec(
       `CREATE TABLE IF NOT EXISTS schedule_slips (id TEXT PRIMARY KEY, kind TEXT NOT NULL, schedule_id TEXT NOT NULL, schedule_name TEXT NOT NULL, at TEXT NOT NULL, scheduled_for TEXT, text TEXT NOT NULL, body TEXT, run_id TEXT, session_id TEXT, project_id TEXT, status TEXT, reason TEXT, late INTEGER NOT NULL DEFAULT 0, seen INTEGER NOT NULL DEFAULT 0, snoozed_until TEXT)`,
     );
+    // Additive: memory between runs (docs/specs/2026-11-23-scheduled-task-run-memory.md). A run's
+    // notes and the operator's reaction; when the task's prompt last changed (backfilled from its
+    // creation) and when its notes were cleared.
+    for (const [table, col] of [
+      ["schedule_runs", "notes TEXT"],
+      ["schedule_runs", "reaction TEXT"],
+      ["schedules", "prompt_changed_at TEXT"],
+      ["schedules", "notes_cleared_at TEXT"],
+    ] as const) {
+      try {
+        this.db.exec(`ALTER TABLE ${table} ADD COLUMN ${col}`);
+      } catch {
+        /* column already exists */
+      }
+    }
+    this.db.exec(`UPDATE schedules SET prompt_changed_at = created_at WHERE prompt_changed_at IS NULL`);
     // «Аналітика»'s local ledger (docs/specs/2026-11-07-developer-analytics.md, decision 5):
     // personal, machine-local, never synced. No FK to `sessions` on purpose — the money was spent,
     // so the rows outlive a deleted session (removeSession leaves them); removeProject takes them.
@@ -2083,16 +2110,12 @@ export class RegistryService {
   // Every stored task, oldest first. A row whose spec this build cannot read is left out rather
   // than fired on a guess.
   listSchedules(): ScheduleRow[] {
-    const rows = this.db
-      .prepare(`SELECT id, name, kind, prompt, project_id, skills, model, spec, time_zone, enabled, armed_at, created_at, updated_at FROM schedules ORDER BY created_at, id`)
-      .all() as ScheduleDbRow[];
+    const rows = this.db.prepare(`SELECT ${SCHEDULE_COLUMNS} FROM schedules ORDER BY created_at, id`).all() as ScheduleDbRow[];
     return rows.map(readScheduleRow).filter((r): r is ScheduleRow => r !== undefined);
   }
 
   getSchedule(id: string): ScheduleRow | undefined {
-    const row = this.db
-      .prepare(`SELECT id, name, kind, prompt, project_id, skills, model, spec, time_zone, enabled, armed_at, created_at, updated_at FROM schedules WHERE id = ?`)
-      .get(id) as ScheduleDbRow | undefined;
+    const row = this.db.prepare(`SELECT ${SCHEDULE_COLUMNS} FROM schedules WHERE id = ?`).get(id) as ScheduleDbRow | undefined;
     return row ? readScheduleRow(row) : undefined;
   }
 
@@ -2100,9 +2123,25 @@ export class RegistryService {
   putSchedule(t: ScheduleRow): void {
     this.db
       .prepare(
-        `INSERT OR REPLACE INTO schedules (id, name, kind, prompt, project_id, skills, model, spec, time_zone, enabled, armed_at, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+        `INSERT OR REPLACE INTO schedules (${SCHEDULE_COLUMNS}) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
       )
-      .run(t.id, t.name, t.kind, t.prompt, t.projectId ?? null, JSON.stringify(t.skills), t.model ?? null, JSON.stringify(t.schedule), t.timeZone, t.enabled ? 1 : 0, t.armedAt, t.createdAt, t.updatedAt);
+      .run(
+        t.id,
+        t.name,
+        t.kind,
+        t.prompt,
+        t.projectId ?? null,
+        JSON.stringify(t.skills),
+        t.model ?? null,
+        JSON.stringify(t.schedule),
+        t.timeZone,
+        t.enabled ? 1 : 0,
+        t.armedAt,
+        t.createdAt,
+        t.updatedAt,
+        t.promptChangedAt,
+        t.notesClearedAt ?? null,
+      );
   }
 
   // The task goes with its run history (decision 7: «its history goes with it»). Its slips stay:
@@ -2125,9 +2164,23 @@ export class RegistryService {
   claimScheduleRun(run: ScheduleRun): boolean {
     const r = this.db
       .prepare(
-        `INSERT OR IGNORE INTO schedule_runs (id, schedule_id, scheduled_for, run_trigger, status, reason, detail, started_at, ended_at, session_id, summary) VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
+        `INSERT OR IGNORE INTO schedule_runs (${RUN_COLUMNS}) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`,
       )
-      .run(run.id, run.scheduleId, run.scheduledFor ?? null, run.trigger, run.status, run.reason ?? null, run.detail ?? null, run.startedAt, run.endedAt ?? null, run.sessionId ?? null, run.summary ?? null);
+      .run(
+        run.id,
+        run.scheduleId,
+        run.scheduledFor ?? null,
+        run.trigger,
+        run.status,
+        run.reason ?? null,
+        run.detail ?? null,
+        run.startedAt,
+        run.endedAt ?? null,
+        run.sessionId ?? null,
+        run.summary ?? null,
+        run.notes ?? null,
+        run.reaction ?? null,
+      );
     if (r.changes === 1) this.pruneScheduleRuns(run.scheduleId);
     return r.changes === 1;
   }
@@ -2137,8 +2190,8 @@ export class RegistryService {
     if (!cur) return undefined;
     const next: ScheduleRun = { ...cur, ...patch };
     this.db
-      .prepare(`UPDATE schedule_runs SET status=?, reason=?, detail=?, ended_at=?, session_id=?, summary=? WHERE id=?`)
-      .run(next.status, next.reason ?? null, next.detail ?? null, next.endedAt ?? null, next.sessionId ?? null, next.summary ?? null, id);
+      .prepare(`UPDATE schedule_runs SET status=?, reason=?, detail=?, ended_at=?, session_id=?, summary=?, notes=?, reaction=? WHERE id=?`)
+      .run(next.status, next.reason ?? null, next.detail ?? null, next.endedAt ?? null, next.sessionId ?? null, next.summary ?? null, next.notes ?? null, next.reaction ?? null, id);
     return next;
   }
 
@@ -2157,6 +2210,17 @@ export class RegistryService {
   listRunningScheduleRuns(): ScheduleRun[] {
     const rows = this.db.prepare(`SELECT ${RUN_COLUMNS} FROM schedule_runs WHERE status = 'running' ORDER BY started_at`).all() as RunDbRow[];
     return rows.map(readRunRow);
+  }
+
+  // What the task's earlier runs reported through `report_finding`, newest first: the findings of
+  // every session launched for the task (run memory, decision 3). A deleted session took its own.
+  listScheduleFindings(scheduleId: string, limit: number): AgentFinding[] {
+    const rows = this.db
+      .prepare(
+        `SELECT ${FINDING_COLUMNS} FROM session_findings WHERE session_id IN (SELECT id FROM sessions WHERE schedule_id = ?) ORDER BY created_at DESC, rowid DESC LIMIT ?`,
+      )
+      .all(scheduleId, limit) as FindingRow[];
+    return rows.map(toFinding);
   }
 
   // The latest occurrence already claimed for the task, whatever became of it (decision 8's
@@ -2232,6 +2296,12 @@ export class RegistryService {
   // A snooze hides the slip until `until`; the re-fire clears it with a new `at`, unseen.
   snoozeScheduleSlip(id: string, until: string): boolean {
     return this.db.prepare(`UPDATE schedule_slips SET snoozed_until = ? WHERE id = ?`).run(until, id).changes === 1;
+  }
+
+  // «Видалити сповіщення» (docs/specs/2026-11-24-notification-panel-actions.md, decision 6): the
+  // slip only; its run keeps its record in the task's history.
+  deleteScheduleSlip(id: string): boolean {
+    return this.db.prepare(`DELETE FROM schedule_slips WHERE id = ?`).run(id).changes === 1;
   }
 
   refireScheduleSlip(id: string, at: string): ScheduleSlip | undefined {

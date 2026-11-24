@@ -491,7 +491,7 @@ export const en: MessageSchema = {
       estimatePlaceholder: 'not estimated',
       estimateHint: 'optional; «Analytics» compares it with the time to PR',
       estimateInvalid: 'an estimate is a number of hours above zero, e.g. 1.5',
-      typeLabel: 'Type',
+      typeLabel: 'Branch type',
       worktreeLabel: 'Isolate in a worktree',
       worktreeDesc: 'A separate folder, a separate checkout. The agent won’t touch your working state.',
       hiddenLabel: 'Hide from the board',
@@ -3594,6 +3594,12 @@ export const en: MessageSchema = {
       thoughtWith: 'thought {parts}',
       thought: 'thought',
     },
+    toolCommands: {
+      added: 'mounted',
+      removed: 'unmounted',
+      addedCount: 'mounted {count} command | mounted {count} commands',
+      removedCount: 'unmounted {count} command | unmounted {count} commands',
+    },
     toolRow: {
       noDetails: 'No details.',
       statusPending: 'running',
@@ -4351,6 +4357,7 @@ export const en: MessageSchema = {
     member_bad_email: 'That does not look like an email — we invite by the address a colleague signs into Kermanych with',
     member_not_owner_invite: 'The cloud refused: only the workspace owner can invite people to it',
     member_not_owner_roles: 'The cloud refused: only the workspace owner can change roles',
+    cloud_unreachable: 'the cloud cannot be reached',
     workspace_has_projects: 'Move or delete this workspace’s projects first',
     workspace_delete_not_owner: 'The cloud refused: only the owner can delete a workspace',
     oauth_no_url: 'Supabase did not return an authorization URL',
@@ -4429,6 +4436,8 @@ export const en: MessageSchema = {
   notices: {
     slot_wait: 'sent, waiting for a slot · {running} of {limit} running',
     watchdog_killed: 'Command {command} stopped: the machine ran out of memory ({size})',
+    tool_commands_added: 'mounted a tool command: {names} | mounted tool commands: {names}',
+    tool_commands_removed: 'unmounted a tool command: {names} | unmounted tool commands: {names}',
     interactive_request_cancelled:
       'the assistant tried to ask via an interactive dialog ({method}) — the request was cancelled because there is nowhere to answer it in this chat',
     frames_lost: 'lost {count} frame(s) from omp — part of the reply may not have arrived',
@@ -4568,6 +4577,7 @@ export const en: MessageSchema = {
     schedule_project_unknown: 'unknown project: {value}',
     schedule_skill_unknown: 'unknown skills: {value}',
     schedule_at_past: 'the time {value} has already passed',
+    schedule_run_no_result: 'this run has no result',
   },
   cuk: {
     title: 'ЦУК · Kermanych Control Center',
@@ -4656,16 +4666,21 @@ export const en: MessageSchema = {
         missed: 'missed',
         late: 'late',
         due: 'scheduled for {at}',
-        openTask: 'Open the task',
         status: 'Status',
         scheduledFor: 'Scheduled for',
-        discuss: 'Discuss in ЦУК',
-        discussDraft: 'The result of the task «{name}»:\n\n{body}\n\n',
+        // docs/specs/2026-11-24-notification-panel-actions.md
+        delete: 'Delete the notification',
+        createTask: 'Create a task',
+        noProject: 'Pick a project in the switcher at the top',
+        taskHeadRun: 'The result of the scheduled task «{name}» ({when}):',
+        taskHeadFailed: 'The scheduled task «{name}» did not run ({when}):',
+        taskHeadReminder: 'The reminder «{name}» ({when}):',
+        reactFailed: 'The task is created, but «Taken into work» was not saved on the run: {error}',
         toastReminder: 'Reminder: {text}',
         toastRun: '«{name}»: {text}',
         toastFailed: '«{name}» did not run: {text}',
       },
-      loadFailed: 'Could not read the notifications: {error}',
+      loadFailed: 'Could not read the notifications: {error}. Retrying automatically.',
       retry: 'Try again',
       toast: 'I improved the skill «{skill}»: {summary}',
       view: 'View',
@@ -4759,6 +4774,17 @@ export const en: MessageSchema = {
         noRuns: 'Has not run yet.',
         manual: 'manual',
         delete: 'Delete',
+      },
+      reaction: {
+        label: 'Reaction',
+        taken: 'Taken into work',
+        rejected: 'Not interested',
+      },
+      notes: {
+        title: 'Notes for the next run',
+        from: 'Left by the run of {when}',
+        older: 'before the task last changed',
+        clear: 'Clear the notes',
       },
     },
     card: {
@@ -5552,6 +5578,11 @@ export const en: MessageSchema = {
     deleteSchedule: {
       title: 'Delete the scheduled task?',
       message: 'The task «{name}» is deleted with its run history.',
+    },
+    clearScheduleNotes: {
+      title: 'Clear the notes?',
+      message: 'The next run of «{name}» starts without the notes of earlier runs. They stay in the history.',
+      confirm: 'Clear',
     },
     newChat: {
       title: 'Start a new chat?',

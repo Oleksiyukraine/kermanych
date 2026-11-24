@@ -1,7 +1,8 @@
 <template>
   <!-- One scheduled task over the console (docs/specs/2026-11-06-scheduled-tasks.md, decision 6),
-       opened from a «Розклад» row the way an improvement opens: what it does, when, its run
-       history, «Запустити зараз» and «Видалити». -->
+       opened from a «Розклад» row the way an improvement opens: what it does, when, the notes
+       its next run gets, its run history with the operator's reactions
+       (docs/specs/2026-11-23-scheduled-task-run-memory.md), «Запустити зараз» and «Видалити». -->
   <section class="stv" :aria-labelledby="headingId">
     <header class="stv__head">
       <button
@@ -44,6 +45,17 @@
           <p>{{ task.prompt }}</p>
         </div>
 
+        <!-- The notes the next run gets (run memory, decisions 1 and 6): visible, and clearable. -->
+        <details v-if="notesRun" class="stv__notes">
+          <summary class="stv__label mono">{{ t('cuk.schedule.notes.title') }}</summary>
+          <p class="stv__notes-meta mono">
+            {{ t('cuk.schedule.notes.from', { when: formatFiring(notesRun.scheduledFor ?? notesRun.startedAt, zone, locale) }) }}
+            <span v-if="beforePromptChange(task, notesRun)" class="stv__run-mark">{{ t('cuk.schedule.notes.older') }}</span>
+          </p>
+          <p class="stv__notes-text">{{ notesRun.notes }}</p>
+          <KBtn variant="ghost" :loading="clearNotes.busy.value" @click="clearNotes.run()">{{ t('cuk.schedule.notes.clear') }}</KBtn>
+        </details>
+
         <div class="stv__history">
           <span class="stv__label mono">{{ t('cuk.schedule.detail.history') }}</span>
           <KSkeleton v-if="phase === 'skeleton'" variant="rows" :rows="3" />
@@ -59,6 +71,7 @@
                 <span class="stv__run-status">{{ t(`cuk.schedule.status.${r.status}`) }}</span>
                 <span v-if="r.trigger === 'catch-up'" class="stv__run-mark">{{ t('cuk.notifications.slip.late') }}</span>
                 <span v-else-if="r.trigger === 'manual'" class="stv__run-mark">{{ t('cuk.schedule.detail.manual') }}</span>
+                <ScheduleRunReaction v-if="task.kind === 'agent' && r.status === 'done'" class="stv__run-reaction" :run="r" />
               </span>
               <span v-if="r.status === 'skipped' || r.status === 'failed'" class="stv__run-text">
                 {{ reasonText(t, r.reason, r.detail ?? '') }}
@@ -93,7 +106,7 @@
 // the view opens and kept current by `schedule_run_update`.
 import { computed, nextTick, onMounted, ref, useId } from 'vue';
 import { useI18n } from 'vue-i18n';
-import { describeSchedule } from '@kermanych/core';
+import { beforePromptChange, currentNotesRun, describeSchedule } from '@kermanych/core';
 import { useSchedules } from 'stores/schedules';
 import { useProjects } from 'stores/projects';
 import { useOrchestrator } from 'stores/orchestrator';
@@ -105,6 +118,7 @@ import { formatFiring, machineTimeZone, reasonText } from '../../lib/schedules';
 import { locale as localeRef } from '../../lib/locale';
 import KBtn from 'components/kit/KBtn.vue';
 import KSkeleton from 'components/kit/KSkeleton.vue';
+import ScheduleRunReaction from './ScheduleRunReaction.vue';
 
 const props = defineProps<{ id: string }>();
 const emit = defineEmits<{ close: [] }>();
@@ -123,6 +137,7 @@ const task = computed(() => schedules.tasks?.find((x) => x.id === props.id));
 const runs = computed(() => schedules.runs[props.id]);
 const runsError = ref('');
 const phase = useLoadPhase(() => !runs.value && !runsError.value);
+const notesRun = computed(() => (task.value && runs.value ? currentNotesRun(task.value, runs.value) : undefined));
 
 const project = computed(() => {
   const id = task.value?.projectId;
@@ -180,6 +195,19 @@ const remove = useAsyncAction(async () => {
   await schedules.remove(x.id);
   local.notify(t('cuk.schedule.deleted', { name: x.name }), 'info');
   emit('close');
+});
+
+// «Очистити нотатки» asks first: the next run starts without them.
+const clearNotes = useAsyncAction(async () => {
+  const x = task.value;
+  if (!x) return;
+  const ok = await confirmAction({
+    title: t('confirmations.clearScheduleNotes.title'),
+    message: t('confirmations.clearScheduleNotes.message', { name: x.name }),
+    confirmLabel: t('confirmations.clearScheduleNotes.confirm'),
+  });
+  if (!ok) return;
+  await schedules.clearNotes(x.id);
 });
 </script>
 
@@ -285,6 +313,42 @@ const remove = useAsyncAction(async () => {
   white-space: pre-line;
 }
 
+.stv__notes {
+  display: flex;
+  flex-direction: column;
+  gap: var(--k-sp-2);
+
+  // `.stv__label` is a block, which drops the disclosure marker; a list item keeps it.
+  summary {
+    display: list-item;
+    cursor: pointer;
+  }
+
+  .k-btn {
+    align-self: flex-start;
+  }
+}
+
+.stv__notes-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--k-sp-2);
+  margin: 0;
+  font-size: var(--k-fs-xs);
+  color: var(--k-faint);
+}
+
+.stv__notes-text {
+  margin: 0;
+  padding: var(--k-sp-2) var(--k-sp-3);
+  border-left: 2px solid var(--k-line-strong);
+  font-size: var(--k-fs-sm);
+  line-height: 1.5;
+  white-space: pre-line;
+  overflow-wrap: anywhere;
+}
+
 .stv__note,
 .stv__empty {
   margin: 0;
@@ -335,6 +399,10 @@ const remove = useAsyncAction(async () => {
 
 .stv__run-status {
   color: var(--k-text);
+}
+
+.stv__run-reaction {
+  margin-left: auto;
 }
 
 .stv__run-mark {

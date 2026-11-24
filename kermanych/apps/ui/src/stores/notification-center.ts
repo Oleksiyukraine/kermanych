@@ -58,6 +58,7 @@ import { bounceDock } from '../lib/dock';
 import { reasonText } from '../lib/schedules';
 import { isUnseen, mergeFeed, type NotificationItem } from '../lib/notification-feed';
 import { useAppUpdate } from './app-update';
+import { cloudReadErrorText } from '../lib/cloud-errors';
 
 export type { NotificationItem };
 
@@ -86,6 +87,11 @@ export type PlannedShare = {
 
 // Long enough to read a skill name and a summary and reach for «Переглянути».
 const TOAST_MS = 10_000;
+
+// A failed list read tries again on its own (the cloud unreachable at launch or after a sleep is
+// the usual cause): sooner at first, then once a minute, and at once when Realtime rejoins.
+const RETRY_MIN_MS = 5_000;
+const RETRY_MAX_MS = 60_000;
 
 export const useNotificationCenter = defineStore('notification-center', () => {
   const auth = useAuth();
@@ -121,6 +127,10 @@ export const useNotificationCenter = defineStore('notification-center', () => {
   // Bumped by every (re)bind, so a read that lands after a sign-out or a user switch is dropped.
   let generation = 0;
   let stopChannel: (() => void) | undefined;
+  // The automatic retry of a failed read, and the generation whose read is in flight.
+  let retryTimer: ReturnType<typeof setTimeout> | undefined;
+  let retryDelay = RETRY_MIN_MS;
+  let readingFor: number | undefined;
 
   function owner(): AiOwner {
     const id = auth.user?.id;
@@ -199,6 +209,8 @@ export const useNotificationCenter = defineStore('notification-center', () => {
     const mine = ++generation;
     stopChannel?.();
     stopChannel = undefined;
+    stopRetry();
+    retryDelay = RETRY_MIN_MS;
     items.value = [];
     details.value = {};
     close();
@@ -211,8 +223,20 @@ export const useNotificationCenter = defineStore('notification-center', () => {
     }
     phase.value = 'loading';
     // Bound before the read, so a change landing during it is not lost; the read then fills in
-    // behind whatever already arrived.
-    stopChannel = subscribeSkillImprovements(auth.client, uid, onChange);
+    // behind whatever already arrived. A failed read retries as soon as the channel (re)joins:
+    // the cloud answers again.
+    stopChannel = subscribeSkillImprovements(auth.client, uid, onChange, (state) => {
+      if (state === 'SUBSCRIBED' && mine === generation && phase.value === 'error') void read(mine);
+    });
+    await read(mine);
+  }
+
+  // The list read. Rows Realtime already delivered stay; a failure keeps what is shown, says why
+  // and schedules the next try. While it is in error the column keeps its rows, not a skeleton.
+  async function read(mine: number): Promise<void> {
+    if (readingFor === mine) return;
+    readingFor = mine;
+    stopRetry();
     try {
       const rows = await listSkillImprovementEntries(auth.client);
       if (mine !== generation) return;
@@ -221,12 +245,23 @@ export const useNotificationCenter = defineStore('notification-center', () => {
         ...items.value,
         ...rows.filter((r) => !arrived.has(r.id)).map((entry) => ({ kind: 'skill-improvement' as const, entry })),
       ].slice(0, SKILL_IMPROVEMENTS_KEEP);
+      error.value = '';
       phase.value = 'ready';
+      retryDelay = RETRY_MIN_MS;
     } catch (e) {
       if (mine !== generation) return;
-      error.value = e instanceof Error ? e.message : String(e);
+      error.value = cloudReadErrorText(e);
       phase.value = 'error';
+      retryTimer = setTimeout(() => void read(mine), retryDelay);
+      retryDelay = Math.min(retryDelay * 2, RETRY_MAX_MS);
+    } finally {
+      if (readingFor === mine) readingFor = undefined;
     }
+  }
+
+  function stopRetry(): void {
+    clearTimeout(retryTimer);
+    retryTimer = undefined;
   }
 
   /** Follow the signed-in user for the life of the app. Idempotent; the shell calls it once. */

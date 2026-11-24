@@ -69,6 +69,13 @@ export type ScheduledTask = {
   armedAt: string;
   createdAt: string;
   updatedAt: string;
+  // ISO instant the prompt text last changed (creation counts): earlier runs' results and notes
+  // reach a run marked «before the task was last changed»
+  // (docs/specs/2026-11-23-scheduled-task-run-memory.md, decision 4).
+  promptChangedAt: string;
+  // ISO instant of «Очистити нотатки» (decision 6): notes of runs started before it are not
+  // handed on.
+  notesClearedAt?: string;
   // ISO instant, computed by the api on every read; absent when disabled or nothing is ahead.
   nextAt?: string;
   // A run of this task is in flight.
@@ -124,9 +131,19 @@ export type ScheduleRun = {
   endedAt?: string;
   // A project run's session (decision 5).
   sessionId?: string;
-  // The first line of the run's final answer.
+  // The first line of the run's final answer (without its notes section).
   summary?: string;
+  // The answer's «## Notes for the next run» section, cut out of it (run memory, decision 1).
+  notes?: string;
+  // The operator's verdict on a `done` run's result (run memory, decision 2).
+  reaction?: ScheduleRunReaction;
 };
+
+export type ScheduleRunReaction = "taken" | "rejected";
+export const SCHEDULE_RUN_REACTIONS = ["taken", "rejected"] as const satisfies readonly ScheduleRunReaction[];
+export function isScheduleRunReaction(v: unknown): v is ScheduleRunReaction {
+  return v === "taken" || v === "rejected";
+}
 
 // A local «Центр сповіщень» entry (decision 6): a reminder fired, or a run ended / skipped / failed.
 export type ScheduleSlipKind = "reminder" | "run";
@@ -159,6 +176,47 @@ export const SCHEDULE_SLIPS_KEEP = 200;
 export const SCHEDULE_TICK_MS = 60_000;
 /** Later than this after its occurrence = «із запізненням» / a missed reminder. */
 export const SCHEDULE_ON_TIME_MS = 5 * 60_000;
+
+// ── Memory between runs (docs/specs/2026-11-23-scheduled-task-run-memory.md) ─────────────
+
+/** The heading a run ends its answer with; what follows it is handed to the next run only. */
+export const RUN_NOTES_HEADING = "## Notes for the next run";
+export const RUN_NOTES_MAX = 4000;
+
+// Any heading level, an optional colon: models restyle a heading they were told verbatim.
+const NOTES_HEADING_RE = /^#{1,6}[ \t]*notes for the next run[ \t]*:?[ \t]*$/gim;
+
+/**
+ * An answer split at its LAST notes heading: the answer the operator reads (summary, slip body)
+ * and the notes, trimmed and capped at RUN_NOTES_MAX. No heading, or nothing under it: no notes.
+ */
+export function splitRunNotes(text: string): { answer: string; notes?: string } {
+  const heads = [...text.matchAll(NOTES_HEADING_RE)];
+  const head = heads.at(-1);
+  if (!head) return { answer: text };
+  const answer = text.slice(0, head.index).trimEnd();
+  const notes = text.slice(head.index + head[0].length).trim();
+  if (!notes) return { answer };
+  return {
+    answer,
+    notes: notes.length > RUN_NOTES_MAX ? `${notes.slice(0, RUN_NOTES_MAX).trimEnd()}\n[…cut at ${RUN_NOTES_MAX} characters]` : notes,
+  };
+}
+
+/**
+ * The run whose notes the next run gets (decision 1): the newest `done` run that left notes,
+ * unless the operator cleared the notes after it started (decision 6). `runs` newest first.
+ */
+export function currentNotesRun(task: Pick<ScheduledTask, "notesClearedAt">, runs: readonly ScheduleRun[]): ScheduleRun | undefined {
+  const run = runs.find((r) => r.status === "done" && r.notes);
+  if (!run) return undefined;
+  return task.notesClearedAt && run.startedAt <= task.notesClearedAt ? undefined : run;
+}
+
+/** A run started before the prompt last changed answered an older wording of the task. */
+export function beforePromptChange(task: Pick<ScheduledTask, "promptChangedAt">, run: Pick<ScheduleRun, "startedAt">): boolean {
+  return run.startedAt < task.promptChangedAt;
+}
 
 /** What the menu-bar icon needs (decision 4): `active` = at least one enabled task. */
 export type ScheduleTrayState = { active: boolean; next?: { name: string; at: string } };

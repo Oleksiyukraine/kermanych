@@ -1133,15 +1133,27 @@
 
         <!-- RIGHT — where it lands -->
         <div class="agents-launcher__side">
-          <!-- «Гілка»: the part after the prefix, the card's own (`tasks.branch_slug`). Left blank,
-               the launch names it from the task with a model
-               (docs/specs/2026-11-04-custom-branch-name.md); typed, it is slugified at launch, and
-               the hint shows the name that lands when that changes what was typed. -->
+          <!-- «Гілка»: the branch name as it lands, `<prefix>/<slug>`, edited where it is read.
+               The prefix is the ▾ chip in front (`tasks.prefix`, the type of work), the input
+               is the rest (`tasks.branch_slug`). Left blank, the launch names it from the task
+               with a model (docs/specs/2026-11-04-custom-branch-name.md); typed, it is slugified
+               at launch, and the hint shows the name that lands when that changes what was
+               typed. `for` points the box at the input, so a click on its padding or on the
+               slash puts the caret there; a click on the chip stays the chip's (a button inside
+               a <label> keeps its own activation). -->
           <div>
             <div class="agents-launcher__label">{{ t('agents.session.branch') }}</div>
-            <label class="agents-launcher__branch agents-launcher__branch--edit mono">
-              <span class="agents-launcher__branch-prefix">{{ draftPrefix }}/</span>
+            <label for="agents-launcher-branch-slug" class="agents-launcher__branch agents-launcher__branch--edit agents-launcher__branch--prefixed mono">
+              <KSelect
+                :model-value="draftPrefix"
+                :options="prefixOptions"
+                :label="t('agents.launcher.typeLabel')"
+                inline
+                @update:model-value="draftPrefix = $event as BranchPrefix"
+              />
+              <span class="agents-launcher__branch-slash" aria-hidden="true">/</span>
               <input
+                id="agents-launcher-branch-slug"
                 v-model="draftBranchSlug"
                 class="agents-launcher__branch-input"
                 :placeholder="t('agents.launcher.branchPlaceholder')"
@@ -1194,20 +1206,6 @@
               >{{ opt === 'managed' ? t('agents.native.modeManaged') : opt }}</button>
             </div>
             <div class="agents-launcher__hint mono">{{ t('agents.native.modeHint') }}</div>
-          </div>
-
-          <div>
-            <div class="agents-launcher__label">{{ t('agents.launcher.typeLabel') }}</div>
-            <div class="agents-launcher__seg agents-launcher__seg--fit">
-              <button
-                v-for="opt in prefixOptions"
-                :key="opt"
-                type="button"
-                class="agents-launcher__seg-btn mono"
-                :class="{ 'agents-launcher__seg-btn--active': opt === draftPrefix }"
-                @click="draftPrefix = opt"
-              >{{ opt }}</button>
-            </div>
           </div>
 
           <div class="agents-launcher__block agents-launcher__block--stack">
@@ -3022,7 +3020,7 @@ const draftModel = ref('');
 // Reasoning effort for the launch, the other half of `model`. '' is «за замовчуванням» —
 // the card stores nothing and omp picks. A card being edited keeps its own.
 const draftEffort = ref<ThinkingLevel | ''>('');
-// The segmented pickers offer core's vocabularies verbatim — the same constants openLauncher
+// The prefix picker offers core's vocabulary verbatim — the same constant openLauncher
 // validates a card's free-text launch params against, so a prefix added to core cannot show
 // up as accepted-but-unpickable here. Except `synergy`, which only a Синергія launch takes (docs/specs/2026-11-06-synergy.md, decision 5).
 const draftPrefix = ref<BranchPrefix>('feature');
@@ -3281,12 +3279,17 @@ async function loadLaunchBranches(preferred: string | undefined): Promise<void> 
   }
 }
 
+// What the opener of this launcher wants to hear once the popup has written a NEW card
+// (openTaskFromText's `onCreated`); every other opening clears it.
+let onCardCreated: (() => void) | undefined;
+
 // `deepAnalysis` seeds «Глибокий аналіз» for a NEW card; a card being edited keeps its own.
 function openLauncher(card?: Task, deepAnalysis = false): void {
   // Before loadLaunchBranches(), which reads it. A card being edited stays in its own
   // project; a new one lands in the selected project, and the «Нова задача» button is
   // disabled unless there is one.
   launchProjectId.value = card?.projectId ?? store.selectedProjectId;
+  onCardCreated = undefined;
   editingTaskId.value = card?.id ?? null;
   // The title and task text open on the target's draft, or on the card's own (blank for a new
   // card) when there is none — set through bind(), never assigned first (lib/drafts.ts).
@@ -3326,15 +3329,23 @@ function openLauncher(card?: Task, deepAnalysis = false): void {
 
 // Turn a transcript text selection into a new backlog task: prefill the launcher
 // with the selection as the task body and a name suggested from its first line,
-// defaulting to "save to backlog" so a finding is parked rather than run now.
-function openTaskFromText(text: string): void {
+// defaulting to "save to backlog" so a finding is parked rather than run now. A schedule slip's
+// «Створити задачу» comes here too (store.requestNewTask), with its own project, a title taken
+// from the answer rather than its header, and a hook for the card it writes.
+function openTaskFromText(
+  text: string,
+  projectId?: string,
+  title = taskNameFromText(text),
+  onCreated?: () => void,
+): void {
   // The finding belongs to the project the transcript came from, which under a workspace
   // scope is not necessarily the selected one.
-  launchProjectId.value = selectedSession.value?.projectId ?? store.selectedProjectId;
+  launchProjectId.value = projectId ?? selectedSession.value?.projectId ?? store.selectedProjectId;
+  onCardCreated = onCreated;
   editingTaskId.value = null;
   // A selection prefills the form: it is not the project's «Нова задача» draft and must not
   // overwrite one, so this form keeps no draft.
-  launcherDraft.bind(null, { title: taskNameFromText(text), description: text });
+  launcherDraft.bind(null, { title, description: text });
   // New task from a selection: same project default model as openLauncher's new-task branch.
   const textDefault = store.projects.find((p) => p.id === launchProjectId.value);
   draftModel.value = textDefault?.defaultModel ?? '';
@@ -3354,6 +3365,17 @@ function openTaskFromText(text: string): void {
   launcherOpen.value = true;
   void nextTick(() => nameField.value?.focus());
 }
+
+// «Створити задачу» in a schedule slip, from ЦТ: the request may be waiting when this page mounts.
+watch(
+  () => store.newTaskRequest,
+  (req) => {
+    if (!req) return;
+    store.newTaskRequest = undefined;
+    openTaskFromText(req.text, req.projectId, req.title, req.onCreated);
+  },
+  { immediate: true },
+);
 
 // Both buttons write a CLOUD card; «Запустити» then launches it on this machine. Creating
 // the card FIRST is what makes the task visible to the team with an assignee, and it also
@@ -3426,6 +3448,10 @@ async function submitLauncher(asTask: boolean): Promise<void> {
       // launcher is in edit mode for this card — its footer offers «Видалити», which is
       // honest, and a retry carries any edit made in between into the same card.
       editingTaskId.value = created.id;
+      // Once per card: a retried launch edits this card and is no new one.
+      const hook = onCardCreated;
+      onCardCreated = undefined;
+      hook?.();
     }
     // The card holds the text now. A retry after a failed launch edits that card, so further
     // edits are its draft.
@@ -5165,7 +5191,7 @@ function openDocTask(path: string): void {
   color: var(--k-text);
   word-break: break-all;
 }
-// The editable box: the prefix is the «Тип» pick, fixed text; the input is the rest of the name.
+// The editable box: a text input with the box's frame and focus ring.
 .agents-launcher__branch--edit {
   display: flex;
   align-items: baseline;
@@ -5175,8 +5201,17 @@ function openDocTask(path: string): void {
 .agents-launcher__branch--edit:focus-within {
   border-color: var(--k-accent);
 }
-.agents-launcher__branch-prefix {
+// «Гілка»: the prefix chip (KSelect `inline`), a slash, then the slug input — the branch name
+// in the order it lands. The chip is taller than a line of text, so the box trades vertical
+// padding for it and stays the height of «Оцінка, год» below; the chip sits close to the left
+// edge, an inset token rather than a second column.
+.agents-launcher__branch--prefixed {
+  align-items: center;
+  padding: 8px 12px 8px 8px;
+}
+.agents-launcher__branch-slash {
   flex: none;
+  padding: 0 5px 0 6px;
   color: var(--k-muted);
 }
 .agents-launcher__branch-input {
@@ -5203,9 +5238,8 @@ function openDocTask(path: string): void {
   border-radius: var(--k-r);
   overflow: hidden;
 }
-/* Labels of uneven length (`Керманич` beside `omp`, `refactoring` beside `fix`): each button
-   starts at its own width, so the long one is not cut to a quarter of the row, and the set
-   stays one row — a row that runs out of room (a design card adds `design` to «Тип») wraps
+/* Labels of uneven length (`Керманич` beside `omp`): each button starts at its own width, so
+   the long one is not cut to a quarter of the row, and a row that runs out of room wraps
    rather than truncating a label. */
 .agents-launcher__seg--fit .agents-launcher__seg-btn {
   flex: 1 0 auto;
