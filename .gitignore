@@ -13,9 +13,9 @@ dist/
 # (kermanych/apps/ui/scripts/build-whisper-server.sh)
 kermanych/.whisper-build/
 
-# SQLite journal files of the docs-harness index — present only while the MCP server has it open
-*.sqlite-shm
-*.sqlite-wal
+# The docs-harness index is derived data, rebuilt locally by `docs-harness docs index`
+# (kermanych/docs/agents/project-docs.md); only .docs-harness/config.json is shared.
+kermanych/.docs-harness/index/
 
 # Session git worktrees (packages/core worktreeDir): one folder per session, inside the project repo.
 # `.gitworktree/` is the older folder: sessions started before the move, and the release command.

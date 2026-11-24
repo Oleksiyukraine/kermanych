@@ -129,6 +129,18 @@ test("in-place create is refused when one is already active in the project", asy
   await expect(sup.createSessionFromTask("task-1", USER)).rejects.toMatchObject({ code: "inplace_already_active" });
 });
 
+test("a finished chat in the project does not occupy the in-place slot", async () => {
+  const g = reg.upsertProject({ id: PROJECT, name: "g", localRepoPath: repo });
+  reg.createSession({
+    projectId: g.id, name: "c", task: "t", worktreePath: "", branch: "",
+    worktree: false, kind: "chat", status: "done",
+  });
+  cloudTask({ worktree: false, projectId: g.id });
+
+  const err = await sup.createSessionFromTask("task-1", USER).catch((e: unknown) => e);
+  expect(err).not.toMatchObject({ code: "inplace_already_active" });
+});
+
 test("in-place create is refused on a detached HEAD", async () => {
   const g = reg.upsertProject({ id: PROJECT, name: "g", localRepoPath: repo });
   const head = git(repo, "rev-parse", "HEAD").trim();
