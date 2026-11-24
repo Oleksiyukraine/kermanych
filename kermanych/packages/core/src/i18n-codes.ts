@@ -45,6 +45,10 @@ export type NoticeCode =
   // supervisor.service.ts — the machine resource profile (docs/specs/2026-10-21-machine-resource-profile.md):
   | "slot_wait" // supervisor.service.ts — a message is accepted but waits for an agent slot (params: { running, limit })
   | "watchdog_killed" // watchdog.service.ts — the watchdog killed an agent command at critical memory pressure (params: { command, size })
+  // transcript-reducer.ts — omp's «Tool commands: added …; removed …» notice, one entry per
+  // direction: MCP/extension tools mounted or unmounted as bash commands mid-session:
+  | "tool_commands_added" // transcript-reducer.ts — tools mounted as commands (params: { names, count } — comma-joined names)
+  | "tool_commands_removed" // transcript-reducer.ts — tools unmounted (params: { names, count } — comma-joined names)
   // jira-tools.service.ts — one `ManagementChatReply.trackerChanges` line per Jira write the
   // assistant made through its Jira tools during the turn:
   | "jira_issue_created" // jira-tools.service.ts — jira_create_issue filed an issue (params: { key, summary })
@@ -179,6 +183,8 @@ export const NOTICE_CODES = [
   "project_dir_missing",
   "slot_wait",
   "watchdog_killed",
+  "tool_commands_added",
+  "tool_commands_removed",
   "jira_issue_created",
   "jira_issue_updated",
   "jira_issue_transitioned",

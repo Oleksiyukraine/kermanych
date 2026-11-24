@@ -1,4 +1,4 @@
-import { clampLines, toolDisplay, type RpcEvent, type ToolLine, type TranscriptEntry, type Usage } from "@kermanych/core";
+import { clampLines, toolDisplay, type Notice, type RpcEvent, type ToolLine, type TranscriptEntry, type Usage } from "@kermanych/core";
 
 export type ToolEntry = Extract<TranscriptEntry, { kind: "tool" }>;
 export type TurnEntry = Extract<TranscriptEntry, { kind: "turn" }>;
@@ -267,13 +267,38 @@ export function reduceRpcEvents(events: RpcEvent[], opts?: ReduceOpts): Reduced 
       const ev = e as Extract<RpcEvent, { type: "notice" }>;
       const text = ev.message ?? "";
       if (!text.trim()) continue;
-      const at = stamp();
       // omp spells it `warning`, the transcript union spells it `warn`; anything else omp
       // adds later reads as `info` rather than leaking an unknown value into a typed field.
       const level = ev.level === "warn" || ev.level === "warning" ? "warn" : ev.level === "error" ? "error" : "info";
-      entries.push({ kind: "notice", id: `n${at}`, at, level, text });
+      for (const n of toolCommandNotices(text) ?? [{ text }]) {
+        const at = stamp();
+        entries.push({ kind: "notice", id: `n${at}`, at, level, ...n });
+      }
       continue;
     }
   }
   return { entries, full, textBuf, thinkBuf };
+}
+
+// omp (19.1+) announces MCP/extension tools mounted or unmounted as bash commands with one
+// English line, `Tool commands: added a, b; removed c` (either half may be absent). Each half
+// becomes its own coded notice so the UI can fold the name list away and localize the
+// summary; anything that does not parse exactly stays a plain notice with omp's text.
+export function toolCommandNotices(text: string): Notice[] | undefined {
+  const PREFIX = "Tool commands: ";
+  if (!text.startsWith(PREFIX)) return undefined;
+  const out: Notice[] = [];
+  for (const part of text.slice(PREFIX.length).split("; ")) {
+    const m = /^(added|removed) (.+)$/.exec(part);
+    if (!m) return undefined;
+    const names = m[2]!.split(", ").filter(Boolean);
+    if (!names.length) return undefined;
+    const added = m[1] === "added";
+    out.push({
+      text: `${added ? "підключено" : "відключено"} команди інструментів: ${names.join(", ")}`,
+      code: added ? "tool_commands_added" : "tool_commands_removed",
+      params: { names: names.join(", "), count: names.length },
+    });
+  }
+  return out.length ? out : undefined;
 }

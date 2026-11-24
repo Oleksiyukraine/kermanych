@@ -3521,6 +3521,8 @@ export const en: MessageSchema = {
       tokens: '{count} tok',
       thoughtWith: 'thought {parts}',
       thought: 'thought',
+      commandsAdded: 'mounted {count} command | mounted {count} commands',
+      commandsRemoved: 'unmounted {count} command | unmounted {count} commands',
     },
     toolRow: {
       noDetails: 'No details.',
@@ -4357,6 +4359,8 @@ export const en: MessageSchema = {
   notices: {
     slot_wait: 'sent, waiting for a slot · {running} of {limit} running',
     watchdog_killed: 'Command {command} stopped: the machine ran out of memory ({size})',
+    tool_commands_added: 'mounted a tool command: {names} | mounted tool commands: {names}',
+    tool_commands_removed: 'unmounted a tool command: {names} | unmounted tool commands: {names}',
     interactive_request_cancelled:
       'the assistant tried to ask via an interactive dialog ({method}) — the request was cancelled because there is nowhere to answer it in this chat',
     frames_lost: 'lost {count} frame(s) from omp — part of the reply may not have arrived',

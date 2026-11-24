@@ -1065,6 +1065,13 @@ const logSamples: TranscriptEntry[] = [
   { kind: 'notice', id: '7', at: nowMs, level: 'info', text: t('kit.gallery.logSamples.notice7') },
   { kind: 'notice', id: '8', at: nowMs, level: 'warn', text: t('kit.gallery.logSamples.notice8') },
   { kind: 'notice', id: '9', at: nowMs, level: 'error', text: t('kit.gallery.logSamples.notice9') },
+  // omp's «Tool commands» line, folded: a shared prefix tag, and a single name with none.
+  {
+    kind: 'notice', id: '9a', at: nowMs, level: 'info', code: 'tool_commands_added',
+    text: 'mcp__nestjs_docs_get_nestjs_manual, mcp__nestjs_docs_get_project_spec, mcp__nestjs_docs_search_nestjs_api',
+    params: { names: 'mcp__nestjs_docs_get_nestjs_manual, mcp__nestjs_docs_get_project_spec, mcp__nestjs_docs_search_nestjs_api', count: 3 },
+  },
+  { kind: 'notice', id: '9b', at: nowMs, level: 'info', code: 'tool_commands_removed', text: 'mcp__context7_query_docs', params: { names: 'mcp__context7_query_docs', count: 1 } },
   // `turn` is ledger data for block summaries — it renders nothing, by design.
   { kind: 'turn', id: '10', at: nowMs, model: 'claude-opus-5', ms: 21_300 },
 ];

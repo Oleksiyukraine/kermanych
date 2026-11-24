@@ -3544,6 +3544,8 @@ export const uk = {
       tokens: '{count} ток',
       thoughtWith: 'думав {parts}',
       thought: 'думав',
+      commandsAdded: 'підключено {count} команду | підключено {count} команди | підключено {count} команд',
+      commandsRemoved: 'відключено {count} команду | відключено {count} команди | відключено {count} команд',
     },
     toolRow: {
       noDetails: 'Деталей немає.',
@@ -4381,6 +4383,10 @@ export const uk = {
   notices: {
     slot_wait: 'надіслано, чекає на слот · {running} з {limit} працюють',
     watchdog_killed: 'Команду {command} зупинено: на машині закінчилась пам’ять ({size})',
+    tool_commands_added:
+      'підключено команду інструмента: {names} | підключено команди інструментів: {names} | підключено команди інструментів: {names}',
+    tool_commands_removed:
+      'відключено команду інструмента: {names} | відключено команди інструментів: {names} | відключено команди інструментів: {names}',
     interactive_request_cancelled:
       'асистент спробував запитати через інтерактивне вікно ({method}) — запит скасовано, бо в цьому чаті немає де на нього відповісти',
     frames_lost: 'втрачено {count} кадр(ів) від omp — частина відповіді могла не дійти',
