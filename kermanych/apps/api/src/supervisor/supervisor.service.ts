@@ -1572,10 +1572,11 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
           { count: dirty.length, files },
         );
       }
-      // A pre-cutover backlog leftover never launched, so it never occupies the in-place slot.
+      // Only an agent occupies the in-place slot: chats are read-only, discussions and reviews
+      // never switch the checkout's branch, and a pre-cutover backlog leftover never launched.
       const activeInPlace = this.registry
         .listSessions(project.id)
-        .some((s) => s.id !== excludeId && !s.worktree && s.kind !== "discussion" && s.kind !== "review" && s.status !== "merged" && s.status !== "backlog");
+        .some((s) => s.id !== excludeId && !s.worktree && s.kind === "agent" && s.status !== "merged" && s.status !== "backlog");
       if (activeInPlace)
         throw new CodedError(
           "inplace_already_active",

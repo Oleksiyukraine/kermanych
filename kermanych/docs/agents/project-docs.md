@@ -32,8 +32,9 @@ find the right mockup, then open the file itself.
 The docs describe this project only. Don't present them as the documented behaviour of a
 third-party library. If a doc contradicts the code, trust the code and say so.
 
-When you add or rename docs, or change `docs.include` tags in `.docs-harness/config.json`,
-re-index:
+The index (`.docs-harness/index/`) is not committed: each checkout builds its own. After a fresh
+clone, and whenever you add or rename docs or change `docs.include` tags in
+`.docs-harness/config.json`, re-index:
 
 ```bash
 docs-harness docs index           # incremental; --rebuild to start over

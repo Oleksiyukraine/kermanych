@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { nextTick, reactive } from 'vue';
 import { createPinia, setActivePinia } from 'pinia';
 import type { SkillImprovementChange } from '@kermanych/cloud';
@@ -19,6 +19,7 @@ const deleteAiSkill = vi.fn();
 const setSkillImprovementState = vi.fn();
 const unbind = vi.fn();
 let onChange: ((c: SkillImprovementChange) => void) | undefined;
+let onState: ((s: string) => void) | undefined;
 const order: string[] = [];
 
 vi.mock('@kermanych/cloud', () => ({
@@ -33,9 +34,10 @@ vi.mock('@kermanych/cloud', () => ({
   upsertAiSkill: (...a: unknown[]) => upsertAiSkill(...a),
   deleteAiSkill: (...a: unknown[]) => deleteAiSkill(...a),
   setSkillImprovementState: (...a: unknown[]) => setSkillImprovementState(...a),
-  subscribeSkillImprovements: (_c: unknown, _uid: string, cb: (c: SkillImprovementChange) => void) => {
+  subscribeSkillImprovements: (_c: unknown, _uid: string, cb: (c: SkillImprovementChange) => void, state?: (s: string) => void) => {
     order.push('bind');
     onChange = cb;
+    onState = state;
     return unbind;
   },
 }));
@@ -176,6 +178,60 @@ describe('notification center', () => {
     await settle();
     expect(store.items).toEqual([]);
     expect(unbind).toHaveBeenCalled();
+    // Signed back in here, while the read answers: the store outlives this test, and the next
+    // beforeEach's sign-in would otherwise bind it again under the next test's mocks.
+    auth.user = { id: 'u1' };
+    await nextTick();
+    await settle();
+  });
+
+  // The cloud unreachable at launch (or after a sleep) left the column on «Failed to fetch» until
+  // the operator pressed «Спробувати ще».
+  describe('a failed read', () => {
+    afterEach(() => vi.useRealTimers());
+
+    it('says the cloud is unreachable and reads again on its own until it answers', async () => {
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+      listSkillImprovementEntries.mockRejectedValue(new Error('TypeError: Failed to fetch'));
+      const store = useNotificationCenter();
+      store.start();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(store.phase).toBe('error');
+      expect(store.error).toBe('errors.cloud_unreachable');
+
+      await vi.advanceTimersByTimeAsync(5_000);
+      expect(listSkillImprovementEntries).toHaveBeenCalledTimes(2);
+      expect(store.phase).toBe('error');
+
+      listSkillImprovementEntries.mockResolvedValue([entry('i1')]);
+      await vi.advanceTimersByTimeAsync(10_000);
+      expect(listSkillImprovementEntries).toHaveBeenCalledTimes(3);
+      expect(store.phase).toBe('ready');
+      expect(store.error).toBe('');
+      expect(store.items.map((i) => i.entry.id)).toEqual(['i1']);
+
+      await vi.advanceTimersByTimeAsync(120_000);
+      expect(listSkillImprovementEntries).toHaveBeenCalledTimes(3);
+    });
+
+    it('reads again at once when Realtime rejoins, and keeps a server refusal in its own words', async () => {
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+      listSkillImprovementEntries.mockRejectedValue(new Error('JWT expired'));
+      const store = useNotificationCenter();
+      store.start();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(store.error).toBe('JWT expired');
+
+      listSkillImprovementEntries.mockResolvedValue([entry('i1')]);
+      onState!('SUBSCRIBED');
+      await vi.advanceTimersByTimeAsync(0);
+      expect(store.phase).toBe('ready');
+      expect(listSkillImprovementEntries).toHaveBeenCalledTimes(2);
+
+      onState!('SUBSCRIBED');
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(listSkillImprovementEntries).toHaveBeenCalledTimes(2);
+    });
   });
 
   describe('rollback', () => {
