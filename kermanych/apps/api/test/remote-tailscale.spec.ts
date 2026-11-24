@@ -133,10 +133,13 @@ function fakeRunner(answers: Record<string, string | Error>) {
 }
 
 describe("Tailscale", () => {
-  it("finds the CLI on PATH first, then in the macOS app bundle", () => {
+  it("finds the CLI on PATH, except the macOS app bundle's, which wins", () => {
     expect(findOnPath("tailscale", host({}, ["/bin/tailscale"]))).toBe("/bin/tailscale");
     const bundle = "/Applications/Tailscale.app/Contents/MacOS/Tailscale";
     expect(new Tailscale(fakeRunner({}).runner, host({}, [bundle])).findCli()).toBe(bundle);
+    // A Homebrew CLI on PATH cannot reach the app's daemon: the bundle's binary goes first.
+    expect(new Tailscale(fakeRunner({}).runner, host({ path: "/opt/homebrew/bin" }, ["/opt/homebrew/bin/tailscale", bundle])).findCli()).toBe(bundle);
+    expect(new Tailscale(fakeRunner({}).runner, host({ path: "/opt/homebrew/bin" }, ["/opt/homebrew/bin/tailscale"])).findCli()).toBe("/opt/homebrew/bin/tailscale");
     expect(new Tailscale(fakeRunner({}).runner, host({ platform: "linux" }, [bundle])).findCli()).toBeUndefined();
     expect(new Tailscale(fakeRunner({}).runner, host({ platform: "linux" }, ["/usr/bin/pkexec"])).findPkexec()).toBe("/usr/bin/pkexec");
     expect(new Tailscale(fakeRunner({}).runner, host({}, ["/usr/bin/pkexec"])).findPkexec()).toBeUndefined();

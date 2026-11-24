@@ -48,10 +48,11 @@ const QUERY_TIMEOUT_MS = 10_000;
 const SERVE_TIMEOUT_MS = 20_000;
 const OPERATOR_TIMEOUT_MS = 180_000;
 
-// Where the macOS app keeps the CLI when it is not on PATH: the App Store / standalone app bundle's
-// binary doubles as the CLI; Homebrew's formula installs `tailscale` under its prefix, which a GUI
-// app's PATH (launched from the Dock) usually lacks.
-const MACOS_CLI = ["/Applications/Tailscale.app/Contents/MacOS/Tailscale", "/opt/homebrew/bin/tailscale", "/usr/local/bin/tailscale"];
+// macOS: the App Store / standalone app bundle's binary doubles as the CLI (taken first, see
+// findCli); Homebrew's formula installs `tailscale` under its prefix, which a GUI app's PATH
+// (launched from the Dock) usually lacks.
+const MACOS_APP_CLI = "/Applications/Tailscale.app/Contents/MacOS/Tailscale";
+const MACOS_CLI = ["/opt/homebrew/bin/tailscale", "/usr/local/bin/tailscale"];
 
 export function realTailscaleHost(): TailscaleHost {
   return {
@@ -223,8 +224,14 @@ export class Tailscale {
     return this.host.platform;
   }
 
-  /** The CLI, or undefined when Tailscale is not installed (spec → Tailscale → «Find the CLI»). */
+  /**
+   * The CLI, or undefined when Tailscale is not installed (spec → Tailscale → «Find the CLI»).
+   * macOS: the app bundle's binary first. It is the only CLI that talks to the App Store /
+   * standalone app's daemon; a Homebrew `tailscale` left on PATH talks only to Homebrew's own
+   * `tailscaled` and reads «failed to connect» next to a running app.
+   */
   findCli(): string | undefined {
+    if (this.host.platform === "darwin" && this.host.executable(MACOS_APP_CLI)) return MACOS_APP_CLI;
     return findOnPath("tailscale", this.host, this.host.platform === "darwin" ? MACOS_CLI : []);
   }
 
