@@ -69,8 +69,11 @@ of listed sessions only.
    (blocked phase and the bottom-bar mark). ✅ Not yet seen: the pairing dialog against a real
    tailnet, and the packaged app serving the client from its asar.
 8. **Docs** — README «Пульт» and «Monorepo layout». ✅
-9. **Manual on a real tailnet** — the spec's Testing checklist on macOS + iPhone (Tailscale serve,
-   QR, home-screen install, push). Open.
+9. **Manual on a real tailnet** — macOS (Tailscale app 1.104) + iPhone 15 Pro, the real
+   RemoteService over fake sessions: `tailscale serve` on :8443 with a valid certificate, QR → Safari
+   → home screen → 6-digit pairing in the installed app, live list update, push for a question and
+   for an error, answer / message (`steer`) / stop reaching the computer, the serve rule removed
+   on shutdown. ✅ Open: the same on Linux and Android, and the desktop app's own pairing dialog.
 
 ## Risks and order
 
