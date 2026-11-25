@@ -44,6 +44,7 @@ export type KIconName =
   | 'fullscreen'
   | 'fullscreenExit'
   | 'chevronDown'
+  | 'chevronUp'
   | 'chevronRight'
   | 'copy'
   | 'coins'
@@ -195,6 +196,8 @@ const ICONS: Record<KIconName, readonly string[]> = {
   // KCodeView's fold gutter: an open block points down, a folded one points at its summary.
   chevronDown: ['m6 9 6 6 6-6'],
   chevronRight: ['m9 18 6-6-6-6'],
+  // KStatusLine's fold: up folds the stage pipeline to bars, down (chevronDown) unfolds it.
+  chevronUp: ['m18 15-6-6-6 6'],
   // «Скопіювати шлях» beside a path in the session's «Документація» tab: Lucide's copy, two
   // overlapping sheets.
   copy: ['M10 8h10a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H10a2 2 0 0 1-2-2V10a2 2 0 0 1 2-2z', 'M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2'],

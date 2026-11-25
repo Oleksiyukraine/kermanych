@@ -96,6 +96,17 @@ Settled with the operator one question at a time on a prototype
    - Board cards are unchanged (loop data exists only on the assignee's machine).
    - Decisions 12–15 of `docs/specs/2026-11-23-pr-feedback-loop.md` are superseded by this
      document.
+7. **Follow-up (operator, same day): names only, notes on hover, a fold to bars.**
+   - The list card shows the dots and the current stage's name only (`ПР`, not
+     `ПР · можна створювати`): the note never fit the card. The note is in the card's tooltip.
+   - The full line drops the note under each stage name; the note lives in the stage's tooltip
+     (it already carried it). This amends decision 2's «optional short note under its name».
+   - ⌃ at the right end of the full line folds it to a strip of thin bars across the pane, one
+     per stage, coloured by state (the running one pulses), each with the stage tooltip; a click
+     on the strip unfolds it. Device-wide (`kermanych.statusLine.minimized`), not per session: a
+     per-session fold would spring open on every switch to another agent. The folded strip has
+     no action buttons and no popovers — the operator asked for «just bars».
+     Rejected: keeping the buttons beside the bars (the strip would grow to the buttons' height).
 
 ## Changes
 
@@ -114,6 +125,11 @@ Settled with the operator one question at a time on a prototype
 - `apps/ui/test/status-line.spec.ts` — `pipelineOf` per row of decision 2.
 - `kermanych/README.md` — the «Status line» paragraph rewritten.
 - The prototype route `/__design/status-line/variants` and `pages/design/status-line/` deleted.
+- Follow-up (decision 7): `KStatusLine.vue` — compact shows the stage name only with the full
+  tooltip; full drops `.k-sl__note`, gets the fold button and the minimized bars variant; the
+  pipe's minimum width drops from 280 to 220 px (no notes to fit). `lib/status-line.ts` —
+  `statusLineMinimized` (`persisted`). `KIcon.vue` — `chevronUp`. i18n `statusLine.minimize` /
+  `statusLine.expand`, the kit caption. `kermanych/README.md` — «Status line» paragraph.
 
 ## Verification
 
@@ -132,8 +148,17 @@ Settled with the operator one question at a time on a prototype
 - Not verified: a real GitHub PR polled by the loop (the preview has no loop states outside the
   gallery fixtures); the light, matrix and hermes themes; the per-comment «Передати» click
   against the api.
+- Follow-up (decision 7): `pnpm typecheck` in `apps/ui` clean; `vitest run
+  test/status-line.spec.ts` 12 passed. Live preview (seeded, 1440 px): agent cards show dots and
+  `Агент` only, the hover tooltip reads `Агент · конфлікт з базовою гілкою`; the full line shows
+  stage names without notes; ⌃ folds it to bars, the bar tooltip reads
+  `Агент · чекає відповіді · 52 с`, `localStorage['kermanych.statusLine.minimized']` is `"1"`, a
+  click on the strip unfolds it. Kit gallery: the fold applies to every sample at once (one
+  device preference). Not verified: light / matrix / hermes themes for the bars; keyboard-only
+  fold and unfold.
 
 ## Documentation impact
 
 `kermanych/README.md`, «Status line» paragraph under «Status flows back»: describes the pipeline,
-the popovers, and that the older displays are gone.
+the popovers, that the older displays are gone, and (decision 7) names-only stages with notes in
+tooltips and the fold to bars with its device preference.
