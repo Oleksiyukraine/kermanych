@@ -1,7 +1,7 @@
 <template>
-  <span class="k-schedule-mark mono" v-tip="t('kit.scheduleMark.tip', { name })" :aria-label="t('kit.scheduleMark.tip', { name })">
+  <span class="k-schedule-mark mono" :class="{ 'k-schedule-mark--icon': iconOnly }" v-tip="t('kit.scheduleMark.tip', { name })" :aria-label="t('kit.scheduleMark.tip', { name })">
     <KIcon name="clock" />
-    <span class="k-schedule-mark__label" aria-hidden="true">{{ t('kit.scheduleMark.label', { name }) }}</span>
+    <span v-if="!iconOnly" class="k-schedule-mark__label" aria-hidden="true">{{ t('kit.scheduleMark.label', { name }) }}</span>
   </span>
 </template>
 
@@ -13,7 +13,8 @@ import KIcon from './KIcon.vue';
 // decision 5): the run is an ordinary session the operator archives himself, and this says where
 // it came from. Styled like KMinionMark — a mark AND a word, in the muted ink: it says who started
 // the agent, not that anything waits for the operator.
-defineProps<{ name: string }>();
+// `iconOnly` drops the words where the row is tight (KSessionCard); the tooltip still names the task.
+defineProps<{ name: string; iconOnly?: boolean }>();
 const { t } = useI18n();
 </script>
 
@@ -32,6 +33,10 @@ const { t } = useI18n();
   line-height: 1;
   white-space: nowrap;
   --k-icon-size: var(--k-icon-xs);
+}
+
+.k-schedule-mark--icon {
+  padding: 2px;
 }
 
 // A long task name is cut, not wrapped: the mark sits in a one-line row.
