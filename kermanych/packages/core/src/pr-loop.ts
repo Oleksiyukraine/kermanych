@@ -85,6 +85,11 @@ export type PrLoopCi = {
   failed: { name: string; url?: string }[];
   /** Minutes the oldest stuck check has run; absent when none is stuck. */
   stuckMin?: number;
+  /**
+   * GitHub refused the head's check runs (403: a fine-grained token without «Checks: read»): the
+   * rest only counts commit statuses, so CI is not known to be green.
+   */
+  checksDenied?: true;
 };
 
 /**
@@ -195,10 +200,13 @@ export function emptyPrLoopCi(): PrLoopCi {
   return { state: "none", total: 0, done: 0, failed: [] };
 }
 
-/** «Готово до мерджу» (decision 10): open, CI green or absent, approved, no conflict. */
+/**
+ * «Готово до мерджу» (decision 10): open, CI green or absent, approved, no conflict. Check runs the
+ * token may not read are not «absent».
+ */
 export function isReadyToMerge(s: PrLoopState): boolean {
   return (
-    !s.unavailable && s.pr?.state === "open" && (s.ci.state === "success" || s.ci.state === "none") &&
+    !s.unavailable && s.pr?.state === "open" && !s.ci.checksDenied && (s.ci.state === "success" || s.ci.state === "none") &&
     s.review.decision === "approved" && s.mergeable === "clean"
   );
 }

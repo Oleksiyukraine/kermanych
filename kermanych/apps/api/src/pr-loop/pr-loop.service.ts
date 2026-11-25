@@ -40,7 +40,7 @@ import {
 } from "@kermanych/core";
 import { RegistryService, type PrLoopRow } from "../registry/registry.service";
 import { SupervisorService, type GithubPrSource } from "../supervisor/supervisor.service";
-import { GithubClient, GithubEtagCache, githubFailure, type GithubPull } from "../github/github-client";
+import { GithubClient, GithubEtagCache, GithubHttpError, githubFailure, type GithubPull } from "../github/github-client";
 
 // The first tick waits for the api to listen, like ScheduleService's.
 export const PR_LOOP_START_DELAY_MS = 5_000;
@@ -264,15 +264,20 @@ export class PrLoopService implements OnModuleInit, OnModuleDestroy {
       }
       const { owner, repo, pull } = found;
       const n = pull.number;
+      // A token without «Checks: read» gets a 403 on check runs alone; the statuses, reviews and
+      // comments still read, so the loop goes on without them instead of failing as no_access.
       const [runs, statuses, reviews, inline, conversation] = await Promise.all([
-        gh.checkRuns(owner, repo, pull.head.sha),
+        gh.checkRuns(owner, repo, pull.head.sha).catch((err: unknown) => {
+          if (err instanceof GithubHttpError && err.status === 403 && !err.rateLimited) return null;
+          throw err;
+        }),
         gh.combinedStatus(owner, repo, pull.head.sha),
         gh.reviews(owner, repo, n),
         gh.reviewComments(owner, repo, n),
         gh.issueComments(owner, repo, n),
       ]);
       const checks: PrLoopCheck[] = [
-        ...runs.map((r) => {
+        ...(runs ?? []).map((r) => {
           const url = r.html_url ?? r.details_url;
           const started = r.started_at ?? r.created_at;
           return {
@@ -324,7 +329,7 @@ export class PrLoopService implements OnModuleInit, OnModuleDestroy {
         branch: s.branch,
         base: this.supervisor.syncBase(s, g),
         checks,
-        ci: ciSummary(checks, this.now()),
+        ci: { ...ciSummary(checks, this.now()), ...(runs ? {} : { checksDenied: true as const }) },
         comments,
       };
     } catch (err) {

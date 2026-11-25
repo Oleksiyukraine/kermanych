@@ -187,10 +187,13 @@ function prStages(
   }
 
   const ci = loop.ci;
-  if (ci.state === 'failure') set('ci', 'failed', [k('statusLine.note.ciFailed', { n: ci.failed.length, total: ci.total }, ci.failed.length)]);
-  else if (ci.stuckMin !== undefined) set('ci', 'waiting', [k('statusLine.note.ciStuck', { min: ci.stuckMin })]);
-  else if (ci.state === 'pending') set('ci', 'running', [{ text: `${ci.done}/${ci.total}` }]);
-  else if (ci.state === 'success') set('ci', 'done', [{ text: `${ci.total}/${ci.total}` }]);
+  // Check runs the token may not read: what is shown is only the commit statuses, and the tip says why.
+  const ciTip = ci.checksDenied ? [k('prLoop.ci.checksDenied')] : undefined;
+  if (ci.state === 'failure') set('ci', 'failed', [k('statusLine.note.ciFailed', { n: ci.failed.length, total: ci.total }, ci.failed.length)], ciTip);
+  else if (ci.stuckMin !== undefined) set('ci', 'waiting', [k('statusLine.note.ciStuck', { min: ci.stuckMin })], ciTip);
+  else if (ci.state === 'pending') set('ci', 'running', [{ text: `${ci.done}/${ci.total}` }], ciTip);
+  else if (ci.state === 'success') set('ci', 'done', [{ text: `${ci.total}/${ci.total}` }], ciTip);
+  else if (ci.checksDenied) set('ci', 'unknown', [k('statusLine.note.noData')], ciTip);
   else set('ci', 'done', [k('statusLine.note.ciNone')]);
 
   const r = loop.review;
