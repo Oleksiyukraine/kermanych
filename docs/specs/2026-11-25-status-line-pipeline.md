@@ -46,7 +46,7 @@ Settled with the operator one question at a time on a prototype
    | `waiting_input` | work stage ● `чекає відповіді · 5 хв` | Відповісти |
    | `error` | work stage ✗ `помилка` (full reason in the tooltip) | Відновити / Увійти |
    | `stopped` | work stage ○ `зупинено · 12 хв тому` | Продовжити |
-   | `done` (no PR) | Агент ✓ → **ПР** ● `можна створювати` | — |
+   | `done` (no PR) | Агент ● `відповів · хід за вами` (decision 8; was ПР ● `можна створювати`) | — |
    | `conflict` | no PR: Агент ✗; PR open: Злиття ✗ — `конфлікт з <base>` | Розвʼязати |
    | `in_review` | ПР ✓ `#41` → CI → Ревʼю → Злиття from `PrLoopState` (below) | Продовжити петлю / Передати агенту |
    | `merged` | every stage ✓ | — |
@@ -107,6 +107,13 @@ Settled with the operator one question at a time on a prototype
      per-session fold would spring open on every switch to another agent. The folded strip has
      no action buttons and no popovers — the operator asked for «just bars».
      Rejected: keeping the buttons beside the bars (the strip would grow to the buttons' height).
+8. **Follow-up (operator, same day): a finished turn is not a finished task.** `done` without a
+   PR used to put the session on **ПР** ● `можна створювати`. `done` ends every turn, so a
+   conversation still going on (an interview, a question answered in text) sat on «ПР». Now it
+   waits on **Агент** ● `відповів · хід за вами · N хв тому`, «ПР» stays ○; «ПР» moves only when
+   a PR is opened (`prOpened` / `in_review`). The `statusLine.note.prReady` key is replaced by
+   `statusLine.note.turnDone`. Rejected: keying «можна створювати» on uncommitted changes — an
+   interview that wrote its task document has changes too, and is still mid-conversation.
 
 ## Changes
 

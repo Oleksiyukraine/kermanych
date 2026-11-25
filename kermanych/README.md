@@ -2036,7 +2036,9 @@ developer's machine. The direction is always task → session.
    resolve, continue the loop, pass to the agent), and ⌃ folds the line to a strip of thin
    coloured bars across the pane, one per stage, each with the same tooltip; a click on the
    strip unfolds it. The fold is one choice for the device (`kermanych.statusLine.minimized`
-   in localStorage) and hides the action buttons. Once the PR is open, work on review feedback
+   in localStorage) and hides the action buttons. A finished turn without a PR waits on
+   «Агент» (`відповів · хід за вами`): it ends the turn, not the task, so «ПР» moves only once
+   a PR is opened. Once the PR is open, work on review feedback
    shows on «Ревʼю» (`агент виправляє · коло 2`), never back on «Агент». CI and «Ревʼю» come
    from the PR feedback loop; without it they read «немає даних», the reason in the tooltip.
    With the loop, a click on CI or «Ревʼю» opens their details: the failed checks with links,

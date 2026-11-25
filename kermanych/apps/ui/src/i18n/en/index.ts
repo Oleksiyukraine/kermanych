@@ -3292,7 +3292,7 @@ export const en: MessageSchema = {
       stopped: 'stopped',
       conflict: 'conflict with {base}',
       conflictPlain: 'conflict with the base branch',
-      prReady: 'ready to open',
+      turnDone: 'replied · your turn',
       noData: 'no data',
       notPolled: 'the loop has not checked this PR yet',
       ciFailed: '{n} of {total} failed',

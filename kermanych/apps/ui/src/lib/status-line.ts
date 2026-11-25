@@ -139,9 +139,9 @@ export function pipelineOf(s: Session, loop: PrLoopState | null | undefined, now
         current = undefined;
         break;
       }
-      set('agent', 'done', [relativeTime(s.lastActivityAt, now)]);
-      set('pr', 'waiting', [k('statusLine.note.prReady')]);
-      current = 'pr';
+      // `done` ends a turn, not the task: the conversation may go on (an interview, a follow-up),
+      // so the ball is with the operator on «Агент». «ПР» moves only once a PR is opened.
+      set('agent', 'waiting', [k('statusLine.note.turnDone'), relativeTime(s.lastActivityAt, now)]);
       break;
     case 'merged':
       for (const key of STAGES) if (key !== 'pr') set(key, 'done');
