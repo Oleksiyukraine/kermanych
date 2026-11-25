@@ -2006,9 +2006,10 @@ developer's machine. The direction is always task → session.
    2 minutes (conditional requests, so an unchanged PR does not spend the GitHub API limit): the
    CI of the PR's head commit (check runs and commit statuses) and its review comments. It needs
    the project's `GIT_TOKEN`; without one the loop says so and does nothing. A fine-grained
-   token without «Checks: read» still runs the loop on commit statuses and comments: CI then
-   reads «немає даних» (or only the statuses), the tooltip and the CI details name the missing
-   permission, and the PR is never called ready to merge. A round is one
+   token without «Checks: read» or «Commit statuses: read» still runs the loop on what it can
+   read (the PR, reviews, comments): CI then reads «немає даних» (or only the part it can read),
+   the tooltip and the CI details name the missing permissions, the PR is never called ready to
+   merge, and a merged PR still shows «Злиття» ✓. A round is one
    message to the agent with the failed checks and every new comment: it goes once every check
    of the head has finished (a check running over 60 minutes counts as hung and holds nothing),
    no new comment came for 5 minutes, and the session is not running a turn. The agent fixes,

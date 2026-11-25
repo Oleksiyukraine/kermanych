@@ -102,11 +102,12 @@ Settled with the operator one question at a time.
     - GitHub only; GitLab and Bitbucket PRs are not watched (as in the merge check).
     - The loop needs the project's `GIT_TOKEN`. One poll is ~6 requests; the anonymous limit is 60
       per hour. Without a token the status line says «петля недоступна: немає `GIT_TOKEN`».
-      A token that GitHub refuses the check runs alone (403 without a spent rate limit: a
-      fine-grained token without «Checks: read») does not make the loop unavailable: the commit
-      statuses, reviews and comments are still read and rounds still go; the CI fact carries
-      `checksDenied`, the CI stage reads «немає даних» (or the statuses only) with the missing
-      permission as its tip, and the PR is never «готово до мерджу» while it is set.
+      A token that GitHub refuses the check runs or the commit statuses (403 without a spent rate
+      limit: a fine-grained token without «Checks: read» or «Commit statuses: read») does not make
+      the loop unavailable: the PR, reviews and comments are still read and rounds still go; the
+      CI fact carries `checksDenied`, the CI stage reads «немає даних» (or the part it can read)
+      with the missing permissions as its tip, and the PR is never «готово до мерджу» while it is
+      set. (The statuses half was added by `docs/specs/2026-11-25-pr-loop-statuses-denied.md`.)
     - Tick every 2 min with conditional requests (`If-None-Match`; a 304 does not count against the
       limit). The real cost is measured during implementation: `x-ratelimit-remaining` before and
       after an hour with one watched PR, written into this document.

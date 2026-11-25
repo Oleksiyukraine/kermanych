@@ -86,8 +86,9 @@ export type PrLoopCi = {
   /** Minutes the oldest stuck check has run; absent when none is stuck. */
   stuckMin?: number;
   /**
-   * GitHub refused the head's check runs (403: a fine-grained token without «Checks: read»): the
-   * rest only counts commit statuses, so CI is not known to be green.
+   * GitHub refused the head's check runs or its commit statuses (403: a fine-grained token
+   * without «Checks: read» or «Commit statuses: read»): the rest counts only what it could read,
+   * so CI is not known to be green.
    */
   checksDenied?: true;
 };

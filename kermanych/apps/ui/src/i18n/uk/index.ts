@@ -3358,7 +3358,7 @@ export const uk = {
       success: '✓ {total}/{total}',
       failure: '✗ {n} з {total} впала | ✗ {n} з {total} впали | ✗ {n} з {total} впали',
       stuck: 'CI висить {min} хв',
-      checksDenied: 'токен не бачить перевірок (check runs): дайте йому право «Checks: read»',
+      checksDenied: 'токен не бачить CI цього PR: дайте йому права «Checks: read» і «Commit statuses: read»',
     },
     review: {
       approved: 'схвалено',

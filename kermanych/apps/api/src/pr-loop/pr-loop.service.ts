@@ -264,14 +264,17 @@ export class PrLoopService implements OnModuleInit, OnModuleDestroy {
       }
       const { owner, repo, pull } = found;
       const n = pull.number;
-      // A token without «Checks: read» gets a 403 on check runs alone; the statuses, reviews and
-      // comments still read, so the loop goes on without them instead of failing as no_access.
-      const [runs, statuses, reviews, inline, conversation] = await Promise.all([
-        gh.checkRuns(owner, repo, pull.head.sha).catch((err: unknown) => {
+      // A fine-grained token without «Checks: read» or «Commit statuses: read» gets a 403 on that
+      // CI source alone; the PR, reviews and comments still read, so the loop goes on without it
+      // (CI marked denied) instead of failing as no_access — a merged PR still shows as merged.
+      const denied = <T>(read: Promise<T>): Promise<T | null> =>
+        read.catch((err: unknown) => {
           if (err instanceof GithubHttpError && err.status === 403 && !err.rateLimited) return null;
           throw err;
-        }),
-        gh.combinedStatus(owner, repo, pull.head.sha),
+        });
+      const [runs, statuses, reviews, inline, conversation] = await Promise.all([
+        denied(gh.checkRuns(owner, repo, pull.head.sha)),
+        denied(gh.combinedStatus(owner, repo, pull.head.sha)),
         gh.reviews(owner, repo, n),
         gh.reviewComments(owner, repo, n),
         gh.issueComments(owner, repo, n),
@@ -288,7 +291,7 @@ export class PrLoopService implements OnModuleInit, OnModuleDestroy {
             ...(started ? { startedAt: started } : {}),
           };
         }),
-        ...statuses.map((st) => ({
+        ...(statuses ?? []).map((st) => ({
           name: st.context,
           state: commitStatusState(st.state),
           ...(st.target_url ? { url: st.target_url } : {}),
@@ -329,7 +332,7 @@ export class PrLoopService implements OnModuleInit, OnModuleDestroy {
         branch: s.branch,
         base: this.supervisor.syncBase(s, g),
         checks,
-        ci: { ...ciSummary(checks, this.now()), ...(runs ? {} : { checksDenied: true as const }) },
+        ci: { ...ciSummary(checks, this.now()), ...(runs && statuses ? {} : { checksDenied: true as const }) },
         comments,
       };
     } catch (err) {
