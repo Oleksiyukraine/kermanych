@@ -116,6 +116,14 @@ describe('pipelineOf', () => {
     expect(p.stages.find((x) => x.key === 'ci')!.tip).toEqual([{ key: 'prLoop.ci.checksDenied' }]);
   });
 
+  it('a PR merged on GitHub while the session is still on review settles on «Злиття» ✓, even with CI unreadable', () => {
+    const l = loop({ pr: { number: 41, url: '', state: 'merged' }, ci: { state: 'none', total: 0, done: 0, failed: [], checksDenied: true } });
+    expect(shape(session({ status: 'in_review', prOpened: true }), l)).toEqual({
+      states: states('done', 'done', 'done', 'unknown', 'done', 'done'),
+      current: 'merge',
+    });
+  });
+
   it('merged is done end to end', () => {
     expect(shape(session({ status: 'merged', prOpened: true }), loop({ pr: { number: 41, url: '', state: 'merged' } }))).toEqual({
       states: states('done', 'done', 'done', 'done', 'done', 'done'),

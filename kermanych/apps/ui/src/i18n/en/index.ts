@@ -3335,7 +3335,7 @@ export const en: MessageSchema = {
       success: '✓ {total}/{total}',
       failure: '✗ {n} of {total} failed | ✗ {n} of {total} failed',
       stuck: 'CI hangs for {min} min',
-      checksDenied: 'the token cannot read check runs: give it the «Checks: read» permission',
+      checksDenied: 'the token cannot read the CI of the PR: give it «Checks: read» and «Commit statuses: read»',
     },
     review: {
       approved: 'approved',

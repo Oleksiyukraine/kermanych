@@ -354,6 +354,20 @@ describe("the end of the loop", () => {
     expect(sent).toHaveLength(1);
     expect(sent[0]!.text).toContain("please rename");
   });
+
+  it("a token that reads neither check runs nor commit statuses still sees the PR merged", async () => {
+    const id = seed();
+    const fake = globalThis.fetch;
+    vi.stubGlobal("fetch", async (url: string, init?: RequestInit) =>
+      /\/(check-runs|status)$/.test(new URL(url).pathname)
+        ? new Response(JSON.stringify({ message: "Resource not accessible by personal access token" }), { status: 403, headers: { "x-ratelimit-remaining": "4999" } })
+        : fake(url, init),
+    );
+    gh.pull = { ...gh.pull, state: "closed", merged_at: at(T0) };
+    await service().tick();
+    expect(lastState(id)!.unavailable).toBeUndefined();
+    expect(lastState(id)).toMatchObject({ pr: { state: "merged" }, ci: { state: "none", total: 0, checksDenied: true }, loop: { phase: "ended" } });
+  });
 });
 
 describe("persistence", () => {
