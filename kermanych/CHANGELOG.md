@@ -4,6 +4,51 @@ What changed in each release of the Kermanych desktop app. The newest version is
 The release workflow publishes a version's section as its GitHub Release notes, and the app
 shows it as «What's new». Write each section for the people who use the app, in English.
 
+## 1.5.0 — 2026-11-25
+
+### New
+
+- «Пульт» lets you follow and steer this computer's agents from your phone, through your own
+  Tailscale network. Turn it on in Settings → «Застосунок» → «Пульт» and pair the phone with a
+  QR code. On the phone you can read a session, answer an agent's question, send a message or a
+  photo, and stop an agent. When you are away, it notifies you that an agent needs you.
+- New users get a welcome screen that leads to a first workspace and project. The new project
+  wizard («+» in the sidebar) checks your git token and clones a repository or uses a folder you
+  already have. It also connects an existing project on this computer.
+- After an agent opens a PR, Kermanych watches it and sends the agent failed checks and new
+  review comments to fix. After 3 rounds in a row it pauses and asks you. Choose «авто» or
+  «вручну» per project in the project's Git settings.
+- A status line under the session tabs and on each agent card shows where the work is:
+  Задача → Агент → ПР → CI → Ревʼю → Злиття, with the action it needs. ⌃ folds it to thin bars.
+- A scheduled task remembers its earlier runs. A run reads the notes the last run left, which
+  results you marked «Взято в роботу» or «Не цікаво», and the findings already reported, so it
+  does not repeat itself. The task shows the notes, and «Очистити нотатки» clears them.
+- «Кімната відпочинку» in the header has «Гвіздки», a one-minute break game with a leaderboard.
+  Play alone, against AI models, or online with colleagues from your workspace.
+- Voice dictation (🎤 or ⌥D) works in the ЦУК and Менеджмент composers.
+- A scheduled task's notification opens its details in ЦТ. From there you can delete the
+  notification or create a task from it.
+
+### Improvements
+
+- «Розклад» in ЦТ shows the tasks of the selected workspace, plus reminders and tasks without a
+  project.
+- In «Нова задача», the branch type is picked at the start of the «Гілка» field.
+- When an MCP server adds or removes its tools, the agent's log shows one row of server pills
+  instead of a long list of tool names.
+- «Тестувальник» runs faster. It uses a fast model by default, and you can pick the model and
+  effort per project on its page.
+- Менеджмент can work on one answer for up to an hour. Before, it stopped after 4 minutes.
+- «Центр сповіщень» tries again on its own when it cannot reach the cloud.
+
+### Fixes
+
+- «Запустити» no longer spins forever when a git fetch hangs, for example after the computer
+  slept.
+- A file link in an agent's log opens the file. Before, it left the window on the start-up
+  screen.
+- Dictation no longer sends «Музика», or a click, as a message when you said nothing.
+
 ## 1.4.0 — 2026-11-17
 
 ### New
