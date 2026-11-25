@@ -1,0 +1,147 @@
+/* «Пульт» — the phone's base layer. Colours, type, radii and spacing come from
+ * @kermanych/tokens (dark by default: `:root` already carries the dark set). Mobile-first:
+ * one column, 44px touch targets, safe-area padding for the notch and the home indicator. */
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+  -webkit-tap-highlight-color: transparent;
+}
+
+html,
+body {
+  margin: 0;
+  min-height: 100%;
+  background: var(--k-bg);
+  color: var(--k-text);
+  font-family: var(--k-font-ui);
+  /* Phones read 15px body text; the desktop's 13px base is for a pointer and a large screen. */
+  font-size: var(--k-fs-md);
+  line-height: 1.45;
+  overscroll-behavior-y: none;
+}
+
+#app {
+  min-height: 100dvh;
+  display: flex;
+  flex-direction: column;
+}
+
+button,
+input,
+textarea {
+  font: inherit;
+  color: inherit;
+}
+
+/* iOS zooms into any field under 16px; the phone's fields are 16px to keep the page still. */
+input,
+textarea {
+  font-size: 16px;
+}
+
+:focus-visible {
+  outline: none;
+  box-shadow: var(--k-glow-focus);
+}
+
+/* ── Layout ─────────────────────────────────────────────────────────── */
+
+.screen {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 100dvh;
+}
+
+.topbar {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  gap: var(--k-sp-2);
+  min-height: calc(52px + env(safe-area-inset-top));
+  padding: env(safe-area-inset-top) calc(var(--k-sp-3) + env(safe-area-inset-right)) 0
+    calc(var(--k-sp-3) + env(safe-area-inset-left));
+  background: var(--k-bg);
+  border-bottom: var(--k-rule-thin) solid var(--k-line);
+}
+
+.topbar__title {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--k-fs-lg);
+  font-weight: var(--k-fw-semibold);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pad-x {
+  padding-left: calc(var(--k-sp-4) + env(safe-area-inset-left));
+  padding-right: calc(var(--k-sp-4) + env(safe-area-inset-right));
+}
+
+.muted {
+  color: var(--k-muted);
+}
+
+.error-text {
+  color: var(--k-danger);
+  font-size: var(--k-fs-base);
+}
+
+/* ── Skeleton ───────────────────────────────────────────────────────── */
+
+.skeleton {
+  border-radius: var(--k-r-sm);
+  background: linear-gradient(90deg, var(--k-surface) 0%, var(--k-surface2) 50%, var(--k-surface) 100%);
+  background-size: 200% 100%;
+  animation: skeleton 1.2s ease-in-out infinite;
+}
+
+@keyframes skeleton {
+  from {
+    background-position: 100% 0;
+  }
+  to {
+    background-position: -100% 0;
+  }
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes pulse {
+  50% {
+    opacity: 0.35;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .skeleton,
+  .spinner {
+    animation-duration: 0s;
+  }
+}
+
+.spinner {
+  display: inline-block;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  border: 2px solid currentColor;
+  border-right-color: transparent;
+  animation: spin 0.7s linear infinite;
+  flex: none;
+}

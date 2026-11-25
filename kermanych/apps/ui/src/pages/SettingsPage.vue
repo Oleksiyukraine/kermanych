@@ -587,6 +587,13 @@
           <p v-else class="set__note">{{ t('settings.notifications.desktopOnly') }}</p>
         </div>
 
+        <!-- ── APP · ПУЛЬТ ──────────────────────────────────────────────────── -->
+        <!-- docs/specs/2026-11-24-mobile-remote-control.md, decision 7: the switch, the Tailscale
+             checks, pairing a phone and the paired phones. Applies on click, no save bar. -->
+        <div v-else-if="section.key === 'app-remote'" class="set__form">
+          <RemoteSection />
+        </div>
+
         <!-- ── APP · ГАРЯЧІ КЛАВІШІ ─────────────────────────────────────────── -->
         <div v-else-if="section.key === 'app-keymap'" class="set__form set__form--wide">
           <div class="set__table">
@@ -1144,6 +1151,7 @@ import KTag from 'components/kit/KTag.vue';
 import KLangToggle from 'components/kit/KLangToggle.vue';
 import KSkeleton from 'components/kit/KSkeleton.vue';
 import SteGuide from 'components/settings/SteGuide.vue';
+import RemoteSection from 'components/settings/RemoteSection.vue';
 import { APP_VERSION, useAppUpdate } from 'stores/app-update';
 import { useFeedback } from 'stores/feedback';
 import { useOnboarding } from 'stores/onboarding';

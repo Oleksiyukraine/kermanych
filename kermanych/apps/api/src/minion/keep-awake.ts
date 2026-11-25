@@ -1,7 +1,9 @@
 // apps/api/src/minion/keep-awake.ts
 // While a «Посіпака» run is in progress the machine must not go to idle sleep
 // (docs/specs/2026-10-23-minion-auto-run.md, decision 13), nor while a scheduled agent run is
-// (docs/specs/2026-11-06-scheduled-tasks.md, «Keep-awake»). The api imports nothing from
+// (docs/specs/2026-11-06-scheduled-tasks.md, «Keep-awake»), nor while «Пульт» is on and an agent
+// works or waits for an answer (docs/specs/2026-11-24-mobile-remote-control.md, decision 9: the
+// phone must not lose the computer exactly when an agent waits). The api imports nothing from
 // electron, so the desktop app hands its implementation in through `bootstrap({ keepAwake })`
 // (Electron's powerSaveBlocker), the way it hands in the session browser (browser-host.ts); a
 // standalone api has none, and the machine sleeps as usual.
@@ -11,7 +13,7 @@ export type KeepAwake = (hold: boolean) => void;
 
 // Who asks: each service tells only its own need, so one service's «done» never releases the
 // other's run.
-export type AwakeHolder = "minion" | "schedule";
+export type AwakeHolder = "minion" | "schedule" | "remote";
 
 let hook: KeepAwake | undefined;
 const holders = new Set<AwakeHolder>();

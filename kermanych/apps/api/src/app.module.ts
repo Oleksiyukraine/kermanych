@@ -77,9 +77,11 @@ import { GitSetupService } from "./git/git-setup.service";
 import { GitController } from "./http/git.controller";
 import { PrLoopController } from "./http/pr-loop.controller";
 import { PrLoopService } from "./pr-loop/pr-loop.service";
+import { RemoteController } from "./http/remote.controller";
+import { RemoteService } from "./remote/remote.service";
 
 @Module({
-  controllers: [AuthController, ProjectsController, SessionsController, FsController, UsageController, CloudController, SkillsController, SkillImportController, McpController, ManagementController, ManagementMcpController, CukController, ModelsController, JiraController, LinearController, PlaneController, SlackController, AccountController, DocsController, NativeController, BrowserMcpController, MachineController, MinionController, TesterController, VoiceController, DeviceController, SchedulesController, AnalyticsController, GitController, NailGameController, PrLoopController],
+  controllers: [AuthController, ProjectsController, SessionsController, FsController, UsageController, CloudController, SkillsController, SkillImportController, McpController, ManagementController, ManagementMcpController, CukController, ModelsController, JiraController, LinearController, PlaneController, SlackController, AccountController, DocsController, NativeController, BrowserMcpController, MachineController, MinionController, TesterController, VoiceController, DeviceController, SchedulesController, AnalyticsController, GitController, NailGameController, PrLoopController, RemoteController],
   providers: [
     RegistryService, WorktreeService, SupervisorService, PreviewService, EnvFileService, EventsGateway, McpService,
     UsageService,
@@ -216,6 +218,12 @@ import { PrLoopService } from "./pr-loop/pr-loop.service";
     // inspection, a remote's HEAD, and the background clone jobs whose `git_clone` events ride
     // the supervisor's `events$` to the socket. The supervisor never knows it.
     GitSetupService,
+    // «Пульт» (docs/specs/2026-11-24-mobile-remote-control.md): the phone's own server on
+    // 127.0.0.1 behind `tailscale serve`, its pairing and device keys, the filtered session feed,
+    // Web Push and the `remote` keep-awake holder. It drives the supervisor through a whitelist
+    // (RemotePhone) and reads AuthService's sign-in; nothing depends back, and its `remote_update`
+    // rides the supervisor's `events$` to the socket.
+    RemoteService,
     // Global by design: the api binds 127.0.0.1 but was previously drivable by
     // anything on the machine, including GET /fs/list (arbitrary local directory
     // enumeration). Opt out per route with @Public(), never per module.
