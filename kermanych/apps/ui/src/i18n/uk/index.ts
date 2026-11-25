@@ -3313,7 +3313,7 @@ export const uk = {
       stopped: 'зупинено',
       conflict: 'конфлікт з {base}',
       conflictPlain: 'конфлікт з базовою гілкою',
-      prReady: 'можна створювати',
+      turnDone: 'відповів · хід за вами',
       noData: 'немає даних',
       notPolled: 'петля ще не перевіряла цей PR',
       ciFailed: '{n} з {total} впала | {n} з {total} впали | {n} з {total} впали',

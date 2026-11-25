@@ -58,8 +58,10 @@ describe('pipelineOf', () => {
     expect(shape(session({ status: 'stopped' }))).toEqual({ states: states('done', 'todo', 'todo', 'todo', 'todo', 'todo'), current: 'agent' });
   });
 
-  it('done without a PR waits on «ПР»', () => {
-    expect(shape(session({ status: 'done' }))).toEqual({ states: states('done', 'done', 'waiting', 'todo', 'todo', 'todo'), current: 'pr' });
+  it('done without a PR waits for the operator on «Агент», not on «ПР»', () => {
+    const p = pipelineOf(session({ status: 'done' }), null, NOW);
+    expect(shape(session({ status: 'done' }))).toEqual({ states: states('done', 'waiting', 'todo', 'todo', 'todo', 'todo'), current: 'agent' });
+    expect(p.stages.find((x) => x.key === 'agent')!.note[0]).toEqual({ key: 'statusLine.note.turnDone' });
   });
 
   it('a conflict fails «Агент» before the PR and «Злиття» after it', () => {
@@ -123,6 +125,6 @@ describe('pipelineOf', () => {
 
   it('a session that is not an agent shows only its work stage', () => {
     expect(shape(session({ kind: 'chat', status: 'thinking', lastEventAt: NOW - 1_000 }))).toEqual({ states: 'agent:running', current: 'agent' });
-    expect(shape(session({ kind: 'discussion', status: 'done' }))).toEqual({ states: 'agent:done', current: 'agent' });
+    expect(shape(session({ kind: 'discussion', status: 'done' }))).toEqual({ states: 'agent:waiting', current: 'agent' });
   });
 });
