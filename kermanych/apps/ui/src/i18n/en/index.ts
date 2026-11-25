@@ -3267,6 +3267,8 @@ export const en: MessageSchema = {
     label: 'Task stages',
     details: 'Details of the «{stage}» stage',
     openPr: 'Open the PR on GitHub',
+    minimize: 'Fold the stages to bars',
+    expand: 'Unfold the task stages',
     stage: {
       task: 'Task',
       agent: 'Agent',
@@ -3855,7 +3857,7 @@ export const en: MessageSchema = {
         sessionFindings: 'findings: ⚑ with the open count — the agent noticed problems outside its task, and they await a decision',
         sessionDeep: 'deep analysis: the «analysis» mark — the agent asks and documents first, and codes once approved',
         sessionMinion: 'minion: the «minion» mark — the Minion runs the session by itself; «decision needed» — it stopped on a choice that is yours (the reason is in the tooltip); «not needed» — nothing to change, the card is closed (the evidence is in the tooltip)',
-        statusLine: 'status line — the task’s stage pipeline (Task → Agent → PR → CI → Review → Merge): full — under the session tabs, with the action the status asks for; compact — dots and the current stage in the card of the «Agents» list. CI and Review with the PR feedback loop open their details on click; a narrow pane keeps the words only on the current stage and on a failed one',
+        statusLine: 'status line — the task’s stage pipeline (Task → Agent → PR → CI → Review → Merge): full — under the session tabs, stage names only (each stage’s note in its tooltip), with the action the status asks for, and ⌃ folds it to thin bars across the pane (one choice for the device); compact — dots and the current stage’s name in the card of the «Agents» list. CI and Review with the PR feedback loop open their details on click; a narrow pane keeps the names only on the current stage and on a failed one',
         kanbanMinion: 'auto-run: «minion» — the Minion on the author’s machine may take the task by itself; «decision needed» in review — the run awaits your answer; «not needed» in done — the problem is already fixed, the card repeats another, or the code is gone',
         splitButton: 'split: a click runs the default action, ▾ lists the other ways, each with a caption',
       },

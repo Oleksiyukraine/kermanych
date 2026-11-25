@@ -3,10 +3,19 @@
 // docs/specs/2026-11-25-status-line-pipeline.md): which stage a session is on and in what state.
 // Pure, like lib/time.ts: every note is a catalog key and its params, rendered by the component,
 // so the mapping is testable without vue-i18n. Also the stall threshold KPanel's banner uses on
-// the surfaces that have no status line.
+// the surfaces that have no status line, and the device's choice to fold the line to bars.
+import type { Ref } from 'vue';
 import { isReadyToMerge, type PrLoopState, type Session } from '@kermanych/core';
 import { dur, relativeTime } from './time';
 import { needsSignIn } from './session-auth';
+import { persisted } from './persisted';
+
+/**
+ * The full line folded to a strip of thin bars, one per stage (KStatusLine). One choice for the
+ * whole device, not per session: it is how the operator wants the pane to look, and a per-session
+ * fold would spring back open on every switch to another agent.
+ */
+export const statusLineMinimized: Ref<boolean> = persisted('kermanych.statusLine.minimized', false, (raw) => raw === '1', (on) => (on ? '1' : '0'));
 
 /**
  * A running turn silent this long is stalled: KPanel's stall banner and the status line's

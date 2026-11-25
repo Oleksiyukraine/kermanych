@@ -1,11 +1,21 @@
 <template>
   <!-- COMPACT: the status row of an agent's card in the «Агенти» list — the pipeline as dots and
-       the current stage named. No actions: the card is itself a button. -->
-  <div v-if="variant === 'compact'" v-tip.overflow="compactText" class="k-sl k-sl--compact">
+       the current stage's name only: a note would not fit the card, so it lives in the tooltip.
+       No actions: the card is itself a button. -->
+  <div v-if="variant === 'compact'" v-tip="compactTip" class="k-sl k-sl--compact">
     <span class="k-sl__dots" aria-hidden="true">
       <span v-for="s in pipeline.stages" :key="s.key" class="k-sl__dot" :class="`k-sl--${s.state}`" />
     </span>
-    <span class="k-sl__compact-text mono" :class="`k-sl--${currentStage.state}`">{{ compactText }}</span>
+    <span class="k-sl__compact-text mono" :class="`k-sl--${currentStage.state}`">{{ t(`statusLine.stage.${currentStage.key}`) }}</span>
+  </div>
+
+  <!-- MINIMIZED: the full line folded by the operator (`statusLineMinimized`) — one thin bar per
+       stage across the pane, each with its tooltip. The whole strip unfolds it; no actions. -->
+  <div v-else-if="minimized" class="k-sl k-sl--mini" role="status" :aria-label="t('statusLine.label')">
+    <button type="button" class="k-sl__bars" :aria-label="t('statusLine.expand')" @click="minimized = false">
+      <span v-for="s in pipeline.stages" :key="s.key" v-tip="tipOf(s)" class="k-sl__bar" :class="`k-sl--${s.state}`" />
+      <KIcon name="chevronDown" class="k-sl__bars-icon" />
+    </button>
   </div>
 
   <!-- FULL: under the session tab row, the width of the pane, on every tab. -->
@@ -31,7 +41,6 @@
         >
           <span class="k-sl__node"><KSpinner v-if="s.state === 'running'" :size="11" /><template v-else>{{ NODE[s.state] }}</template></span>
           <span class="k-sl__name">{{ t(`statusLine.stage.${s.key}`) }}</span>
-          <span v-if="s.note.length" class="k-sl__note mono">{{ render(s.note) }}</span>
         </button>
         <a
           v-else-if="s.key === 'pr' && prUrl && s.state === 'done'"
@@ -39,16 +48,14 @@
           :href="prUrl"
           target="_blank"
           rel="noopener"
-          v-tip="t('statusLine.openPr')"
+          v-tip="[t('statusLine.openPr'), render(s.note)].filter(Boolean).join(' · ')"
         >
           <span class="k-sl__node">{{ NODE[s.state] }}</span>
           <span class="k-sl__name">{{ t(`statusLine.stage.${s.key}`) }}</span>
-          <span v-if="s.note.length" class="k-sl__note mono">{{ render(s.note) }}</span>
         </a>
         <span v-else class="k-sl__body" v-tip="tipOf(s)">
           <span class="k-sl__node"><KSpinner v-if="s.state === 'running'" :size="11" /><template v-else>{{ NODE[s.state] }}</template></span>
           <span class="k-sl__name">{{ t(`statusLine.stage.${s.key}`) }}</span>
-          <span v-if="s.note.length" class="k-sl__note mono">{{ render(s.note) }}</span>
         </span>
       </li>
     </ol>
@@ -74,6 +81,8 @@
           @click="emit('loopSend')"
         >{{ t('prLoop.action.send') }}</KBtn>
       </template>
+      <!-- Folds the line to bars (`statusLineMinimized`); the last control, so it stays put. -->
+      <KIconButton :title="t('statusLine.minimize')" @click="minimized = true"><KIcon name="chevronUp" class="k-sl__fold-icon" /></KIconButton>
     </span>
 
     <!-- The details of CI and Ревʼю (decision 4): what the merge-box rows used to say, with the
@@ -131,6 +140,8 @@ import type { PrLoopState, Session } from '@kermanych/core';
 // Directly from core's status module, like lib/attention.ts (see the note there).
 import { ACTIVE_STATUSES } from '@kermanych/core/status';
 import KBtn from './KBtn.vue';
+import KIcon from './KIcon.vue';
+import KIconButton from './KIconButton.vue';
 import KSpinner from './KSpinner.vue';
 import { useNow } from '../../composables/useNow';
 import { useAnchoredMenu } from '../../composables/useAnchoredMenu';
@@ -140,6 +151,7 @@ import {
   pipelineOf,
   silentMs,
   STALL_MS,
+  statusLineMinimized,
   type NotePart,
   type Stage,
   type StageKey,
@@ -149,10 +161,11 @@ import {
 
 // The session status line as a stage pipeline, «like GitLab»
 // (docs/specs/2026-11-25-status-line-pipeline.md): `Задача → Агент → ПР → CI → Ревʼю → Злиття`,
-// each stage ✓ / spinner / ● / ✗ / ○ with a short note; which stage and what state is
-// lib/status-line.ts `pipelineOf`. Two variants: `full` sits under the session tab row with the
-// action the status asks for; `compact` is the status row of an agent's card. A narrow pane
-// keeps the current and failed stages spelled out and shrinks the rest to their node (a
+// each stage ✓ / spinner / ● / ✗ / ○, its short note in the stage's tooltip; which stage and what
+// state is lib/status-line.ts `pipelineOf`. Two variants: `full` sits under the session tab row
+// with the action the status asks for, and the operator can fold it to a strip of thin bars (one
+// device-wide choice, `statusLineMinimized`); `compact` is the status row of an agent's card.
+// A narrow pane keeps the current and failed stages named and shrinks the rest to their node (a
 // container query, no measuring). CI and Ревʼю open a popover with the «Петля після ПР» details.
 //
 // Presentational like the rest of the kit: every button emits, and the page wires it to the
@@ -231,16 +244,16 @@ function render(parts: readonly NotePart[]): string {
     .join(' · ');
 }
 
-/** The stage's tooltip: its name, its note in full (a narrow pane hides it) and the reason. */
+/** The stage's tooltip: its name, its note in full (the line itself shows only the name) and
+ *  the reason. */
 function tipOf(s: Stage): string {
   return [t(`statusLine.stage.${s.key}`), render(s.note), s.tip ? render(s.tip) : ''].filter(Boolean).join(' · ');
 }
 
-const compactText = computed(() => {
-  const s = currentStage.value;
-  const name = t(`statusLine.stage.${s.key}`);
-  return s.note.length ? `${name} · ${render(s.note)}` : name;
-});
+const compactTip = computed(() => tipOf(currentStage.value));
+
+// A local alias, so the template can assign it (an imported binding is read-only there).
+const minimized = statusLineMinimized;
 
 // ── CI / Ревʼю details ──────────────────────────────────────────────────────
 const detailed = (key: StageKey): boolean => watching.value && (key === 'ci' || key === 'review');
@@ -263,9 +276,10 @@ function toggleStage(key: StageKey): void {
   anchorEl.value = anchors.get(key) ?? null;
   void menu.show();
 }
-// The loop went away (PR merged, session left review): nothing left to show.
-watch(watching, (w) => {
-  if (!w) menu.close();
+// The loop went away (PR merged, session left review), or the line folded to bars: nothing
+// left to anchor the popover to.
+watch([watching, minimized], ([w, folded]) => {
+  if (!w || folded) menu.close();
 });
 
 const ciText = computed(() => {
@@ -352,6 +366,56 @@ const loopText = computed(() => {
   &.k-sl--unknown { color: var(--k-muted); }
 }
 
+// ── Minimized ────────────────────────────────────────────────────────────────
+// The full line folded: one thin bar per stage, the width of the pane. A bar's box is taller
+// than its paint so its tooltip is easy to hover.
+.k-sl--mini {
+  flex: none;
+  border-bottom: 1px solid var(--k-line);
+}
+
+.k-sl__bars {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  width: 100%;
+  padding: 2px var(--k-sp-3);
+  border: 0;
+  background: transparent;
+  color: var(--k-faint);
+  cursor: pointer;
+
+  &:hover { background: var(--k-surface2); color: var(--k-muted); }
+  &:focus-visible { outline: 1px solid var(--k-accent); outline-offset: -1px; }
+}
+
+.k-sl__bar {
+  flex: 1 1 0;
+  position: relative;
+  height: 10px;
+
+  &::before {
+    content: '';
+    position: absolute;
+    inset: 3px 0;
+    border-radius: 2px;
+    background: var(--k-sl-tone);
+  }
+
+  &.k-sl--todo::before,
+  &.k-sl--unknown::before { background: var(--k-line-strong); }
+
+  &.k-sl--running::before { animation: k-sl-pulse 1.1s ease-in-out infinite; }
+}
+
+.k-sl__bars-icon,
+.k-sl__fold-icon { --k-icon-size: var(--k-icon-xs); }
+
+.k-sl__bars-icon {
+  flex: none;
+  margin-left: var(--k-sp-1);
+}
+
 // ── Full ─────────────────────────────────────────────────────────────────────
 .k-sl--full {
   flex: none;
@@ -369,8 +433,8 @@ const loopText = computed(() => {
 
 .k-sl__pipe {
   flex: 1 1 auto;
-  // Every node, two links and a few words of the current stage.
-  min-width: min(100%, 280px);
+  // Every node, the links at their shortest and the current stage's name.
+  min-width: min(100%, 220px);
   overflow: hidden;
   display: flex;
   align-items: flex-start;
@@ -403,9 +467,9 @@ const loopText = computed(() => {
   min-width: 0;
   display: grid;
   // `auto`, not minmax(0, …): the stage keeps its natural width while there is room, and the
-  // words (overflow hidden, so their automatic minimum is 0) ellipsize when there is not.
+  // name (overflow hidden, so its automatic minimum is 0) ellipsizes when there is not.
   grid-template-columns: 20px auto;
-  grid-template-rows: 20px auto;
+  grid-template-rows: 20px;
   column-gap: 6px;
   align-items: center;
   padding: 1px 4px 1px 1px;
@@ -458,26 +522,13 @@ const loopText = computed(() => {
 .k-sl--todo .k-sl__name,
 .k-sl--unknown .k-sl__name { color: var(--k-faint); font-weight: var(--k-fw-regular); }
 
-.k-sl__note {
-  grid-column: 2;
-  max-width: 260px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: var(--k-fs-xs);
-  color: var(--k-sl-tone);
-}
-
-.k-sl--done .k-sl__note { color: var(--k-muted); }
-
-// Narrow pane (decision 5): only the current and failed stages keep their words.
+// Narrow pane (decision 5): only the current and failed stages keep their names.
 @container (max-width: 760px) {
-  // The shrunk stages keep their node whole; the words of the key ones take what is left.
+  // The shrunk stages keep their node whole; the names of the key ones take what is left.
   .k-sl__stage:not(.k-sl__stage--key) {
     flex: none;
 
-    .k-sl__name,
-    .k-sl__note { display: none; }
+    .k-sl__name { display: none; }
     .k-sl__body { column-gap: 0; padding-right: 1px; }
   }
 
@@ -567,6 +618,7 @@ const loopText = computed(() => {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .k-sl__dot.k-sl--running { animation: none; }
+  .k-sl__dot.k-sl--running,
+  .k-sl__bar.k-sl--running::before { animation: none; }
 }
 </style>
