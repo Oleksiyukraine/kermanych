@@ -7,7 +7,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Subject } from "rxjs";
-import { PR_LOOP_MARKER, type PrLoopState, type ServerEvent, type Session } from "@kermanych/core";
+import { isReadyToMerge, PR_LOOP_MARKER, type PrLoopState, type ServerEvent, type Session } from "@kermanych/core";
 import { RegistryService } from "../src/registry/registry.service";
 import { PrLoopService } from "../src/pr-loop/pr-loop.service";
 import { GithubClient, GithubEtagCache, parseGithubPrUrl } from "../src/github/github-client";
@@ -332,6 +332,27 @@ describe("the end of the loop", () => {
     vi.stubGlobal("fetch", async () => new Response("", { status: 403, headers: { "x-ratelimit-remaining": "0" } }));
     await service().tick();
     expect(lastState(id)).toMatchObject({ unavailable: "rate_limited" });
+  });
+
+  it("a token without «Checks: read» keeps the loop: statuses and comments are read, CI is marked denied", async () => {
+    const id = seed();
+    const fake = globalThis.fetch;
+    vi.stubGlobal("fetch", async (url: string, init?: RequestInit) =>
+      new URL(url).pathname.endsWith("/check-runs")
+        ? new Response(JSON.stringify({ message: "Resource not accessible by personal access token" }), { status: 403, headers: { "x-ratelimit-remaining": "4999" } })
+        : fake(url, init),
+    );
+    gh.statuses = [{ context: "ci/ext", state: "success", created_at: at(T0 - min(10)) }];
+    gh.reviews = [{ id: 1, user: { login: "owner-user", type: "User" }, body: "", state: "APPROVED", submitted_at: at(T0 - min(30)), html_url: "https://github.com/o/r/pull/7#r1", author_association: "OWNER" }];
+    const svc = service();
+    await svc.tick();
+    expect(lastState(id)).toMatchObject({ ci: { state: "success", total: 1, checksDenied: true }, review: { decision: "approved" } });
+    expect(lastState(id)!.unavailable).toBeUndefined();
+    expect(isReadyToMerge(lastState(id)!)).toBe(false);
+    gh.conversation = [conv("OWNER", "please rename", 10)];
+    await svc.tick();
+    expect(sent).toHaveLength(1);
+    expect(sent[0]!.text).toContain("please rename");
   });
 });
 

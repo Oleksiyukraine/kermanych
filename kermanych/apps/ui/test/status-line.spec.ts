@@ -107,6 +107,13 @@ describe('pipelineOf', () => {
     expect(p.current).toBe('pr');
   });
 
+  it('check runs the token may not read: CI is unknown with the reason, and an approval does not make it mergeable', () => {
+    const l = loop({ ci: { state: 'none', total: 0, done: 0, failed: [], checksDenied: true }, review: { decision: 'approved', pending: 0, untrusted: [] } });
+    const p = pipelineOf(session({ status: 'in_review', prOpened: true }), l, NOW);
+    expect(p.stages.map((x) => x.state)).toEqual(['done', 'done', 'done', 'unknown', 'done', 'todo']);
+    expect(p.stages.find((x) => x.key === 'ci')!.tip).toEqual([{ key: 'prLoop.ci.checksDenied' }]);
+  });
+
   it('merged is done end to end', () => {
     expect(shape(session({ status: 'merged', prOpened: true }), loop({ pr: { number: 41, url: '', state: 'merged' } }))).toEqual({
       states: states('done', 'done', 'done', 'done', 'done', 'done'),

@@ -3335,6 +3335,7 @@ export const en: MessageSchema = {
       success: '✓ {total}/{total}',
       failure: '✗ {n} of {total} failed | ✗ {n} of {total} failed',
       stuck: 'CI hangs for {min} min',
+      checksDenied: 'the token cannot read check runs: give it the «Checks: read» permission',
     },
     review: {
       approved: 'approved',
