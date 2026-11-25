@@ -46,6 +46,11 @@
   --k-shadow-card-hover:0 4px 14px rgba(0,0,0,.35);
   --k-grad-accent:linear-gradient(180deg,rgba(255,255,255,.08),rgba(255,255,255,0));
   --k-glow-focus:0 0 0 3px rgba(255,86,60,.18);
+  /* hover tint — a translucent hue laid on a clickable row's hover, faded out from the
+   * row's left edge (KRequestBlock's request header). Raspberry here: the accent's
+   * warm neighbour, so it reads as related to the coral bar without competing with it;
+   * the alpha keeps it a wash under the text, never a fill. */
+  --k-tint-hover:rgba(214,64,138,.16);
   /* type */
   --k-font-ui:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
   --k-font-mono:'JetBrains Mono',ui-monospace,monospace;
@@ -127,6 +132,7 @@
   --k-shadow-card-hover:0 4px 14px rgba(0,0,0,.08);
   --k-grad-accent:linear-gradient(180deg,rgba(255,255,255,.08),rgba(255,255,255,0));
   --k-glow-focus:0 0 0 3px rgba(200,53,27,.16);
+  --k-tint-hover:rgba(196,38,110,.08);
 }
 
 /* MATRIX theme.
@@ -168,6 +174,7 @@
   --k-shadow-card-hover:0 4px 14px rgba(0,25,0,.45);
   --k-grad-accent:linear-gradient(180deg,rgba(255,255,255,.08),rgba(255,255,255,0));
   --k-glow-focus:0 0 0 3px rgba(99,160,121,.2);
+  --k-tint-hover:rgba(99,160,121,.14);
 }
 
 /* HERMES theme.
@@ -206,4 +213,5 @@
   --k-shadow-card-hover:0 6px 18px rgba(2,4,12,.5);
   --k-grad-accent:linear-gradient(180deg,rgba(255,255,255,.08),rgba(255,255,255,0));
   --k-glow-focus:0 0 0 3px rgba(79,209,224,.2);
+  --k-tint-hover:rgba(140,120,235,.16);
 }

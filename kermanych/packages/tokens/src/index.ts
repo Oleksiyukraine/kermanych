@@ -74,8 +74,8 @@ export const shadow = {
   },
 } as const satisfies Record<KTheme, Record<string, string>>;
 
-// Depth: sheen, raise overlay, card shadows, primary fill, focus glow — the
-// `--k-sheen` … `--k-glow-focus` tokens of tokens.css, one set per theme.
+// Depth: sheen, raise overlay, card shadows, primary fill, focus glow, hover tint —
+// the `--k-sheen` … `--k-tint-hover` tokens of tokens.css, one set per theme.
 export const depth = {
   dark: {
     sheen: "inset 0 1px 0 rgba(255,255,255,.04)",
@@ -84,6 +84,7 @@ export const depth = {
     shadowCardHover: "0 4px 14px rgba(0,0,0,.35)",
     gradAccent: "linear-gradient(180deg,rgba(255,255,255,.08),rgba(255,255,255,0))",
     glowFocus: "0 0 0 3px rgba(255,86,60,.18)",
+    tintHover: "rgba(214,64,138,.16)",
   },
   light: {
     sheen: "inset 0 1px 0 rgba(255,255,255,.8)",
@@ -92,6 +93,7 @@ export const depth = {
     shadowCardHover: "0 4px 14px rgba(0,0,0,.08)",
     gradAccent: "linear-gradient(180deg,rgba(255,255,255,.08),rgba(255,255,255,0))",
     glowFocus: "0 0 0 3px rgba(200,53,27,.16)",
+    tintHover: "rgba(196,38,110,.08)",
   },
   matrix: {
     sheen: "inset 0 1px 0 rgba(180,220,190,.05)",
@@ -100,6 +102,7 @@ export const depth = {
     shadowCardHover: "0 4px 14px rgba(0,25,0,.45)",
     gradAccent: "linear-gradient(180deg,rgba(255,255,255,.08),rgba(255,255,255,0))",
     glowFocus: "0 0 0 3px rgba(99,160,121,.2)",
+    tintHover: "rgba(99,160,121,.14)",
   },
   hermes: {
     sheen: "inset 0 1px 0 rgba(170,190,240,.06)",
@@ -108,6 +111,7 @@ export const depth = {
     shadowCardHover: "0 6px 18px rgba(2,4,12,.5)",
     gradAccent: "linear-gradient(180deg,rgba(255,255,255,.08),rgba(255,255,255,0))",
     glowFocus: "0 0 0 3px rgba(79,209,224,.2)",
+    tintHover: "rgba(140,120,235,.16)",
   },
 } as const satisfies Record<KTheme, Record<string, string>>;
 
