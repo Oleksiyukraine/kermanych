@@ -185,9 +185,20 @@ const summary = computed(() => {
 .k-rb + .k-rb { margin-top: 10px; }
 .k-rb { border-radius: var(--k-r-lg); }
 .k-rb__head {
+  position: relative; isolation: isolate;
   display: flex; align-items: baseline; gap: 8px; width: 100%; padding: 6px 0;
   background: transparent; border: none; cursor: pointer; text-align: left;
 }
+/* Hover: a `--k-tint-hover` wash that leaves the accent bar and fades out across the row,
+   so a full-width log does not light up a solid stripe. Painted on a pseudo-element
+   (`isolation` keeps its z-index under the text) because a gradient does not transition
+   and because KPanel's `.k-log--flash` animates this button's own `background`. */
+.k-rb__head::before {
+  content: ''; position: absolute; inset: 0; z-index: -1; pointer-events: none;
+  background: linear-gradient(90deg, var(--k-tint-hover), transparent 75%);
+  opacity: 0; transition: opacity 0.12s;
+}
+.k-rb__head:hover::before { opacity: 1; }
 .k-rb__head:focus-visible { outline: 1px solid var(--k-accent); outline-offset: 2px; }
 .k-rb__bar { flex: none; width: 2px; align-self: stretch; background: var(--k-accent); }
 .k-rb__voice { flex: none; align-self: center; color: var(--k-muted); --k-icon-size: var(--k-icon-sm); }
