@@ -23,6 +23,7 @@ const task: ScheduleRow = {
   armedAt: "2026-11-06T08:00:00.000Z",
   createdAt: "2026-11-06T08:00:00.000Z",
   updatedAt: "2026-11-06T08:00:00.000Z",
+  promptChangedAt: "2026-11-06T08:00:00.000Z",
 };
 
 const run = (over: Partial<ScheduleRun> & { id: string }): ScheduleRun => ({
