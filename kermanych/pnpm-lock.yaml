@@ -4,6 +4,11 @@ settings:
   autoInstallPeers: true
   excludeLinksFromLockfile: false
 
+patchedDependencies:
+  '@quasar/app-vite@2.3.0':
+    hash: 02a4803ae898e1d181e35e29afc1403db3719ea15259bd966b88adfa6110ad7a
+    path: patches/@quasar__app-vite@2.3.0.patch
+
 importers:
 
   .:
@@ -234,7 +239,7 @@ importers:
         version: 10.4.22(reflect-metadata@0.2.2)(rxjs@7.8.2)
       '@quasar/app-vite':
         specifier: 2.3.0
-        version: 2.3.0(@electron/packager@18.4.4)(@types/node@22.20.1)(electron-builder@24.13.3(electron-builder-squirrel-windows@24.13.3(dmg-builder@24.13.3)))(pinia@2.3.1(typescript@5.9.3)(vue@3.5.41(typescript@5.9.3)))(quasar@2.24.0)(rollup@4.62.4)(sass@1.100.0)(terser@5.49.2)(tsx@4.23.10)(typescript@5.9.3)(vue-router@4.6.4(vue@3.5.41(typescript@5.9.3)))(vue@3.5.41(typescript@5.9.3))
+        version: 2.3.0(patch_hash=02a4803ae898e1d181e35e29afc1403db3719ea15259bd966b88adfa6110ad7a)(@electron/packager@18.4.4)(@types/node@22.20.1)(electron-builder@24.13.3(electron-builder-squirrel-windows@24.13.3(dmg-builder@24.13.3)))(pinia@2.3.1(typescript@5.9.3)(vue@3.5.41(typescript@5.9.3)))(quasar@2.24.0)(rollup@4.62.4)(sass@1.100.0)(terser@5.49.2)(tsx@4.23.10)(typescript@5.9.3)(vue-router@4.6.4(vue@3.5.41(typescript@5.9.3)))(vue@3.5.41(typescript@5.9.3))
       '@types/markdown-it':
         specifier: ^14.1.2
         version: 14.1.2
@@ -5956,7 +5961,7 @@ snapshots:
 
   '@protobufjs/utf8@1.1.2': {}
 
-  '@quasar/app-vite@2.3.0(@electron/packager@18.4.4)(@types/node@22.20.1)(electron-builder@24.13.3(electron-builder-squirrel-windows@24.13.3(dmg-builder@24.13.3)))(pinia@2.3.1(typescript@5.9.3)(vue@3.5.41(typescript@5.9.3)))(quasar@2.24.0)(rollup@4.62.4)(sass@1.100.0)(terser@5.49.2)(tsx@4.23.10)(typescript@5.9.3)(vue-router@4.6.4(vue@3.5.41(typescript@5.9.3)))(vue@3.5.41(typescript@5.9.3))':
+  '@quasar/app-vite@2.3.0(patch_hash=02a4803ae898e1d181e35e29afc1403db3719ea15259bd966b88adfa6110ad7a)(@electron/packager@18.4.4)(@types/node@22.20.1)(electron-builder@24.13.3(electron-builder-squirrel-windows@24.13.3(dmg-builder@24.13.3)))(pinia@2.3.1(typescript@5.9.3)(vue@3.5.41(typescript@5.9.3)))(quasar@2.24.0)(rollup@4.62.4)(sass@1.100.0)(terser@5.49.2)(tsx@4.23.10)(typescript@5.9.3)(vue-router@4.6.4(vue@3.5.41(typescript@5.9.3)))(vue@3.5.41(typescript@5.9.3))':
     dependencies:
       '@quasar/render-ssr-error': 1.0.4
       '@quasar/ssl-certificate': 1.0.0
