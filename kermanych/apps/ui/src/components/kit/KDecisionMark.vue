@@ -1,7 +1,7 @@
 <template>
-  <span class="k-decision-mark mono" v-tip="reason" :aria-label="`${t('kit.decisionMark.label')}: ${reason}`">
+  <span class="k-decision-mark mono" :class="{ 'k-decision-mark--icon': iconOnly }" v-tip="reason" :aria-label="`${t('kit.decisionMark.label')}: ${reason}`">
     <KIcon name="decision" />
-    <span class="k-decision-mark__label" aria-hidden="true">{{ t('kit.decisionMark.label') }}</span>
+    <span v-if="!iconOnly" class="k-decision-mark__label" aria-hidden="true">{{ t('kit.decisionMark.label') }}</span>
   </span>
 </template>
 
@@ -13,7 +13,8 @@ import KIcon from './KIcon.vue';
 // stopped on something only the operator can decide, and the card waits «На ревʼю» for them.
 // `reason` is already worded (lib/minion.ts minionReasonText) and is the tooltip: the mark is
 // the call to act, the reason says on what. In the accent, because it is the operator's turn.
-defineProps<{ reason: string }>();
+// `iconOnly` drops the word where the row is tight (KSessionCard); the tooltip keeps the reason.
+defineProps<{ reason: string; iconOnly?: boolean }>();
 const { t } = useI18n();
 </script>
 
@@ -31,5 +32,9 @@ const { t } = useI18n();
   line-height: 1;
   white-space: nowrap;
   --k-icon-size: var(--k-icon-xs);
+}
+
+.k-decision-mark--icon {
+  padding: 2px;
 }
 </style>

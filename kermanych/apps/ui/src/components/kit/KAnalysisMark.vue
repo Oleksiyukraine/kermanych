@@ -1,7 +1,7 @@
 <template>
-  <span class="k-analysis-mark mono" v-tip="t('kit.analysisMark.tip')" :aria-label="t('kit.analysisMark.tip')">
+  <span class="k-analysis-mark mono" :class="{ 'k-analysis-mark--icon': iconOnly }" v-tip="t('kit.analysisMark.tip')" :aria-label="t('kit.analysisMark.tip')">
     <KIcon name="analysis" />
-    <span class="k-analysis-mark__label" aria-hidden="true">{{ t('kit.analysisMark.label') }}</span>
+    <span v-if="!iconOnly" class="k-analysis-mark__label" aria-hidden="true">{{ t('kit.analysisMark.label') }}</span>
   </span>
 </template>
 
@@ -14,6 +14,8 @@ import KIcon from './KIcon.vue';
 // word, in the accent: the two kinds of agent otherwise look identical, and the difference
 // decides whether opening one means reading a question or reviewing a diff. The magnifier is
 // the same mark the «Нова задача» menu shows for the option, so card and choice match.
+// `iconOnly` drops the word where the row is tight (KSessionCard); the tooltip still names it.
+defineProps<{ iconOnly?: boolean }>();
 const { t } = useI18n();
 </script>
 
@@ -31,5 +33,9 @@ const { t } = useI18n();
   line-height: 1;
   white-space: nowrap;
   --k-icon-size: var(--k-icon-xs);
+}
+
+.k-analysis-mark--icon {
+  padding: 2px;
 }
 </style>

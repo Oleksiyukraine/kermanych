@@ -62,14 +62,15 @@
           <KStatusDot :status="status" />
           <span v-if="statusLine" v-tip.overflow="statusTip" class="k-session-card__status-line">{{ statusLine }}</span>
         </span>
+        <!-- Marks as icons alone: the row is one line, and every mark's tooltip names it. -->
         <span v-if="harness || deepAnalysis || minion || schedule || autoRun || needsDecision || notNeeded" class="k-session-card__marks mono">
           <KHarnessMark v-if="harness" :harness="harness" />
-          <KAnalysisMark v-if="deepAnalysis" />
-          <KMinionMark v-if="minion" kind="running" />
-          <KMinionMark v-else-if="autoRun" kind="allowed" />
-          <KScheduleMark v-if="schedule" :name="schedule" />
-          <KDecisionMark v-if="needsDecision" :reason="needsDecision" />
-          <KNotNeededMark v-else-if="notNeeded" :reason="notNeeded" />
+          <KAnalysisMark v-if="deepAnalysis" icon-only />
+          <KMinionMark v-if="minion" kind="running" icon-only />
+          <KMinionMark v-else-if="autoRun" kind="allowed" icon-only />
+          <KScheduleMark v-if="schedule" :name="schedule" icon-only />
+          <KDecisionMark v-if="needsDecision" :reason="needsDecision" icon-only />
+          <KNotNeededMark v-else-if="notNeeded" :reason="notNeeded" icon-only />
         </span>
         <span v-if="spend" v-tip="spend" class="k-session-card__spend" role="img" :aria-label="spend">
           <KIcon name="coins" />
@@ -112,10 +113,11 @@ import type { LaunchMode } from '../../lib/native-session';
 
 // Session summary card: the agent's name + time header with its branch under it (the branch
 // heads the card only when there is no name), then ONE row: the status dot with a one-line
-// status, the marks of how the agent works, and a coins icon whose tooltip holds the model and
-// what it consumed. Every row is a single line, so the card keeps its height while the status
-// flips between a two-line todo and a one-line tool. Hover and selection lift the card (surface
-// fill, sheen, card shadow); the selected card wears a thin accent frame. While an agent works
+// status, the marks of how the agent works (icons alone, each named by its tooltip), and a coins
+// icon whose tooltip holds the model and what it consumed. Every row is a single line, so the
+// card keeps its height while the status flips between a two-line todo and a one-line tool.
+// Hover and selection lift the card (surface fill, sheen, card shadow); the selected card wears
+// a thin accent frame. While an agent works
 // (`thinking`/`tool`, the statuses the dot pulses for — not `queued`, which may be an hour in
 // the slot queue) light runs around its frame, selected or not: a dimmer ring on the others,
 // all rings in one phase so several working agents turn as one rhythm. Reduced motion keeps
