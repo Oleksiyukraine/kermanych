@@ -12,15 +12,6 @@
     "release:prepare": "tsx scripts/release.ts prepare",
     "release:notes": "tsx scripts/release.ts notes"
   },
-  "pnpm": {
-    "onlyBuiltDependencies": [
-      "@nestjs/core",
-      "better-sqlite3",
-      "esbuild",
-      "electron",
-      "node-pty"
-    ]
-  },
   "devDependencies": {
     "tsx": "^4.23.10"
   }
