@@ -8,7 +8,7 @@ import { ref } from 'vue';
 import { io, type Socket } from 'socket.io-client';
 import type { TerminalAttachReply, TerminalErrorCode, TerminalInfo, TerminalOpenReply } from '@kermanych/core';
 import { getAuthToken } from '../lib/api';
-import { SOCKET_ORIGIN } from '../lib/socket';
+import { SOCKET_ORIGIN, installRefusalRetry, installVisibilityResync } from '../lib/socket';
 import { globalTr } from '../boot/i18n';
 import { useOrchestrator } from './orchestrator';
 import { panelTerminals } from '../lib/native-session';
@@ -19,6 +19,9 @@ export type TerminalSink = { reset(replay: string): void; data(chunk: string): v
 
 const VISIBLE_KEY = 'kermanych.terminal.visible';
 const ACK_MS = 10_000;
+// The least time between two cycles of the socket for an unanswered attach: an api that is
+// itself stuck gets one reconnect per window, not one per timed-out view.
+const CYCLE_MIN_MS = 30_000;
 
 export const useTerminal = defineStore('terminal', () => {
   const orchestrator = useOrchestrator();
@@ -45,6 +48,7 @@ export const useTerminal = defineStore('terminal', () => {
   // at the very point its replay ends, so these chunks follow the replay — yet they can
   // arrive before the attach's reply does.
   const early = new Map<string, string[]>();
+  let lastCycle = -Infinity;
 
   function setPanel(visible: boolean): void {
     panelVisible.value = visible;
@@ -85,7 +89,8 @@ export const useTerminal = defineStore('terminal', () => {
     listFailed.value = false;
     // A view whose shell is gone from the list unmounts with its tab; the rest re-attach.
     for (const id of sinks.keys()) {
-      if (list.some((t) => t.id === id)) void join(s, id);
+      // A timed-out re-attach has already cycled the socket (join); the next connect retries.
+      if (list.some((t) => t.id === id)) void join(s, id).catch(() => undefined);
     }
   }
 
@@ -100,22 +105,44 @@ export const useTerminal = defineStore('terminal', () => {
       const sink = sinks.get(id);
       sink?.reset(reply.replay);
       for (const chunk of held) sink?.data(chunk);
+    } catch (err) {
+      // No answer on a socket that thinks it is connected: the transport most likely died
+      // under it (a sleep) and socket.io has not noticed yet. Cycle it rather than leave the
+      // view on its skeleton — the reconnect's sync() attaches every view again.
+      if (early.get(id) === held && sinks.has(id)) cycle(s);
+      throw err;
     } finally {
       if (early.get(id) === held) early.delete(id);
     }
   }
 
+  function cycle(s: Socket): void {
+    const now = Date.now();
+    if (!s.connected || now - lastCycle < CYCLE_MIN_MS) return;
+    lastCycle = now;
+    s.disconnect();
+    s.connect();
+  }
+
   // Idempotent. The handshake reads the token on every attempt, so a token refreshed since
-  // the last connect is the one presented. A refused handshake is not retried by socket.io;
-  // the next call revives it.
+  // the last connect is the one presented.
   function connect(): Socket {
     if (socket) {
       if (!socket.connected && !socket.active) socket.connect();
       return socket;
     }
     const s = io(`${SOCKET_ORIGIN}/terminal`, {
+      // Its own connection, not a namespace multiplexed on the events socket's (lib/socket.ts).
+      // socket.io closes a shared connection only once every socket on it is down, so while
+      // this one was up, the events socket's cycle after a sleep reused the dead transport,
+      // and both waited out the ping timeout with keystrokes and re-attaches going nowhere.
+      forceNew: true,
       auth: (cb) => cb({ token: getAuthToken() }),
     });
+    // The events socket's two recoveries: a handshake the api refused (a token handed over
+    // late) is retried, and a long hide (a sleep) cycles the transport that may have died.
+    installRefusalRetry(s);
+    if (typeof document !== 'undefined') installVisibilityResync(s, document);
     // Every (re)connect, not just the first: an api restart ends every shell, and a plain
     // reconnect drops this socket's room memberships, so both the list and the attached
     // views are re-established from the server.
