@@ -1,0 +1,77 @@
+diff --git a/lib/modes/electron/electron-devserver.js b/lib/modes/electron/electron-devserver.js
+index bae53dd9363b5ff63f9cf48ae42854ca4874eabe..09ef11ddba148b7bf3533483e81cbf307e45bde0 100644
+--- a/lib/modes/electron/electron-devserver.js
++++ b/lib/modes/electron/electron-devserver.js
+@@ -8,17 +8,16 @@ import { spawn } from '../../utils/spawn.js'
+ import { getPackagePath } from '../../utils/get-package-path.js'
+ import { quasarElectronConfig } from './electron-config.js'
+ 
+-function wait (time) {
+-  return new Promise(resolve => {
+-    setTimeout(resolve, time)
+-  })
+-}
+-
+ export class QuasarModeDevserver extends AppDevserver {
+   #pid = 0
+   #server = null
+   #watcherList = []
+   #killedPid = false
++  // Resolves once the running Electron process has exited.
++  #exited = Promise.resolve()
++  // Restarts run one at a time: main and preload rebuilt at once (a git pull touching both)
++  // used to spawn two Electrons side by side on the same profile and the same api port.
++  #restartQueue = Promise.resolve()
+   #electronExecutable
+ 
+   constructor (opts) {
+@@ -97,19 +96,33 @@ export class QuasarModeDevserver extends AppDevserver {
+     })
+   }
+ 
+-  async #runElectron (quasarConf) {
++  #runElectron (quasarConf) {
++    this.#restartQueue = this.#restartQueue.then(() => this.#restartElectron(quasarConf))
++    return this.#restartQueue
++  }
++
++  async #restartElectron (quasarConf) {
+     if (this.#pid) {
+       log('Shutting down Electron process...')
+-      process.kill(this.#pid)
+-
+-      this.#pid = 0
++      const pid = this.#pid
+       this.#killedPid = true
+-
+-      // on some OSes a small delay is needed
+-      // so that resources are freed on kill
+-      await wait(100)
++      this.#pid = 0
++      // Already gone (ESRCH): its close handler resolves #exited regardless.
++      try { process.kill(pid) } catch {}
++
++      // Wait for the process to actually exit (it releases its ports and the profile only
++      // then); a shutdown that hangs is cut short.
++      const timer = setTimeout(() => {
++        warn(`Electron process ${ pid } did not exit in 10s; killing it`)
++        try { process.kill(pid, 'SIGKILL') } catch {}
++      }, 10_000)
++      await this.#exited
++      clearTimeout(timer)
+     }
+ 
++    let exited
++    this.#exited = new Promise(resolve => { exited = resolve })
++
+     this.#pid = spawn(
+       this.#electronExecutable,
+       [
+@@ -120,6 +133,7 @@ export class QuasarModeDevserver extends AppDevserver {
+       ].concat(this.argv._),
+       { cwd: this.ctx.appPaths.appDir },
+       code => {
++        exited()
+         if (this.#killedPid === true) {
+           this.#killedPid = false
+         }

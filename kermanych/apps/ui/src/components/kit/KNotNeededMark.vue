@@ -1,7 +1,7 @@
 <template>
-  <span class="k-not-needed-mark mono" v-tip="reason" :aria-label="`${t('kit.notNeededMark.label')}: ${reason}`">
+  <span class="k-not-needed-mark mono" :class="{ 'k-not-needed-mark--icon': iconOnly }" v-tip="reason" :aria-label="`${t('kit.notNeededMark.label')}: ${reason}`">
     <KIcon name="notNeeded" />
-    <span class="k-not-needed-mark__label" aria-hidden="true">{{ t('kit.notNeededMark.label') }}</span>
+    <span v-if="!iconOnly" class="k-not-needed-mark__label" aria-hidden="true">{{ t('kit.notNeededMark.label') }}</span>
   </span>
 </template>
 
@@ -14,7 +14,8 @@ import KIcon from './KIcon.vue';
 // gone — and closed the card «Завершені». `reason` is the agent's evidence (lib/minion.ts
 // cardNotNeededReason / sessionNotNeededReason) and is the tooltip. Muted, never the accent:
 // it is a closed result, not the operator's turn (that is KDecisionMark).
-defineProps<{ reason: string }>();
+// `iconOnly` drops the word where the row is tight (KSessionCard); the tooltip keeps the evidence.
+defineProps<{ reason: string; iconOnly?: boolean }>();
 const { t } = useI18n();
 </script>
 
@@ -32,5 +33,9 @@ const { t } = useI18n();
   line-height: 1;
   white-space: nowrap;
   --k-icon-size: var(--k-icon-xs);
+}
+
+.k-not-needed-mark--icon {
+  padding: 2px;
 }
 </style>

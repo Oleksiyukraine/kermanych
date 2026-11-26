@@ -1,3 +1,12 @@
 packages:
   - "packages/*"
   - "apps/*"
+
+onlyBuiltDependencies:
+  - "@nestjs/core"
+  - better-sqlite3
+  - electron
+  - esbuild
+  - node-pty
+patchedDependencies:
+  '@quasar/app-vite@2.3.0': patches/@quasar__app-vite@2.3.0.patch

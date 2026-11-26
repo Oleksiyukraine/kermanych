@@ -1,7 +1,7 @@
 <template>
-  <span class="k-minion-mark mono" v-tip="tip" :aria-label="tip">
+  <span class="k-minion-mark mono" :class="{ 'k-minion-mark--icon': iconOnly }" v-tip="tip" :aria-label="tip">
     <KIcon name="minion" />
-    <span class="k-minion-mark__label" aria-hidden="true">{{ t('kit.minionMark.label') }}</span>
+    <span v-if="!iconOnly" class="k-minion-mark__label" aria-hidden="true">{{ t('kit.minionMark.label') }}</span>
   </span>
 </template>
 
@@ -17,7 +17,8 @@ import KIcon from './KIcon.vue';
 // The same shape for both, so a card and the run it became read as one thing; only the tooltip
 // says which. Styled like KAnalysisMark, in the muted ink: it says who works the card, not that
 // anything waits for the operator (that is KDecisionMark).
-const props = withDefaults(defineProps<{ kind?: 'allowed' | 'running' }>(), { kind: 'running' });
+// `iconOnly` drops the word where the row is tight (KSessionCard); the tooltip still names it.
+const props = withDefaults(defineProps<{ kind?: 'allowed' | 'running'; iconOnly?: boolean }>(), { kind: 'running' });
 const { t } = useI18n();
 const tip = computed(() => t(props.kind === 'allowed' ? 'kit.minionMark.allowed' : 'kit.minionMark.running'));
 </script>
@@ -36,5 +37,9 @@ const tip = computed(() => t(props.kind === 'allowed' ? 'kit.minionMark.allowed'
   line-height: 1;
   white-space: nowrap;
   --k-icon-size: var(--k-icon-xs);
+}
+
+.k-minion-mark--icon {
+  padding: 2px;
 }
 </style>
