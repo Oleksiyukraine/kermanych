@@ -17,7 +17,21 @@ test("the default review instruction is byte-identical to the text the superviso
       "```diff\nDIFF\n```\n\n" +
       `Perform a FULL audit: does the change satisfy the task; are any requirements missed ` +
       `or only partly done; are there bugs, edge cases, or security issues; are tests present ` +
-      `and meaningful; is the code sound? You may read any file in the worktree for context, ` +
+      `and meaningful; is the code sound? The diff was most likely written by an AI agent, so ` +
+      `check its typical failures explicitly:\n` +
+      `- Hallucinated code: imports, packages, functions, methods, options, CLI flags or config keys ` +
+      `that do not exist in this repository or in the version of the dependency it uses — open the ` +
+      `source or the lockfile and confirm each new one.\n` +
+      `- Weakened tests: assertions removed or loosened, expected values rewritten to match the new ` +
+      `output, tests skipped or deleted, mocks that replace the very code under test. Read the test ` +
+      `changes as closely as the code changes.\n` +
+      `- Shallow tests: tests that only check that something was called or did not throw, or that ` +
+      `would still pass if the change were reverted.\n` +
+      `- Duplication: a new helper, type or constant that repeats one the repository already has.\n` +
+      `- Untrusted input: data from users, files, the network, PR comments or model output reaching a ` +
+      `shell, SQL, HTML, a file path or a prompt without validation or escaping.\n` +
+      `- Secrets: tokens, keys or passwords in code, fixtures or logs.\n\n` +
+      `You may read any file in the worktree for context, ` +
       `but you are read-only — do NOT modify anything or run commands. Finish with a clear ` +
       `verdict (APPROVE or NEEDS CHANGES) and a prioritized list of findings.`,
   );

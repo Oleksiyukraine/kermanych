@@ -65,7 +65,21 @@ const REVIEW = [
   "```diff\n{{diff}}\n```\n\n",
   "Perform a FULL audit: does the change satisfy the task; are any requirements missed ",
   "or only partly done; are there bugs, edge cases, or security issues; are tests present ",
-  "and meaningful; is the code sound? You may read any file in the worktree for context, ",
+  "and meaningful; is the code sound? The diff was most likely written by an AI agent, so ",
+  "check its typical failures explicitly:\n",
+  "- Hallucinated code: imports, packages, functions, methods, options, CLI flags or config keys ",
+  "that do not exist in this repository or in the version of the dependency it uses — open the ",
+  "source or the lockfile and confirm each new one.\n",
+  "- Weakened tests: assertions removed or loosened, expected values rewritten to match the new ",
+  "output, tests skipped or deleted, mocks that replace the very code under test. Read the test ",
+  "changes as closely as the code changes.\n",
+  "- Shallow tests: tests that only check that something was called or did not throw, or that ",
+  "would still pass if the change were reverted.\n",
+  "- Duplication: a new helper, type or constant that repeats one the repository already has.\n",
+  "- Untrusted input: data from users, files, the network, PR comments or model output reaching a ",
+  "shell, SQL, HTML, a file path or a prompt without validation or escaping.\n",
+  "- Secrets: tokens, keys or passwords in code, fixtures or logs.\n\n",
+  "You may read any file in the worktree for context, ",
   "but you are read-only — do NOT modify anything or run commands. Finish with a clear ",
   "verdict (APPROVE or NEEDS CHANGES) and a prioritized list of findings.",
 ].join("");
@@ -303,6 +317,61 @@ export function baseSyncBlock(base: string): string {
     "4. If the merge brought anything in, run the project's checks (typecheck, tests) for what it touched. ",
     "Fix a failure caused by the two sides meeting in a separate commit. Report a failure that is already ",
     `on \`origin/${base}\` — in the PR's \`## Testing\` when you write one — without fixing it.`,
+  ].join("");
+}
+
+// The size warning for «Створити ПР» (docs/specs/2026-11-26-agentic-maturity-quick-wins.md): a pull
+// request past what one reviewer checks in one pass gets a `## Size` section that says so and how it
+// could be split. The api measures the branch itself (WorktreeService.changedFiles, committed and
+// uncommitted, from the fork point) rather than asking the model to, so the numbers are the ones the
+// «Завершити» sheet lists. Appended after the instruction like baseSyncBlock, so an overridden PR agent
+// still carries it. A warning, not a refusal: a big change can be right, but the reviewer must know.
+export const PR_SIZE_LIMIT_LINES = 400;
+
+// Lockfiles are machine-written and nobody reviews them line by line; counting them would flag every
+// dependency bump. A Set, not a Record: the key is a file name from the branch, and `constructor`
+// must not read as a lockfile.
+const LOCKFILES = new Set([
+  "package-lock.json",
+  "npm-shrinkwrap.json",
+  "pnpm-lock.yaml",
+  "yarn.lock",
+  "bun.lock",
+  "bun.lockb",
+  "Cargo.lock",
+  "go.sum",
+  "poetry.lock",
+  "uv.lock",
+  "Pipfile.lock",
+  "Gemfile.lock",
+  "composer.lock",
+  "Podfile.lock",
+  "pubspec.lock",
+]);
+
+/** Lines added plus removed and the number of files, lockfiles left out. */
+function prSize(files: readonly { path: string; added: number; removed: number }[]): { files: number; lines: number } {
+  let count = 0;
+  let lines = 0;
+  for (const f of files) {
+    if (LOCKFILES.has(f.path.slice(f.path.lastIndexOf("/") + 1))) continue;
+    count++;
+    lines += f.added + f.removed;
+  }
+  return { files: count, lines };
+}
+
+/** The size rule for the PR agent, or "" when the change is within PR_SIZE_LIMIT_LINES. */
+export function prSizeBlock(files: readonly { path: string; added: number; removed: number }[]): string {
+  const size = prSize(files);
+  if (size.lines <= PR_SIZE_LIMIT_LINES) return "";
+  return [
+    "The size of this pull request — this rule is Kermanych's own and applies whatever the instruction ",
+    `above says: the branch changes ${size.lines} lines in ${size.files} files against its base, lockfiles `,
+    `not counted, more than the ${PR_SIZE_LIMIT_LINES} lines a reviewer can check in one pass. Open the pull `,
+    "request as it is — do not split or trim the branch now — and add a `## Size` section to its body: ",
+    "these numbers, and how the change could be split into smaller pull requests (which files or steps ",
+    "belong together), so the reviewer can plan the review.",
   ].join("");
 }
 

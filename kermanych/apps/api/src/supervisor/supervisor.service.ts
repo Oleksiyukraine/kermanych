@@ -41,6 +41,7 @@ import {
   type TaskAction,
   agentById,
   baseSyncBlock,
+  prSizeBlock,
   renderInstruction,
   expandHelpers,
   helperNotice,
@@ -3146,6 +3147,10 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     // A «Посіпака» session's PR is told apart by its title (docs/specs/2026-10-23-minion-auto-run.md,
     // decision 10); appended like the sync, so neither an override nor the repo's conventions drop it.
     const title = s.minion ? `\n\n${MINION_PR_TITLE_RULE}` : "";
+    // The size warning (docs/specs/2026-11-26-agentic-maturity-quick-wins.md) is measured here over
+    // the same listing the «Завершити» sheet shows. A listing that fails only loses the warning:
+    // it must never stop the pull request.
+    const size = await this.prSizeRule(s, g);
     // The reflection step (docs/specs/2026-11-06-skill-improvement-reflection.md) goes last, after
     // every other Kermanych block, so it still applies whatever the instruction says.
     const reflect = this.browser?.skillReflection(id) ?? "";
@@ -3158,7 +3163,7 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
           baseLine,
         },
         template,
-      ) + sync + title + block + artifacts + reflect;
+      ) + sync + title + size + block + artifacts + reflect;
 
     // A send parked for an agent slot replays this whole call later, so the flags below are armed
     // for the turn that call starts, not now on a child that is not running it.
@@ -3658,6 +3663,21 @@ export class SupervisorService implements OnModuleInit, OnModuleDestroy {
     const dir = s.worktreePath || g.localRepoPath;
     const target = s.baseBranch || (s.worktree ? await this.worktree.currentBranch(g.localRepoPath) : "");
     return { dir, target, from: (await this.worktree.forkPoint(dir, target)) || target };
+  }
+
+  // The PR agent's size rule (core prSizeBlock), "\n\n"-prefixed, or "" when the branch is small,
+  // has no base to measure from, or cannot be listed — the warning is advice, never a gate.
+  private async prSizeRule(s: Session, g: Project): Promise<string> {
+    if (s.worktree && !s.worktreePath) return "";
+    try {
+      const { dir, from } = await this.branchBase(s, g);
+      if (!from) return "";
+      const rule = prSizeBlock(await this.worktree.changedFiles(dir, from));
+      return rule ? `\n\n${rule}` : "";
+    } catch (err) {
+      console.warn(`[supervisor] could not measure the pull request of ${s.id}: ${(err as Error).message}`);
+      return "";
+    }
   }
 
   // A session left at `conflict` whose tree is no longer mid-merge — resolved in an editor, with

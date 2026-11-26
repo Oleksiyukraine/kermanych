@@ -37,7 +37,7 @@
       <template v-if="draft.kind === 'stdio'">
         <KField v-model="draft.command" :label="t('aiTeam.mcp.editor.command')" placeholder="npx" />
         <div class="mcpe__field">
-          <KField v-model="draft.args" :label="t('aiTeam.mcp.editor.args')" multiline :rows="3" placeholder="-y&#10;@playwright/mcp@latest" />
+          <KField v-model="draft.args" :label="t('aiTeam.mcp.editor.args')" multiline :rows="3" placeholder="-y&#10;@playwright/mcp@0.0.86" />
           <p class="mcpe__hint">{{ t('aiTeam.mcp.editor.argsHint') }}</p>
         </div>
         <!-- The command line as a session will run it: the one-argument-per-line rule shows here. -->

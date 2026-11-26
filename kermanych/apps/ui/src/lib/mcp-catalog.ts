@@ -4,6 +4,11 @@
 // 2026-11-16. A hosted (URL) server is preferred over a local `npx` one where the vendor offers
 // both: a local server is one more process per session (docs/claude-resource-limits.md).
 //
+// A local server names an exact package version, never `@latest`
+// (docs/specs/2026-11-26-agentic-maturity-quick-wins.md): `npx -y` runs whatever the registry
+// serves at launch, so an unpinned entry hands every new release — or a hijacked one — straight
+// to the agent. A version moves only when someone bumps it here and the change is reviewed.
+//
 // A pick only fills the editor's form; the operator sees and can change everything before the
 // save, which goes through the same `.mcp.json` + codex write as a hand-made server. Secrets are
 // `${VAR}` placeholders in the definition, so every entry also reaches codex (the spec's test).
@@ -36,7 +41,12 @@ export type McpCatalogEntry = {
 };
 
 const http = (url: string, headers: Record<string, string> = {}): McpServerDef => ({ kind: 'http', url, headers });
-const npx = (args: string[], env: Record<string, string> = {}): McpServerDef => ({ kind: 'stdio', command: 'npx', args: ['-y', ...args], env });
+const npx = (pkg: string, version: string, args: string[] = [], env: Record<string, string> = {}): McpServerDef => ({
+  kind: 'stdio',
+  command: 'npx',
+  args: ['-y', `${pkg}@${version}`, ...args],
+  env,
+});
 
 export const MCP_CATALOG: readonly McpCatalogEntry[] = [
   {
@@ -45,7 +55,7 @@ export const MCP_CATALOG: readonly McpCatalogEntry[] = [
     title: 'Playwright',
     group: 'browser',
     auth: 'none',
-    def: npx(['@playwright/mcp@latest']),
+    def: npx('@playwright/mcp', '0.0.86'),
     docs: 'https://github.com/microsoft/playwright-mcp',
   },
   {
@@ -54,7 +64,7 @@ export const MCP_CATALOG: readonly McpCatalogEntry[] = [
     title: 'Chrome DevTools',
     group: 'browser',
     auth: 'none',
-    def: npx(['chrome-devtools-mcp@latest']),
+    def: npx('chrome-devtools-mcp', '1.14.0'),
     docs: 'https://github.com/ChromeDevTools/chrome-devtools-mcp',
   },
   {
@@ -163,7 +173,7 @@ export const MCP_CATALOG: readonly McpCatalogEntry[] = [
     title: 'Brave Search',
     group: 'web',
     auth: 'key',
-    def: npx(['@brave/brave-search-mcp-server', '--transport', 'stdio'], { BRAVE_API_KEY: '${BRAVE_API_KEY}' }),
+    def: npx('@brave/brave-search-mcp-server', '2.2.0', ['--transport', 'stdio'], { BRAVE_API_KEY: '${BRAVE_API_KEY}' }),
     docs: 'https://github.com/brave/brave-search-mcp-server',
     key: { url: 'https://brave.com/search/api/', placeholder: 'BSA…' },
   },

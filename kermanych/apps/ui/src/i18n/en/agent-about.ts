@@ -85,7 +85,7 @@ export const agentAbout: typeof uk = {
       conventions: 'The project’s PR conventions, or if none: Conventional Commits and a body with Summary and Testing sections.',
       baseLine: 'Which branch the PR targets: the session’s base or the default branch.',
     },
-    adds: 'The base-branch sync step; for the Minion, a [Minion] prefix in the PR title; for card sessions, a request to write a tester checklist. At the very end, a look back over the session for skill lessons (improve_skill), while «Improve skills» is not off.',
+    adds: 'The base-branch sync step; when the branch changes more than 400 lines (lockfiles not counted), its size and a request for a «## Size» section in the PR body on how to split the change; for the Minion, a [Minion] prefix in the PR title; for card sessions, a request to write a tester checklist. At the very end, a look back over the session for skill lessons (improve_skill), while «Improve skills» is not off.',
     ends: 'As soon as a PR link appears in the reply it is saved and the session moves to In review. The branch and worktree stay.',
   },
   commit: {
