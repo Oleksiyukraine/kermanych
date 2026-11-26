@@ -78,6 +78,28 @@ export type GithubCommitStatus = {
   created_at: string;
 };
 
+// A GitHub Actions workflow run of a commit (`/actions/runs?head_sha=`) and one of its jobs
+// (`/actions/runs/{id}/jobs`). A job is what the check-runs endpoint lists as a check run.
+type GithubWorkflowRun = {
+  id: number;
+  name: string | null;
+  status: string | null;
+  conclusion: string | null;
+  html_url: string;
+  run_started_at?: string | null;
+  created_at: string;
+};
+
+type GithubWorkflowJob = {
+  id: number;
+  name: string;
+  status: string;
+  conclusion: string | null;
+  html_url: string | null;
+  started_at: string | null;
+  created_at?: string | null;
+};
+
 export type GithubReview = {
   id: number;
   user: GithubUser | null;
@@ -180,6 +202,22 @@ export class GithubClient {
   async combinedStatus(owner: string, repo: string, sha: string): Promise<GithubCommitStatus[]> {
     const body = await this.get<{ statuses?: GithubCommitStatus[] }>(`/repos/${enc(owner)}/${enc(repo)}/commits/${enc(sha)}/status`);
     return body.statuses ?? [];
+  }
+
+  // The GitHub Actions jobs of a commit, as check runs — what the check-runs endpoint returns for
+  // Actions, read through the Actions API instead: GitHub offers a fine-grained token no «Checks»
+  // permission, but «Actions: read» reads these. A run with no job yet (queued) stands for itself.
+  async actionsJobs(owner: string, repo: string, sha: string): Promise<GithubCheckRun[]> {
+    const base = `/repos/${enc(owner)}/${enc(repo)}/actions/runs`;
+    const runs = (await this.list<{ workflow_runs?: GithubWorkflowRun[] }>(`${base}?head_sha=${enc(sha)}&per_page=100`)).flatMap((p) => p.workflow_runs ?? []);
+    const perRun = await Promise.all(
+      runs.map(async (run): Promise<GithubCheckRun[]> => {
+        const jobs = (await this.list<{ jobs?: GithubWorkflowJob[] }>(`${base}/${run.id}/jobs?filter=latest&per_page=100`)).flatMap((p) => p.jobs ?? []);
+        if (jobs.length) return jobs;
+        return [{ id: run.id, name: run.name ?? `run ${run.id}`, status: run.status ?? "queued", conclusion: run.conclusion, html_url: run.html_url, started_at: run.run_started_at ?? run.created_at }];
+      }),
+    );
+    return perRun.flat();
   }
 
   async reviews(owner: string, repo: string, number: number): Promise<GithubReview[]> {

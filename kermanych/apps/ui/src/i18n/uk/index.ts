@@ -1219,7 +1219,7 @@ export const uk = {
         label: 'Git-токен (GIT_TOKEN)',
         check: 'Перевірити',
         create: 'Створити токен на GitHub',
-        rights: 'Оберіть «Fine-grained token» з доступом до потрібних репозиторіїв і правами: Contents — Read and write, Pull requests — Read and write, Metadata — Read; для петлі після ПР ще Checks, Commit statuses і Actions — Read.',
+        rights: 'Оберіть «Fine-grained token» з доступом до потрібних репозиторіїв і правами: Contents — Read and write, Pull requests — Read and write, Metadata — Read; для петлі після ПР ще Actions і Commit statuses — Read.',
         belongs: "Токен належить {'@'}{login}",
         reuse: 'Використати токен з проєкту «{name}»',
         skipWarn: 'Можна пропустити, але без токена агент не зможе відправляти зміни й відкривати пул-реквести.',
@@ -3358,7 +3358,8 @@ export const uk = {
       success: '✓ {total}/{total}',
       failure: '✗ {n} з {total} впала | ✗ {n} з {total} впали | ✗ {n} з {total} впали',
       stuck: 'CI висить {min} хв',
-      checksDenied: 'токен не бачить CI цього PR: дайте йому права «Checks: read» і «Commit statuses: read»',
+      checksDenied: 'токен не бачить CI цього PR: дайте йому права «Actions: read» і «Commit statuses: read» (права «Checks» fine-grained токен не має)',
+      viaActions: 'CI прочитано з GitHub Actions: check runs fine-grained токену недоступні, тож перевірок інших застосунків тут не видно',
     },
     review: {
       approved: 'схвалено',

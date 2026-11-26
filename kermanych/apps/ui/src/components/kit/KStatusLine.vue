@@ -107,6 +107,7 @@
           </ul>
           <p v-if="loop.ci.stuckMin !== undefined" class="k-sl__pop-row k-sl__warn">{{ t('prLoop.ci.stuck', { min: loop.ci.stuckMin }) }}</p>
           <p v-if="loop.ci.checksDenied" class="k-sl__pop-row k-sl__warn">{{ t('prLoop.ci.checksDenied') }}</p>
+          <p v-else-if="loop.ci.checksVia" class="k-sl__pop-row">{{ t('prLoop.ci.viaActions') }}</p>
         </template>
 
         <template v-else>

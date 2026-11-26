@@ -103,11 +103,16 @@ Settled with the operator one question at a time.
     - The loop needs the project's `GIT_TOKEN`. One poll is ~6 requests; the anonymous limit is 60
       per hour. Without a token the status line says «петля недоступна: немає `GIT_TOKEN`».
       A token that GitHub refuses the check runs or the commit statuses (403 without a spent rate
-      limit: a fine-grained token without «Checks: read» or «Commit statuses: read») does not make
-      the loop unavailable: the PR, reviews and comments are still read and rounds still go; the
-      CI fact carries `checksDenied`, the CI stage reads «немає даних» (or the part it can read)
-      with the missing permissions as its tip, and the PR is never «готово до мерджу» while it is
-      set. (The statuses half was added by `docs/specs/2026-11-25-pr-loop-statuses-denied.md`.)
+      limit) does not make the loop unavailable: the PR, reviews and comments are still read and
+      rounds still go. Refused check runs — always so for a fine-grained token, which GitHub offers
+      no «Checks» permission — are replaced by the head's GitHub Actions jobs read through the
+      Actions API («Actions: read»); the CI fact then carries `checksVia: "actions"` and its tip
+      says other Apps' checks are not seen. A source with no substitute (check runs and Actions
+      both, or the commit statuses) sets `checksDenied`: the CI stage reads «немає даних» (or the
+      part it can read) with the missing permissions as its tip, and the PR is never «готово до
+      мерджу» while it is set. (The statuses half was added by
+      `docs/specs/2026-11-25-pr-loop-statuses-denied.md`, the Actions fallback by
+      `docs/specs/2026-11-26-pr-loop-ci-via-actions.md`.)
     - Tick every 2 min with conditional requests (`If-None-Match`; a 304 does not count against the
       limit). The real cost is measured during implementation: `x-ratelimit-remaining` before and
       after an hour with one watched PR, written into this document.

@@ -264,9 +264,11 @@ export class PrLoopService implements OnModuleInit, OnModuleDestroy {
       }
       const { owner, repo, pull } = found;
       const n = pull.number;
-      // A fine-grained token without «Checks: read» or «Commit statuses: read» gets a 403 on that
-      // CI source alone; the PR, reviews and comments still read, so the loop goes on without it
-      // (CI marked denied) instead of failing as no_access — a merged PR still shows as merged.
+      // A 403 on one CI source (not a spent rate limit) drops that source alone; the PR, reviews
+      // and comments still read, so the loop goes on (CI marked denied) instead of failing as
+      // no_access — a merged PR still shows as merged. GitHub offers a fine-grained token no
+      // «Checks» permission at all, so refused check runs fall back to the head's GitHub Actions
+      // jobs through the Actions API («Actions: read»).
       const denied = <T>(read: Promise<T>): Promise<T | null> =>
         read.catch((err: unknown) => {
           if (err instanceof GithubHttpError && err.status === 403 && !err.rateLimited) return null;
@@ -279,8 +281,9 @@ export class PrLoopService implements OnModuleInit, OnModuleDestroy {
         gh.reviewComments(owner, repo, n),
         gh.issueComments(owner, repo, n),
       ]);
+      const jobs = runs ? null : await denied(gh.actionsJobs(owner, repo, pull.head.sha));
       const checks: PrLoopCheck[] = [
-        ...(runs ?? []).map((r) => {
+        ...(runs ?? jobs ?? []).map((r) => {
           const url = r.html_url ?? r.details_url;
           const started = r.started_at ?? r.created_at;
           return {
@@ -332,7 +335,11 @@ export class PrLoopService implements OnModuleInit, OnModuleDestroy {
         branch: s.branch,
         base: this.supervisor.syncBase(s, g),
         checks,
-        ci: { ...ciSummary(checks, this.now()), ...(runs && statuses ? {} : { checksDenied: true as const }) },
+        ci: {
+          ...ciSummary(checks, this.now()),
+          ...((runs || jobs) && statuses ? {} : { checksDenied: true as const }),
+          ...(jobs ? { checksVia: "actions" as const } : {}),
+        },
         comments,
       };
     } catch (err) {

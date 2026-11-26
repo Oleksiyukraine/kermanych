@@ -270,9 +270,10 @@ on its first step opens the old short form instead (name, git remote, platform):
 the cloud that this machine does not connect.
 
 1. **Доступ до git.** `GIT_TOKEN`, with a link to create a fine-grained GitHub token (Contents
-   and Pull requests read/write, Metadata read; for the PR feedback loop also Checks, Commit
-   statuses and Actions read). «Використати токен з проєкту X» copies the
-   token of another project connected on this machine. «Перевірити» asks GitHub whose token it
+   and Pull requests read/write, Metadata read; for the PR feedback loop also Actions and Commit
+   statuses read — GitHub offers fine-grained tokens no «Checks» permission). «Використати токен
+   з проєкту X» copies the token of another project connected on this machine. «Перевірити» asks
+   GitHub whose token it
    is. «Пропустити» goes on without one: cloning a public repository or picking an existing
    folder works, but the agents cannot push or open pull requests until a token is set.
 2. **Репозиторій.** «GitHub» lists the repositories the token can read, with a search; «За URL»
@@ -2006,11 +2007,14 @@ developer's machine. The direction is always task → session.
    **PR feedback loop.** While a session's GitHub PR is open, the local API polls it every
    2 minutes (conditional requests, so an unchanged PR does not spend the GitHub API limit): the
    CI of the PR's head commit (check runs and commit statuses) and its review comments. It needs
-   the project's `GIT_TOKEN`; without one the loop says so and does nothing. A fine-grained
-   token without «Checks: read» or «Commit statuses: read» still runs the loop on what it can
-   read (the PR, reviews, comments): CI then reads «немає даних» (or only the part it can read),
-   the tooltip and the CI details name the missing permissions, the PR is never called ready to
-   merge, and a merged PR still shows «Злиття» ✓. A round is one
+   the project's `GIT_TOKEN`; without one the loop says so and does nothing. GitHub refuses a
+   fine-grained token the check runs (it offers such tokens no «Checks» permission); the loop then
+   reads the head's GitHub Actions jobs through the Actions API instead («Actions: read»), and the
+   CI tooltip says checks of other GitHub Apps are not seen. A token that can read neither, or
+   lacks «Commit statuses: read», still runs the loop on what it can read (the PR, reviews,
+   comments): CI then reads «немає даних» (or only the part it can read), the tooltip and the CI
+   details name the missing permissions, the PR is never called ready to merge, and a merged PR
+   still shows «Злиття» ✓. A round is one
    message to the agent with the failed checks and every new comment: it goes once every check
    of the head has finished (a check running over 60 minutes counts as hung and holds nothing),
    no new comment came for 5 minutes, and the session is not running a turn. The agent fixes,

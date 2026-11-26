@@ -1207,7 +1207,7 @@ export const en: MessageSchema = {
         label: 'Git token (GIT_TOKEN)',
         check: 'Check',
         create: 'Create a token on GitHub',
-        rights: 'Pick “Fine-grained token” with access to the repositories you need and the rights: Contents — Read and write, Pull requests — Read and write, Metadata — Read; for the PR feedback loop also Checks, Commit statuses and Actions — Read.',
+        rights: 'Pick “Fine-grained token” with access to the repositories you need and the rights: Contents — Read and write, Pull requests — Read and write, Metadata — Read; for the PR feedback loop also Actions and Commit statuses — Read.',
         belongs: "The token belongs to {'@'}{login}",
         reuse: 'Use the token from project “{name}”',
         skipWarn: 'You can skip this, but without a token the agent cannot push changes or open pull requests.',
@@ -3335,7 +3335,8 @@ export const en: MessageSchema = {
       success: '✓ {total}/{total}',
       failure: '✗ {n} of {total} failed | ✗ {n} of {total} failed',
       stuck: 'CI hangs for {min} min',
-      checksDenied: 'the token cannot read the CI of the PR: give it «Checks: read» and «Commit statuses: read»',
+      checksDenied: 'the token cannot read the CI of the PR: give it «Actions: read» and «Commit statuses: read» (a fine-grained token has no «Checks» permission)',
+      viaActions: 'CI read from GitHub Actions: check runs are closed to a fine-grained token, so checks of other apps are not seen here',
     },
     review: {
       approved: 'approved',

@@ -86,11 +86,18 @@ export type PrLoopCi = {
   /** Minutes the oldest stuck check has run; absent when none is stuck. */
   stuckMin?: number;
   /**
-   * GitHub refused the head's check runs or its commit statuses (403: a fine-grained token
-   * without «Checks: read» or «Commit statuses: read»): the rest counts only what it could read,
-   * so CI is not known to be green.
+   * GitHub refused a CI source that has no substitute (403): the check runs and the Actions API
+   * both (a fine-grained token without «Actions: read»), or the commit statuses (without
+   * «Commit statuses: read»). The rest counts only what it could read, so CI is not known to be
+   * green.
    */
   checksDenied?: true;
+  /**
+   * GitHub refused the head's check runs — always so for a fine-grained token, which GitHub offers
+   * no «Checks» permission — and the head's GitHub Actions jobs were read in their place through
+   * the Actions API («Actions: read»). Checks of other GitHub Apps are not seen.
+   */
+  checksVia?: "actions";
 };
 
 /**
