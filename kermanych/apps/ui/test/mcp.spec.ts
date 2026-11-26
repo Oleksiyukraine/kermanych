@@ -68,6 +68,15 @@ describe('MCP catalog', () => {
     expect(new Set(MCP_CATALOG.map((e) => e.name)).size).toBe(MCP_CATALOG.length);
   });
 
+  // docs/specs/2026-11-26-agentic-maturity-quick-wins.md: `npx -y` runs whatever the registry
+  // serves, so a local entry must name an exact release, not `@latest` or a range.
+  it('pins every local server to an exact package version', () => {
+    for (const entry of MCP_CATALOG) {
+      if (entry.def.kind !== 'stdio') continue;
+      expect(entry.def.args[1], entry.id).toMatch(/^(@[^/]+\/)?[^@]+@\d+\.\d+\.\d+$/);
+    }
+  });
+
   it('asks for the key instead of offering to keep one, and stores a pasted token alone', () => {
     const github = mcpCatalogDraft(MCP_CATALOG.find((e) => e.id === 'github')!);
     const [header] = github.pairs;

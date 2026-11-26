@@ -50,10 +50,12 @@ function make(skills: SkillsService = stubSkills()) {
     fetchBranch: vi.fn().mockResolvedValue("skipped"),
     refExists: vi.fn().mockResolvedValue(false),
     behindCount: vi.fn().mockResolvedValue(0),
+    forkPoint: vi.fn().mockResolvedValue("abc123"),
+    changedFiles: vi.fn().mockResolvedValue([{ path: "src/a.ts", added: 10, removed: 2 }]),
   };
   // Partial mock: createPullRequest only resumes the agent — the DI seam is cast once.
   const sup = new SupervisorService(registry, worktree as unknown as WorktreeService, offlineAuth(), skills);
-  return { sup, registry };
+  return { sup, registry, worktree };
 }
 
 // Replay a turn that reports a PR URL — the signal Kermanych settles `in_review` on. A
@@ -165,6 +167,48 @@ describe("createPullRequest", () => {
     // Kermanych's base sync rides any instruction, an override included (decision 8).
     expect(p).toContain("git merge --no-commit origin/dev");
     expect(p.endsWith("SKILL BLOCK")).toBe(true);
+  });
+
+  // docs/specs/2026-11-26-agentic-maturity-quick-wins.md: past the limit the agent is told the measured
+  // size and asked for a `## Size` section; lockfiles do not count toward it.
+  it("asks for a size section only when the branch is past the review limit, lockfiles left out", async () => {
+    const { sup, registry, worktree } = make();
+    const g = registry.upsertProject({ id: "p1", name: "g", localRepoPath: "/tmp/proj" });
+    const s = registry.createSession({ projectId: g.id, name: "AAA", task: "t", worktreePath: "/tmp/wt", branch: "feature/aaa", baseBranch: "dev" });
+    registry.updateSession(s.id, { status: "done" });
+
+    worktree.changedFiles.mockResolvedValueOnce([
+      { path: "src/a.ts", added: 150, removed: 50 },
+      { path: "pnpm-lock.yaml", added: 3000, removed: 900 },
+    ]);
+    await sup.createPullRequest(s.id);
+    expect(prompts.at(-1)!).not.toContain("## Size");
+    for (const cb of eventCbs) cb({ type: "agent_end", isTerminal: true });
+
+    worktree.changedFiles.mockResolvedValueOnce([
+      { path: "src/a.ts", added: 300, removed: 50 },
+      { path: "src/b.ts", added: 60, removed: 0 },
+    ]);
+    await sup.createPullRequest(s.id);
+    const p = prompts.at(-1)!;
+    expect(p).toContain("## Size");
+    expect(p).toContain("410 lines in 2 files");
+    expect(worktree.changedFiles).toHaveBeenLastCalledWith("/tmp/wt", "abc123");
+  });
+
+  it("opens the pull request without the size rule when the branch cannot be listed", async () => {
+    const { sup, registry, worktree } = make();
+    const g = registry.upsertProject({ id: "p1", name: "g", localRepoPath: "/tmp/proj" });
+    const s = registry.createSession({ projectId: g.id, name: "AAA", task: "t", worktreePath: "/tmp/wt", branch: "feature/aaa", baseBranch: "dev" });
+    registry.updateSession(s.id, { status: "done" });
+    worktree.changedFiles.mockRejectedValueOnce(new Error("git failed"));
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    await sup.createPullRequest(s.id);
+
+    expect(prompts.at(-1)!).toMatch(/gh pr create/);
+    expect(prompts.at(-1)!).not.toContain("## Size");
+    warn.mockRestore();
   });
 
   it("settles the session on in_review only once the PR turn reports a PR URL", async () => {

@@ -2087,6 +2087,12 @@ developer's machine. The direction is always task → session.
    the newer of the branch's fork points with `<base>` and with `origin/<base>`, so a branch
    that merged a newer base does not list teammates' files as its own.
 
+   **Size warning.** When the branch changes more than 400 lines against that fork point
+   (added plus removed, committed or not, lockfiles not counted), «Створити ПР» tells the agent
+   the measured size and asks for a `## Size` section in the PR body: the numbers and how the
+   change could be split into smaller PRs. The PR still opens as it is; the warning is for the
+   reviewer. Like the base sync, it rides any «Провізор» instruction, an override included.
+
 Nothing else leaves your machine. Transcripts, the current tool, context usage, todo
 phases, interactive prompts and the provider-plan spend under the account name (read from
 `omp usage` on this machine, never mirrored) are local-only by design — the board shows
@@ -2467,8 +2473,10 @@ checkout, because that is where every session's harness starts.
   a key (the form asks for it, links to where it is issued, and stores it in `.env`), or OAuth
   (sign in inside the agent after saving). A pick fills the form, which you review and save as
   usual; a name already in `.mcp.json` shows as «вже додано». Supabase is added read-only
-  (`?read_only=true`). The entries live in `apps/ui/src/lib/mcp-catalog.ts`, and a test holds
-  each of them to saving cleanly and reaching codex.
+  (`?read_only=true`). Local (`npx`) entries name an exact package version, never `@latest`, so a
+  new release reaches agents only through a reviewed bump. The entries live in
+  `apps/ui/src/lib/mcp-catalog.ts`, and a test holds each of them to saving cleanly, reaching
+  codex and, for a local one, being pinned.
 - **Editing.** «Додати сервер», «Змінити» and «Видалити» write the root `.mcp.json`. Unknown keys
   of a server (`timeout`, `oauth`, …) and the file's indentation are kept. Every write also sets
   the server's `[mcp_servers.<name>]` table in `.codex/config.toml`: env values of the form

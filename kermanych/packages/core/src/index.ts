@@ -284,6 +284,8 @@ export {
   instructionHoles,
   renderInstruction,
   baseSyncBlock,
+  PR_SIZE_LIMIT_LINES,
+  prSizeBlock,
   type AgentDef,
   type AgentKind,
 } from "./agents";
