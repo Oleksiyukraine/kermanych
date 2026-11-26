@@ -23,6 +23,9 @@ type Gh = {
   pull: { state: "open" | "closed"; merged_at: string | null; sha: string; mergeable_state: string };
   runs: unknown[];
   statuses: unknown[];
+  // GitHub Actions through the Actions API: the head's workflow runs and the jobs of each.
+  workflowRuns: { id: number; name: string; status: string; conclusion: string | null; html_url: string; created_at: string }[];
+  jobs: Record<number, unknown[]>;
   reviews: unknown[];
   inline: unknown[];
   conversation: unknown[];
@@ -49,6 +52,10 @@ function stubGithub(): void {
       });
     if (p === `/repos/o/r/commits/${gh.pull.sha}/check-runs`) return json({ total_count: gh.runs.length, check_runs: gh.runs });
     if (p === `/repos/o/r/commits/${gh.pull.sha}/status`) return json({ state: "pending", statuses: gh.statuses });
+    if (p === "/repos/o/r/actions/runs" && u.searchParams.get("head_sha") === gh.pull.sha)
+      return json({ total_count: gh.workflowRuns.length, workflow_runs: gh.workflowRuns });
+    const jobsOf = /^\/repos\/o\/r\/actions\/runs\/(\d+)\/jobs$/.exec(p);
+    if (jobsOf) return json({ total_count: 0, jobs: gh.jobs[Number(jobsOf[1])] ?? [] });
     if (p === "/repos/o/r/pulls/7/reviews") return json(gh.reviews);
     if (p === "/repos/o/r/pulls/7/comments") return json(gh.inline);
     if (p === "/repos/o/r/issues/7/comments") return json(gh.conversation);
@@ -135,6 +142,8 @@ beforeEach(() => {
     pull: { state: "open", merged_at: null, sha: HEAD, mergeable_state: "clean" },
     runs: [],
     statuses: [],
+    workflowRuns: [],
+    jobs: {},
     reviews: [],
     inline: [],
     conversation: [],
@@ -334,19 +343,58 @@ describe("the end of the loop", () => {
     expect(lastState(id)).toMatchObject({ unavailable: "rate_limited" });
   });
 
-  it("a token without «Checks: read» keeps the loop: statuses and comments are read, CI is marked denied", async () => {
-    const id = seed();
+  // GitHub offers a fine-grained token no «Checks» permission: the check runs answer 403.
+  const refuse = (path: RegExp) => {
     const fake = globalThis.fetch;
     vi.stubGlobal("fetch", async (url: string, init?: RequestInit) =>
-      new URL(url).pathname.endsWith("/check-runs")
+      path.test(new URL(url).pathname)
         ? new Response(JSON.stringify({ message: "Resource not accessible by personal access token" }), { status: 403, headers: { "x-ratelimit-remaining": "4999" } })
         : fake(url, init),
     );
+  };
+  const job = (id: number, name: string, status: string, conclusion: string | null) => ({
+    id,
+    name,
+    status,
+    conclusion,
+    html_url: `https://github.com/o/r/actions/runs/11/job/${id}`,
+    started_at: at(T0 - min(5)),
+  });
+
+  it("refused check runs are read as the head's GitHub Actions jobs, and a failed job reaches the agent", async () => {
+    const id = seed();
+    refuse(/\/check-runs$/);
+    const wf = (wid: number, name: string, status: string, conclusion: string | null) => ({ id: wid, name, status, conclusion, html_url: `https://github.com/o/r/actions/runs/${wid}`, created_at: at(T0 - min(5)) });
+    gh.workflowRuns = [wf(11, "CI", "in_progress", null), wf(12, "Lint", "queued", null)];
+    gh.jobs = { 11: [job(1, "build", "completed", "success"), job(2, "test", "in_progress", null)] };
+    const svc = service();
+    await svc.tick();
+    // The queued run has no job yet and stands for itself.
+    expect(lastState(id)!.ci).toEqual({ state: "pending", total: 3, done: 1, failed: [], checksVia: "actions" });
+    gh.workflowRuns = [wf(11, "CI", "completed", "failure"), wf(12, "Lint", "completed", "success")];
+    gh.jobs = { 11: [job(1, "build", "completed", "success"), job(2, "test", "completed", "failure")], 12: [job(3, "lint", "completed", "success")] };
+    now = T0 + min(2);
+    await svc.tick();
+    expect(lastState(id)!.ci).toEqual({
+      state: "failure",
+      total: 3,
+      done: 3,
+      failed: [{ name: "test", url: "https://github.com/o/r/actions/runs/11/job/2" }],
+      checksVia: "actions",
+    });
+    expect(sent).toHaveLength(1);
+    expect(sent[0]!.text).toContain("**test** — https://github.com/o/r/actions/runs/11/job/2");
+  });
+
+  it("a token that reads neither check runs nor Actions keeps the loop: statuses and comments are read, CI is marked denied", async () => {
+    const id = seed();
+    refuse(/\/(check-runs|actions\/runs)$/);
     gh.statuses = [{ context: "ci/ext", state: "success", created_at: at(T0 - min(10)) }];
     gh.reviews = [{ id: 1, user: { login: "owner-user", type: "User" }, body: "", state: "APPROVED", submitted_at: at(T0 - min(30)), html_url: "https://github.com/o/r/pull/7#r1", author_association: "OWNER" }];
     const svc = service();
     await svc.tick();
     expect(lastState(id)).toMatchObject({ ci: { state: "success", total: 1, checksDenied: true }, review: { decision: "approved" } });
+    expect(lastState(id)!.ci.checksVia).toBeUndefined();
     expect(lastState(id)!.unavailable).toBeUndefined();
     expect(isReadyToMerge(lastState(id)!)).toBe(false);
     gh.conversation = [conv("OWNER", "please rename", 10)];
@@ -357,12 +405,7 @@ describe("the end of the loop", () => {
 
   it("a token that reads neither check runs nor commit statuses still sees the PR merged", async () => {
     const id = seed();
-    const fake = globalThis.fetch;
-    vi.stubGlobal("fetch", async (url: string, init?: RequestInit) =>
-      /\/(check-runs|status)$/.test(new URL(url).pathname)
-        ? new Response(JSON.stringify({ message: "Resource not accessible by personal access token" }), { status: 403, headers: { "x-ratelimit-remaining": "4999" } })
-        : fake(url, init),
-    );
+    refuse(/\/(check-runs|status|actions\/runs)$/);
     gh.pull = { ...gh.pull, state: "closed", merged_at: at(T0) };
     await service().tick();
     expect(lastState(id)!.unavailable).toBeUndefined();
